@@ -13,6 +13,7 @@ import {
     AlertCircle
 } from 'lucide-react'
 
+import pkg from '../../../package.json'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -54,6 +55,9 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
                                 </Link>
                             ))}
                         </nav>
+                    </div>
+                    <div className="mt-auto p-4 flex justify-between items-center text-xs text-muted-foreground">
+                        <span>v{pkg.version}</span>
                     </div>
                 </div>
             </div>
