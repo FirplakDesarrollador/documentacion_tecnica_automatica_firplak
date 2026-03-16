@@ -31,14 +31,18 @@ Siguiendo los estándares de desarrollo de alta confiabilidad, la APP se divide 
     npm install
     pip install requests python-dotenv
     ```
-3.  **Variables de Entorno**: Crear un archivo `.env` basado en el entorno de desarrollo con:
-    - `DATABASE_URL`
-    - `GITHUB_TOKEN`
-    - `GEMINI_API_KEY`
+3.  **Variables de Entorno**: Crear un archivo `.env` basado en `.env.example`.
 4.  **Ejecución**:
     ```bash
     npm run dev
     ```
+
+## 🤖 Para Agentes de IA (Antigravity / Cursor / Claude)
+Si eres un agente de IA trabajando en este proyecto:
+- **Arquitectura de 3 Capas**: Sigue estrictamente el archivo `AGENTS.md`. No mezcles lógica de negocio en el frontend; usa scripts en `execution/` y defínelos en `directives/`.
+- **Contexto**: Lee siempre `directives/github_integration.md` antes de realizar operaciones con GitHub.
+- **Herramientas**: Asegúrate de tener `requests` y `python-dotenv` instalados para ejecutar los scripts de Layer 3.
+- **Flujo de Trabajo**: Este proyecto utiliza un flujo basado en tareas y planes de implementación (`implementation_plan.md`).
 
 ---
 *Desarrollado con ❤️ por el equipo de IA - FPK*
