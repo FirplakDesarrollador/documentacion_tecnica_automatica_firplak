@@ -1,0 +1,42 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Project specific
+.tmp/
+credentials.json
+token.json
+**/*.db
+**/*.db-journal
+
+# Dependencies
+node_modules/
+jspm_packages/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# Build outputs
+.next/
+out/
+build/
+dist/
+bin/
+obj/
+
+# Misc
+.DS_Store
+*.log
+.gemini/
+.agents/
+find_by_name_results.json
+grep_search_results.json
+list_dir_results.json
