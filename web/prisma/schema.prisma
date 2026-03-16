@@ -1,0 +1,180 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// Module 1: Product Master Data
+// -----------------------------------------------------------------------------
+
+model Product {
+  id                        String   @id @default(cuid())
+  
+  // Identification
+  code                      String   @unique
+  familia_code              String?
+  ref_code                  String?
+  version_code              String?
+  sap_description           String?
+  barcode_text              String?
+  
+  // Classification
+  product_type              String?
+  use_destination           String?
+  zone_text                 String?
+  furniture_name            String?
+  designation               String?
+  line                      String?
+  commercial_measure        String?
+  
+  // Characteristics
+  assembled_flag            Boolean  @default(false)
+  rh_flag                   Boolean  @default(false)
+  accessory_text            String?
+  door_color_text           String?
+  edge_2mm_flag             Boolean  @default(false)
+  
+  // Color
+  color_code                String?
+  color                     Color?   @relation(fields: [color_code], references: [code_4dig])
+  
+  // Dimensions
+  width_cm                  Float?
+  depth_cm                  Float?
+  height_cm                 Float?
+  weight_kg                 Float?
+  width_in                  Float?
+  depth_in                  Float?
+  height_in                 Float?
+  weight_lb                 Float?
+  
+  // Icons & Assets
+  icon_rh                   Boolean  @default(false)
+  icon_full_extension       Boolean  @default(false)
+  icon_soft_close           Boolean  @default(false)
+  icon_edge_2mm             Boolean  @default(false)
+  
+  isometric_path            String?
+  isometric_asset_id        String?
+  isometric_asset           Asset?   @relation("ProductIsometric", fields: [isometric_asset_id], references: [id])
+  
+  // Client 
+  private_label_flag        Boolean  @default(false)
+  private_label_client_name String?
+  private_label_client_id   String?
+  private_label_client      Client?  @relation(fields: [private_label_client_id], references: [id])
+  
+  // Final Names
+  final_name_es             String?
+  final_name_en             String?
+  
+  // Other
+  stacking_max              Int?
+  validation_status         String   @default("incomplete") // incomplete, needs_review, ready
+  
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+}
+
+model Color {
+  id              String   @id @default(cuid())
+  code_4dig       String   @unique
+  code_short      Int?
+  name_color_sap  String
+  
+  products        Product[]
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Familia {
+  id                String   @id @default(cuid())
+  code              String   @unique
+  name              String
+  product_type      String?
+  use_destination   String?
+  assembled_default Boolean  @default(false)
+  rh_default        Boolean  @default(false)
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model Client {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  logo_id     String?
+  logo        Asset?   @relation("ClientLogo", fields: [logo_id], references: [id])
+  
+  products    Product[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// -----------------------------------------------------------------------------
+// Module 2: Rules Engine
+// -----------------------------------------------------------------------------
+
+model Rule {
+  id                   String   @id @default(cuid())
+  rule_type            String   // name_component, icon_activation, logo_selection, validation_requirement, template_visibility
+  target_entity        String   // product, template
+  condition_expression String   // e.g "rh_flag == true" or a more structured JSON
+  action_type          String   // e.g "append_text", "set_icon"
+  action_payload       String   // JSON string of the action (e.g., text to append)
+  priority             Int      @default(0)
+  enabled              Boolean  @default(true)
+  notes                String?
+  
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+// -----------------------------------------------------------------------------
+// Module 3: Asset Library
+// -----------------------------------------------------------------------------
+
+model Asset {
+  id          String   @id @default(cuid())
+  type        String   // logo, client_logo, icon, symbol, isometric
+  name        String
+  file_path   String   // local path or relative url for MVP
+  tags        String?  // comma separated
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  isometric_products Product[] @relation("ProductIsometric")
+  clients            Client[]  @relation("ClientLogo")
+}
+
+// -----------------------------------------------------------------------------
+// Module 4: Template Builder
+// -----------------------------------------------------------------------------
+
+model Template {
+  id               String   @id @default(cuid())
+  name             String
+  document_type    String   // label, datasheet, etc.
+  width_mm         Float
+  height_mm        Float
+  orientation      String   // horizontal, vertical
+  
+  // Structured JSON string defining elements
+  elements_json    String
+  
+  version          Int      @default(1)
+  active           Boolean  @default(true)
+  
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
