@@ -143,7 +143,7 @@ export function EditProductForm({ initialData }: { initialData: any }) {
                                 </div>
                             </div>
 
-                            <div className="flex gap-6 mt-2">
+                            <div className="flex flex-wrap gap-6 mt-6 p-5 bg-slate-50 border border-slate-100 rounded-xl">
                                 <div className="flex items-center space-x-2">
                                     <Checkbox
                                         id="rh_flag"

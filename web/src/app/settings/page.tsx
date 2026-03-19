@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 
 export default function SettingsPage() {
     return (
-        <div className="flex flex-col gap-6 max-w-4xl">
+        <div className="flex flex-col gap-8 max-w-4xl">
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Configuración</h1>

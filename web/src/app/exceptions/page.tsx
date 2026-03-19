@@ -1,4 +1,4 @@
-import prisma from '@/lib/prisma'
+import { dbQuery } from '@/lib/supabase'
 import {
     Table,
     TableBody,
@@ -20,11 +20,8 @@ const MVP_REQUIRED_TEMPLATE_ELEMENTS = [
 ] as any
 
 export default async function ExceptionsPage() {
-    const products = await prisma.product.findMany({
-        orderBy: { updatedAt: 'desc' },
-    })
-
-    const rules = await prisma.rule.findMany({ where: { enabled: true } })
+    const products = await dbQuery(`SELECT * FROM public.products ORDER BY updated_at DESC`) || []
+    const rules = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true`) || []
 
     // Find products that have issues
     const exceptionalProducts = products.map((p: any) => {
@@ -33,8 +30,8 @@ export default async function ExceptionsPage() {
     }).filter((item: any) => !item.issues.isValid || item.issues.warnings.length > 0)
 
     return (
-        <div className="flex flex-col gap-6">
-            <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-8">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight text-red-600 flex items-center gap-2">
                         <AlertCircle className="w-8 h-8" />
@@ -46,7 +43,7 @@ export default async function ExceptionsPage() {
                 </div>
             </div>
 
-            <div className="rounded-md border bg-white">
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                 <Table>
                     <TableHeader>
                         <TableRow>

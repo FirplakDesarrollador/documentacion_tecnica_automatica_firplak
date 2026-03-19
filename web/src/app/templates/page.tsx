@@ -1,4 +1,4 @@
-import prisma from '@/lib/prisma'
+import { dbQuery } from '@/lib/supabase'
 import {
     Table,
     TableBody,
@@ -14,25 +14,23 @@ import { NewTemplateDialog } from '@/components/templates/NewTemplateDialog'
 import { DeleteTemplateButton } from '@/components/templates/DeleteTemplateButton'
 
 export default async function TemplatesPage() {
-    const templates = await prisma.template.findMany({
-        orderBy: { updatedAt: 'desc' },
-    })
+    const templates = await dbQuery(`SELECT * FROM public.templates ORDER BY updated_at DESC`) || []
 
     return (
-        <div className="flex flex-col gap-6">
-            <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-8">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Plantillas</h1>
                     <p className="text-muted-foreground">
                         Administra visualmente los diseños de tus etiquetas y documentos.
                     </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-3">
                     <NewTemplateDialog />
                 </div>
             </div>
 
-            <div className="rounded-md border bg-white">
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                 <Table>
                     <TableHeader>
                         <TableRow>

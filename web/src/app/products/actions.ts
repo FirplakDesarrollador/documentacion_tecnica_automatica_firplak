@@ -1,120 +1,84 @@
 'use server'
 
-import prisma from '@/lib/prisma'
+import { dbQuery } from '@/lib/supabase'
 import { redirect } from 'next/navigation'
 import { parseProductCode } from '@/lib/engine/codeParser'
 import { GoogleGenAI } from '@google/genai'
 
 export async function checkFamilyExists(code: string) {
-    if (!code) return true // assume ok if empty to avoid early errors
+    if (!code) return true
     const parsed = await parseProductCode(code, '', false)
     if (!parsed.familia_code) return true
 
-    const familia = await prisma.familia.findUnique({
-        where: { code: parsed.familia_code }
-    })
-    return !!familia
+    const rows = await dbQuery(`SELECT code FROM public.familias WHERE code = '${parsed.familia_code.replace(/'/g, "''")}' LIMIT 1`)
+    return rows && rows.length > 0
 }
 
 export async function createFamilyAction(data: any) {
     if (!data.code) throw new Error("Family code is required")
-    await prisma.familia.create({
-        data: {
-            code: data.code,
-            name: data.name || null,
-            product_type: data.product_type || null,
-            use_destination: data.use_destination || null,
-        }
-    })
+    await dbQuery(`
+        INSERT INTO public.familias (code, name, product_type, use_destination)
+        VALUES ('${data.code}', ${data.name ? `'${data.name.replace(/'/g, "''")}'` : 'NULL'}, ${data.product_type ? `'${data.product_type}'` : 'NULL'}, ${data.use_destination ? `'${data.use_destination}'` : 'NULL'})
+        ON CONFLICT (code) DO NOTHING
+    `)
     redirect('/products')
 }
 
 export async function createProductAction(data: any) {
-    if (!data.code) {
-        throw new Error('Code is required')
-    }
+    if (!data.code) throw new Error('Code is required')
 
     const parsed = await parseProductCode(data.code, data.sap_description, data.rh_flag)
 
-    // Check if we need to create a new family
     if (data._newFamily && parsed.familia_code) {
-        const exists = await prisma.familia.findUnique({
-            where: { code: parsed.familia_code }
-        })
-        if (!exists) {
-            await prisma.familia.create({
-                data: {
-                    code: parsed.familia_code,
-                    name: data._newFamily.name || parsed.familia_code,
-                    product_type: data._newFamily.product_type || data.product_type || null,
-                    use_destination: data._newFamily.use_destination || data.use_destination || null,
-                    // Note: zone_text is not in Family schema directly in this snippet, but we can set others
-                }
-            })
+        const existing = await dbQuery(`SELECT code FROM public.familias WHERE code = '${parsed.familia_code.replace(/'/g, "''")}' LIMIT 1`)
+        if (!existing || existing.length === 0) {
+            await dbQuery(`
+                INSERT INTO public.familias (code, name, product_type, use_destination)
+                VALUES ('${parsed.familia_code}', '${(data._newFamily.name || parsed.familia_code).replace(/'/g, "''")}', ${data._newFamily.product_type ? `'${data._newFamily.product_type}'` : 'NULL'}, ${data._newFamily.use_destination ? `'${data._newFamily.use_destination}'` : 'NULL'})
+                ON CONFLICT (code) DO NOTHING
+            `)
         }
     }
 
-    await prisma.product.create({
-        data: {
-            code: data.code,
-            sap_description: data.sap_description || null,
-            product_type: data.product_type || parsed.product_type || null,
-            furniture_name: data.furniture_name || null,
-            color_code: data.color_code || parsed.color_code || null,
-            rh_flag: parsed.rh_flag,
-            assembled_flag: data.assembled_flag || parsed.assembled_flag,
-            edge_2mm_flag: data.edge_2mm_flag || false,
-            line: data.line || null,
-            use_destination: data.use_destination || parsed.use_destination || null,
-            commercial_measure: data.commercial_measure || null,
-            accessory_text: data.accessory_text || null,
-            designation: data.designation || null,
+    function esc(v: any) {
+        if (v === null || v === undefined) return 'NULL'
+        if (typeof v === 'boolean') return v ? 'true' : 'false'
+        if (typeof v === 'number') return String(v)
+        return `'${String(v).replace(/'/g, "''")}'`
+    }
 
-            // Dimensiones
-            width_cm: data.width_cm ? parseFloat(data.width_cm) : null,
-            depth_cm: data.depth_cm ? parseFloat(data.depth_cm) : null,
-            height_cm: data.height_cm ? parseFloat(data.height_cm) : null,
-            weight_kg: data.weight_kg ? parseFloat(data.weight_kg) : null,
-            stacking_max: data.stacking_max ? parseInt(data.stacking_max) : null,
-
-            // Campos derivados del código
-            familia_code: parsed.familia_code,
-            ref_code: parsed.ref_code,
-            version_code: parsed.version_code,
-        },
-    })
+    await dbQuery(`
+        INSERT INTO public.products (code, sap_description, product_type, furniture_name, color_code, rh_flag, assembled_flag, edge_2mm_flag, line, use_destination, commercial_measure, accessory_text, designation, width_cm, depth_cm, height_cm, weight_kg, stacking_max, familia_code, ref_code, version_code, sku_servicios_ref)
+        VALUES (${esc(data.code)}, ${esc(data.sap_description)}, ${esc(data.product_type || parsed.product_type)}, ${esc(data.furniture_name)}, ${esc(data.color_code || parsed.color_code)}, ${data.rh_flag || parsed.rh_flag ? 'true' : 'false'}, ${data.assembled_flag || parsed.assembled_flag ? 'true' : 'false'}, ${data.edge_2mm_flag ? 'true' : 'false'}, ${esc(data.line)}, ${esc(data.use_destination || parsed.use_destination)}, ${esc(data.commercial_measure)}, ${esc(data.accessory_text)}, ${esc(data.designation)}, ${data.width_cm ? parseFloat(data.width_cm) : 'NULL'}, ${data.depth_cm ? parseFloat(data.depth_cm) : 'NULL'}, ${data.height_cm ? parseFloat(data.height_cm) : 'NULL'}, ${data.weight_kg ? parseFloat(data.weight_kg) : 'NULL'}, ${data.stacking_max ? parseInt(data.stacking_max) : 'NULL'}, ${esc(parsed.familia_code)}, ${esc(parsed.ref_code)}, ${esc(parsed.version_code)}, ${esc(data.code)})
+        ON CONFLICT (code) DO NOTHING
+    `)
 
     redirect('/products')
 }
 
 export async function updateProductAction(id: string, data: any) {
     if (!data.code) throw new Error('Code is required')
-
     const parsed = await parseProductCode(data.code, data.sap_description, data.rh_flag)
 
-    await prisma.product.update({
-        where: { id },
-        data: {
-            code: data.code,
-            sap_description: data.sap_description || null,
-            product_type: data.product_type || null,
-            furniture_name: data.furniture_name || null,
-            color_code: data.color_code || null,
-            rh_flag: data.rh_flag || false,
-            assembled_flag: data.assembled_flag || false,
-            edge_2mm_flag: data.edge_2mm_flag || false,
-            line: data.line || null,
-            use_destination: data.use_destination || null,
-            commercial_measure: data.commercial_measure || null,
-            accessory_text: data.accessory_text || null,
-            designation: data.designation || null,
+    function esc(v: any) {
+        if (v === null || v === undefined) return 'NULL'
+        if (typeof v === 'boolean') return v ? 'true' : 'false'
+        if (typeof v === 'number') return String(v)
+        return `'${String(v).replace(/'/g, "''")}'`
+    }
 
-            // Campos derivados del código por si cambió el código
-            familia_code: parsed.familia_code,
-            ref_code: parsed.ref_code,
-            version_code: parsed.version_code,
-        },
-    })
+    await dbQuery(`
+        UPDATE public.products SET
+            code=${esc(data.code)}, sap_description=${esc(data.sap_description)}, product_type=${esc(data.product_type)},
+            furniture_name=${esc(data.furniture_name)}, color_code=${esc(data.color_code)},
+            rh_flag=${data.rh_flag ? 'true' : 'false'}, assembled_flag=${data.assembled_flag ? 'true' : 'false'},
+            edge_2mm_flag=${data.edge_2mm_flag ? 'true' : 'false'}, line=${esc(data.line)},
+            use_destination=${esc(data.use_destination)}, commercial_measure=${esc(data.commercial_measure)},
+            accessory_text=${esc(data.accessory_text)}, designation=${esc(data.designation)},
+            familia_code=${esc(parsed.familia_code)}, ref_code=${esc(parsed.ref_code)},
+            version_code=${esc(parsed.version_code)}, updated_at=now()
+        WHERE id='${id}'
+    `)
 
     redirect('/products')
 }
@@ -122,34 +86,27 @@ export async function updateProductAction(id: string, data: any) {
 export async function massUpdateProducts(ids: string[], updateData: any) {
     if (!ids || ids.length === 0) return
 
-    // Limit fields that can be updated massively and protect others
-    const safeData: any = {}
-    if (updateData.edge_2mm_flag !== undefined) safeData.edge_2mm_flag = updateData.edge_2mm_flag
-    if (updateData.rh_flag !== undefined) safeData.rh_flag = updateData.rh_flag
-    if (updateData.assembled_flag !== undefined) safeData.assembled_flag = updateData.assembled_flag
-    if (updateData.commercial_measure !== undefined) safeData.commercial_measure = updateData.commercial_measure
-    if (updateData.accessory_text !== undefined) safeData.accessory_text = updateData.accessory_text
-    if (updateData.validation_status !== undefined) safeData.validation_status = updateData.validation_status
+    const setClauses: string[] = []
+    if (updateData.edge_2mm_flag !== undefined) setClauses.push(`edge_2mm_flag=${updateData.edge_2mm_flag ? 'true' : 'false'}`)
+    if (updateData.rh_flag !== undefined) setClauses.push(`rh_flag=${updateData.rh_flag ? 'true' : 'false'}`)
+    if (updateData.assembled_flag !== undefined) setClauses.push(`assembled_flag=${updateData.assembled_flag ? 'true' : 'false'}`)
+    if (updateData.commercial_measure !== undefined) setClauses.push(`commercial_measure='${String(updateData.commercial_measure).replace(/'/g, "''")}'`)
+    if (updateData.accessory_text !== undefined) setClauses.push(`accessory_text='${String(updateData.accessory_text).replace(/'/g, "''")}'`)
+    if (updateData.validation_status !== undefined) setClauses.push(`validation_status='${updateData.validation_status}'`)
 
-    if (Object.keys(safeData).length > 0) {
-        await prisma.product.updateMany({
-            where: { id: { in: ids } },
-            data: safeData
-        })
-    }
+    if (setClauses.length === 0) return
+
+    const idList = ids.map(id => `'${id}'`).join(',')
+    await dbQuery(`UPDATE public.products SET ${setClauses.join(', ')}, updated_at=now() WHERE id IN (${idList})`)
 }
 
 export async function translateMissingProducts() {
     try {
-        const products = await prisma.product.findMany({
-            where: { final_name_en: null, final_name_es: { not: null } },
-            take: 20
-        })
+        const products = await dbQuery(`SELECT id, final_name_es, use_destination, width_cm, rh_flag, icon_soft_close, edge_2mm_flag FROM public.products WHERE final_name_en IS NULL AND final_name_es IS NOT NULL LIMIT 20`)
 
-        if (products.length === 0) return { success: true, count: 0, message: "No hay productos pendientes de traducir." }
+        if (!products || products.length === 0) return { success: true, count: 0, message: "No hay productos pendientes de traducir." }
 
-        // Inicializamos con la variable de entorno por defecto
-        const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || '' });
+        const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || '' })
 
         const promptTemplate = `
 English product names must not be literal translations of Spanish names.
@@ -182,44 +139,28 @@ Example Output:
 }
 
 Translate these products:
-`;
-
-        const productsData = products.map((p: any) => ({
-            id: p.id,
-            final_name_es: p.final_name_es,
-            use_destination: p.use_destination,
-            width_cm: p.width_cm,
-            rh_flag: p.rh_flag,
-            icon_soft_close: p.icon_soft_close,
-            edge_2mm_flag: p.edge_2mm_flag
-        }))
-
-        const prompt = promptTemplate + JSON.stringify(productsData, null, 2)
+`
+        const prompt = promptTemplate + JSON.stringify(products, null, 2)
 
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: prompt,
-            config: {
-                responseMimeType: 'application/json'
-            }
-        });
+            config: { responseMimeType: 'application/json' }
+        })
 
-        const text = response.text;
-        if (!text) throw new Error("No response from AI");
-        const translations = JSON.parse(text);
+        const text = response.text
+        if (!text) throw new Error("No response from AI")
+        const translations = JSON.parse(text)
 
-        let updatedCount = 0;
+        let updatedCount = 0
         for (const [id, en_name] of Object.entries(translations)) {
-            await prisma.product.update({
-                where: { id },
-                data: { final_name_en: en_name as string }
-            })
-            updatedCount++;
+            await dbQuery(`UPDATE public.products SET final_name_en='${String(en_name).replace(/'/g, "''")}', updated_at=now() WHERE id='${id}'`)
+            updatedCount++
         }
 
         return { success: true, count: updatedCount, message: `Traducidos exitosamente ${updatedCount} productos.` }
     } catch (e: any) {
-        console.error("Translation Error:", e);
+        console.error("Translation Error:", e)
         return { success: false, error: e.message }
     }
 }

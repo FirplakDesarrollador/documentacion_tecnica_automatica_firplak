@@ -88,7 +88,7 @@ export default function NewProductPage() {
     }
 
     return (
-        <div className="flex flex-col gap-6 max-w-5xl mx-auto w-full">
+        <div className="flex flex-col gap-8 max-w-5xl mx-auto w-full">
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Nuevo Producto</h1>
@@ -251,7 +251,7 @@ export default function NewProductPage() {
                                                 </div>
                                             </div>
 
-                                            <div className="flex gap-6 mt-4 p-4 bg-muted/30 rounded-md">
+                                            <div className="flex flex-wrap gap-6 mt-6 p-5 bg-slate-50 border border-slate-100 rounded-xl">
                                                 <div className="flex items-center space-x-2">
                                                     <Checkbox
                                                         id="rh_flag"

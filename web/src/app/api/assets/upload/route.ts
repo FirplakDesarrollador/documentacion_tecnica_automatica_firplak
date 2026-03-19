@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
-import { writeFile } from 'fs/promises'
-import path from 'path'
+import { dbQuery } from '@/lib/supabase'
+import { supabase } from '@/lib/supabase'
 import { v4 as uuidv4 } from 'uuid'
 
 export async function POST(request: Request) {
@@ -16,30 +15,45 @@ export async function POST(request: Request) {
         const bytes = await file.arrayBuffer()
         const buffer = Buffer.from(bytes)
 
-        // Generate unique name
-        const ext = path.extname(file.name) || '.png'
-        const fileName = `${uuidv4()}${ext}`
+        const ext = file.name.split('.').pop() || 'png'
+        const fileName = `${uuidv4()}.${ext}`
+        const bucketPath = `assets/${fileName}`
 
-        // In our implementation plan, MVP uses local filesystem (public directory)
-        const filepath = path.join(process.cwd(), 'public', 'uploads', fileName)
-        await writeFile(filepath, buffer)
-
-        // Determine type based on extension
+        // Determine type
         let type = 'icon'
-        if (ext.toLowerCase() === '.svg') type = 'logo'
-        if (file.name.toLowerCase().includes('logo')) type = 'logo'
+        if (ext.toLowerCase() === 'svg' || file.name.toLowerCase().includes('logo')) type = 'logo'
 
-        // Create DB record
-        const asset = await prisma.asset.create({
-            data: {
-                name: file.name.replace(ext, ''),
-                type,
-                file_path: `/uploads/${fileName}`
-            }
-        })
+        // Upload to Supabase Storage (bucket 'assets')
+        const { error: storageError } = await supabase.storage
+            .from('assets')
+            .upload(bucketPath, buffer, {
+                contentType: file.type || 'application/octet-stream',
+                upsert: false
+            })
 
-        return NextResponse.json({ success: true, asset })
-    } catch (error) {
+        let filePath: string
+        if (storageError) {
+            // Fallback: guardar en filesystem local (dev mode)
+            console.warn('Storage upload failed, falling back to local:', storageError.message)
+            const { writeFile } = await import('fs/promises')
+            const { join } = await import('path')
+            const localPath = join(process.cwd(), 'public', 'uploads', fileName)
+            await writeFile(localPath, buffer)
+            filePath = `/uploads/${fileName}`
+        } else {
+            const { data: urlData } = supabase.storage.from('assets').getPublicUrl(bucketPath)
+            filePath = urlData.publicUrl
+        }
+
+        // Create DB record in Supabase
+        const rows = await dbQuery(`
+            INSERT INTO public.assets (name, type, file_path)
+            VALUES ('${file.name.replace(`.${ext}`, '').replace(/'/g, "''")}', '${type}', '${filePath.replace(/'/g, "''")}')
+            RETURNING id, name, type, file_path, created_at
+        `)
+
+        return NextResponse.json({ success: true, asset: rows?.[0] })
+    } catch (error: any) {
         console.error('Upload Error:', error)
         return NextResponse.json({ success: false, error: 'Failed to upload asset' }, { status: 500 })
     }

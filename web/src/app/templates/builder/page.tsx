@@ -1,4 +1,4 @@
-import prisma from '@/lib/prisma'
+import { dbQuery } from '@/lib/supabase'
 import { BuilderCanvas } from '@/components/templates/TemplateCanvas'
 import Link from 'next/link'
 import { ArrowLeft } from 'lucide-react'
@@ -15,17 +15,14 @@ export default async function TemplateBuilderPage({
         redirect('/templates')
     }
 
-    const template = await prisma.template.findUnique({
-        where: { id: resolvedParams.id }
-    })
+    const rows = await dbQuery(`SELECT * FROM public.templates WHERE id='${resolvedParams.id}' LIMIT 1`)
+    const template = rows?.[0]
 
     if (!template) {
         redirect('/templates')
     }
 
-    const assets = await prisma.asset.findMany({
-        orderBy: { name: 'asc' }
-    })
+    const assets = await dbQuery(`SELECT * FROM public.assets ORDER BY name ASC`) || []
 
     return (
         <div className="flex flex-col gap-6 h-[calc(100vh-80px)]">
