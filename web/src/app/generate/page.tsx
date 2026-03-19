@@ -31,10 +31,13 @@ export default async function GeneratePage({
         if (m.length > 0) conditions.push(`commercial_measure IN (${m.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
         const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
         products = await dbQuery(
-            `SELECT id, code, final_name_es, final_name_en, product_type, validation_status, familia_code,
-                    isometric_asset_id, barcode_text, commercial_measure, weight_kg, width_cm, depth_cm, height_cm,
-                    sap_description, furniture_name, color_code, ref_code
-             FROM public.products ${where} ORDER BY code ASC LIMIT 200`
+            `SELECT p.id, p.code, p.final_name_es, p.final_name_en, p.product_type, p.validation_status, p.familia_code,
+                    p.isometric_asset_id, p.barcode_text, p.commercial_measure, p.weight_kg, p.width_cm, p.depth_cm, p.height_cm,
+                    p.sap_description, p.furniture_name, p.color_code, p.ref_code,
+                    c.name_color_sap as color_name
+             FROM public.products p
+             LEFT JOIN public.colors c ON p.color_code = c.code_4dig
+             ${where} ORDER BY p.code ASC LIMIT 200`
         ) || []
     }
 
@@ -56,8 +59,13 @@ export default async function GeneratePage({
     let references: { value: string, label: string }[] = []
     if (f.length > 0) {
         const fFilter = f.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(',')
+        // Correlacional: filtrar por medidas seleccionadas si existen
+        const mFilter = m.length > 0 ? `AND commercial_measure IN (${m.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})` : ''
+        
         const refRecords = await dbQuery(
-            `SELECT DISTINCT ref_code, furniture_name FROM public.products WHERE ref_code IS NOT NULL AND familia_code IN (${fFilter})`
+            `SELECT DISTINCT ref_code, furniture_name 
+             FROM public.products 
+             WHERE ref_code IS NOT NULL AND familia_code IN (${fFilter}) ${mFilter}`
         ) || []
         references = refRecords
             .map((rec: any) => ({ value: rec.ref_code as string, label: `${rec.ref_code} - ${rec.furniture_name || ''}` }))
@@ -67,8 +75,13 @@ export default async function GeneratePage({
     let measures: string[] = []
     if (f.length > 0) {
         const fFilter = f.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(',')
+        // Correlacional: filtrar por referencias seleccionadas si existen
+        const rFilter = r.length > 0 ? `AND ref_code IN (${r.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})` : ''
+
         const measureRecords = await dbQuery(
-            `SELECT DISTINCT commercial_measure FROM public.products WHERE commercial_measure IS NOT NULL AND commercial_measure != '' AND familia_code IN (${fFilter})`
+            `SELECT DISTINCT commercial_measure 
+             FROM public.products 
+             WHERE commercial_measure IS NOT NULL AND commercial_measure != '' AND familia_code IN (${fFilter}) ${rFilter}`
         ) || []
         measures = measureRecords.map((rec: any) => rec.commercial_measure as string).sort()
     }

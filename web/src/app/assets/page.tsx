@@ -12,6 +12,7 @@ import { Search, Image as ImageIcon } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { UploadAssetButton } from '@/components/assets/UploadAssetButton'
+import { IsometricAssociationDialog } from '@/components/assets/IsometricAssociationDialog'
 
 export default async function AssetsPage() {
     const assets = await dbQuery(`SELECT * FROM public.assets ORDER BY created_at DESC`) || []
@@ -26,6 +27,7 @@ export default async function AssetsPage() {
                     </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
+                    <IsometricAssociationDialog />
                     <UploadAssetButton />
                 </div>
             </div>

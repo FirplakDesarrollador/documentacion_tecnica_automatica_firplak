@@ -22,6 +22,46 @@ export function ExportButtons({ elements, product }: ExportButtonsProps) {
     const [isExporting, setIsExporting] = useState<string | null>(null)
 
     const handleExport = async (format: 'pdf' | 'png' | 'jpg') => {
+        // --- Validation for Required Fields ---
+        const missingFields: string[] = []
+        
+        elements.forEach(el => {
+            if (!el.required) return
+            
+            if (el.type === 'dynamic_text' && el.dataField) {
+                const val = product[el.dataField]
+                if (!val || String(val).trim() === '') {
+                    missingFields.push(el.dataField)
+                }
+            } else if (el.type === 'text' && el.content) {
+                // Check if internal variables are missing
+                const matches = el.content.match(/\{[^}]+\}/g)
+                if (matches) {
+                    matches.forEach(match => {
+                        const varName = match.slice(1, -1)
+                        const val = product[varName]
+                        if (!val || String(val).trim() === '') {
+                            missingFields.push(varName)
+                        }
+                    })
+                } else if (!el.content || el.content.trim() === '') {
+                    missingFields.push('Texto Fijo')
+                }
+            } else if (el.type === 'image') {
+                if (!el.content || el.content === '') {
+                    missingFields.push('Imagen/Recurso')
+                }
+            }
+        })
+
+        if (missingFields.length > 0) {
+            toast.error(`Exportación bloqueada: Faltan datos obligatorios (${[...new Set(missingFields)].join(', ')})`, {
+                duration: 6000
+            })
+            return
+        }
+        // --------------------------------------
+
         setIsExporting(format)
 
         try {

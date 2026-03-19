@@ -41,7 +41,12 @@ export default async function ProductsPage({
         if (r.length > 0) conditions.push(`ref_code IN (${r.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
         if (m.length > 0) conditions.push(`commercial_measure IN (${m.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
         const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-        products = await dbQuery(`SELECT * FROM public.products ${where} ORDER BY updated_at DESC LIMIT 100`) || []
+        products = await dbQuery(
+            `SELECT p.*, c.name_color_sap as color_name
+             FROM public.products p
+             LEFT JOIN public.colors c ON p.color_code = c.code_4dig
+             ${where} ORDER BY p.updated_at DESC LIMIT 100`
+        ) || []
     }
 
     // Usamos familia_code directamente de products para evitar el mismatch
@@ -49,7 +54,10 @@ export default async function ProductsPage({
     const familiaRecords = await dbQuery(
         `SELECT DISTINCT p.familia_code, f.name
          FROM public.products p
-         LEFT JOIN public.familias f ON f.code = LTRIM(p.familia_code, 'V')
+         LEFT JOIN public.familias f ON f.code = CASE 
+            WHEN p.familia_code ~ '^[VCP].*' THEN SUBSTRING(p.familia_code FROM 2)
+            ELSE p.familia_code 
+         END
          WHERE p.familia_code IS NOT NULL
          ORDER BY p.familia_code ASC`
     ) || []
@@ -61,14 +69,18 @@ export default async function ProductsPage({
     let references: {value: string, label: string}[] = []
     if (f.length > 0) {
         const fFilter = f.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(',')
-        const refRecords = await dbQuery(`SELECT DISTINCT ref_code, furniture_name FROM public.products WHERE ref_code IS NOT NULL AND familia_code IN (${fFilter})`) || []
+        const mFilter = m.length > 0 ? `AND commercial_measure IN (${m.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})` : ''
+        
+        const refRecords = await dbQuery(`SELECT DISTINCT ref_code, furniture_name FROM public.products WHERE ref_code IS NOT NULL AND familia_code IN (${fFilter}) ${mFilter}`) || []
         references = refRecords.map((rec: any) => ({ value: rec.ref_code as string, label: `${rec.ref_code} - ${rec.furniture_name || ''}` })).sort((a: any, b: any) => a.value.localeCompare(b.value))
     }
 
     let measures: string[] = []
     if (f.length > 0) {
         const fFilter = f.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(',')
-        const measureRecords = await dbQuery(`SELECT DISTINCT commercial_measure FROM public.products WHERE commercial_measure IS NOT NULL AND commercial_measure != '' AND familia_code IN (${fFilter})`) || []
+        const rFilter = r.length > 0 ? `AND ref_code IN (${r.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})` : ''
+
+        const measureRecords = await dbQuery(`SELECT DISTINCT commercial_measure FROM public.products WHERE commercial_measure IS NOT NULL AND commercial_measure != '' AND familia_code IN (${fFilter}) ${rFilter}`) || []
         measures = measureRecords.map((rec: any) => rec.commercial_measure as string).sort()
     }
 
@@ -113,7 +125,7 @@ export default async function ProductsPage({
                     <Link href="/products/mass-edit">
                         <Button variant="secondary" className="w-full sm:w-auto">
                             <DatabaseZap className="mr-2 h-4 w-4 text-indigo-500" />
-                            Verificación
+                            Cambios masivos
                         </Button>
                     </Link>
                     <Link href="/products/new">
@@ -144,9 +156,10 @@ export default async function ProductsPage({
                     <Table>
                         <TableHeader>
                             <TableRow>
-                                <TableHead className="w-[150px]">Código</TableHead>
+                                <TableHead className="w-[140px]">Código</TableHead>
                                 <TableHead>Nombre Final</TableHead>
-                                <TableHead className="w-[150px]">Estado</TableHead>
+                                <TableHead className="w-[120px]">Color</TableHead>
+                                <TableHead className="w-[130px]">Estado</TableHead>
                                 <TableHead className="text-right w-[100px]">Acciones</TableHead>
                             </TableRow>
                         </TableHeader>
@@ -154,7 +167,10 @@ export default async function ProductsPage({
                             {hasFilterMsg || products.map((product) => (
                                 <TableRow key={product.id}>
                                     <TableCell className="font-medium text-slate-900">{product.code}</TableCell>
-                                    <TableCell className="text-slate-600">{product.final_name_es || '-'}</TableCell>
+                                    <TableCell className="text-slate-600 font-medium">{product.final_name_es || '-'}</TableCell>
+                                    <TableCell className="text-slate-500 text-sm uppercase">
+                                        {product.color_name || product.color_code || '-'}
+                                    </TableCell>
                                     <TableCell>
                                         <Badge
                                             variant={

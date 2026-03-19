@@ -30,11 +30,11 @@ export function UploadAssetButton() {
                 throw new Error('Upload failed')
             }
 
-            toast.success('Asset uploaded successfully')
+            toast.success('Recurso subido correctamente')
             router.refresh()
         } catch (error) {
             console.error('Upload error:', error)
-            toast.error('Failed to upload asset')
+            toast.error('Error al subir el recurso')
         } finally {
             setIsUploading(false)
             if (fileInputRef.current) {
@@ -57,7 +57,7 @@ export function UploadAssetButton() {
                 disabled={isUploading}
             >
                 {isUploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlusCircle className="mr-2 h-4 w-4" />}
-                {isUploading ? 'Uploading...' : 'Upload Asset'}
+                {isUploading ? 'Subiendo...' : 'Adjuntar recurso'}
             </Button>
         </>
     )

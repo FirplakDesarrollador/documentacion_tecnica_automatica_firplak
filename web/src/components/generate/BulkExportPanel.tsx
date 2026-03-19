@@ -9,6 +9,8 @@ import { toast } from 'sonner'
 import { ValidationWarnings, getMissingFields, getTemplateRequiredFields, fieldLabel } from './ValidationWarnings'
 import type { TemplateOption } from './TemplatePicker'
 import type { GenerateProduct } from './GenerateProductTable'
+import { resolveAssetsAction } from '@/app/generate/actions'
+import { generateExportHtml, resolveTemplateAssets } from '@/lib/export/exportUtils'
 
 type ExportStatus = 'pending' | 'exporting' | 'done' | 'error'
 
@@ -24,48 +26,54 @@ interface BulkExportPanelProps {
     onClose: () => void
 }
 
-async function exportOneProduct(product: GenerateProduct, template: TemplateOption): Promise<void> {
+async function exportOneProduct(
+    product: GenerateProduct, 
+    template: TemplateOption, 
+    format: 'pdf' | 'jpg'
+): Promise<void> {
     let elements: any[] = []
     try {
         elements = JSON.parse(template.elements_json || '[]')
     } catch { elements = [] }
 
-    const hydrateText = (text: string) => {
-        if (!text) return ''
-        return text.replace(/{([^}]+)}/g, (_, field) => String(product[field] ?? ''))
-    }
+    // 1. Identificar activos a resolver (UUIDs en campos de imagen)
+    const assetIds = elements
+        .filter(el => el.type === 'image' && el.content && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(el.content))
+        .map(el => el.content)
+    
+    // 2. Resolver assets mediante acción de servidor (incluye logo_empresa)
+    const assetMap = await resolveAssetsAction(assetIds)
 
-    // Hidratar los elementos con datos del producto
-    const hydrated = elements.map((el: any) => {
-        let content = el.content || ''
-        if (el.dataField) {
-            content = String(product[el.dataField] ?? '')
+    // 3. Hidratar y resolver elementos usando utilidad centralizada
+    const hydrated = await resolveTemplateAssets(elements, product, assetMap)
+    
+    // 4. Reemplazar variables {field} en los contenidos de texto
+    hydrated.forEach((el: any) => {
+        if (el.type === 'text' || el.type === 'dynamic_text') {
+            const rawContent = el.type === 'dynamic_text' ? `{${el.dataField}}` : (el.content || '')
+            el.content = rawContent.replace(/{([^}]+)}/g, (_: string, field: string) => {
+                if (field === 'color') return product.color_name || product.color_code || ''
+                return String(product[field] ?? '')
+            })
         }
-        return { ...el, content: hydrateText(content) }
     })
 
-    // Calcular dimensiones en px (asumiendo 96 dpi, mm → px)
+    // 5. Generar HTML con utilidad centralizada (incluye fuentes)
     const MM_TO_PX = 3.7795
     const widthPx = Math.round((template.width_mm || 200) * MM_TO_PX)
     const heightPx = Math.round((template.height_mm || 100) * MM_TO_PX)
-
-    const htmlElements = hydrated.map((el: any) => {
-        const style = `left:${el.x}px;top:${el.y}px;width:${el.width}px;height:${el.height}px;font-size:${el.fontSize || 14}px;font-weight:${el.fontWeight || 'normal'};text-align:${el.textAlign || 'left'};`
-        if (el.type === 'barcode') return `<div class="element" style="${style}background:#1e293b;color:white;display:flex;align-items:center;justify-content:center;">|||| ${product.code} ||||</div>`
-        if (el.type === 'image') {
-            const imgSrc = el.content?.startsWith('http') ? el.content : product.isometric_path
-            if (imgSrc) return `<div class="element" style="${style}"><img src="${imgSrc}" style="width:100%;height:100%;object-fit:contain;" /></div>`
-            return `<div class="element" style="${style}color:#aaa;display:flex;align-items:center;justify-content:center;border:1px solid #eee;">[${el.content || 'IMG'}]</div>`
-        }
-        return `<div class="element" style="${style}">${el.content}</div>`
-    }).join('')
-
-    const html = `<!DOCTYPE html><html><head><style>body{margin:0;padding:0;font-family:sans-serif;}.canvas{position:relative;width:${widthPx}px;height:${heightPx}px;background:white;overflow:hidden;}.element{position:absolute;box-sizing:border-box;}</style></head><body><div class="canvas">${htmlElements}</div></body></html>`
+    
+    const html = generateExportHtml(hydrated, product, widthPx, heightPx)
 
     const response = await fetch('/api/export', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ html, format: 'pdf', width: widthPx, height: heightPx }),
+        body: JSON.stringify({ 
+            html, 
+            format, 
+            width: widthPx, 
+            height: heightPx 
+        }),
     })
 
     if (!response.ok) throw new Error(`Error exportando ${product.code}`)
@@ -74,7 +82,7 @@ async function exportOneProduct(product: GenerateProduct, template: TemplateOpti
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${product.code}_${template.name.replace(/\s+/g, '_')}.pdf`
+    a.download = `${product.code}_${template.name.replace(/\s+/g, '_')}.${format}`
     document.body.appendChild(a)
     a.click()
     window.URL.revokeObjectURL(url)
@@ -88,6 +96,16 @@ export function BulkExportPanel({ selectedProducts, template, onClose }: BulkExp
     const [isRunning, setIsRunning] = useState(false)
     const [started, setStarted] = useState(false)
     const [warningsConfirmed, setWarningsConfirmed] = useState(false)
+    
+    // Formatos permitidos por la plantilla
+    const allowedFormats = useMemo(() => {
+        if (!template?.export_formats) return ['pdf', 'jpg']
+        return template.export_formats.split(',').map((f: string) => f.trim().toLowerCase())
+    }, [template])
+
+    const [selectedFormat, setSelectedFormat] = useState<'pdf' | 'jpg'>(
+        allowedFormats.includes('pdf') ? 'pdf' : (allowedFormats[0] as any || 'pdf')
+    )
 
     const requiredFields = useMemo(
         () => template ? getTemplateRequiredFields(template.elements_json) : [],
@@ -126,7 +144,7 @@ export function BulkExportPanel({ selectedProducts, template, onClose }: BulkExp
             if (item.status !== 'pending') continue
             updateItem(item.product.id, 'exporting')
             try {
-                await exportOneProduct(item.product, template)
+                await exportOneProduct(item.product, template, selectedFormat)
                 updateItem(item.product.id, 'done')
             } catch (err: any) {
                 updateItem(item.product.id, 'error', err?.message || 'Error desconocido')
@@ -218,15 +236,28 @@ export function BulkExportPanel({ selectedProducts, template, onClose }: BulkExp
             <div className="flex items-center gap-3 pt-1">
                 {!started ? (
                     <>
-                        <Button
-                            onClick={startExport}
-                            disabled={!template || (hasWarnings && !warningsConfirmed)}
-                            className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white"
-                        >
-                            <Download className="w-4 h-4 mr-2" />
-                            Iniciar exportación ({total} PDF{total > 1 ? 's' : ''})
-                        </Button>
-                        <Button variant="outline" onClick={onClose} className="w-24">
+                        <div className="flex flex-col gap-2 flex-1">
+                            <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-lg w-full">
+                                {allowedFormats.map(f => (
+                                    <button
+                                        key={f}
+                                        onClick={() => setSelectedFormat(f as any)}
+                                        className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${selectedFormat === f ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                    >
+                                        {f.toUpperCase()}
+                                    </button>
+                                ))}
+                            </div>
+                            <Button
+                                onClick={startExport}
+                                disabled={!template || (hasWarnings && !warningsConfirmed)}
+                                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
+                            >
+                                <Download className="w-4 h-4 mr-2" />
+                                Iniciar exportación ({total} {selectedFormat.toUpperCase()})
+                            </Button>
+                        </div>
+                        <Button variant="outline" onClick={onClose} className="w-24 mt-auto">
                             Cancelar
                         </Button>
                     </>

@@ -27,12 +27,14 @@ export async function createTemplate(data: {
 export async function updateTemplate(id: string, data: {
     elements_json: string
     name?: string
+    export_formats?: string
 }) {
     try {
         const nameClause = data.name ? `, name='${data.name.replace(/'/g, "''")}' ` : ''
+        const formatsClause = data.export_formats ? `, export_formats='${data.export_formats.replace(/'/g, "''")}' ` : ''
         await dbQuery(`
             UPDATE public.templates SET
-                elements_json='${data.elements_json.replace(/'/g, "''")}' ${nameClause},
+                elements_json='${data.elements_json.replace(/'/g, "''")}' ${nameClause} ${formatsClause},
                 updated_at=now()
             WHERE id='${id}'
         `)

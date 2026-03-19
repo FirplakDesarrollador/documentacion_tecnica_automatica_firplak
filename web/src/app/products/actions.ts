@@ -100,50 +100,118 @@ export async function massUpdateProducts(ids: string[], updateData: any) {
     await dbQuery(`UPDATE public.products SET ${setClauses.join(', ')}, updated_at=now() WHERE id IN (${idList})`)
 }
 
+export async function deleteProducts(ids: string[]) {
+    if (!ids || ids.length === 0) return
+    const idList = ids.map(id => `'${id}'`).join(',')
+    await dbQuery(`DELETE FROM public.products WHERE id IN (${idList})`)
+}
+
 export async function translateMissingProducts() {
     try {
-        const products = await dbQuery(`SELECT id, final_name_es, use_destination, width_cm, rh_flag, icon_soft_close, edge_2mm_flag FROM public.products WHERE final_name_en IS NULL AND final_name_es IS NOT NULL LIMIT 20`)
+        const products = await dbQuery(`
+            SELECT 
+                id, 
+                final_name_es, 
+                use_destination, 
+                width_cm, 
+                rh_flag, 
+                icon_soft_close, 
+                edge_2mm_flag,
+                line as model
+            FROM public.products 
+            WHERE final_name_en IS NULL 
+            AND final_name_es IS NOT NULL 
+            LIMIT 20
+        `)
 
         if (!products || products.length === 0) return { success: true, count: 0, message: "No hay productos pendientes de traducir." }
 
         const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || '' })
 
         const promptTemplate = `
-English product names must not be literal translations of Spanish names.
-Instead, generate standardized North American cabinetry product names using the structure:
-[MODEL NAME] [PRODUCT TYPE] [SIZE] [KEY FEATURES]
+You are NOT a translator.
+You are a Firplak SAP product naming expert for the US market.
+Your job is to REBUILD product names in professional commercial English, not translate word by word.
 
-Use a controlled vocabulary dictionary for translating product attributes such as:
-- MOISTURE RESISTANT
-- SOFT CLOSE HINGES
-- FULL EXTENSION DRAWER SLIDES
-- 2MM EDGE BAND
-- READY TO ASSEMBLE
-- PREASSEMBLED CABINET
+---
+CONTEXT
+Products belong to categories such as:
+- bathroom vanities
+- kitchen cabinets
+- laundry units
+- sinks and lavatories
+The output must match real SAP naming conventions used in manufacturing and export.
 
-Map product use_destination to product types:
-LAVAMANOS -> VANITY CABINET
-LAVARROPAS -> LAUNDRY CABINET
-COCINA -> KITCHEN BASE CABINET
-LAVAPLATOS -> SINK BASE CABINET
-OTRO -> CABINET
+---
+INPUT
+You will receive structured product data including:
+- final_name_es (Spanish structured name)
+- use_destination
+- width_cm
+- attributes (RH, soft close, etc.)
 
-Avoid literal words such as "FURNITURE", "FOR WASHBASIN", or "PRODUCT".
-Keep product names concise and commercially natural for the North American cabinetry market.
+---
+CRITICAL RULES
+1. DO NOT translate literally
+2. DO NOT invent names
+3. DO NOT use generic words like:
+   - "furniture"
+   - "product"
+   - "washbasin furniture"
 
-Respond with ONLY a JSON object mapping the product IDs to their generated English names.
-Example Output:
+---
+FIRPLAK CORE RULES (MANDATORY)
+- "LVM" MUST be translated as "LAV"
+- Model names (SIENA, OSLO, VALDEZ) must NEVER be translated
+- Output must be ALL CAPS
+- NO hyphens ("-")
+- Color or finish must be at the END if present
+- Use real US industry terminology only
+
+---
+DIMENSIONS (VERY IMPORTANT)
+- Convert ALL dimensions from cm to inches (1 in = 2.54 cm)
+- Use commercial rounding
+- Format: 31IN, 25IN, 37IN
+- Handle dual dimensions strictly if present in Spanish name (e.g., 79X48 -> 31INX19IN)
+- STRICT FORMAT: No spaces in dimension blocks (e.g., "31IN" is OK, "31 IN" is WRONG)
+- NEVER output cm
+
+---
+HANDLES
+- "CON MANIJAS" -> WITH HANDLES
+- "SIN MANIJAS" -> WITHOUT HANDLES
+- If not specified -> DO NOT assume
+
+---
+PRODUCT LOGIC (VERY IMPORTANT)
+DO NOT force all products into "VANITY CABINET"
+Decide correctly based on context:
+- Bathroom with sink -> VANITY or LAV
+- Upper cabinet -> WALL CABINET
+- Lower cabinet -> BASE CABINET
+- Pantry -> PANTRY CABINET
+- Laundry -> LAUNDRY CABINET
+- Sink base -> SINK BASE CABINET
+
+---
+STRUCTURE
+Build names using this logic:
+[MODEL] + [PRODUCT TYPE] + [SIZE IN INCHES] + [KEY FEATURES]
+
+Keep it clean, commercial, and realistic.
+
+---
+OUTPUT FORMAT (STRICT JSON)
+Return ONLY a JSON object:
 {
-  "product-id-123": "MFL KITCHEN BASE CABINET 60CM SOFT CLOSE HINGES",
-  "product-id-456": "LOMBARDIA VANITY CABINET MOISTURE RESISTANT"
+  "product_id": "ENGLISH NAME"
 }
-
-Translate these products:
 `
-        const prompt = promptTemplate + JSON.stringify(products, null, 2)
+        const prompt = promptTemplate + "\n\nTranslate these products:\n" + JSON.stringify(products, null, 2)
 
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-1.5-flash',
             contents: prompt,
             config: { responseMimeType: 'application/json' }
         })
@@ -153,12 +221,85 @@ Translate these products:
         const translations = JSON.parse(text)
 
         let updatedCount = 0
+        let failedCount = 0
+
         for (const [id, en_name] of Object.entries(translations)) {
-            await dbQuery(`UPDATE public.products SET final_name_en='${String(en_name).replace(/'/g, "''")}', updated_at=now() WHERE id='${id}'`)
+            const originalProduct = products.find((p: any) => p.id === id)
+            if (!originalProduct) continue;
+
+            const nameStr = String(en_name).trim().toUpperCase()
+            let failedRule = ""
+
+            // 1. FORMAT VALIDATION
+            const forbiddenTerms = ['FURNITURE', 'PRODUCT', 'WASHBASIN FURNITURE']
+            const hasForbidden = forbiddenTerms.some(term => nameStr.includes(term))
+            const hasCM = nameStr.includes('CM')
+            const hasHyphen = nameStr.includes('-')
+            
+            // 2. SEMANTIC VALIDATION
+            const modelName = String(originalProduct.model || '').toUpperCase()
+            const hasModel = modelName ? nameStr.includes(modelName) : true
+            
+            // LVM -> LAV consistency check (Mandatory)
+            const needsLav = originalProduct.final_name_es?.toUpperCase().includes('LVM')
+            const hasLav = nameStr.includes('LAV')
+            
+            // Dimensions format strict check: XXIN or XXINXYYIN (no spaces)
+            const dimRegex = /\b\d+IN\b|\b\d+INX\d+IN\b/
+            const hasValidDimFormat = dimRegex.test(nameStr)
+            
+            // Dimension Parity check
+            const esDims = originalProduct.final_name_es?.match(/\d+X\d+|\b\d{2,}\b/g) || []
+            const enDims = nameStr.match(/(\d+)IN/g) || []
+            // If Spanish has "79X48", esDims might be ["79X48"] or ["79", "48"]. 
+            // Let's count individual numbers in ES name vs IN blocks in EN name.
+            const esNumCount = (originalProduct.final_name_es?.match(/\d+/g) || []).filter((n: string) => n.length >= 2).length
+            const enInCount = enDims.length
+            const dimParityFail = esNumCount > 0 && enInCount < esNumCount
+
+            // Mandatory Elements Check
+            const typeKeywords = ['CABINET', 'VANITY', 'LAV', 'BASE', 'WALL', 'PANTRY', 'LAUNDRY', 'SINK']
+            const hasType = typeKeywords.some(tk => nameStr.includes(tk))
+            const hasInBlock = nameStr.includes('IN')
+
+            // Consistency
+            const useDest = String(originalProduct.use_destination || '').toUpperCase()
+            let typeConsistent = true
+            if (useDest.includes('COCINA') && nameStr.includes('VANITY')) typeConsistent = false
+            if (useDest.includes('LAVAMANO') && !nameStr.includes('VANITY') && !nameStr.includes('LAV')) typeConsistent = false
+
+            // Define specific failure reasons
+            if (hasForbidden) failedRule = "forbidden_terms"
+            else if (hasCM) failedRule = "contains_cm"
+            else if (hasHyphen) failedRule = "contains_hyphen"
+            else if (!hasModel) failedRule = "missing_model"
+            else if (!hasType) failedRule = "missing_product_type"
+            else if (!hasInBlock) failedRule = "missing_dimension"
+            else if (!hasValidDimFormat) failedRule = "invalid_dimension_format"
+            else if (dimParityFail) failedRule = "dimension_parity_fail"
+            else if (needsLav && !hasLav) failedRule = "missing_lav"
+            else if (!typeConsistent) failedRule = "type_consistency_fail"
+
+            if (failedRule) {
+                console.error(`Automated Validation Failed for Product ${id}: "${nameStr}"`)
+                console.error({ product_id: id, generated_name: nameStr, failed_rule: failedRule })
+                
+                // Mark as auto_failed
+                await dbQuery(`UPDATE public.products SET validation_status='auto_failed', updated_at=now() WHERE id='${id}'`)
+                failedCount++
+                continue
+            }
+
+            await dbQuery(`UPDATE public.products SET final_name_en='${nameStr.replace(/'/g, "''")}', validation_status='ready', updated_at=now() WHERE id='${id}'`)
             updatedCount++
         }
 
-        return { success: true, count: updatedCount, message: `Traducidos exitosamente ${updatedCount} productos.` }
+        return { 
+            success: true, 
+            count: updatedCount, 
+            failedCount,
+            message: `Procesados: ${updatedCount} exitosos, ${failedCount} fallidos automáticamente.` 
+        }
     } catch (e: any) {
         console.error("Translation Error:", e)
         return { success: false, error: e.message }

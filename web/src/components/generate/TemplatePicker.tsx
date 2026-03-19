@@ -23,6 +23,7 @@ export interface TemplateOption {
     orientation: string
     active: boolean
     elements_json: string
+    export_formats?: string
 }
 
 interface TemplatePickerProps {

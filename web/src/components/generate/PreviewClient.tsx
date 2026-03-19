@@ -7,6 +7,8 @@ import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import { TemplatePicker, type TemplateOption } from '@/components/generate/TemplatePicker'
 import { ValidationWarnings, getMissingFields, getTemplateRequiredFields } from '@/components/generate/ValidationWarnings'
+import { resolveAssetsAction } from '@/app/generate/actions'
+import { generateExportHtml, resolveTemplateAssets } from '@/lib/export/exportUtils'
 
 const MM_TO_PX = 3.7795
 
@@ -26,7 +28,7 @@ export function PreviewClient({ product, templates, initialTemplateId, engineRes
         initialTemplateId ?? templates[0]?.id ?? null
     )
     const [isExporting, setIsExporting] = useState(false)
-    const [exportFormat, setExportFormat] = useState<'pdf' | 'png'>('pdf')
+    const [exportFormat, setExportFormat] = useState<'pdf' | 'jpg'>('pdf')
 
     const selectedTemplate = useMemo(
         () => templates.find(t => t.id === selectedTemplateId) ?? null,
@@ -44,8 +46,9 @@ export function PreviewClient({ product, templates, initialTemplateId, engineRes
 
     const hydrate = (text: string) => {
         if (!text) return ''
-        return text.replace(/{([^}]+)}/g, (_, field) => {
+        return text.replace(/{([^}]+)}/g, (_: string, field: string) => {
             if (field === 'final_name_es') return engineResult.finalNameEs || product['final_name_es'] || ''
+            if (field === 'color') return product.color_name || product.color_code || ''
             return String(product[field] ?? '')
         })
     }
@@ -81,41 +84,67 @@ export function PreviewClient({ product, templates, initialTemplateId, engineRes
     const canvasW = selectedTemplate ? Math.round(selectedTemplate.width_mm * MM_TO_PX) : 756
     const canvasH = selectedTemplate ? Math.round(selectedTemplate.height_mm * MM_TO_PX) : 378
 
-    const handleExport = async (format: 'pdf' | 'png') => {
+    const handleExport = async () => {
         if (!selectedTemplate) return
         setIsExporting(true)
 
         try {
-            const htmlElements = hydratedElements.map((el: any) => {
-                const style = `left:${el.x}px;top:${el.y}px;width:${el.width}px;height:${el.height}px;font-size:${el.fontSize || 14}px;font-weight:${el.fontWeight || 'normal'};text-align:${el.textAlign || 'left'};`
-                if (el.type === 'barcode') return `<div class="el" style="${style}background:#1e293b;color:white;display:flex;align-items:center;justify-content:center;">|||| ${product.code} ||||</div>`
-                if (el.type === 'image') return `<div class="el" style="${style}color:#aaa;display:flex;align-items:center;justify-content:center;">[${el.content || 'IMG'}]</div>`
-                return `<div class="el" style="${style}">${el.content}</div>`
-            }).join('')
+            let elements: any[] = []
+            try {
+                elements = JSON.parse(selectedTemplate.elements_json || '[]')
+            } catch { elements = [] }
 
-            const html = `<!DOCTYPE html><html><head><style>body{margin:0;padding:0;font-family:sans-serif;}.canvas{position:relative;width:${canvasW}px;height:${canvasH}px;background:white;overflow:hidden;}.el{position:absolute;box-sizing:border-box;}</style></head><body><div class="canvas">${htmlElements}</div></body></html>`
+            // 1. Resolver assets
+            const assetIds = elements
+                .filter(el => el.type === 'image' && el.content && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(el.content))
+                .map(el => el.content)
+            
+            const assetMap = await resolveAssetsAction(assetIds)
+            const hydrated = await resolveTemplateAssets(elements, product, assetMap)
 
-            const res = await fetch('/api/export', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ html, format, width: canvasW, height: canvasH }),
+            // 2. Reemplazar variables
+            hydrated.forEach((el: any) => {
+                if (el.type === 'text' || el.type === 'dynamic_text') {
+                    const rawContent = el.type === 'dynamic_text' ? `{${el.dataField}}` : (el.content || '')
+                    el.content = rawContent.replace(/{([^}]+)}/g, (_: string, field: string) => {
+                        if (field === 'color') return product.color_name || product.color_code || ''
+                        return String(product[field] ?? '')
+                    })
+                }
             })
 
-            if (!res.ok) throw new Error('Error al exportar')
+            const widthPx = Math.round((selectedTemplate.width_mm || 200) * MM_TO_PX)
+            const heightPx = Math.round((selectedTemplate.height_mm || 100) * MM_TO_PX)
 
-            const blob = await res.blob()
+            const html = generateExportHtml(hydrated, product, widthPx, heightPx)
+
+            const response = await fetch('/api/export', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    html, 
+                    format: exportFormat, 
+                    width: widthPx, 
+                    height: heightPx 
+                }),
+            })
+
+            if (!response.ok) throw new Error('Error en la generación del archivo')
+
+            const blob = await response.blob()
             const url = window.URL.createObjectURL(blob)
             const a = document.createElement('a')
             a.href = url
-            a.download = `${product.code}_${selectedTemplate.name.replace(/\s+/g, '_')}.${format}`
+            a.download = `${product.code}_${selectedTemplate.name.replace(/\s+/g, '_')}.${exportFormat}`
             document.body.appendChild(a)
             a.click()
             window.URL.revokeObjectURL(url)
             document.body.removeChild(a)
-            toast.success(`${format.toUpperCase()} exportado correctamente`)
-        } catch (e) {
-            console.error(e)
-            toast.error('Error al exportar el documento')
+            
+            toast.success('Archivo exportado correctamente')
+        } catch (error) {
+            console.error(error)
+            toast.error('Hubo un error al exportar el archivo')
         } finally {
             setIsExporting(false)
         }
@@ -258,25 +287,33 @@ export function PreviewClient({ product, templates, initialTemplateId, engineRes
                 {/* Exportar */}
                 <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col gap-3">
                     <h3 className="font-semibold text-slate-800 text-sm">Exportar</h3>
-                    <div className="flex flex-col gap-2">
-                        <Button
-                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
-                            onClick={() => handleExport('pdf')}
-                            disabled={!selectedTemplate || isExporting}
-                        >
-                            {isExporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
-                            PDF
-                        </Button>
-                        <Button
-                            variant="outline"
-                            className="w-full"
-                            onClick={() => handleExport('png')}
-                            disabled={!selectedTemplate || isExporting}
-                        >
-                            {isExporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
-                            PNG
-                        </Button>
-                    </div>
+                    
+                    {selectedTemplate && (
+                        <div className="flex flex-col gap-3">
+                            {/* Selector de formato filtrado */}
+                            <div className="flex bg-slate-100 p-1 rounded-lg w-full">
+                                {(selectedTemplate.export_formats ? selectedTemplate.export_formats.split(',').map(f => f.trim().toLowerCase()) : ['pdf', 'jpg']).map(fmt => (
+                                    <button
+                                        key={fmt}
+                                        onClick={() => setExportFormat(fmt as any)}
+                                        className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${exportFormat === fmt ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                    >
+                                        {fmt.toUpperCase()}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <Button
+                                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
+                                onClick={handleExport}
+                                disabled={isExporting}
+                            >
+                                {isExporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
+                                Descargar {exportFormat.toUpperCase()}
+                            </Button>
+                        </div>
+                    )}
+
                     {!selectedTemplate && (
                         <p className="text-xs text-amber-600">Selecciona una plantilla para exportar</p>
                     )}

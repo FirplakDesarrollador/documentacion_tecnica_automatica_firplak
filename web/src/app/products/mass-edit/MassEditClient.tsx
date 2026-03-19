@@ -9,8 +9,17 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
 import { massUpdateProducts } from '../actions'
 import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, CheckCircle2, RotateCcw } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, RotateCcw, Trash2, AlertTriangle, Search } from 'lucide-react'
 import Link from 'next/link'
+import { deleteProducts } from '../actions'
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog'
 
 interface Product {
     id: string
@@ -47,6 +56,20 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
     const [filterMeasure, setFilterMeasure] = useState<string[]>([])
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
+    // Deletion states
+    const [deleteOpen, setDeleteOpen] = useState(false)
+    const [deleteStep, setDeleteStep] = useState(0)
+    const [isDeleting, setIsDeleting] = useState(false)
+    const [idsToDelete, setIdsToDelete] = useState<string[]>([])
+
+    const CONFIRMATION_STEPS = [
+        "¿Estás segur@ de que deseas eliminar permanentemente estos elementos?",
+        "¿Estás bien, bien segur@ de lo que haces?",
+        "Mira que vas a borrar esto para siempre... ¿Eres human@ de verdad?",
+        "Bueno, conste que te avisé. Si le das a 'Sí' otra vez se eliminará y no hay vuelta atrás.",
+        "Ok, ok, te doy una última oportunidad... ¿Sí lo eliminas definitivamente?"
+    ]
+
     // Batch update state
     const [batchUpdates, setBatchUpdates] = useState({
         edge_2mm_flag: false,
@@ -57,7 +80,16 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
 
     const filteredProducts = useMemo(() => {
         return products.filter(p => {
-            const matchFam = filterFamily.length === 0 || (p.familia_code && filterFamily.includes(p.familia_code))
+            // Normalize product familia_code by removing prefixes if necessary
+            let normalizedPCode = p.familia_code || ''
+            if (/^[VCP]([A-Z]{3,4}\d{2})$/i.test(normalizedPCode)) {
+                normalizedPCode = normalizedPCode.substring(1)
+            } else if (/^[VCP](?!$)/i.test(normalizedPCode)) {
+                // If it starts with V, C, or P and followed by anything, assume it's a prefix
+                normalizedPCode = normalizedPCode.substring(1)
+            }
+
+            const matchFam = filterFamily.length === 0 || filterFamily.includes(normalizedPCode) || filterFamily.includes(p.familia_code || '')
             const matchRef = filterRef.length === 0 || (p.ref_code && filterRef.includes(p.ref_code))
             const matchMeas = filterMeasure.length === 0 || (p.commercial_measure && filterMeasure.includes(p.commercial_measure))
             return matchFam && matchRef && matchMeas
@@ -66,7 +98,11 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
 
     const references = useMemo(() => {
         if (filterFamily.length === 0) return []
-        const availableProducts = products.filter(p => p.familia_code && filterFamily.includes(p.familia_code))
+        const availableProducts = products.filter(p => {
+            let normalizedPCode = p.familia_code || ''
+            if (/^[VCP]/i.test(normalizedPCode)) normalizedPCode = normalizedPCode.substring(1)
+            return filterFamily.includes(normalizedPCode) || filterFamily.includes(p.familia_code || '')
+        })
         const uniqueRefs = new Map<string, string>()
         availableProducts.forEach(p => {
             if (p.ref_code) uniqueRefs.set(p.ref_code, p.furniture_name || '')
@@ -80,7 +116,9 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
     const measures = useMemo(() => {
         if (filterFamily.length === 0) return []
         const availableProducts = products.filter(p => {
-            const matchFam = filterFamily.includes(p.familia_code || '')
+            let normalizedPCode = p.familia_code || ''
+            if (/^[VCP]/i.test(normalizedPCode)) normalizedPCode = normalizedPCode.substring(1)
+            const matchFam = filterFamily.includes(normalizedPCode) || filterFamily.includes(p.familia_code || '')
             // Note: User says measures should not depend on references:
             // "El filtro de medidas no se condiciona a que haya o no opciones en las referencias."
             return matchFam
@@ -128,10 +166,6 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
         const idsArray = Array.from(selectedIds)
         const updates: any = {}
 
-        // Only apply fields that the user intentionally wants to set
-        // For checkboxes, we need a way to say "don't change" or "set true/false"
-        // Let's assume if it's checked here, we set it. We'll add intermediate states or just simple overrides.
-        // For MVP, we pass the current state of batchUpdates.
         updates.edge_2mm_flag = batchUpdates.edge_2mm_flag
         updates.rh_flag = batchUpdates.rh_flag
         updates.assembled_flag = batchUpdates.assembled_flag
@@ -142,16 +176,55 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
         try {
             await massUpdateProducts(idsArray, updates)
 
-            // Update local state
             setProducts(prev => prev.map(p =>
                 idsArray.includes(p.id) ? { ...p, ...updates } : p
             ))
 
             toast.success(`Se actualizaron ${idsArray.length} productos correctamente`)
-            setSelectedIds(new Set()) // clear selection
+            setSelectedIds(new Set())
         } catch (error) {
             console.error(error)
             toast.error("Error al actualizar productos")
+        }
+    }
+
+    const startDelete = (ids: string[]) => {
+        if (ids.length === 0) {
+            toast.error("Selecciona al menos un producto para eliminar")
+            return
+        }
+        setIdsToDelete(ids)
+        setDeleteStep(0)
+        setDeleteOpen(true)
+    }
+
+    const cancelDelete = () => {
+        setDeleteOpen(false)
+        setDeleteStep(0)
+        setIdsToDelete([])
+    }
+
+    const confirmDelete = async () => {
+        if (deleteStep < CONFIRMATION_STEPS.length - 1) {
+            setDeleteStep(deleteStep + 1)
+        } else {
+            setIsDeleting(true)
+            try {
+                await deleteProducts(idsToDelete)
+                setProducts(prev => prev.filter(p => !idsToDelete.includes(p.id)))
+                setSelectedIds(prev => {
+                    const next = new Set(prev)
+                    idsToDelete.forEach(id => next.delete(id))
+                    return next
+                })
+                toast.success(`Se eliminaron ${idsToDelete.length} productos exitosamente.`)
+                cancelDelete()
+            } catch (error) {
+                console.error(error)
+                toast.error("Error al eliminar productos")
+            } finally {
+                setIsDeleting(false)
+            }
         }
     }
 
@@ -258,6 +331,16 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                                 <CheckCircle2 className="w-4 h-4 mr-2" />
                                 Aplicar Cambios
                             </Button>
+
+                            <Button
+                                variant="outline"
+                                onClick={() => startDelete(Array.from(selectedIds))}
+                                disabled={selectedIds.size === 0}
+                                className="w-full mt-2 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700 hover:border-red-300"
+                            >
+                                <Trash2 className="w-4 h-4 mr-2" />
+                                Eliminar Seleccionados
+                            </Button>
                         </div>
                     </div>
                 </div>
@@ -284,12 +367,27 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                                     <TableHead className="text-center">RH</TableHead>
                                     <TableHead className="text-center">Armado</TableHead>
                                     <TableHead>Estado</TableHead>
+                                    <TableHead className="text-right">Acciones</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {filteredProducts.length === 0 ? (
+                                {filterFamily.length === 0 && filterRef.length === 0 && filterMeasure.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                                        <TableCell colSpan={12} className="h-[400px] text-center">
+                                            <div className="flex flex-col items-center justify-center max-w-sm mx-auto space-y-4">
+                                                <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-2">
+                                                    <Search className="w-8 h-8 text-slate-400" />
+                                                </div>
+                                                <h3 className="text-lg font-semibold text-slate-900">Empieza tu verificación</h3>
+                                                <p className="text-sm text-slate-500 text-center leading-relaxed">
+                                                    Selecciona una <b>Familia</b> para filtrar el catálogo y realizar ediciones masivas de forma segura.
+                                                </p>
+                                            </div>
+                                        </TableCell>
+                                    </TableRow>
+                                ) : filteredProducts.length === 0 ? (
+                                    <TableRow>
+                                        <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">
                                             No se encontraron productos con estos filtros.
                                         </TableCell>
                                     </TableRow>
@@ -347,6 +445,16 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                                                         p.validation_status === 'needs_review' ? 'Revisar' : 'Listo'}
                                                 </Badge>
                                             </TableCell>
+                                            <TableCell className="text-right">
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50"
+                                                    onClick={() => startDelete([p.id])}
+                                                >
+                                                    <Trash2 className="h-4 w-4" />
+                                                </Button>
+                                            </TableCell>
                                         </TableRow>
                                     ))
                                 )}
@@ -359,6 +467,28 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                 </div>
 
             </div>
+
+            <Dialog open={deleteOpen} onOpenChange={(val) => !val && cancelDelete()}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <AlertTriangle className="h-5 w-5 text-red-500" />
+                            Eliminar {idsToDelete.length > 1 ? `${idsToDelete.length} productos` : 'producto'} {deleteStep > 2 ? '🔥' : '⚠️'}
+                        </DialogTitle>
+                        <DialogDescription className="pt-4 text-base font-medium text-slate-800">
+                            {CONFIRMATION_STEPS[deleteStep]}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter className="mt-6 flex justify-between sm:justify-between items-center w-full">
+                        <Button variant="outline" onClick={cancelDelete}>
+                            ¡No, me arrepentí! (Cancelar)
+                        </Button>
+                        <Button variant="destructive" onClick={confirmDelete} disabled={isDeleting}>
+                            {isDeleting ? 'Eliminando...' : 'Sí, continuar'}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }

@@ -117,27 +117,45 @@ export function ValidationWarnings({ warnings, compact = false }: ValidationWarn
 }
 
 /**
- * Dado un producto y los dataFields requeridos por la plantilla,
- * retorna los campos que están vacíos/null
+ * Dado un producto y los criterios requeridos por la plantilla,
+ * retorna los nombres legibles de los campos/recursos que faltan.
  */
-export function getMissingFields(product: Record<string, any>, requiredFields: string[]): string[] {
-    return requiredFields.filter(field => {
-        const val = product[field]
-        return val === null || val === undefined || val === ''
-    })
+export function getMissingFields(product: Record<string, any>, requirements: any[]): string[] {
+    const missing: string[] = []
+
+    for (const req of requirements) {
+        // 1. Validar campos de datos (variables)
+        if (req.dataField) {
+            const val = product[req.dataField]
+            if (val === null || val === undefined || val === '') {
+                missing.push(req.dataField)
+            }
+        }
+        
+        // 2. Validar marcadores de imagen especiales (isiométrico)
+        if (req.type === 'image') {
+            if (req.content === 'isometrico_placeholder' || req.dataField === 'isometric_path') {
+                if (!product.isometric_path) {
+                    missing.push('isometric_path')
+                }
+            }
+            // Si es un UUID de asset, asumimos que existe si está en la plantilla, 
+            // pero podríamos validar si el usuario seleccionó uno.
+        }
+    }
+
+    return Array.from(new Set(missing))
 }
 
 /**
- * Extrae los dataFields requeridos de los elementos de una plantilla
+ * Extrae los elementos requeridos de una plantilla
  */
-export function getTemplateRequiredFields(elementsJson: string): string[] {
+export function getTemplateRequiredFields(elementsJson: string): any[] {
     try {
         const elements: any[] = JSON.parse(elementsJson)
-        const fields = new Set<string>()
-        for (const el of elements) {
-            if (el.dataField) fields.add(el.dataField)
-        }
-        return Array.from(fields)
+        // Filtramos solo los elementos que el diseñador marcó como 'required'
+        // O los que son variables (para retrocompatibilidad o seguridad)
+        return elements.filter(el => el.required === true || el.type === 'dynamic_text')
     } catch {
         return []
     }

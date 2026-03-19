@@ -29,6 +29,9 @@ export interface GenerateProduct {
     width_cm: number | null
     depth_cm: number | null
     height_cm: number | null
+    color_code: string | null
+    color_name: string | null
+    ref_code: string | null
     [key: string]: any
 }
 
@@ -96,15 +99,15 @@ export function GenerateProductTable({
                 <TableRow className="bg-slate-50/80">
                     <TableHead className="w-10">
                         <Checkbox
-                            checked={allSelected ? true : someSelected ? 'indeterminate' : false}
+                            checked={(allSelected ? true : someSelected ? 'indeterminate' : false) as any}
                             onCheckedChange={toggleAll}
                             aria-label="Seleccionar todos"
                         />
                     </TableHead>
-                    <TableHead className="w-[160px]">Código</TableHead>
+                    <TableHead className="w-[140px]">Código</TableHead>
                     <TableHead>Nombre</TableHead>
+                    <TableHead className="w-[120px]">Color</TableHead>
                     <TableHead className="w-[130px]">Estado</TableHead>
-                    <TableHead className="w-[160px]">Familia</TableHead>
                     {templateId && <TableHead className="w-[120px]">Plantilla</TableHead>}
                     <TableHead className="text-right w-[120px]">Acción</TableHead>
                 </TableRow>
@@ -133,13 +136,13 @@ export function GenerateProductTable({
                             <TableCell className="text-slate-600 text-sm">
                                 {product.final_name_es || <span className="text-slate-400 italic">Sin nombre</span>}
                             </TableCell>
+                            <TableCell className="text-slate-500 text-xs font-medium uppercase">
+                                {product.color_name || product.color_code || '—'}
+                            </TableCell>
                             <TableCell>
                                 <Badge variant={statusVariant(product.validation_status)} className="text-xs">
                                     {statusLabel(product.validation_status)}
                                 </Badge>
-                            </TableCell>
-                            <TableCell className="text-slate-500 text-sm">
-                                {product.familia_code || '—'}
                             </TableCell>
                             {templateId && (
                                 <TableCell>
