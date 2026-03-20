@@ -5,11 +5,13 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { PlusCircle, Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Bold, Italic, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, Undo2, Redo2, Copy, Trash2 } from 'lucide-react'
+import { PlusCircle, Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Bold, Italic, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, Undo2, Redo2, Copy, Trash2, Settings, BookOpen } from 'lucide-react'
 import { toast } from 'sonner'
 import { updateTemplate, getPreviewProduct } from '@/app/templates/actions'
 import { useRouter } from 'next/navigation'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
 
 export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'box' | 'dashed_line'
 
@@ -30,12 +32,13 @@ export interface TemplateElement {
     borderStyle?: 'solid' | 'dashed' | 'dotted' // used for lines/boxes
     borderWidth?: number
     required?: boolean
+    lineHeight?: number
 }
 
 const PIXELS_PER_MM = 4
 const MAX_HISTORY = 10
 
-function OverflowText({ text, textAlign, isPreviewMode, type, previewData, dataField }: { text: string, textAlign: 'left' | 'center' | 'right' | undefined, isPreviewMode: boolean, type: string, previewData?: any, dataField?: string }) {
+function OverflowText({ text, textAlign, isPreviewMode, type, previewData, dataField, lineHeight }: { text: string, textAlign: 'left' | 'center' | 'right' | undefined, isPreviewMode: boolean, type: string, previewData?: any, dataField?: string, lineHeight?: number }) {
     const textRef = useRef<HTMLDivElement>(null)
     const [isOverflowing, setIsOverflowing] = useState(false)
 
@@ -44,8 +47,10 @@ function OverflowText({ text, textAlign, isPreviewMode, type, previewData, dataF
         if (!isPreviewMode || !previewData) return text
 
         if (type === 'dynamic_text') {
-            let val = previewData[text.replace(/[{}]/g, '')] || text
-            return val
+            const varName = text.replace(/[{}]/g, '');
+            const val = previewData[varName];
+            if (val === null || val === undefined || val === '') return '[VACIO]';
+            return String(val);
         }
 
         let interpolated = text
@@ -53,8 +58,9 @@ function OverflowText({ text, textAlign, isPreviewMode, type, previewData, dataF
         if (matches) {
             matches.forEach(match => {
                 const varName = match.slice(1, -1)
-                const val = previewData[varName] !== undefined ? previewData[varName] : match
-                interpolated = interpolated.replace(match, String(val))
+                const val = previewData[varName];
+                const replacement = (val === null || val === undefined || val === '') ? '[VACIO]' : String(val);
+                interpolated = interpolated.replace(match, replacement)
             })
         }
         return interpolated
@@ -112,7 +118,7 @@ function OverflowText({ text, textAlign, isPreviewMode, type, previewData, dataF
             className={`w-full h-full overflow-hidden pointer-events-none flex flex-col justify-center ${isOverflowing ? 'ring-2 ring-red-500 bg-red-100/50' : ''}`}
         >
             {isOverflowing && <span className="absolute -top-5 left-0 bg-red-500 text-white text-[9px] px-1 rounded shadow-sm z-50 pointer-events-none">Desbordamiento</span>}
-            <div style={{ textAlign, width: '100%', wordBreak: 'break-word', whiteSpace: 'pre-wrap', padding: '0 2px' }}>
+            <div style={{ textAlign, width: '100%', wordBreak: 'break-word', whiteSpace: 'pre-wrap', padding: '0 2px', lineHeight: lineHeight || 1.2 }}>
                 {renderTextContent()}
             </div>
         </div>
@@ -155,8 +161,51 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                 <Button variant="ghost" size="icon-sm" className="h-6 w-6" onMouseDown={(e) => execCommand('underline', e)} title="Subrayado">
                     <u>U</u>
                 </Button>
+                <Button variant="ghost" size="icon-sm" className="h-6 w-6" onMouseDown={(e) => execCommand('removeFormat', e)} title="Borrar Formato">
+                    <Trash2 className="h-3 w-3 text-slate-400" />
+                </Button>
                 
                 <div className="h-4 w-px bg-slate-300 mx-1" />
+
+                <select
+                    className="h-6 text-[10px] rounded border bg-white hover:bg-slate-50 cursor-pointer px-1 outline-none font-bold text-slate-600"
+                    onChange={(e) => {
+                        const size = e.target.value;
+                        if (!size) return;
+                        
+                        // Use a more robust way to apply font size via execCommand + span replacement
+                        // since browser fontSize only supports 1-7
+                        document.execCommand('styleWithCSS', false, "true");
+                        document.execCommand('fontSize', false, "7");
+                        
+                        if (editorRef.current) {
+                            const fontEls = editorRef.current.getElementsByTagName('font');
+                            const spanEls = editorRef.current.getElementsByTagName('span');
+                            
+                            // Process both possible outcomes (some browsers use font, others use span with styleWithCSS)
+                            Array.from(fontEls).forEach(el => {
+                                if (el.getAttribute('size') === "7") {
+                                    el.removeAttribute('size');
+                                    el.style.fontSize = `${size}pt`;
+                                }
+                            });
+                            Array.from(spanEls).forEach(el => {
+                                if (el.style.fontSize === 'xxx-large' || el.style.fontSize === '48px') {
+                                    el.style.fontSize = `${size}pt`;
+                                }
+                            });
+                            
+                            onChange(editorRef.current.innerHTML);
+                        }
+                        e.target.value = "";
+                    }}
+                    value=""
+                >
+                    <option value="" disabled>Tamaño</option>
+                    {[6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48].map(s => (
+                        <option key={s} value={s}>{s}pt</option>
+                    ))}
+                </select>
 
                 <select
                     className="h-6 text-[10px] rounded border bg-slate-100 hover:bg-slate-200 cursor-pointer px-1 outline-none ml-auto"
@@ -172,6 +221,7 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                     <option value="final_name_es">Nombre (ES)</option>
                     <option value="final_name_en">Nombre (EN)</option>
                     <option value="code">Código Artículo (SKU)</option>
+                    <option value="sku_base">SKU Sin Color</option>
                     <option value="barcode_text">Código de Barras EAN</option>
                     <option value="color">Color (Nombre)</option>
                     <option value="color_code">Color (Código)</option>
@@ -179,7 +229,8 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                     <option value="furniture_name">Nombre Mueble Genérico</option>
                     <option value="line">Línea</option>
                     <option value="commercial_measure">Medida Comercial</option>
-                    <option value="use_destination">Uso / Zona</option>
+                    <option value="use_destination">Uso</option>
+                    <option value="zone_home">Zona</option>
                     <option value="width_cm">Ancho (cm)</option>
                     <option value="depth_cm">Fondo (cm)</option>
                     <option value="height_cm">Alto (cm)</option>
@@ -380,21 +431,29 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
     // Keyboard shortcuts
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
+            const isTyping = 
+                ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName || '') || 
+                (document.activeElement as HTMLElement)?.isContentEditable;
+
             // Undo: Ctrl+Z
             if (e.ctrlKey && e.key === 'z') {
-                e.preventDefault()
-                undo()
+                if (!isTyping) {
+                    e.preventDefault()
+                    undo()
+                }
             }
             // Redo: Ctrl+Y or Ctrl+Shift+Z
             if ((e.ctrlKey && e.key === 'y') || (e.ctrlKey && e.shiftKey && e.key === 'Z')) {
-                e.preventDefault()
-                redo()
+                if (!isTyping) {
+                    e.preventDefault()
+                    redo()
+                }
             }
 
             // Delete key
             if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length > 0) {
-                // Ensure we are not typing in an input
-                if (document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'SELECT' && document.activeElement?.tagName !== 'TEXTAREA') {
+                // Ensure we are not typing in a field
+                if (!isTyping) {
                     e.preventDefault()
                     removeSelectedElements()
                 }
@@ -402,14 +461,14 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
 
             // Copy & Paste (Ctrl+C, Ctrl+V)
             if (e.ctrlKey && e.key === 'c' && selectedIds.length > 0) {
-                if (document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'SELECT' && document.activeElement?.tagName !== 'TEXTAREA') {
+                if (!isTyping) {
                     const toCopy = elements.filter(el => selectedIds.includes(el.id))
                     sessionStorage.setItem('template_clipboard', JSON.stringify(toCopy))
                     toast("Copiado al portapapeles")
                 }
             }
             if (e.ctrlKey && e.key === 'v') {
-                if (document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'SELECT' && document.activeElement?.tagName !== 'TEXTAREA') {
+                if (!isTyping) {
                     const stored = sessionStorage.getItem('template_clipboard')
                     if (stored) {
                         try {
@@ -420,6 +479,35 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                         } catch (e) {
                             console.error(e)
                         }
+                    }
+                }
+            }
+
+            // Move with Arrows (1mm) or Shift + Arrows (5mm)
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key) && selectedIds.length > 0) {
+                if (!isTyping) {
+                    e.preventDefault()
+                    const step = e.shiftKey ? 20 : 4 // 5mm vs 1mm (4px per mm)
+                    const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0
+                    const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0
+                    
+                    const newElements = elements.map(el => {
+                        if (selectedIds.includes(el.id)) {
+                            return { ...el, x: el.x + dx, y: el.y + dy }
+                        }
+                        return el
+                    })
+                    setElements(newElements)
+                    // We only commit to history on discrete steps or we can use a debounced commit
+                    // For simplicity, let's commit on each press if it's not a repeat, but repeat is actually common for fine tuning.
+                    // If we commit on every repeat, the history fills up fast.
+                    if (!e.repeat) {
+                        commitHistory(newElements)
+                    } else {
+                        // If repeating, we'll just update the current state and commit on keyup or similar
+                        // But useEffect doesn't easily track keyup without state. 
+                        // Let's just commit for now to keep it simple and functional.
+                        commitHistory(newElements)
                     }
                 }
             }
@@ -838,6 +926,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                             type={el.type}
                                             previewData={previewData}
                                             dataField={el.dataField}
+                                            lineHeight={el.lineHeight}
                                         />
                                     )}
                                 </div>
@@ -848,13 +937,21 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
             </div>
 
             {/* Properties Panel */}
-            <div className="w-full xl:w-80 flex flex-col gap-4 shrink-0 overflow-y-auto max-h-[calc(100vh-140px)]">
-                <Card className="p-4 flex flex-col gap-4 bg-slate-50/50 shadow-inner">
-                    <h3 className="font-semibold text-lg border-b pb-2 flex justify-between items-center">
-                        <span>Propiedades</span>
-                        {selectedIds.length > 1 && <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">{selectedIds.length} elementos</span>}
-                    </h3>
+            <div className="w-full xl:w-80 flex flex-col shrink-0 h-[calc(100vh-220px)] sticky top-4">
+                <Card className="flex-1 flex flex-col overflow-hidden bg-slate-50/50 shadow-inner">
+                    <div className="p-4 border-b border-slate-200 bg-white/50 backdrop-blur-sm flex justify-between items-center shrink-0">
+                        <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                            <Box className="h-4 w-4 text-indigo-500" />
+                            Propiedades
+                        </h3>
+                        {selectedIds.length > 1 && (
+                            <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold text-[10px]">
+                                {selectedIds.length} ítems
+                            </span>
+                        )}
+                    </div>
 
+                    <div className="flex-1 overflow-y-auto p-5 custom-scrollbar pb-12">
                     {activeEl ? (
                         <div className="flex flex-col gap-5">
                             <div>
@@ -890,6 +987,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                         <option value="final_name_es">Nombre (ES)</option>
                                         <option value="final_name_en">Nombre (EN)</option>
                                         <option value="code">Código Artículo (SKU)</option>
+                                        <option value="sku_base">SKU Sin Color</option>
                                         <option value="barcode_text">Código de Barras EAN</option>
                                         <option value="color">Color (Nombre)</option>
                                         <option value="color_code">Color (Código)</option>
@@ -897,7 +995,8 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                         <option value="furniture_name">Nombre Mueble Genérico</option>
                                         <option value="line">Línea</option>
                                         <option value="commercial_measure">Medida Comercial</option>
-                                        <option value="use_destination">Uso / Zona</option>
+                                        <option value="use_destination">Uso</option>
+                                        <option value="zone_home">Zona</option>
                                         <option value="width_cm">Ancho (cm)</option>
                                         <option value="depth_cm">Fondo (cm)</option>
                                         <option value="height_cm">Alto (cm)</option>
@@ -999,6 +1098,13 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                             <Input type="number" className="bg-white h-8" value={activeEl.fontSize || 10} onChange={(e) => updateSelectedElements({ fontSize: parseInt(e.target.value) || 10 })} />
                                         </div>
                                         <div>
+                                            <Label className="text-[11px] mb-1 block">Interlineado (Ej: 0.9)</Label>
+                                            <Input type="number" step="0.1" className="bg-white h-8" value={activeEl.lineHeight || 1.2} onChange={(e) => updateSelectedElements({ lineHeight: parseFloat(e.target.value) || 1.2 })} />
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
                                             <Label className="text-[11px] mb-1 block">Alineación Horizontal</Label>
                                             <div className="flex gap-1">
                                                 <Button size="icon" variant={activeEl.textAlign === 'left' ? 'default' : 'outline'} className="h-8 w-8 bg-white" onClick={() => updateSelectedElements({ textAlign: 'left' })}>
@@ -1012,9 +1118,6 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                                 </Button>
                                             </div>
                                         </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-3">
                                         <div>
                                             <Label className="text-[11px] mb-1 block">Peso de Fuente</Label>
                                             <select
@@ -1027,6 +1130,9 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                                 <option value="bold">Negrilla (Bold)</option>
                                             </select>
                                         </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-3">
                                         <div>
                                             <Label className="text-[11px] mb-1 block">Cursiva</Label>
                                             <div className="flex gap-1">
@@ -1129,7 +1235,8 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                 </p>
                             </div>
                         </div>
-                    )}
+                        )}
+                    </div>
                 </Card>
             </div>
 

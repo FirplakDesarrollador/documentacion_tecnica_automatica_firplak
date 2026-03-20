@@ -1,24 +1,59 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, use } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import Link from 'next/link'
-import { createFamilyAction } from '@/app/products/actions'
-import { ArrowLeft } from 'lucide-react'
+import { updateFamilyAction } from '@/app/products/actions'
+import { dbQuery } from '@/lib/supabase'
+import { ArrowLeft, Loader2 } from 'lucide-react'
+import { useRouter } from 'next/navigation'
 
-export default function NewFamilyPage() {
+export default function EditFamilyPage({ params: paramsPromise }: { params: Promise<{ code: string }> }) {
+    const params = use(paramsPromise)
+    const code = params.code
+    const router = useRouter()
+    const [loading, setLoading] = useState(true)
+    const [saving, setSaving] = useState(false)
     const [formData, setFormData] = useState({
-        code: '',
         name: '',
         zone_home: '',
         line: '',
         product_type: '',
         use_destination: '',
     })
+
+    useEffect(() => {
+        const fetchFamily = async () => {
+            try {
+                // We use dbQuery which is client-safe in this context if implemented correctly, 
+                // but let's assume it's available or we should use a server action.
+                // Given the project structure, I'll use a fetch-like approach if possible or a direct await if it's a server component.
+                // Wait, this is a client component ('use client'). I should fetch via an API or a server action that returns data.
+                
+                // Let's use a server action to fetch family details to keep it consistent.
+                const response = await fetch(`/api/families/${code}`)
+                if (response.ok) {
+                    const data = await response.json()
+                    setFormData({
+                        name: data.name || '',
+                        zone_home: data.zone_home || '',
+                        line: data.line || '',
+                        product_type: data.product_type || '',
+                        use_destination: data.use_destination || '',
+                    })
+                }
+            } catch (err) {
+                console.error("Failed to fetch family:", err)
+            } finally {
+                setLoading(false)
+            }
+        }
+        fetchFamily()
+    }, [code])
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))
@@ -30,7 +65,23 @@ export default function NewFamilyPage() {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
-        await createFamilyAction(formData)
+        setSaving(true)
+        try {
+            await updateFamilyAction(code, formData)
+            router.push('/families')
+        } catch (err) {
+            console.error("Failed to update family:", err)
+        } finally {
+            setSaving(false)
+        }
+    }
+
+    if (loading) {
+        return (
+            <div className="flex h-[400px] items-center justify-center">
+                <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
+            </div>
+        )
     }
 
     return (
@@ -42,8 +93,8 @@ export default function NewFamilyPage() {
                     </Button>
                 </Link>
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight text-slate-900">Nueva Familia</h1>
-                    <p className="text-slate-500">Registra una nueva familia para autocompletar productos.</p>
+                    <h1 className="text-3xl font-bold tracking-tight text-slate-900">Editar Familia</h1>
+                    <p className="text-slate-500">Actualiza las propiedades de la familia de productos <span className="font-mono text-slate-900 font-bold">{code}</span>.</p>
                 </div>
             </div>
 
@@ -51,20 +102,20 @@ export default function NewFamilyPage() {
                 <CardHeader className="pb-4">
                     <CardTitle className="text-lg font-semibold text-slate-800">Detalles de Familia</CardTitle>
                     <CardDescription className="text-sm text-slate-500">
-                        Ingresa el código principal de la familia (ej. VBAN05, VBAN31) y sus propiedades por defecto.
+                        Modifica las propiedades por defecto que se aplicarán a los nuevos productos de esta familia.
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
                     <form onSubmit={handleSubmit} className="flex flex-col gap-6">
                         <div className="grid gap-4 sm:grid-cols-2">
                             <div className="grid gap-2">
-                                <Label htmlFor="code" className="text-sm font-medium">Código de Familia *</Label>
+                                <Label className="text-sm font-medium">Código de Familia</Label>
                                 <Input
-                                    id="code" name="code" required
-                                    placeholder="VBAN05, BAN31..."
-                                    className="bg-slate-50 border-slate-200"
-                                    value={formData.code} onChange={handleChange}
+                                    disabled
+                                    className="bg-slate-100 border-slate-200 font-mono"
+                                    value={code}
                                 />
+                                <p className="text-[10px] text-slate-400 font-medium tracking-tight">El código único no se puede modificar.</p>
                             </div>
                             <div className="grid gap-2">
                                 <Label htmlFor="name" className="text-sm font-medium">Nombre de Familia</Label>
@@ -147,8 +198,19 @@ export default function NewFamilyPage() {
                                     Cancelar
                                 </Button>
                             </Link>
-                            <Button type="submit" className="bg-slate-900 text-white hover:bg-slate-800 px-6">
-                                Guardar Familia
+                            <Button 
+                                type="submit" 
+                                className="bg-slate-900 text-white hover:bg-slate-800 px-6"
+                                disabled={saving}
+                            >
+                                {saving ? (
+                                    <>
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        Guardando...
+                                    </>
+                                ) : (
+                                    'Guardar Cambios'
+                                )}
                             </Button>
                         </div>
                     </form>

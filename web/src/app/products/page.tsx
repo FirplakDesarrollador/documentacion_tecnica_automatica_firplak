@@ -116,10 +116,10 @@ export default async function ProductsPage({
                     </p>
                 </div>
                 <div className="flex flex-col sm:flex-row flex-wrap items-start sm:items-center gap-3">
-                    <Link href="/families/new">
-                        <Button variant="outline" className="w-full sm:w-auto">
+                    <Link href="/families">
+                        <Button variant="outline" className="w-full sm:w-auto border-slate-200 text-slate-600 hover:bg-slate-50">
                             <PlusCircle className="mr-2 h-4 w-4" />
-                            Familia
+                            Familias
                         </Button>
                     </Link>
                     <Link href="/products/mass-edit">
@@ -157,7 +157,9 @@ export default async function ProductsPage({
                         <TableHeader>
                             <TableRow>
                                 <TableHead className="w-[140px]">Código</TableHead>
-                                <TableHead>Nombre Final</TableHead>
+                                <TableHead className="min-w-[200px]">Descripción SAP</TableHead>
+                                <TableHead className="min-w-[200px]">Nombre Final</TableHead>
+                                <TableHead className="min-w-[200px]">Nombre EN</TableHead>
                                 <TableHead className="w-[120px]">Color</TableHead>
                                 <TableHead className="w-[130px]">Estado</TableHead>
                                 <TableHead className="text-right w-[100px]">Acciones</TableHead>
@@ -167,7 +169,13 @@ export default async function ProductsPage({
                             {hasFilterMsg || products.map((product) => (
                                 <TableRow key={product.id}>
                                     <TableCell className="font-medium text-slate-900">{product.code}</TableCell>
+                                    <TableCell className="text-slate-500 text-xs truncate max-w-[200px]" title={product.sap_description || ''}>
+                                        {product.sap_description || '-'}
+                                    </TableCell>
                                     <TableCell className="text-slate-600 font-medium">{product.final_name_es || '-'}</TableCell>
+                                    <TableCell className="text-slate-500 italic text-sm">
+                                        {product.final_name_en || <span className="opacity-50">Pendiente</span>}
+                                    </TableCell>
                                     <TableCell className="text-slate-500 text-sm uppercase">
                                         {product.color_name || product.color_code || '-'}
                                     </TableCell>

@@ -36,7 +36,7 @@ export default function NewProductPage() {
     const [isNewFamily, setIsNewFamily] = useState(false)
     const [familyData, setFamilyData] = useState({
         name: '',
-        zone_text: '',
+        zone_home: '',
         line: '',
         product_type: '',
     })
@@ -148,7 +148,7 @@ export default function NewProductPage() {
                                                     </div>
                                                     <div className="grid gap-2">
                                                         <Label htmlFor="family_zone">Zona</Label>
-                                                        <Input id="family_zone" name="zone_text" value={familyData.zone_text} onChange={handleFamilyChange} />
+                                                        <Input id="family_zone" name="zone_home" value={familyData.zone_home} onChange={handleFamilyChange} />
                                                     </div>
                                                 </div>
                                             </div>

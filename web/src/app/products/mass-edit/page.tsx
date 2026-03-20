@@ -1,8 +1,10 @@
 import { dbQuery } from '@/lib/supabase'
 import { MassEditClient } from './MassEditClient'
 
+export const dynamic = 'force-dynamic'
+
 export default async function MassEditPage() {
-    const products = await dbQuery(`SELECT id, code, familia_code, ref_code, furniture_name, edge_2mm_flag, rh_flag, assembled_flag, commercial_measure, accessory_text, validation_status, sap_description, line, zone_text, color_code, width_cm, depth_cm, height_cm FROM public.products ORDER BY updated_at DESC`) || []
+    const products = await dbQuery(`SELECT id, code, familia_code, ref_code, furniture_name, edge_2mm_flag, rh_flag, assembled_flag, commercial_measure, accessory_text, validation_status, sap_description, line, zone_home, color_code, width_cm, depth_cm, height_cm, final_name_es, final_name_en FROM public.products ORDER BY updated_at DESC`) || []
 
     const familiaRecords = await dbQuery(
         `SELECT DISTINCT p.familia_code, f.name

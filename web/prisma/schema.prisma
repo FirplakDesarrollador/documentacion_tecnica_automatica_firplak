@@ -17,7 +17,7 @@ model Product {
   barcode_text              String?
   product_type              String?
   use_destination           String?
-  zone_text                 String?
+  zone_home                 String?
   furniture_name            String?
   designation               String?
   line                      String?
@@ -72,6 +72,7 @@ model Familia {
   name              String
   product_type      String?
   use_destination   String?
+  zone_home         String?
   assembled_default Boolean  @default(false)
   rh_default        Boolean  @default(false)
   createdAt         DateTime @default(now())

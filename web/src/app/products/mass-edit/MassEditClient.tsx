@@ -9,9 +9,10 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
 import { massUpdateProducts } from '../actions'
 import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, CheckCircle2, RotateCcw, Trash2, AlertTriangle, Search } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, RotateCcw, Trash2, AlertTriangle, Search, Loader2 } from 'lucide-react'
 import Link from 'next/link'
-import { deleteProducts } from '../actions'
+import { deleteProducts, translateProductsAction } from '../actions'
+import { cn } from "@/lib/utils"
 import {
     Dialog,
     DialogContent,
@@ -35,11 +36,13 @@ interface Product {
     validation_status: string
     sap_description: string | null
     line: string | null
-    zone_text: string | null
+    zone_home: string | null
     color_code: string | null
     width_cm: number | null
     depth_cm: number | null
     height_cm: number | null
+    final_name_en: string | null
+    final_name_es: string | null
 }
 
 import { MultiSelectSearchField } from '@/components/ui-custom/MultiSelectSearchField'
@@ -76,9 +79,15 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
         rh_flag: false,
         assembled_flag: false,
         validation_status: '',
+        zone_home: '',
     })
 
     const filteredProducts = useMemo(() => {
+        // Si no hay filtros seleccionados, no mostrar nada para evitar selecciones masivas accidentales
+        if (filterFamily.length === 0 && filterRef.length === 0 && filterMeasure.length === 0) {
+            return []
+        }
+
         return products.filter(p => {
             // Normalize product familia_code by removing prefixes if necessary
             let normalizedPCode = p.familia_code || ''
@@ -143,6 +152,7 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
     }
 
     const handleSelectAll = (checked: boolean) => {
+        if (filteredProducts.length === 0) return
         if (checked) {
             setSelectedIds(new Set(filteredProducts.map(p => p.id)))
         } else {
@@ -172,6 +182,9 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
         if (batchUpdates.validation_status) {
             updates.validation_status = batchUpdates.validation_status
         }
+        if (batchUpdates.zone_home) {
+            updates.zone_home = batchUpdates.zone_home
+        }
 
         try {
             await massUpdateProducts(idsArray, updates)
@@ -185,6 +198,50 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
         } catch (error) {
             console.error(error)
             toast.error("Error al actualizar productos")
+        }
+    }
+
+    const [isTranslating, setIsTranslating] = useState(false)
+    const [missingTerms, setMissingTerms] = useState<string[]>([])
+    const [missingTermsDialogOpen, setMissingTermsDialogOpen] = useState(false)
+
+    const handleBatchTranslate = async (mode: 'missing' | 'repair' | 'all') => {
+        if (selectedIds.size === 0) {
+            toast.error("Selecciona productos para traducir")
+            return
+        }
+
+        setIsTranslating(true)
+        const idsArray = Array.from(selectedIds)
+
+        try {
+            const result = await translateProductsAction(idsArray, mode)
+            if (result.success) {
+                toast.success(result.message)
+                
+                if (result.updatedProducts && result.updatedProducts.length > 0) {
+                    const updates = result.updatedProducts;
+                    setProducts(prev => prev.map(p => {
+                        const up = updates.find(u => u.id === p.id);
+                        if (up) {
+                            return { ...p, final_name_en: up.final_name_en, validation_status: up.final_name_en.includes('[') ? 'needs_review' : 'ready' };
+                        }
+                        return p;
+                    }));
+                }
+
+                if (result.missingTerms && result.missingTerms.length > 0) {
+                    setMissingTerms(result.missingTerms)
+                    setMissingTermsDialogOpen(true)
+                }
+            } else {
+                toast.error(result.message)
+            }
+        } catch (error) {
+            console.error(error)
+            toast.error("Error en la traducción masiva")
+        } finally {
+            setIsTranslating(false)
         }
     }
 
@@ -242,55 +299,29 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-
-                {/* Panel lateral de controles */}
-                <div className="md:col-span-1 flex flex-col gap-6">
-                    <div className="p-4 border rounded-md bg-white">
-                        <h3 className="font-semibold mb-4">Filtros</h3>
-                        <div className="space-y-4">
-                            <div className="grid gap-2">
-                                <Label>Familia</Label>
-                                <MultiSelectSearchField
-                                    options={families}
-                                    values={filterFamily}
-                                    onChange={handleFamilyChange}
-                                    placeholder="Familia"
-                                />
-                            </div>
-                            <div className="grid gap-2">
-                                <Label>Referencia</Label>
-                                <MultiSelectSearchField
-                                    options={references}
-                                    values={filterRef}
-                                    onChange={handleReferenceChange}
-                                    placeholder="Referencia"
-                                />
-                            </div>
-                            <div className="grid gap-2">
-                                <Label>Medida</Label>
-                                <MultiSelectSearchField
-                                    options={measures.map(m => ({ value: m, label: m }))}
-                                    values={filterMeasure}
-                                    onChange={setFilterMeasure}
-                                    placeholder="Medida"
-                                />
-                            </div>
+            {/* Panel superior de controles (Acciones Globales y Filtros) */}
+            <div className="flex flex-col lg:flex-row gap-4">
+                {/* Acciones Globales (Izquierda, más espacio) */}
+                <div className="flex-1 p-4 border rounded-md bg-blue-50 border-blue-200 flex flex-col justify-between">
+                    <div>
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="font-semibold text-blue-900 flex items-center gap-2">
+                                <CheckCircle2 className="w-4 h-4" />
+                                Acciones Globales
+                            </h3>
+                            <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                                {selectedIds.size} seleccionados
+                            </Badge>
                         </div>
-                    </div>
 
-                    <div className="p-4 border rounded-md bg-blue-50 border-blue-200">
-                        <h3 className="font-semibold mb-2 text-blue-900">Acciones Globales</h3>
-                        <p className="text-sm text-blue-800/80 mb-4">Aplicar a {selectedIds.size} seleccionados</p>
-
-                        <div className="space-y-4">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3 mb-4">
                             <div className="flex items-center space-x-2">
                                 <Checkbox
                                     id="batch_edge"
                                     checked={batchUpdates.edge_2mm_flag}
                                     onCheckedChange={(c) => setBatchUpdates(p => ({ ...p, edge_2mm_flag: !!c }))}
                                 />
-                                <Label htmlFor="batch_edge">Aplicar Canto 2mm</Label>
+                                <Label htmlFor="batch_edge" className="text-xs cursor-pointer">Canto 2mm</Label>
                             </div>
                             <div className="flex items-center space-x-2">
                                 <Checkbox
@@ -298,7 +329,7 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                                     checked={batchUpdates.rh_flag}
                                     onCheckedChange={(c) => setBatchUpdates(p => ({ ...p, rh_flag: !!c }))}
                                 />
-                                <Label htmlFor="batch_rh">Marcar como RH</Label>
+                                <Label htmlFor="batch_rh" className="text-xs cursor-pointer">RH</Label>
                             </div>
                             <div className="flex items-center space-x-2">
                                 <Checkbox
@@ -306,67 +337,158 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                                     checked={batchUpdates.assembled_flag}
                                     onCheckedChange={(c) => setBatchUpdates(p => ({ ...p, assembled_flag: !!c }))}
                                 />
-                                <Label htmlFor="batch_assembled">Marcar Armado</Label>
+                                <Label htmlFor="batch_assembled" className="text-xs cursor-pointer">Armado</Label>
                             </div>
-
-                            <div className="grid gap-2 pt-2 border-t border-blue-200/50">
-                                <Label>Estado de Validación</Label>
+                            <div className="flex items-center space-x-2">
                                 <select
-                                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors cursor-pointer"
+                                    className="flex h-7 w-full rounded-md border border-input bg-background px-2 py-0 text-[10px] shadow-sm transition-colors cursor-pointer"
                                     value={batchUpdates.validation_status}
                                     onChange={(e) => setBatchUpdates(p => ({ ...p, validation_status: e.target.value }))}
                                 >
-                                    <option value="">(No cambiar)</option>
+                                    <option value="">(Estado)</option>
                                     <option value="incomplete">Incompleto</option>
                                     <option value="needs_review">Revisar</option>
                                     <option value="ready">Listo</option>
                                 </select>
                             </div>
+                            <div className="flex items-center space-x-2 col-span-2 md:col-span-1">
+                                <select
+                                    className="flex h-7 w-full rounded-md border border-input bg-background px-2 py-0 text-[10px] shadow-sm transition-colors cursor-pointer"
+                                    value={batchUpdates.zone_home}
+                                    onChange={(e) => setBatchUpdates(p => ({ ...p, zone_home: e.target.value }))}
+                                >
+                                    <option value="">(Cambiar Zona Masivo)</option>
+                                    <option value="BAÑO">BAÑO</option>
+                                    <option value="COCINA">COCINA</option>
+                                    <option value="ZONA DE ROPA">ZONA DE ROPA</option>
+                                </select>
+                            </div>
+                        </div>
 
+                        <div className="flex gap-2">
                             <Button
                                 onClick={handleApplyBatchUpdate}
                                 disabled={selectedIds.size === 0}
-                                className="w-full mt-2"
+                                size="sm"
+                                className="flex-1 h-8 bg-blue-600 hover:bg-blue-700 text-white"
                             >
-                                <CheckCircle2 className="w-4 h-4 mr-2" />
+                                <CheckCircle2 className="w-3 h-3 mr-2" />
                                 Aplicar Cambios
                             </Button>
 
                             <Button
-                                variant="outline"
+                                variant="destructive"
                                 onClick={() => startDelete(Array.from(selectedIds))}
                                 disabled={selectedIds.size === 0}
-                                className="w-full mt-2 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700 hover:border-red-300"
+                                size="sm"
+                                className="h-8"
                             >
-                                <Trash2 className="w-4 h-4 mr-2" />
-                                Eliminar Seleccionados
+                                <Trash2 className="w-3 h-3" />
+                            </Button>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-2 mt-4 pt-4 border-t border-blue-200/50">
+                        <div className="flex items-center justify-between">
+                            <Label className="text-[10px] uppercase font-bold text-blue-800">Motor de Traducción (Glosario)</Label>
+                            <Link href="/products/glossary">
+                                <Button variant="link" className="h-4 p-0 text-[10px] text-blue-600">Configurar</Button>
+                            </Link>
+                        </div>
+                        <div className="flex gap-2">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleBatchTranslate('missing')}
+                                disabled={selectedIds.size === 0 || isTranslating}
+                                title="Traduce solo los que están vacíos o marcados como Pendiente"
+                                className="flex-1 text-[10px] h-7 border-blue-200 bg-white/50 hover:bg-white text-blue-700"
+                            >
+                                {isTranslating ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RotateCcw className="w-3 h-3 mr-1" />}
+                                Solo Faltantes
+                            </Button>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleBatchTranslate('repair')}
+                                disabled={selectedIds.size === 0 || isTranslating}
+                                title="Vuelve a procesar todos los seleccionados con las reglas actuales"
+                                className="flex-1 text-[10px] h-7 border-blue-200 bg-white/50 hover:bg-white text-blue-700"
+                            >
+                                {isTranslating ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
+                                Reparar / Actualizar
                             </Button>
                         </div>
                     </div>
                 </div>
 
+                {/* Filtros de Búsqueda (Derecha, más compacto) */}
+                <div className="lg:w-[400px] p-4 border rounded-md bg-white">
+                    <h3 className="font-semibold mb-3 text-sm flex items-center gap-2 text-slate-700">
+                        <Search className="w-4 h-4" />
+                        Filtros de Búsqueda
+                    </h3>
+                    <div className="grid grid-cols-1 gap-3">
+                        <div className="grid gap-1">
+                            <Label className="text-[10px] font-medium text-slate-500">Familia</Label>
+                            <MultiSelectSearchField
+                                options={families}
+                                values={filterFamily}
+                                onChange={handleFamilyChange}
+                                placeholder="Familia"
+                                className="h-8 text-xs"
+                            />
+                        </div>
+                        <div className="grid gap-1">
+                            <Label className="text-[10px] font-medium text-slate-500">Referencia</Label>
+                            <MultiSelectSearchField
+                                options={references}
+                                values={filterRef}
+                                onChange={handleReferenceChange}
+                                placeholder="Referencia"
+                                className="h-8 text-xs"
+                            />
+                        </div>
+                        <div className="grid gap-1">
+                            <Label className="text-[10px] font-medium text-slate-500">Medida</Label>
+                            <MultiSelectSearchField
+                                options={measures.map(m => ({ value: m, label: m }))}
+                                values={filterMeasure}
+                                onChange={setFilterMeasure}
+                                placeholder="Medida"
+                                className="h-8 text-xs"
+                            />
+                        </div>
+                    </div>
+                </div>
+            </div>
+
                 {/* Tabla de resultados */}
-                <div className="md:col-span-3 border rounded-md bg-white overflow-hidden flex flex-col h-[70vh]">
-                    <div className="overflow-y-auto flex-1">
-                        <Table>
+                <div className="w-full border rounded-md bg-white overflow-hidden flex flex-col h-[65vh]">
+                    <div className="overflow-auto flex-1 custom-scrollbar">
+                        <Table className="min-w-[1400px]">
                             <TableHeader className="sticky top-0 bg-white z-10 shadow-sm">
                                 <TableRow>
-                                    <TableHead className="w-12 text-center">
+                                    <TableHead className="w-12 text-center sticky left-0 bg-white z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                                         <Checkbox
+                                            disabled={filteredProducts.length === 0}
                                             checked={filteredProducts.length > 0 && selectedIds.size === filteredProducts.length}
                                             onCheckedChange={(c) => handleSelectAll(!!c)}
                                         />
                                     </TableHead>
-                                    <TableHead>Código</TableHead>
-                                    <TableHead>Descripción SAP</TableHead>
-                                    <TableHead>Línea / Zona</TableHead>
+                                    <TableHead className="sticky left-12 bg-white z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Código</TableHead>
+                                    <TableHead className="min-w-[200px]">Descripción SAP</TableHead>
+                                    <TableHead className="min-w-[200px]">Nombre Final (ES)</TableHead>
+                                    <TableHead className="min-w-[200px]">Nombre EN (US)</TableHead>
+                                    <TableHead>Estado</TableHead>
+                                    <TableHead>Zona</TableHead>
+                                    <TableHead>Línea</TableHead>
                                     <TableHead className="whitespace-nowrap">Color</TableHead>
                                     <TableHead className="whitespace-nowrap">WxDxH (cm)</TableHead>
                                     <TableHead>Medida / Ref</TableHead>
                                     <TableHead className="text-center">Canto 2mm</TableHead>
                                     <TableHead className="text-center">RH</TableHead>
                                     <TableHead className="text-center">Armado</TableHead>
-                                    <TableHead>Estado</TableHead>
                                     <TableHead className="text-right">Acciones</TableHead>
                                 </TableRow>
                             </TableHeader>
@@ -394,21 +516,52 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                                 ) : (
                                     filteredProducts.map(p => (
                                         <TableRow key={p.id} className={selectedIds.has(p.id) ? 'bg-blue-50/50' : ''}>
-                                            <TableCell className="text-center">
+                                            <TableCell className="text-center sticky left-0 bg-white z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                                                 <Checkbox
                                                     checked={selectedIds.has(p.id)}
                                                     onCheckedChange={(c) => handleSelectOne(p.id, !!c)}
                                                 />
                                             </TableCell>
-                                            <TableCell className="font-medium text-xs font-mono">{p.code}</TableCell>
-                                            <TableCell className="text-xs max-w-[200px] truncate" title={p.sap_description || ''}>
+                                            <TableCell className="font-medium text-xs font-mono sticky left-12 bg-white z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">{p.code}</TableCell>
+                                            <TableCell className="text-xs max-w-[250px] truncate" title={p.sap_description || ''}>
                                                 {p.sap_description || '-'}
                                             </TableCell>
-                                            <TableCell className="text-xs">
-                                                <div className="flex flex-col">
-                                                    <span>{p.line || '-'}</span>
-                                                    <span className="text-muted-foreground">{p.zone_text || '-'}</span>
-                                                </div>
+                                            <TableCell className="text-xs font-medium max-w-[250px] truncate" title={p.final_name_es || ''}>
+                                                {p.final_name_es || '-'}
+                                            </TableCell>
+                                            <TableCell className="text-[10px] font-medium max-w-[250px] truncate" title={p.final_name_en || ''}>
+                                                {p.final_name_en || <span className="text-slate-400 italic">Pendiente</span>}
+                                            </TableCell>
+                                            <TableCell>
+                                                <Badge
+                                                    variant={
+                                                        p.validation_status === 'ready'
+                                                            ? 'default'
+                                                            : p.validation_status === 'needs_review'
+                                                                ? 'destructive'
+                                                                : 'secondary'
+                                                    }
+                                                >
+                                                    {p.validation_status === 'incomplete' ? 'Incompleto' :
+                                                        p.validation_status === 'needs_review' ? 'Revisar' : 'Listo'}
+                                                </Badge>
+                                            </TableCell>
+                                            <TableCell>
+                                                <Badge
+                                                    variant="outline"
+                                                    className={cn(
+                                                        "text-[10px] font-medium",
+                                                        p.zone_home === 'BAÑO' ? 'bg-blue-50 text-blue-700 border-blue-100' :
+                                                        p.zone_home === 'COCINA' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
+                                                        p.zone_home === 'ZONA DE ROPA' ? 'bg-purple-50 text-purple-700 border-purple-100' :
+                                                        'bg-slate-50 text-slate-600 border-slate-100'
+                                                    )}
+                                                >
+                                                    {p.zone_home || '-'}
+                                                </Badge>
+                                            </TableCell>
+                                            <TableCell className="text-xs font-medium">
+                                                {p.line || '-'}
                                             </TableCell>
                                             <TableCell className="text-xs">
                                                 {p.color_code || '-'}
@@ -431,20 +584,6 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                                             <TableCell className="text-center">
                                                 {p.assembled_flag ? <Badge variant="outline" className="bg-purple-50 text-purple-700">Sí</Badge> : <span className="text-muted-foreground text-xs">-</span>}
                                             </TableCell>
-                                            <TableCell>
-                                                <Badge
-                                                    variant={
-                                                        p.validation_status === 'ready'
-                                                            ? 'default'
-                                                            : p.validation_status === 'needs_review'
-                                                                ? 'destructive'
-                                                                : 'secondary'
-                                                    }
-                                                >
-                                                    {p.validation_status === 'incomplete' ? 'Incompleto' :
-                                                        p.validation_status === 'needs_review' ? 'Revisar' : 'Listo'}
-                                                </Badge>
-                                            </TableCell>
                                             <TableCell className="text-right">
                                                 <Button
                                                     variant="ghost"
@@ -466,9 +605,9 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                     </div>
                 </div>
 
-            </div>
 
             <Dialog open={deleteOpen} onOpenChange={(val) => !val && cancelDelete()}>
+                {/* ... existing delete dialog ... */}
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
@@ -486,6 +625,36 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                         <Button variant="destructive" onClick={confirmDelete} disabled={isDeleting}>
                             {isDeleting ? 'Eliminando...' : 'Sí, continuar'}
                         </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={missingTermsDialogOpen} onOpenChange={setMissingTermsDialogOpen}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2 text-amber-600">
+                            <AlertTriangle className="h-5 w-5" />
+                            Términos Faltantes en el Glosario
+                        </DialogTitle>
+                        <DialogDescription>
+                            Los siguientes términos en español no tienen una traducción definida. Los productos afectados se han marcado en estado "Revisar".
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="bg-slate-50 p-4 rounded-md border max-h-[40vh] overflow-auto">
+                        <div className="flex flex-wrap gap-2">
+                            {missingTerms.map((term, idx) => (
+                                <Badge key={idx} variant="outline" className="bg-white border-amber-200 text-amber-800">
+                                    {term}
+                                </Badge>
+                            ))}
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Link href="/products/glossary" className="w-full">
+                            <Button className="w-full bg-blue-600 hover:bg-blue-700" onClick={() => setMissingTermsDialogOpen(false)}>
+                                Ir al Glosario para Agregarlos
+                            </Button>
+                        </Link>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

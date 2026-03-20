@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Download, Loader2, LayoutTemplate } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -29,6 +29,7 @@ export function PreviewClient({ product, templates, initialTemplateId, engineRes
     )
     const [isExporting, setIsExporting] = useState(false)
     const [exportFormat, setExportFormat] = useState<'pdf' | 'jpg'>('pdf')
+    const [assetMap, setAssetMap] = useState<Record<string, string>>({})
 
     const selectedTemplate = useMemo(
         () => templates.find(t => t.id === selectedTemplateId) ?? null,
@@ -44,12 +45,25 @@ export function PreviewClient({ product, templates, initialTemplateId, engineRes
         }
     }, [selectedTemplate])
 
+    useEffect(() => {
+        const resolveAssets = async () => {
+            const assetIds = elements
+                .filter((el: any) => el.type === 'image' && el.content && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(el.content))
+                .map((el: any) => el.content)
+            
+            const mapping = await resolveAssetsAction(assetIds)
+            setAssetMap(mapping)
+        }
+        if (elements.length > 0) resolveAssets()
+    }, [elements])
+
     const hydrate = (text: string) => {
         if (!text) return ''
         return text.replace(/{([^}]+)}/g, (_: string, field: string) => {
             if (field === 'final_name_es') return engineResult.finalNameEs || product['final_name_es'] || ''
             if (field === 'color') return product.color_name || product.color_code || ''
-            return String(product[field] ?? '')
+            const val = product[field]
+            return (val === null || val === undefined) ? '' : String(val)
         })
     }
 
@@ -59,7 +73,8 @@ export function PreviewClient({ product, templates, initialTemplateId, engineRes
             if (el.dataField === 'final_name_es') {
                 content = engineResult.finalNameEs || product['final_name_es'] || 'N/A'
             } else {
-                content = String(product[el.dataField] ?? '')
+                const val = product[el.dataField]
+                content = (val === null || val === undefined) ? '' : String(val)
             }
         }
         // También hidratar variables dentro del contenido estático
@@ -108,7 +123,8 @@ export function PreviewClient({ product, templates, initialTemplateId, engineRes
                     const rawContent = el.type === 'dynamic_text' ? `{${el.dataField}}` : (el.content || '')
                     el.content = rawContent.replace(/{([^}]+)}/g, (_: string, field: string) => {
                         if (field === 'color') return product.color_name || product.color_code || ''
-                        return String(product[field] ?? '')
+                        const val = product[field]
+                        return (val === null || val === undefined) ? '' : String(val)
                     })
                 }
             })
@@ -208,22 +224,45 @@ export function PreviewClient({ product, templates, initialTemplateId, engineRes
                                             |||| {product.code} ||||
                                         </div>
                                     )}
+                                    {el.type === 'dashed_line' && (
+                                        <div
+                                            className="w-full h-full"
+                                            style={{
+                                                borderBottomStyle: el.borderStyle || 'solid',
+                                                borderBottomWidth: el.borderWidth || 2,
+                                                borderColor: el.color || '#334155',
+                                                height: 0,
+                                                alignSelf: 'center'
+                                            }}
+                                        />
+                                    )}
                                     {el.type === 'image' && (
-                                        el.content?.startsWith('http') || el.dataField === 'isometric_path' ? (
-                                            <img 
-                                                src={el.content || product.isometric_path} 
-                                                alt="asset" 
-                                                className="max-w-full max-h-full object-contain" 
-                                            />
-                                        ) : (
-                                            <span className="text-slate-400 text-xs text-center px-2">[{el.content || 'Imagen'}]</span>
-                                        )
+                                        (() => {
+                                            let src = el.content || ''
+                                            if (assetMap[src]) src = assetMap[src]
+                                            else if (src === 'logo_empresa' && assetMap['logo_empresa']) src = assetMap['logo_empresa']
+                                            else if (src === 'isometrico_placeholder') src = product.isometric_path || ''
+                                            else if (el.dataField === 'isometric_path') src = product.isometric_path || ''
+
+                                            if (src && (src.startsWith('http') || src.startsWith('/storage'))) {
+                                                const baseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+                                                const absoluteSrc = src.startsWith('http') ? src : `${baseUrl}/storage/v1/object/public/${src}`
+                                                return <img src={absoluteSrc} alt="asset" className="max-w-full max-h-full object-contain" />
+                                            }
+
+                                            return <span className="text-slate-400 text-xs text-center px-2">[{el.content || 'Imagen'}]</span>
+                                        })()
                                     )}
                                     {(el.type === 'dynamic_text' || el.type === 'text') && (
                                         <div 
                                             className="w-full break-words"
-                                            dangerouslySetInnerHTML={{ __html: el.content }}
-                                        />
+                                        >
+                                            {el.content ? (
+                                                <div dangerouslySetInnerHTML={{ __html: el.content }} />
+                                            ) : (
+                                                <span className="text-red-500 font-bold text-[10px] bg-red-50 px-1 rounded border border-red-200">[VACIO]</span>
+                                            )}
+                                        </div>
                                     )}
                                 </div>
                             ))}
@@ -292,7 +331,7 @@ export function PreviewClient({ product, templates, initialTemplateId, engineRes
                         <div className="flex flex-col gap-3">
                             {/* Selector de formato filtrado */}
                             <div className="flex bg-slate-100 p-1 rounded-lg w-full">
-                                {(selectedTemplate.export_formats ? selectedTemplate.export_formats.split(',').map(f => f.trim().toLowerCase()) : ['pdf', 'jpg']).map(fmt => (
+                                {(selectedTemplate.export_formats ? (selectedTemplate.export_formats as string).split(',').map((f: string) => f.trim().toLowerCase()) : ['pdf', 'jpg']).map((fmt: string) => (
                                     <button
                                         key={fmt}
                                         onClick={() => setExportFormat(fmt as any)}

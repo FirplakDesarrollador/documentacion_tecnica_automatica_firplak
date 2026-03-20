@@ -36,7 +36,7 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
     ]
 
     return (
-        <div className="grid min-h-screen w-full md:grid-cols-[240px_1fr] lg:grid-cols-[260px_1fr] bg-slate-50 font-sans">
+        <div className="grid h-screen w-full md:grid-cols-[240px_1fr] lg:grid-cols-[260px_1fr] bg-slate-50 font-sans">
             {/* Desktop Sidebar (Dark B2B Theme) */}
             <div className="hidden border-r border-slate-800 bg-slate-950 md:block shadow-xl z-20 relative">
                 <div className="flex h-full max-h-screen flex-col">
@@ -88,9 +88,9 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
             </div>
 
             {/* Main Content Area */}
-            <div className="flex flex-col flex-1 overflow-hidden">
-                {/* Header */}
-                <header className="flex h-16 items-center gap-4 border-b border-slate-200 bg-white px-4 shadow-sm lg:px-8 z-10">
+            <div className="flex flex-col flex-1 overflow-hidden h-screen">
+                {/* Header (Only for Mobile) */}
+                <header className="flex md:hidden h-16 items-center gap-4 border-b border-slate-200 bg-white px-4 shadow-sm z-10">
                     <Sheet>
                         <SheetTrigger>
                             <div className="shrink-0 md:hidden flex items-center justify-center border border-slate-200 bg-white rounded-md p-2 w-10 h-10 hover:bg-slate-50 hover:text-slate-900 cursor-pointer transition-colors">
@@ -130,16 +130,7 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
                         </SheetContent>
                     </Sheet>
                     <div className="w-full flex-1 flex justify-end md:justify-start">
-                        <form className="w-full md:w-auto">
-                            <div className="relative w-full md:w-80 lg:w-96">
-                                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                                <Input
-                                    type="search"
-                                    placeholder="Buscar productos, excepciones..."
-                                    className="w-full appearance-none bg-slate-50 border-slate-200 focus:bg-white pl-9 shadow-none rounded-full transition-colors h-10 text-sm"
-                                />
-                            </div>
-                        </form>
+                        {/* Search bar removed per user request */}
                     </div>
                 </header>
                 

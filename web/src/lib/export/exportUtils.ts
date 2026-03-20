@@ -87,6 +87,13 @@ export function generateExportHtml(
             return `<div class="el" style="${style};background:#000;color:#fff;font-family:monospace;font-size:10px;">|||| ${product.code} ||||</div>`
         }
 
+        if (el.type === 'dashed_line') {
+            const borderStyle = el.borderStyle || 'solid'
+            const borderWidth = el.borderWidth || 2
+            const borderColor = el.color || '#334155'
+            return `<div class="el" style="${style};border-bottom:${borderWidth}px ${borderStyle} ${borderColor};height:0;"></div>`
+        }
+
         if (el.type === 'image') {
             const src = el.resolvedSrc || ''
             if (!src) return `<div class="el" style="${style};border:1px dashed #ccc;color:#ccc;font-size:10px;">[Imagen no disponible]</div>`

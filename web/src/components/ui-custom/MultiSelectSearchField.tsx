@@ -56,20 +56,25 @@ export function MultiSelectSearchField({
     onChange(newValues)
   }
 
-  const selectedLabels = values.length > 0 
-    ? options.filter((o) => values.includes(o.value)).map(o => o.label).join(", ")
-    : placeholder
+  const selectedLabels = React.useMemo(() => {
+    if (values.length === 0) return placeholder
+    if (values.length === options.length && options.length > 0) return `Todos (${values.length})`
+    if (values.length > 1) return `${values.length} seleccionados`
+    
+    const singleOption = options.find((o) => values.includes(o.value))
+    return singleOption ? singleOption.label : placeholder
+  }, [values, options, placeholder])
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         className={cn(
           buttonVariants({ variant: "outline" }), 
-          "w-full justify-between font-normal bg-white border-slate-200 text-slate-700 shadow-sm hover:border-indigo-200 hover:bg-slate-50 transition-all", 
+          "w-full max-w-full justify-between font-normal bg-white border-slate-200 text-slate-700 shadow-sm hover:border-indigo-200 hover:bg-slate-50 transition-all overflow-hidden", 
           className
         )}
       >
-        <span className="truncate">
+        <span className="truncate min-w-0 flex-1 text-left">
           {selectedLabels}
         </span>
         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50 text-slate-400" />
