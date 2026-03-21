@@ -6,7 +6,11 @@ import { PlusCircle, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 
-export function UploadAssetButton() {
+interface Props {
+    onUploadComplete?: (asset: any) => void;
+}
+
+export function UploadAssetButton({ onUploadComplete }: Props = {}) {
     const [isUploading, setIsUploading] = useState(false)
     const fileInputRef = useRef<HTMLInputElement>(null)
     const router = useRouter()
@@ -30,8 +34,15 @@ export function UploadAssetButton() {
                 throw new Error('Upload failed')
             }
 
+            const result = await response.json()
+            if (!result.success) throw new Error(result.error)
+
             toast.success('Recurso subido correctamente')
-            router.refresh()
+            if (onUploadComplete) {
+                onUploadComplete(result.asset)
+            } else {
+                router.refresh()
+            }
         } catch (error) {
             console.error('Upload error:', error)
             toast.error('Error al subir el recurso')

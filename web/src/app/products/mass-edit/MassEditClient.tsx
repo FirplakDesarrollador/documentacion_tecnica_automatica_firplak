@@ -43,6 +43,7 @@ interface Product {
     height_cm: number | null
     final_name_en: string | null
     final_name_es: string | null
+    designation: string | null
 }
 
 import { MultiSelectSearchField } from '@/components/ui-custom/MultiSelectSearchField'
@@ -80,6 +81,7 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
         assembled_flag: false,
         validation_status: '',
         zone_home: '',
+        designation: '',
     })
 
     const filteredProducts = useMemo(() => {
@@ -184,6 +186,9 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
         }
         if (batchUpdates.zone_home) {
             updates.zone_home = batchUpdates.zone_home
+        }
+        if (batchUpdates.designation) {
+            updates.designation = batchUpdates.designation
         }
 
         try {
@@ -363,6 +368,19 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                                     <option value="ZONA DE ROPA">ZONA DE ROPA</option>
                                 </select>
                             </div>
+                            <div className="flex items-center space-x-2 col-span-2 md:col-span-1">
+                                <select
+                                    className="flex h-7 w-full rounded-md border border-input bg-background px-2 py-0 text-[10px] shadow-sm transition-colors cursor-pointer"
+                                    value={batchUpdates.designation}
+                                    onChange={(e) => setBatchUpdates(p => ({ ...p, designation: e.target.value }))}
+                                >
+                                    <option value="">(Cambiar Uso Masivo)</option>
+                                    <option value="ELEVADO">ELEVADO</option>
+                                    <option value="PISO">PISO</option>
+                                    <option value="PARED">PARED (EMPOTRADO)</option>
+                                    <option value="N/A">N/A</option>
+                                </select>
+                            </div>
                         </div>
 
                         <div className="flex gap-2">
@@ -481,6 +499,7 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                                     <TableHead className="min-w-[200px]">Nombre Final (ES)</TableHead>
                                     <TableHead className="min-w-[200px]">Nombre EN (US)</TableHead>
                                     <TableHead>Estado</TableHead>
+                                    <TableHead>Uso</TableHead>
                                     <TableHead>Zona</TableHead>
                                     <TableHead>Línea</TableHead>
                                     <TableHead className="whitespace-nowrap">Color</TableHead>
@@ -545,6 +564,17 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                                                     {p.validation_status === 'incomplete' ? 'Incompleto' :
                                                         p.validation_status === 'needs_review' ? 'Revisar' : 'Listo'}
                                                 </Badge>
+                                            </TableCell>
+                                            <TableCell>
+                                                {p.designation ? (
+                                                    <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-100 text-[10px] font-medium uppercase">
+                                                        {p.designation}
+                                                    </Badge>
+                                                ) : (
+                                                    <span className="text-red-500 text-[10px] font-bold italic flex items-center gap-1">
+                                                        <AlertTriangle className="w-3 h-3" /> Sin Uso
+                                                    </span>
+                                                )}
                                             </TableCell>
                                             <TableCell>
                                                 <Badge

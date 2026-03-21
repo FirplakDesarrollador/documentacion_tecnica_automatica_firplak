@@ -12,6 +12,7 @@ import { useRouter } from 'next/navigation'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
+import { enrichProductData } from '@/lib/engine/productUtils'
 
 export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'box' | 'dashed_line'
 
@@ -33,24 +34,69 @@ export interface TemplateElement {
     borderWidth?: number
     required?: boolean
     lineHeight?: number
+    textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize' | 'sentence'
 }
 
 const PIXELS_PER_MM = 4
 const MAX_HISTORY = 10
 
-function OverflowText({ text, textAlign, isPreviewMode, type, previewData, dataField, lineHeight }: { text: string, textAlign: 'left' | 'center' | 'right' | undefined, isPreviewMode: boolean, type: string, previewData?: any, dataField?: string, lineHeight?: number }) {
+function OverflowText({ text, textAlign = 'left', isPreviewMode, type, previewData, dataField, lineHeight, textTransform }: { text: string, textAlign?: 'left' | 'center' | 'right' | undefined, isPreviewMode: boolean, type: string, previewData?: any, dataField?: string, lineHeight?: number, textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize' | 'sentence' }) {
     const textRef = useRef<HTMLDivElement>(null)
     const [isOverflowing, setIsOverflowing] = useState(false)
 
     // Regex replacement for rich text variables
     const displayText = React.useMemo(() => {
+        const applyTransform = (val: any) => {
+            if (!val || val === null || val === undefined || val === '') return '[VACIO]';
+            let s = String(val);
+            if (!textTransform || textTransform === 'none') return s;
+
+            const acronyms: string[] = ['RTI', 'RTA'];
+            const refs: string[] = [];
+            if (previewData) {
+                if (previewData.line) refs.push(String(previewData.line).toUpperCase());
+                if (previewData.furniture_name) refs.push(String(previewData.furniture_name).toUpperCase());
+            }
+
+            const words = s.split(' ');
+            const transformed = words.map((word, index) => {
+                // Remove punctuation for comparison
+                const cleanWord = word.replace(/[(),/\\.-]/g, '').toUpperCase();
+                const isAcronym = acronyms.includes(cleanWord);
+                const isRef = refs.includes(cleanWord);
+                
+                if (textTransform === 'uppercase') return word.toUpperCase();
+                if (textTransform === 'lowercase') return word.toLowerCase();
+
+                // Rule 1: Acronyms always in ALL CAPS
+                if (isAcronym) return word.toUpperCase();
+
+                // Rule 2: For Sentence Case (sentence)
+                if (textTransform === 'sentence') {
+                    // Capitalize first word or recognized model references
+                    if (index === 0 || isRef) {
+                        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+                    }
+                    return word.toLowerCase();
+                }
+
+                // Rule 3: For Title Case (capitalize)
+                if (textTransform === 'capitalize') {
+                    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+                }
+
+                return word;
+            });
+
+            return transformed.join(' ');
+        }
+
         if (!isPreviewMode || !previewData) return text
 
         if (type === 'dynamic_text') {
             const varName = text.replace(/[{}]/g, '');
             const val = previewData[varName];
-            if (val === null || val === undefined || val === '') return '[VACIO]';
-            return String(val);
+            return applyTransform(val);
         }
 
         let interpolated = text
@@ -59,12 +105,12 @@ function OverflowText({ text, textAlign, isPreviewMode, type, previewData, dataF
             matches.forEach(match => {
                 const varName = match.slice(1, -1)
                 const val = previewData[varName];
-                const replacement = (val === null || val === undefined || val === '') ? '[VACIO]' : String(val);
+                const replacement = applyTransform(val);
                 interpolated = interpolated.replace(match, replacement)
             })
         }
         return interpolated
-    }, [text, isPreviewMode, previewData, type])
+    }, [text, isPreviewMode, previewData, type, textTransform])
 
     useEffect(() => {
         if (!textRef.current || !isPreviewMode) {
@@ -118,7 +164,14 @@ function OverflowText({ text, textAlign, isPreviewMode, type, previewData, dataF
             className={`w-full h-full overflow-hidden pointer-events-none flex flex-col justify-center ${isOverflowing ? 'ring-2 ring-red-500 bg-red-100/50' : ''}`}
         >
             {isOverflowing && <span className="absolute -top-5 left-0 bg-red-500 text-white text-[9px] px-1 rounded shadow-sm z-50 pointer-events-none">Desbordamiento</span>}
-            <div style={{ textAlign, width: '100%', wordBreak: 'break-word', whiteSpace: 'pre-wrap', padding: '0 2px', lineHeight: lineHeight || 1.2 }}>
+            <div style={{ 
+                textAlign, 
+                width: '100%', 
+                wordBreak: 'break-word', 
+                whiteSpace: 'pre-wrap', 
+                padding: '0 2px', 
+                lineHeight: lineHeight || 1.2
+            }}>
                 {renderTextContent()}
             </div>
         </div>
@@ -239,6 +292,15 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                     <option value="depth_in">Fondo (in)</option>
                     <option value="height_in">Alto (in)</option>
                     <option value="weight_lb">Peso (lb)</option>
+                    <option value="technical_description_es">Descripción Técnica (ES)</option>
+                    <option value="technical_description_en">Descripción Técnica (EN)</option>
+                    <option value="zone_home_en">Zona (EN)</option>
+                    <optgroup label="Iconos Dinámicos">
+                        <option value="icon_rh">Icono RH</option>
+                        <option value="icon_edge_2mm">Icono Canto</option>
+                        <option value="icon_soft_close">Icono Cierre</option>
+                        <option value="icon_full_extension">Icono Extensión</option>
+                    </optgroup>
                 </select>
             </div>
             <div
@@ -369,14 +431,22 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
         setIsModified(true)
 
         setHistory(prev => {
+            // Use the current historyIndex to slice. 
+            // Note: Since we need historyIndex here, we must keep it in deps.
             const newHistory = prev.slice(0, historyIndex + 1)
             newHistory.push([...newElements])
             if (newHistory.length > MAX_HISTORY) {
                 newHistory.shift()
+                // If we shifted, the index doesn't change relative to the end, 
+                // but since we are at the end, historyIndex+1 becomes the new length.
             }
             return newHistory
         })
-        setHistoryIndex(prev => Math.min(prev + 1, MAX_HISTORY - 1))
+        
+        setHistoryIndex(prev => {
+            const next = prev + 1
+            return next >= MAX_HISTORY ? MAX_HISTORY - 1 : next
+        })
     }, [historyIndex])
 
     const undo = useCallback(() => {
@@ -431,28 +501,38 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
     // Keyboard shortcuts
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            const isTyping = 
-                ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName || '') || 
-                (document.activeElement as HTMLElement)?.isContentEditable;
+            const activeTag = document.activeElement?.tagName || '';
+            const isInput = ['INPUT', 'SELECT', 'TEXTAREA'].includes(activeTag);
+            const isEditable = (document.activeElement as HTMLElement)?.isContentEditable;
+            const isTyping = isInput || isEditable;
+
+            const key = e.key.toLowerCase();
 
             // Undo: Ctrl+Z
-            if (e.ctrlKey && e.key === 'z') {
+            if (e.ctrlKey && !e.shiftKey && key === 'z') {
                 if (!isTyping) {
                     e.preventDefault()
                     undo()
                 }
             }
             // Redo: Ctrl+Y or Ctrl+Shift+Z
-            if ((e.ctrlKey && e.key === 'y') || (e.ctrlKey && e.shiftKey && e.key === 'Z')) {
+            if ((e.ctrlKey && key === 'y') || (e.ctrlKey && e.shiftKey && key === 'z')) {
                 if (!isTyping) {
                     e.preventDefault()
                     redo()
                 }
             }
 
+            // Duplicate: Ctrl+D
+            if (e.ctrlKey && key === 'd') {
+                if (!isTyping && selectedIds.length > 0) {
+                    e.preventDefault()
+                    duplicateSelectedElements()
+                }
+            }
+
             // Delete key
             if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length > 0) {
-                // Ensure we are not typing in a field
                 if (!isTyping) {
                     e.preventDefault()
                     removeSelectedElements()
@@ -460,36 +540,45 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
             }
 
             // Copy & Paste (Ctrl+C, Ctrl+V)
-            if (e.ctrlKey && e.key === 'c' && selectedIds.length > 0) {
-                if (!isTyping) {
+            if (e.ctrlKey && key === 'c') {
+                if (!isTyping && selectedIds.length > 0) {
+                    // We don't preventDefault here to allow standard text copy if something else is weirdly focused
+                    // but we do our internal copy
                     const toCopy = elements.filter(el => selectedIds.includes(el.id))
                     sessionStorage.setItem('template_clipboard', JSON.stringify(toCopy))
-                    toast("Copiado al portapapeles")
+                    toast("Elementos copiados")
                 }
             }
-            if (e.ctrlKey && e.key === 'v') {
+            if (e.ctrlKey && key === 'v') {
                 if (!isTyping) {
                     const stored = sessionStorage.getItem('template_clipboard')
                     if (stored) {
+                        e.preventDefault() // Prevent browser default paste if we are handling it
                         try {
                             const parsed: TemplateElement[] = JSON.parse(stored)
-                            const newEls = parsed.map(el => ({ ...el, id: crypto.randomUUID(), x: el.x + 10, y: el.y + 10 }))
+                            const newEls = parsed.map(el => ({ 
+                                ...el, 
+                                id: crypto.randomUUID(), 
+                                x: el.x + 10, 
+                                y: el.y + 10 
+                            }))
                             commitHistory([...elements, ...newEls])
                             setSelectedIds(newEls.map(e => e.id))
-                        } catch (e) {
-                            console.error(e)
+                            toast("Elementos pegados")
+                        } catch (err) {
+                            console.error(err)
                         }
                     }
                 }
             }
 
-            // Move with Arrows (1mm) or Shift + Arrows (5mm)
-            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key) && selectedIds.length > 0) {
+            // Move with Arrows
+            if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key) && selectedIds.length > 0) {
                 if (!isTyping) {
                     e.preventDefault()
-                    const step = e.shiftKey ? 20 : 4 // 5mm vs 1mm (4px per mm)
-                    const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0
-                    const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0
+                    const step = e.shiftKey ? 20 : 4 // 5mm vs 1mm
+                    const dx = key === 'arrowleft' ? -step : key === 'arrowright' ? step : 0
+                    const dy = key === 'arrowup' ? -step : key === 'arrowdown' ? step : 0
                     
                     const newElements = elements.map(el => {
                         if (selectedIds.includes(el.id)) {
@@ -498,15 +587,11 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                         return el
                     })
                     setElements(newElements)
-                    // We only commit to history on discrete steps or we can use a debounced commit
-                    // For simplicity, let's commit on each press if it's not a repeat, but repeat is actually common for fine tuning.
-                    // If we commit on every repeat, the history fills up fast.
                     if (!e.repeat) {
                         commitHistory(newElements)
                     } else {
-                        // If repeating, we'll just update the current state and commit on keyup or similar
-                        // But useEffect doesn't easily track keyup without state. 
-                        // Let's just commit for now to keep it simple and functional.
+                        // For repeated keys, we update state immediately and will commit eventually
+                        // To keep it simple, we commit every time but we could debounce
                         commitHistory(newElements)
                     }
                 }
@@ -514,7 +599,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
         }
         window.addEventListener('keydown', handleKeyDown)
         return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [undo, redo, selectedIds, elements, commitHistory, removeSelectedElements])
+    }, [undo, redo, selectedIds, elements, commitHistory, removeSelectedElements, duplicateSelectedElements])
 
     const handleSave = async () => {
         setIsSaving(true)
@@ -536,7 +621,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
         if (!isPreviewMode) {
             if (!previewData) {
                 const data = await getPreviewProduct()
-                setPreviewData(data)
+                setPreviewData(enrichProductData(data))
             }
         }
         setIsPreviewMode(!isPreviewMode)
@@ -882,23 +967,30 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                         <div className="w-full h-full border-2 border-dashed border-gray-300 flex items-center justify-center bg-gray-50/50 overflow-hidden">
                                             {isPreviewMode ? (
                                                 (() => {
-                                                    // 1. Try to find in generic placeholders
+                                                    // 1. Try to find by name in assets (System Defaults)
+                                                    const systemAsset = assets.find(a => a.name === el.content);
+                                                    if (systemAsset && systemAsset.file_path) {
+                                                        return <img src={systemAsset.file_path} className="max-w-full max-h-full object-contain pointer-events-none" />
+                                                    }
+
+                                                    // 2. Special case for legacy 'logo_empresa' if not found by name
                                                     if (el.content === 'logo_empresa') {
                                                         const logoAsset = assets.find(a => a.type === 'logo' && a.name.toLowerCase().includes('logo'));
-                                                        if (logoAsset) return <img src={logoAsset.file_path} className="max-w-full max-h-full object-contain pointer-events-none" />
+                                                        if (logoAsset && logoAsset.file_path) return <img src={logoAsset.file_path} className="max-w-full max-h-full object-contain pointer-events-none" />
                                                         return <span className="text-gray-400 text-[10px] text-center">[Logo Empresa No Encontrado]</span>
                                                     }
 
-                                                    if (el.content === 'isometrico_placeholder') {
+                                                    // 3. Special case for Isometric (Always dynamic from product)
+                                                    if (el.content === 'Isométrico' || el.content === 'isometrico_placeholder' || el.content === 'Isométrico (Placeholder)') {
                                                         if (previewData?.isometric_path) {
                                                             return <img src={previewData.isometric_path} className="max-w-full max-h-full object-contain pointer-events-none" />
                                                         }
-                                                        return <span className="text-gray-400 text-[10px] text-center">[Isometrico Placeholder]</span>
+                                                        return <span className="text-red-500 text-[10px] font-bold text-center border border-red-200 bg-red-50 p-1 rounded">[FALTA ISOMÉTRICO]</span>
                                                     }
 
-                                                    // 2. Try to find by direct ID or Name in assets
+                                                    // 4. Try to find by direct ID or Name in assets (Fallback)
                                                     const asset = assets.find(a => a.id === el.content || a.name === el.content);
-                                                    if (asset) {
+                                                    if (asset && asset.file_path) {
                                                         return <img src={asset.file_path} className="max-w-full max-h-full object-contain pointer-events-none" />
                                                     }
 
@@ -920,13 +1012,10 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                     {/* Text types */}
                                     {(el.type === 'dynamic_text' || el.type === 'text') && (
                                         <OverflowText
+                                            {...el}
                                             text={el.type === 'dynamic_text' ? `{${el.dataField}}` : (el.content || '')}
-                                            textAlign={el.textAlign}
                                             isPreviewMode={isPreviewMode}
-                                            type={el.type}
                                             previewData={previewData}
-                                            dataField={el.dataField}
-                                            lineHeight={el.lineHeight}
                                         />
                                     )}
                                 </div>
@@ -1005,6 +1094,12 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                         <option value="depth_in">Fondo (in)</option>
                                         <option value="height_in">Alto (in)</option>
                                         <option value="weight_lb">Peso (lb)</option>
+                                        <optgroup label="Iconos Dinámicos">
+                                            <option value="icon_rh">Icono RH</option>
+                                            <option value="icon_edge_2mm">Icono Canto</option>
+                                            <option value="icon_soft_close">Icono Cierre</option>
+                                            <option value="icon_full_extension">Icono Extensión</option>
+                                        </optgroup>
                                     </select>
                                 </div>
                             )}
@@ -1032,18 +1127,37 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                         value={activeEl.content || ''}
                                         onChange={(e) => updateSelectedElements({ content: e.target.value })}
                                     >
-                                        <option value="logo_empresa">Logo Empresa Pordefecto</option>
-                                        <option value="isometrico_placeholder">Isométrico (Placeholder)</option>
-                                        <option value="icon_rh">Icono RH Fijo</option>
-                                        <option value="icon_edge_2mm">Icono Canto 2mm</option>
-                                        <option value="icon_soft_close">Icono Cierre Lento</option>
-                                        <option value="icon_full_extension">Icono Extensión Total</option>
+                                        <option value="Logo Empresa Pordefecto">Logo Empresa Pordefecto</option>
+                                        <option value="Isométrico">Isométrico (Dinámico)</option>
+                                        <option value="Icono RH Fijo">Icono RH Fijo</option>
+                                        <option value="Icono Canto 2mm">Icono Canto 2mm</option>
+                                        <option value="Icono Cierre Lento">Icono Cierre Lento</option>
+                                        <option value="Icono Extensión Total">Icono Extensión Total</option>
 
-                                        {assets.length > 0 && <optgroup label="Assets (Base de Datos)">
-                                            {assets.map(a => (
-                                                <option key={a.id} value={a.id}>{a.name}</option>
-                                            ))}
-                                        </optgroup>}
+                                        {assets.filter(a => ![
+                                            'Logo Empresa Pordefecto',
+                                            'Isométrico',
+                                            'Icono RH Fijo',
+                                            'Icono Canto 2mm',
+                                            'Icono Cierre Lento',
+                                            'Icono Extensión Total'
+                                        ].includes(a.name)).length > 0 && (
+                                            <optgroup label="Assets (Base de Datos)">
+                                                {assets
+                                                    .filter(a => ![
+                                                        'Logo Empresa Pordefecto',
+                                                        'Isométrico',
+                                                        'Icono RH Fijo',
+                                                        'Icono Canto 2mm',
+                                                        'Icono Cierre Lento',
+                                                        'Icono Extensión Total'
+                                                    ].includes(a.name))
+                                                    .map(a => (
+                                                        <option key={a.id} value={a.id}>{a.name}</option>
+                                                    ))
+                                                }
+                                            </optgroup>
+                                        )}
                                     </select>
                                 </div>
                             )}
@@ -1140,6 +1254,20 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                                     <Italic className="h-3 w-3 mr-1" /> Activar
                                                 </Button>
                                             </div>
+                                        </div>
+                                        <div>
+                                            <Label className="text-[11px] mb-1 block">Transformación</Label>
+                                            <select
+                                                className="flex h-8 w-full rounded-md border border-input bg-white px-2 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                value={activeEl.textTransform || 'none'}
+                                                onChange={(e) => updateSelectedElements({ textTransform: e.target.value as any })}
+                                            >
+                                                <option value="none">Normal</option>
+                                                <option value="uppercase">MAYÚSCULAS</option>
+                                                <option value="lowercase">minúsculas</option>
+                                                <option value="capitalize">Tipo Título</option>
+                                                <option value="sentence">Tipo Oración</option>
+                                            </select>
                                         </div>
                                     </div>
                                 </div>

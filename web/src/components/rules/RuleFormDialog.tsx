@@ -22,7 +22,6 @@ import {
 } from '@/components/ui/select'
 import { upsertRuleAction } from '@/app/rules/actions'
 import { toast } from 'sonner'
-import { Checkbox } from '@/components/ui/checkbox'
 
 interface RuleFormDialogProps {
     open: boolean
@@ -40,6 +39,7 @@ interface RuleFormData {
     priority: number
     enabled: boolean
     notes: string
+    target_value: string
 }
 
 // Opciones para el constructor
@@ -69,6 +69,16 @@ const ACTION_OPTIONS = [
     { value: 'prepend_text', label: 'Agregar palabra al inicio del nombre' },
 ]
 
+const PRODUCT_TYPE_OPTIONS = [
+    { value: 'MUEBLE', label: 'Mueble' },
+    { value: 'LAVAMANOS', label: 'Lavamanos' },
+    { value: 'LAVARROPAS', label: 'Lavarropas' },
+    { value: 'MESON', label: 'Mesón' },
+    { value: 'QUARTZSTONE', label: 'Quartzstone' },
+    { value: 'BAÑERA', label: 'Bañera' },
+    { value: 'ACCESORIO', label: 'Accesorio' },
+]
+
 export function RuleFormDialog({ open, onOpenChange, rule }: RuleFormDialogProps) {
     const [loading, setLoading] = useState(false)
     
@@ -90,7 +100,8 @@ export function RuleFormDialog({ open, onOpenChange, rule }: RuleFormDialogProps
         action_payload: '',
         priority: 0,
         enabled: true,
-        notes: ''
+        notes: '',
+        target_value: 'MUEBLE'
     })
 
     useEffect(() => {
@@ -112,6 +123,7 @@ export function RuleFormDialog({ open, onOpenChange, rule }: RuleFormDialogProps
                 action_payload: rule.action_payload || '',
                 priority: rule.priority || 0,
                 enabled: rule.enabled !== undefined ? rule.enabled : true,
+                target_value: rule.target_value || 'MUEBLE',
                 notes: rule.notes || ''
             })
 
@@ -151,6 +163,7 @@ export function RuleFormDialog({ open, onOpenChange, rule }: RuleFormDialogProps
                 action_payload: '',
                 priority: 0,
                 enabled: true,
+                target_value: 'MUEBLE',
                 notes: ''
             })
             setCondField('version_code'); setCondOp('=='); setCondVal('')
@@ -175,8 +188,15 @@ export function RuleFormDialog({ open, onOpenChange, rule }: RuleFormDialogProps
             finalPayload = `${actionTarget}=${actionVal}`
         }
 
+        // Determinar rule_type técnico
+        let technicalRuleType = formData.rule_type
+        if (formData.rule_type === 'naming') {
+            technicalRuleType = actionType === 'set_field' ? 'attribute_modifier' : 'name_component'
+        }
+
         const dataToSave = {
             ...formData,
+            rule_type: technicalRuleType,
             condition_expression: finalExpr,
             action_type: actionType,
             action_payload: finalPayload
@@ -236,6 +256,20 @@ export function RuleFormDialog({ open, onOpenChange, rule }: RuleFormDialogProps
                                 </div>
                             </div>
                         </div>
+
+                        {formData.rule_type === 'naming' && (
+                            <div className="space-y-2 py-2">
+                                <Label className="text-slate-700 font-medium">Aplica para Tipo de Producto:</Label>
+                                <Select value={formData.target_value} onValueChange={(v: string | null) => setFormData({...formData, target_value: v || 'MUEBLE'})}>
+                                    <SelectTrigger className="h-11 bg-white border-slate-200 shadow-sm">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {PRODUCT_TYPE_OPTIONS.map(opt => <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>)}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        )}
 
                         {/* Bloque SI (Condición) */}
                         <div className="space-y-4 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">

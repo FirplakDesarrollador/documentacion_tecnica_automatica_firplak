@@ -52,14 +52,15 @@ export default async function ProductsPage({
     // Usamos familia_code directamente de products para evitar el mismatch
     // (familias.code = 'BAN05' pero products.familia_code = 'VBAN05')
     const familiaRecords = await dbQuery(
-        `SELECT DISTINCT p.familia_code, f.name
-         FROM public.products p
-         LEFT JOIN public.familias f ON f.code = CASE 
-            WHEN p.familia_code ~ '^[VCP].*' THEN SUBSTRING(p.familia_code FROM 2)
-            ELSE p.familia_code 
-         END
-         WHERE p.familia_code IS NOT NULL
-         ORDER BY p.familia_code ASC`
+        `SELECT familia_code, MAX(name) as name FROM (
+            SELECT DISTINCT p.familia_code, f.name
+            FROM public.products p
+            LEFT JOIN public.familias f ON f.code = CASE 
+                WHEN p.familia_code ~ '^[VCP].*' THEN SUBSTRING(p.familia_code FROM 2)
+                ELSE p.familia_code 
+            END
+            WHERE p.familia_code IS NOT NULL
+         ) sub GROUP BY familia_code ORDER BY familia_code ASC`
     ) || []
     const families = familiaRecords.map((fam: any) => ({
         value: fam.familia_code,
@@ -71,7 +72,12 @@ export default async function ProductsPage({
         const fFilter = f.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(',')
         const mFilter = m.length > 0 ? `AND commercial_measure IN (${m.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})` : ''
         
-        const refRecords = await dbQuery(`SELECT DISTINCT ref_code, furniture_name FROM public.products WHERE ref_code IS NOT NULL AND familia_code IN (${fFilter}) ${mFilter}`) || []
+        const refRecords = await dbQuery(`
+            SELECT ref_code, MAX(furniture_name) as furniture_name 
+            FROM public.products 
+            WHERE ref_code IS NOT NULL AND familia_code IN (${fFilter}) ${mFilter}
+            GROUP BY ref_code
+        `) || []
         references = refRecords.map((rec: any) => ({ value: rec.ref_code as string, label: `${rec.ref_code} - ${rec.furniture_name || ''}` })).sort((a: any, b: any) => a.value.localeCompare(b.value))
     }
 
@@ -80,7 +86,12 @@ export default async function ProductsPage({
         const fFilter = f.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(',')
         const rFilter = r.length > 0 ? `AND ref_code IN (${r.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})` : ''
 
-        const measureRecords = await dbQuery(`SELECT DISTINCT commercial_measure FROM public.products WHERE commercial_measure IS NOT NULL AND commercial_measure != '' AND familia_code IN (${fFilter}) ${rFilter}`) || []
+        const measureRecords = await dbQuery(`
+            SELECT DISTINCT commercial_measure 
+            FROM public.products 
+            WHERE commercial_measure IS NOT NULL AND commercial_measure != '' 
+            AND familia_code IN (${fFilter}) ${rFilter}
+        `) || []
         measures = measureRecords.map((rec: any) => rec.commercial_measure as string).sort()
     }
 

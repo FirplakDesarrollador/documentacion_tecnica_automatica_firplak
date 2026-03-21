@@ -7,6 +7,7 @@ export async function POST(request: Request) {
     try {
         const data = await request.formData()
         const file: File | null = data.get('file') as unknown as File
+        const assetId = data.get('assetId') as string | null
 
         if (!file) {
             return NextResponse.json({ success: false, error: 'No file uploaded' }, { status: 400 })
@@ -45,12 +46,24 @@ export async function POST(request: Request) {
             filePath = urlData.publicUrl
         }
 
-        // Create DB record in Supabase
-        const rows = await dbQuery(`
-            INSERT INTO public.assets (name, type, file_path)
-            VALUES ('${file.name.replace(`.${ext}`, '').replace(/'/g, "''")}', '${type}', '${filePath.replace(/'/g, "''")}')
-            RETURNING id, name, type, file_path, created_at
-        `)
+        let rows: any[]
+        if (assetId) {
+            // Update existing record
+            rows = await dbQuery(`
+                UPDATE public.assets
+                SET file_path = '${filePath.replace(/'/g, "''")}',
+                    updated_at = now()
+                WHERE id = '${assetId}'
+                RETURNING id, name, type, file_path, created_at
+            `)
+        } else {
+            // Create new DB record in Supabase
+            rows = await dbQuery(`
+                INSERT INTO public.assets (name, type, file_path)
+                VALUES ('${file.name.replace(`.${ext}`, '').replace(/'/g, "''")}', '${type}', '${filePath.replace(/'/g, "''")}')
+                RETURNING id, name, type, file_path, created_at
+            `)
+        }
 
         return NextResponse.json({ success: true, asset: rows?.[0] })
     } catch (error: any) {

@@ -134,13 +134,11 @@ export function getMissingFields(product: Record<string, any>, requirements: any
         
         // 2. Validar marcadores de imagen especiales (isiométrico)
         if (req.type === 'image') {
-            if (req.content === 'isometrico_placeholder' || req.dataField === 'isometric_path') {
+            if (req.content === 'Isométrico' || req.content === 'isometrico_placeholder' || req.dataField === 'isometric_path') {
                 if (!product.isometric_path) {
                     missing.push('isometric_path')
                 }
             }
-            // Si es un UUID de asset, asumimos que existe si está en la plantilla, 
-            // pero podríamos validar si el usuario seleccionó uno.
         }
     }
 

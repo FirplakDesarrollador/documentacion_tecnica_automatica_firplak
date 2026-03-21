@@ -47,7 +47,10 @@ export default async function GeneratePage({
     const familiaRecords = await dbQuery(
         `SELECT DISTINCT p.familia_code, f.name
          FROM public.products p
-         LEFT JOIN public.familias f ON f.code = LTRIM(p.familia_code, 'V')
+         LEFT JOIN public.familias f ON f.code = CASE 
+            WHEN p.familia_code ~ '^[VCP].*' THEN SUBSTRING(p.familia_code FROM 2)
+            ELSE p.familia_code 
+         END
          WHERE p.familia_code IS NOT NULL
          ORDER BY p.familia_code ASC`
     ) || []

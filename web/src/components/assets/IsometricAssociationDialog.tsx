@@ -17,6 +17,7 @@ import { Box, Image as ImageIcon, Loader2, CheckCircle2 } from "lucide-react"
 import { 
     getFamiliesAction, 
     getReferencesByFamilyAction, 
+    getMeasuresByFamilyAndRefAction,
     getAssetsByTypeAction,
     associateIsometricAction 
 } from "@/app/assets/actions"
@@ -36,11 +37,13 @@ export function IsometricAssociationDialog() {
     // Data options
     const [families, setFamilies] = React.useState<Option[]>([])
     const [references, setReferences] = React.useState<Option[]>([])
+    const [measures, setMeasures] = React.useState<Option[]>([])
     const [assets, setAssets] = React.useState<any[]>([])
 
     // Selection state
     const [selectedFamilies, setSelectedFamilies] = React.useState<string[]>([])
     const [selectedReferences, setSelectedReferences] = React.useState<string[]>([])
+    const [selectedMeasures, setSelectedMeasures] = React.useState<string[]>([])
     const [selectedAssetId, setSelectedAssetId] = React.useState<string>("")
 
     const loadInitialData = async () => {
@@ -66,8 +69,10 @@ export function IsometricAssociationDialog() {
             // Reset state on close
             setSelectedFamilies([])
             setSelectedReferences([])
+            setSelectedMeasures([])
             setSelectedAssetId("")
             setReferences([])
+            setMeasures([])
         }
     }, [open])
 
@@ -85,6 +90,20 @@ export function IsometricAssociationDialog() {
         loadRefs()
     }, [selectedFamilies])
 
+    // Load measures when families or references change
+    React.useEffect(() => {
+        const loadMeasures = async () => {
+            if (selectedFamilies.length > 0 || selectedReferences.length > 0) {
+                const meas = await getMeasuresByFamilyAndRefAction(selectedFamilies, selectedReferences)
+                setMeasures(meas)
+            } else {
+                setMeasures([])
+                setSelectedMeasures([])
+            }
+        }
+        loadMeasures()
+    }, [selectedFamilies, selectedReferences])
+
     const handleSubmit = async () => {
         if (!selectedAssetId) {
             toast.error("Por favor selecciona un isométrico")
@@ -100,7 +119,8 @@ export function IsometricAssociationDialog() {
             await associateIsometricAction({
                 assetId: selectedAssetId,
                 familyCodes: selectedFamilies,
-                referenceCodes: selectedReferences
+                referenceCodes: selectedReferences,
+                measureCodes: selectedMeasures
             })
             toast.success("Isométrico asociado correctamente")
             setOpen(false)
@@ -191,6 +211,18 @@ export function IsometricAssociationDialog() {
                                     placeholder="Seleccionar Referencias"
                                     className="h-11"
                                     emptyMessage="Selecciona familias primero."
+                                />
+                            </div>
+
+                            <div className={cn("space-y-2 transition-opacity", (selectedFamilies.length === 0 && selectedReferences.length === 0) && "opacity-50 pointer-events-none")}>
+                                <Label className="text-slate-700 font-medium">Medida(s) Comercial(es) <span className="text-[10px] text-slate-500 font-normal">(Opcional)</span></Label>
+                                <MultiSelectSearchField 
+                                    options={measures}
+                                    values={selectedMeasures}
+                                    onChange={setSelectedMeasures}
+                                    placeholder="Seleccionar Medidas (Ej: 79X48)"
+                                    className="h-11"
+                                    emptyMessage="Selecciona familias o referencias primero."
                                 />
                             </div>
                         </div>

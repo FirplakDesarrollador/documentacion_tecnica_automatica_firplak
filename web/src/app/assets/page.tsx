@@ -12,10 +12,21 @@ import { Search, Image as ImageIcon } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { UploadAssetButton } from '@/components/assets/UploadAssetButton'
+import { EditAssetDialog } from '@/components/assets/EditAssetDialog'
+import { DeleteAssetDialog } from '@/components/assets/DeleteAssetDialog'
 import { IsometricAssociationDialog } from '@/components/assets/IsometricAssociationDialog'
 
 export default async function AssetsPage() {
     const assets = await dbQuery(`SELECT * FROM public.assets ORDER BY created_at DESC`) || []
+
+    const defaultNames = [
+        'Logo Empresa Pordefecto',
+        'Isométrico (Placeholder)',
+        'Icono RH Fijo',
+        'Icono Canto 2mm',
+        'Icono Cierre Lento',
+        'Icono Extensión Total'
+    ]
 
     return (
         <div className="flex flex-col gap-8">
@@ -50,34 +61,62 @@ export default async function AssetsPage() {
                             <TableHead>Tipo</TableHead>
                             <TableHead>Nombre</TableHead>
                             <TableHead>Ruta</TableHead>
+                            <TableHead className="w-[140px] text-right">Acciones</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
                         {assets.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={4} className="h-24 text-center">
-                                    No se han subido recursos aún.
+                                <TableCell colSpan={5} className="h-24 text-center">
+                                    No se han subido Recursos aún.
                                 </TableCell>
                             </TableRow>
                         ) : (
-                            assets.map((asset: any) => (
-                                <TableRow key={asset.id}>
-                                    <TableCell>
-                                        <div className="w-10 h-10 rounded bg-muted flex items-center justify-center">
-                                            <ImageIcon className="h-5 w-5 text-muted-foreground" />
-                                        </div>
-                                    </TableCell>
-                                    <TableCell>
-                                        <Badge variant="outline" className="capitalize">
-                                            {asset.type}
-                                        </Badge>
-                                    </TableCell>
-                                    <TableCell className="font-medium">{asset.name}</TableCell>
-                                    <TableCell className="text-muted-foreground text-sm">
-                                        {asset.file_path}
-                                    </TableCell>
-                                </TableRow>
-                            ))
+                            assets.map((asset: any) => {
+                                const isDefault = defaultNames.includes(asset.name)
+                                return (
+                                    <TableRow key={asset.id}>
+                                        <TableCell>
+                                            <div className="w-10 h-10 rounded bg-muted flex items-center justify-center overflow-hidden border">
+                                                {asset.file_path ? (
+                                                    <img 
+                                                        src={asset.file_path} 
+                                                        alt={asset.name} 
+                                                        className="max-w-full max-h-full object-contain p-1"
+                                                    />
+                                                ) : (
+                                                    <ImageIcon className="h-5 w-5 text-muted-foreground" />
+                                                )}
+                                            </div>
+                                        </TableCell>
+                                        <TableCell>
+                                            <Badge variant="outline" className="capitalize">
+                                                {asset.type}
+                                            </Badge>
+                                        </TableCell>
+                                        <TableCell className="font-medium text-slate-800">
+                                            {asset.name}
+                                            {isDefault && <Badge variant="secondary" className="ml-2 text-[8px] h-4">Sistema</Badge>}
+                                        </TableCell>
+                                        <TableCell className="text-muted-foreground text-xs truncate max-w-[200px]">
+                                            {asset.file_path || 'Sin archivo'}
+                                        </TableCell>
+                                        <TableCell className="text-right flex items-center justify-end gap-1">
+                                            <EditAssetDialog 
+                                                assetId={asset.id} 
+                                                assetName={asset.name} 
+                                                isDefault={isDefault}
+                                            />
+                                            {!isDefault && (
+                                                <DeleteAssetDialog 
+                                                    assetId={asset.id} 
+                                                    assetName={asset.name} 
+                                                />
+                                            )}
+                                        </TableCell>
+                                    </TableRow>
+                                )
+                            })
                         )}
                     </TableBody>
                 </Table>

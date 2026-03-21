@@ -1,9 +1,20 @@
 'use server'
 
 import { dbQuery } from '@/lib/supabase'
-import { redirect } from 'next/navigation'
+import { Product } from '@prisma/client'
+import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
+import { translateSpanishToEnglish } from '@/lib/engine/translator'
 import { parseProductCode } from '@/lib/engine/codeParser'
+import { redirect } from 'next/navigation'
 import { GoogleGenAI } from '@google/genai'
+
+export async function parseProductCodeAction(code: string, sapDesc: string, rhFlag: boolean) {
+    return await parseProductCode(code, sapDesc, rhFlag)
+}
+
+export async function translateAction(nameEs: string, ctx?: any) {
+    return await translateSpanishToEnglish(nameEs, ctx)
+}
 
 export async function checkFamilyExists(code: string) {
     if (!code) return true
@@ -47,9 +58,34 @@ export async function createProductAction(data: any) {
         return `'${String(v).replace(/'/g, "''")}'`
     }
 
+    // Conversions
+    const w_in = data.width_cm ? (parseFloat(data.width_cm) / 2.54).toFixed(2) : 'NULL'
+    const d_in = data.depth_cm ? (parseFloat(data.depth_cm) / 2.54).toFixed(2) : 'NULL'
+    const h_in = data.height_cm ? (parseFloat(data.height_cm) / 2.54).toFixed(2) : 'NULL'
+    const w_lb = data.weight_kg ? (parseFloat(data.weight_kg) * 2.20462).toFixed(2) : 'NULL'
+
     await dbQuery(`
-        INSERT INTO public.products (code, sap_description, product_type, furniture_name, color_code, rh_flag, assembled_flag, edge_2mm_flag, line, use_destination, zone_home, commercial_measure, accessory_text, designation, width_cm, depth_cm, height_cm, weight_kg, stacking_max, familia_code, ref_code, version_code, sku_base, sku_servicios_ref)
-        VALUES (${esc(data.code)}, ${esc(data.sap_description)}, ${esc(data.product_type || parsed.product_type)}, ${esc(data.furniture_name)}, ${esc(data.color_code || parsed.color_code)}, ${data.rh_flag || parsed.rh_flag ? 'true' : 'false'}, ${data.assembled_flag || parsed.assembled_flag ? 'true' : 'false'}, ${data.edge_2mm_flag ? 'true' : 'false'}, ${esc(data.line)}, ${esc(data.use_destination || parsed.use_destination)}, ${esc(data.zone_home || parsed.zone_home)}, ${esc(data.commercial_measure)}, ${esc(data.accessory_text)}, ${esc(data.designation)}, ${data.width_cm ? parseFloat(data.width_cm) : 'NULL'}, ${data.depth_cm ? parseFloat(data.depth_cm) : 'NULL'}, ${data.height_cm ? parseFloat(data.height_cm) : 'NULL'}, ${data.weight_kg ? parseFloat(data.weight_kg) : 'NULL'}, ${data.stacking_max ? parseInt(data.stacking_max) : 'NULL'}, ${esc(parsed.familia_code)}, ${esc(parsed.ref_code)}, ${esc(parsed.version_code)}, ${esc(parsed.sku_base)}, ${esc(data.code)})
+        INSERT INTO public.products (
+            code, sap_description, product_type, furniture_name, color_code, rh_flag, 
+            assembled_flag, edge_2mm_flag, line, use_destination, zone_home, 
+            commercial_measure, accessory_text, designation, width_cm, depth_cm, height_cm, weight_kg, 
+            width_in, depth_in, height_in, weight_lb,
+            stacking_max, familia_code, ref_code, version_code, sku_base, sku_servicios_ref,
+            final_name_es, final_name_en
+        )
+        VALUES (
+            ${esc(data.code)}, ${esc(data.sap_description)}, ${esc(data.product_type || parsed.product_type)}, 
+            ${esc(data.furniture_name)}, ${esc(data.color_code || parsed.color_code)}, ${data.rh_flag || parsed.rh_flag ? 'true' : 'false'}, 
+            ${data.assembled_flag || parsed.assembled_flag ? 'true' : 'false'}, ${data.edge_2mm_flag ? 'true' : 'false'}, 
+            ${esc(data.line)}, ${esc(data.use_destination || parsed.use_destination)}, ${esc(data.zone_home || parsed.zone_home)}, 
+            ${esc(data.commercial_measure)}, ${esc(data.accessory_text)}, ${esc(data.designation)}, 
+            ${data.width_cm ? parseFloat(data.width_cm) : 'NULL'}, ${data.depth_cm ? parseFloat(data.depth_cm) : 'NULL'}, 
+            ${data.height_cm ? parseFloat(data.height_cm) : 'NULL'}, ${data.weight_kg ? parseFloat(data.weight_kg) : 'NULL'},
+            ${w_in}, ${d_in}, ${h_in}, ${w_lb},
+            ${data.stacking_max ? parseInt(data.stacking_max) : 'NULL'}, ${esc(parsed.familia_code)}, ${esc(parsed.ref_code)}, 
+            ${esc(parsed.version_code)}, ${esc(parsed.sku_base)}, ${esc(data.code)},
+            ${esc(data.final_name_es)}, ${esc(data.final_name_en)}
+        )
         ON CONFLICT (code) DO NOTHING
     `)
 
@@ -67,6 +103,12 @@ export async function updateProductAction(id: string, data: any) {
         return `'${String(v).replace(/'/g, "''")}'`
     }
 
+    // Conversions
+    const w_in = data.width_cm ? (parseFloat(data.width_cm) / 2.54).toFixed(2) : 'NULL'
+    const d_in = data.depth_cm ? (parseFloat(data.depth_cm) / 2.54).toFixed(2) : 'NULL'
+    const h_in = data.height_cm ? (parseFloat(data.height_cm) / 2.54).toFixed(2) : 'NULL'
+    const w_lb = data.weight_kg ? (parseFloat(data.weight_kg) * 2.20462).toFixed(2) : 'NULL'
+
     await dbQuery(`
         UPDATE public.products SET
             code=${esc(data.code)}, sap_description=${esc(data.sap_description)}, product_type=${esc(data.product_type)},
@@ -75,8 +117,13 @@ export async function updateProductAction(id: string, data: any) {
             edge_2mm_flag=${data.edge_2mm_flag ? 'true' : 'false'}, line=${esc(data.line)},
             use_destination=${esc(data.use_destination)}, zone_home=${esc(data.zone_home)}, commercial_measure=${esc(data.commercial_measure)},
             accessory_text=${esc(data.accessory_text)}, designation=${esc(data.designation)},
+            width_cm=${data.width_cm ? parseFloat(data.width_cm) : 'NULL'}, depth_cm=${data.depth_cm ? parseFloat(data.depth_cm) : 'NULL'}, 
+            height_cm=${data.height_cm ? parseFloat(data.height_cm) : 'NULL'}, weight_kg=${data.weight_kg ? parseFloat(data.weight_kg) : 'NULL'},
+            width_in=${w_in}, depth_in=${d_in}, height_in=${h_in}, weight_lb=${w_lb},
             familia_code=${esc(parsed.familia_code)}, ref_code=${esc(parsed.ref_code)},
-            version_code=${esc(parsed.version_code)}, sku_base=${esc(parsed.sku_base)}, updated_at=now()
+            version_code=${esc(parsed.version_code)}, sku_base=${esc(parsed.sku_base)},
+            final_name_es=${esc(data.final_name_es)}, final_name_en=${esc(data.final_name_en)},
+            updated_at=now()
         WHERE id='${id}'
     `)
 
@@ -94,6 +141,7 @@ export async function massUpdateProducts(ids: string[], updateData: any) {
     if (updateData.accessory_text !== undefined) setClauses.push(`accessory_text='${String(updateData.accessory_text).replace(/'/g, "''")}'`)
     if (updateData.validation_status !== undefined) setClauses.push(`validation_status='${updateData.validation_status}'`)
     if (updateData.zone_home !== undefined) setClauses.push(`zone_home='${String(updateData.zone_home).replace(/'/g, "''")}'`)
+    if (updateData.designation !== undefined) setClauses.push(`designation='${String(updateData.designation).replace(/'/g, "''")}'`)
 
     if (setClauses.length === 0) return
 
@@ -175,8 +223,6 @@ function validateEnglishName(nameStr: string, originalProduct: any): string | nu
 async function sleep(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
-
-import { translateSpanishToEnglish } from '@/lib/engine/translator'
 
 export async function translateProductsAction(ids?: string[], mode: 'missing' | 'repair' | 'all' = 'missing') {
     try {
@@ -264,4 +310,58 @@ export async function translateProductsAction(ids?: string[], mode: 'missing' | 
 
 export async function translateMissingProducts() {
     return translateProductsAction(undefined, 'missing')
+}
+
+export async function getUniquePropertiesAction() {
+    const lines = await dbQuery(`
+        SELECT DISTINCT line 
+        FROM public.products 
+        WHERE line IS NOT NULL 
+          AND line != '' 
+          AND line NOT IN (SELECT name_color_sap FROM public.colors)
+        ORDER BY line ASC
+    `) || []
+    
+    const designations = await dbQuery(`SELECT DISTINCT designation FROM public.products WHERE designation IS NOT NULL AND designation != '' ORDER BY designation ASC`) || []
+    const productTypes = await dbQuery(`SELECT DISTINCT product_type FROM public.products WHERE product_type IS NOT NULL AND product_type != '' ORDER BY product_type ASC`) || []
+    const useDestinations = await dbQuery(`SELECT DISTINCT use_destination FROM public.products WHERE use_destination IS NOT NULL AND use_destination != '' ORDER BY use_destination ASC`) || []
+    
+    // Nuevas variables unicas
+    const furnitureNames = await dbQuery(`SELECT DISTINCT furniture_name FROM public.products WHERE furniture_name IS NOT NULL AND furniture_name != '' ORDER BY furniture_name ASC`) || []
+    const commercialMeasures = await dbQuery(`SELECT DISTINCT commercial_measure FROM public.products WHERE commercial_measure IS NOT NULL AND commercial_measure != '' ORDER BY commercial_measure ASC`) || []
+    const accessoryTexts = await dbQuery(`SELECT DISTINCT accessory_text FROM public.products WHERE accessory_text IS NOT NULL AND accessory_text != '' ORDER BY accessory_text ASC`) || []
+    const colors = await dbQuery(`SELECT code_4dig as code_color, name_color_sap FROM public.colors ORDER BY code_4dig ASC`) || []
+
+    return {
+        lines: lines.map((r: any) => r.line),
+        designations: designations.map((r: any) => r.designation),
+        productTypes: productTypes.map((r: any) => r.product_type),
+        useDestinations: useDestinations.map((r: any) => r.use_destination),
+        furnitureNames: furnitureNames.map((r: any) => r.furniture_name),
+        commercialMeasures: commercialMeasures.map((r: any) => r.commercial_measure),
+        accessoryTexts: accessoryTexts.map((r: any) => r.accessory_text),
+        colors: colors.map((r: any) => ({ code: r.code_color, name: r.name_color_sap }))
+    }
+}
+
+export async function checkProductExistsAction(code?: string, sapDesc?: string) {
+    if (!code && !sapDesc) return null
+
+    let codeSafe = code ? String(code).trim().replace(/'/g, "''") : ""
+    let sapDescSafe = sapDesc ? String(sapDesc).trim().replace(/'/g, "''") : ""
+
+    let conditions = []
+    if (codeSafe) conditions.push(`code = '${codeSafe}'`)
+    if (sapDescSafe) conditions.push(`sap_description = '${sapDescSafe}'`)
+
+    if (conditions.length === 0) return null
+
+    const res = await dbQuery(`
+        SELECT id, code, sap_description 
+        FROM public.products 
+        WHERE ${conditions.join(' OR ')}
+        LIMIT 1
+    `)
+
+    return res && res.length > 0 ? res[0] : null
 }

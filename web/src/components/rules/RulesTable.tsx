@@ -12,10 +12,16 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { PlusCircle, Edit2, Trash2 } from 'lucide-react'
+import { 
+    Select, 
+    SelectContent, 
+    SelectItem, 
+    SelectTrigger, 
+    SelectValue 
+} from '@/components/ui/select'
 import { RuleFormDialog } from './RuleFormDialog'
 import { deleteRuleAction } from '@/app/rules/actions'
 import { toast } from 'sonner'
-
 import { ruleToSpanishDescription } from '@/lib/engine/ruleTranslator'
 
 interface RulesTableProps {
@@ -25,6 +31,9 @@ interface RulesTableProps {
 export function RulesTable({ initialRules }: RulesTableProps) {
     const [isDialogOpen, setIsDialogOpen] = useState(false)
     const [selectedRule, setSelectedRule] = useState<any>(null)
+
+    // Ocultar las reglas de nomenclatura (están en NomenclaturesSection)
+    const filteredRules = initialRules.filter((r: any) => r.rule_type !== 'name_component')
 
     const handleAdd = () => {
         setSelectedRule(null)
@@ -50,15 +59,15 @@ export function RulesTable({ initialRules }: RulesTableProps) {
         <div className="flex flex-col gap-8">
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight">Motor de Reglas</h1>
-                    <p className="text-muted-foreground">
-                        Configura las normas de negocio en lenguaje natural para automatizar procesos.
+                    <h2 className="text-2xl font-bold tracking-tight text-slate-800">Reglas Avanzadas</h2>
+                    <p className="text-muted-foreground text-sm">
+                        Configura el motor lógico subyacente: plantillas IA, recursos, modificadores y alertas visuales.
                     </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
                     <Button onClick={handleAdd}>
                         <PlusCircle className="mr-2 h-4 w-4" />
-                        Agregar Regla
+                        Agregar Regla Avanzada
                     </Button>
                 </div>
             </div>
@@ -75,14 +84,14 @@ export function RulesTable({ initialRules }: RulesTableProps) {
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {initialRules.length === 0 ? (
+                        {filteredRules.length === 0 ? (
                             <TableRow>
                                 <TableCell colSpan={5} className="h-24 text-center">
-                                    No hay reglas definidas.
+                                    No hay reglas definidas para este tipo.
                                 </TableCell>
                             </TableRow>
                         ) : (
-                            initialRules.map((rule: any) => (
+                            filteredRules.map((rule: any) => (
                                 <TableRow key={rule.id} className="hover:bg-slate-50/50 transition-colors">
                                     <TableCell className="font-medium whitespace-nowrap">
                                         <Badge variant="outline" className={

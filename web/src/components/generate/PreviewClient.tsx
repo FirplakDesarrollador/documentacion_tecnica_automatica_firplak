@@ -9,6 +9,7 @@ import { TemplatePicker, type TemplateOption } from '@/components/generate/Templ
 import { ValidationWarnings, getMissingFields, getTemplateRequiredFields } from '@/components/generate/ValidationWarnings'
 import { resolveAssetsAction } from '@/app/generate/actions'
 import { generateExportHtml, resolveTemplateAssets } from '@/lib/export/exportUtils'
+import { enrichProductData } from '@/lib/engine/productUtils'
 
 const MM_TO_PX = 3.7795
 
@@ -23,7 +24,8 @@ interface PreviewClientProps {
     }
 }
 
-export function PreviewClient({ product, templates, initialTemplateId, engineResult }: PreviewClientProps) {
+export function PreviewClient({ product: rawProduct, templates, initialTemplateId, engineResult }: PreviewClientProps) {
+    const product = useMemo(() => enrichProductData(rawProduct), [rawProduct])
     const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
         initialTemplateId ?? templates[0]?.id ?? null
     )
@@ -62,6 +64,20 @@ export function PreviewClient({ product, templates, initialTemplateId, engineRes
         return text.replace(/{([^}]+)}/g, (_: string, field: string) => {
             if (field === 'final_name_es') return engineResult.finalNameEs || product['final_name_es'] || ''
             if (field === 'color') return product.color_name || product.color_code || ''
+            
+            if (['icon_rh', 'icon_edge_2mm', 'icon_soft_close', 'icon_full_extension'].includes(field)) {
+                const isTrue = product[field] === true || product[field] === 'true'
+                if (isTrue) {
+                    const sysAssetKey = `sys_${field}`
+                    if (assetMap[sysAssetKey]) {
+                        const baseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+                        const src = assetMap[sysAssetKey].startsWith('http') ? assetMap[sysAssetKey] : `${baseUrl}/storage/v1/object/public/${assetMap[sysAssetKey]}`
+                        return `<img src="${src}" style="height: 1.2em; width: auto; vertical-align: middle; display: inline-block; margin: 0 0.1em;" />`
+                    }
+                }
+                return ''
+            }
+
             const val = product[field]
             return (val === null || val === undefined) ? '' : String(val)
         })
@@ -115,15 +131,30 @@ export function PreviewClient({ product, templates, initialTemplateId, engineRes
                 .map(el => el.content)
             
             const assetMap = await resolveAssetsAction(assetIds)
-            const hydrated = await resolveTemplateAssets(elements, product, assetMap)
+            const enrichedProduct = enrichProductData(product)
+            const hydrated = await resolveTemplateAssets(elements, enrichedProduct, assetMap)
 
             // 2. Reemplazar variables
             hydrated.forEach((el: any) => {
                 if (el.type === 'text' || el.type === 'dynamic_text') {
                     const rawContent = el.type === 'dynamic_text' ? `{${el.dataField}}` : (el.content || '')
                     el.content = rawContent.replace(/{([^}]+)}/g, (_: string, field: string) => {
-                        if (field === 'color') return product.color_name || product.color_code || ''
-                        const val = product[field]
+                        if (field === 'color') return enrichedProduct.color_name || enrichedProduct.color_code || ''
+                        
+                        if (['icon_rh', 'icon_edge_2mm', 'icon_soft_close', 'icon_full_extension'].includes(field)) {
+                            const isTrue = enrichedProduct[field] === true || enrichedProduct[field] === 'true'
+                            if (isTrue) {
+                                const sysAssetKey = `sys_${field}`
+                                if (assetMap[sysAssetKey]) {
+                                    const baseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+                                    const src = assetMap[sysAssetKey].startsWith('http') ? assetMap[sysAssetKey] : `${baseUrl}/storage/v1/object/public/${assetMap[sysAssetKey]}`
+                                    return `<img src="${src}" style="height: 1.2em; width: auto; vertical-align: middle; display: inline-block; margin: 0 0.1em;" />`
+                                }
+                            }
+                            return ''
+                        }
+
+                        const val = enrichedProduct[field]
                         return (val === null || val === undefined) ? '' : String(val)
                     })
                 }
@@ -132,7 +163,7 @@ export function PreviewClient({ product, templates, initialTemplateId, engineRes
             const widthPx = Math.round((selectedTemplate.width_mm || 200) * MM_TO_PX)
             const heightPx = Math.round((selectedTemplate.height_mm || 100) * MM_TO_PX)
 
-            const html = generateExportHtml(hydrated, product, widthPx, heightPx)
+            const html = generateExportHtml(hydrated, enrichedProduct, widthPx, heightPx)
 
             const response = await fetch('/api/export', {
                 method: 'POST',
@@ -241,7 +272,9 @@ export function PreviewClient({ product, templates, initialTemplateId, engineRes
                                             let src = el.content || ''
                                             if (assetMap[src]) src = assetMap[src]
                                             else if (src === 'logo_empresa' && assetMap['logo_empresa']) src = assetMap['logo_empresa']
-                                            else if (src === 'isometrico_placeholder') src = product.isometric_path || ''
+                                            else if (src === 'isometrico_placeholder' || src === 'Isométrico' || src === 'Isométrico (Placeholder)') {
+                                                src = product.isometric_path || ''
+                                            }
                                             else if (el.dataField === 'isometric_path') src = product.isometric_path || ''
 
                                             if (src && (src.startsWith('http') || src.startsWith('/storage'))) {
@@ -343,12 +376,12 @@ export function PreviewClient({ product, templates, initialTemplateId, engineRes
                             </div>
 
                             <Button
-                                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
+                                className={`w-full ${missingFields.length > 0 ? 'bg-slate-400 hover:bg-slate-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'} text-white`}
                                 onClick={handleExport}
-                                disabled={isExporting}
+                                disabled={isExporting || missingFields.length > 0}
                             >
                                 {isExporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
-                                Descargar {exportFormat.toUpperCase()}
+                                {missingFields.length > 0 ? 'Faltan datos requeridos (ej. Isométrico)' : `Descargar ${exportFormat.toUpperCase()}`}
                             </Button>
                         </div>
                     )}

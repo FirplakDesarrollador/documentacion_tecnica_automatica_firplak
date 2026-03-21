@@ -74,7 +74,18 @@ export function evaluateProductRules(product: Product, rules: Rule[]): RuleEngin
         transformedProduct: { ...product } 
     }
 
-    const sortedRules = [...rules].filter(r => r.enabled).sort((a, b) => a.priority - b.priority)
+    const sortedRules = [...rules]
+        .filter(r => r.enabled)
+        .filter((r: any) => {
+            // Filter by product type if the rule is specific to one
+            if (r.target_entity && r.target_entity !== 'product' && r.rule_type === 'name_component') {
+                const requiredType = r.target_entity.trim().toUpperCase()
+                const productType = String(result.transformedProduct.product_type || '').trim().toUpperCase()
+                return requiredType === productType
+            }
+            return true
+        })
+        .sort((a, b) => a.priority - b.priority)
 
     // STAGE 1: Attribute Modifiers (Prioritize Version Logic, etc.)
     for (const rule of sortedRules) {

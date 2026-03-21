@@ -25,19 +25,18 @@ export async function resolveTemplateAssets(elements: any[], product: any, asset
         if (el.type === 'image') {
             let finalSrc = el.content || ''
             
-            // 1. Si es un UUID o marcador que está en el mapa
+            // 1. Check if it's a UUID or a direct Name in the assetMap
             if (assetMap[finalSrc]) {
                 finalSrc = assetMap[finalSrc]
             } 
-            // 2. Si es el marcador especial de logo y no se resolvió arriba (fallback)
-            else if (finalSrc === 'logo_empresa' && assetMap['logo_empresa']) {
-                finalSrc = assetMap['logo_empresa']
+            // 2. Fallbacks for system defaults
+            else if (finalSrc === 'logo_empresa' && assetMap['Logo Empresa Pordefecto']) {
+                finalSrc = assetMap['Logo Empresa Pordefecto']
             }
-            // 3. Si es el placeholder del isométrico
-            else if (finalSrc === 'isometrico_placeholder') {
+            else if (finalSrc === 'isometrico_placeholder' || finalSrc === 'Isométrico' || finalSrc === 'Isométrico (Placeholder)') {
                 finalSrc = product.isometric_path || ''
             }
-            // 4. Si es un dataField (como isometric_path directamente)
+            // 3. Fallback for dataField if specified
             else if (el.dataField === 'isometric_path') {
                 finalSrc = product.isometric_path || ''
             }

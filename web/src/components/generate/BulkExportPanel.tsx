@@ -11,6 +11,7 @@ import type { TemplateOption } from './TemplatePicker'
 import type { GenerateProduct } from './GenerateProductTable'
 import { resolveAssetsAction } from '@/app/generate/actions'
 import { generateExportHtml, resolveTemplateAssets } from '@/lib/export/exportUtils'
+import { enrichProductData } from '@/lib/engine/productUtils'
 
 type ExportStatus = 'pending' | 'exporting' | 'done' | 'error'
 
@@ -45,15 +46,16 @@ async function exportOneProduct(
     const assetMap = await resolveAssetsAction(assetIds)
 
     // 3. Hidratar y resolver elementos usando utilidad centralizada
-    const hydrated = await resolveTemplateAssets(elements, product, assetMap)
+    const enrichedProduct = enrichProductData(product)
+    const hydrated = await resolveTemplateAssets(elements, enrichedProduct, assetMap)
     
     // 4. Reemplazar variables {field} en los contenidos de texto
     hydrated.forEach((el: any) => {
         if (el.type === 'text' || el.type === 'dynamic_text') {
             const rawContent = el.type === 'dynamic_text' ? `{${el.dataField}}` : (el.content || '')
             el.content = rawContent.replace(/{([^}]+)}/g, (_: string, field: string) => {
-                if (field === 'color') return product.color_name || product.color_code || ''
-                return String(product[field] ?? '')
+                if (field === 'color') return enrichedProduct.color_name || enrichedProduct.color_code || ''
+                return String(enrichedProduct[field] ?? '')
             })
         }
     })
@@ -63,7 +65,7 @@ async function exportOneProduct(
     const widthPx = Math.round((template.width_mm || 200) * MM_TO_PX)
     const heightPx = Math.round((template.height_mm || 100) * MM_TO_PX)
     
-    const html = generateExportHtml(hydrated, product, widthPx, heightPx)
+    const html = generateExportHtml(hydrated, enrichedProduct, widthPx, heightPx)
 
     const response = await fetch('/api/export', {
         method: 'POST',
@@ -183,18 +185,12 @@ export function BulkExportPanel({ selectedProducts, template, onClose }: BulkExp
             </div>
 
             {/* Advertencias */}
-            {hasWarnings && !warningsConfirmed && (
+            {hasWarnings && (
                 <div className="flex flex-col gap-3">
                     <ValidationWarnings warnings={warnings} />
-                    <label className="flex items-center gap-2.5 text-sm text-slate-600 cursor-pointer select-none">
-                        <input
-                            type="checkbox"
-                            className="w-4 h-4 rounded accent-indigo-600"
-                            checked={warningsConfirmed}
-                            onChange={e => setWarningsConfirmed(e.target.checked)}
-                        />
-                        Entendido, quiero exportar igualmente con campos incompletos
-                    </label>
+                    <p className="text-xs text-red-600 font-bold bg-red-50 p-2 rounded border border-red-100 italic">
+                        No se permite la exportación hasta que todos los productos seleccionados tengan su isométrico asociado.
+                    </p>
                 </div>
             )}
 
@@ -250,11 +246,11 @@ export function BulkExportPanel({ selectedProducts, template, onClose }: BulkExp
                             </div>
                             <Button
                                 onClick={startExport}
-                                disabled={!template || (hasWarnings && !warningsConfirmed)}
-                                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
+                                disabled={!template || hasWarnings}
+                                className={`w-full ${hasWarnings ? 'bg-slate-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'} text-white`}
                             >
                                 <Download className="w-4 h-4 mr-2" />
-                                Iniciar exportación ({total} {selectedFormat.toUpperCase()})
+                                {hasWarnings ? 'Bloqueado: Faltan Isométricos' : `Iniciar exportación (${total} ${selectedFormat.toUpperCase()})`}
                             </Button>
                         </div>
                         <Button variant="outline" onClick={onClose} className="w-24 mt-auto">
