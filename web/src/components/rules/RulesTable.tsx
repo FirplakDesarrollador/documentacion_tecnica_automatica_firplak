@@ -23,6 +23,7 @@ import { RuleFormDialog } from './RuleFormDialog'
 import { deleteRuleAction } from '@/app/rules/actions'
 import { toast } from 'sonner'
 import { ruleToSpanishDescription } from '@/lib/engine/ruleTranslator'
+import { cn } from '@/lib/utils'
 
 interface RulesTableProps {
     initialRules: any[]
@@ -74,13 +75,13 @@ export function RulesTable({ initialRules }: RulesTableProps) {
 
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                 <Table>
-                    <TableHeader>
+                    <TableHeader className="bg-slate-50/50">
                         <TableRow>
-                            <TableHead>Tipo</TableHead>
-                            <TableHead>Descripción de la Regla (Lógica de Negocio)</TableHead>
-                            <TableHead>Prio</TableHead>
-                            <TableHead>Estado</TableHead>
-                            <TableHead className="text-right">Acciones</TableHead>
+                            <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500">Tipo de Regla</TableHead>
+                            <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500 text-center">Lógica de Negocio (Descripción)</TableHead>
+                            <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500 text-center">Prio</TableHead>
+                            <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500 text-center">Estado</TableHead>
+                            <TableHead className="text-right uppercase tracking-wider text-[10px] font-bold text-slate-500">Acciones</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -94,13 +95,16 @@ export function RulesTable({ initialRules }: RulesTableProps) {
                             filteredRules.map((rule: any) => (
                                 <TableRow key={rule.id} className="hover:bg-slate-50/50 transition-colors">
                                     <TableCell className="font-medium whitespace-nowrap">
-                                        <Badge variant="outline" className={
-                                            (rule.rule_type === 'naming' || rule.rule_type === 'name_component') ? 'border-blue-200 text-blue-700 bg-blue-50' :
-                                            rule.rule_type === 'template' ? 'border-purple-200 text-purple-700 bg-purple-50' :
-                                            (rule.rule_type === 'asset' || rule.rule_type === 'icon_activation') ? 'border-amber-200 text-amber-700 bg-amber-50' :
-                                            (rule.rule_type === 'attribute_modifier') ? 'border-cyan-200 text-cyan-700 bg-cyan-50' :
-                                            'border-red-200 text-red-700 bg-red-50'
-                                        }>
+                                        <Badge 
+                                            className={cn(
+                                                "text-[9px] px-1.5 py-0.5 font-bold uppercase tracking-tight ring-1 ring-inset whitespace-nowrap",
+                                                (rule.rule_type === 'naming' || rule.rule_type === 'name_component') ? 'bg-blue-50 text-blue-700 ring-blue-700/10' :
+                                                rule.rule_type === 'template' ? 'bg-purple-50 text-purple-700 ring-purple-700/10' :
+                                                (rule.rule_type === 'asset' || rule.rule_type === 'icon_activation') ? 'bg-amber-50 text-amber-700 ring-amber-700/10' :
+                                                (rule.rule_type === 'attribute_modifier') ? 'bg-cyan-50 text-cyan-700 ring-cyan-700/10' :
+                                                'bg-rose-50 text-rose-700 ring-rose-700/10'
+                                            )}
+                                        >
                                             {(rule.rule_type === 'naming' || rule.rule_type === 'name_component') ? 'Nomenclatura' :
                                              rule.rule_type === 'template' ? 'Plantilla' :
                                              (rule.rule_type === 'asset' || rule.rule_type === 'icon_activation') ? 'Recurso' : 
@@ -113,12 +117,12 @@ export function RulesTable({ initialRules }: RulesTableProps) {
                                             dangerouslySetInnerHTML={{ __html: ruleToSpanishDescription(rule).replace(/\*\*([^*]+)\*\*/g, '<strong class="text-blue-700 font-semibold">$1</strong>') }}
                                         />
                                     </TableCell>
-                                    <TableCell>{rule.priority}</TableCell>
-                                    <TableCell>
+                                    <TableCell className="text-center font-mono text-xs">{rule.priority}</TableCell>
+                                    <TableCell className="text-center">
                                         {rule.enabled ? (
-                                            <Badge variant="default" className="bg-blue-600">Activo</Badge>
+                                            <Badge className="bg-emerald-50 text-emerald-700 ring-1 ring-emerald-700/10 hover:bg-emerald-50 text-[9px] px-1.5 py-0 font-bold uppercase tracking-tight">Activo</Badge>
                                         ) : (
-                                            <Badge variant="secondary">Deshabilitado</Badge>
+                                            <Badge className="bg-slate-50 text-slate-400 ring-1 ring-slate-400/10 hover:bg-slate-50 text-[9px] px-1.5 py-0 font-bold uppercase tracking-tight">Deshabilitado</Badge>
                                         )}
                                     </TableCell>
                                     <TableCell className="text-right">

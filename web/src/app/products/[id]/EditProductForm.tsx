@@ -17,9 +17,9 @@ export function EditProductForm({ initialData }: { initialData: any }) {
         product_type: initialData.product_type || '',
         furniture_name: initialData.furniture_name || '',
         color_code: initialData.color_code || '',
-        rh_flag: initialData.rh_flag || false,
+        rh: initialData.rh || 'NA',
         assembled_flag: initialData.assembled_flag || false,
-        edge_2mm_flag: initialData.edge_2mm_flag || false,
+        canto_puertas: initialData.canto_puertas || '',
         line: initialData.line || '',
         use_destination: initialData.use_destination || '',
         commercial_measure: initialData.commercial_measure || '',
@@ -42,6 +42,8 @@ export function EditProductForm({ initialData }: { initialData: any }) {
             commercial_measure: suggestions.commercial_measure || prev.commercial_measure,
             accessory_text: suggestions.accessory_text || prev.accessory_text,
             use_destination: suggestions.use_destination || prev.use_destination,
+            canto_puertas: suggestions.canto_puertas || prev.canto_puertas,
+            rh: suggestions.rh || prev.rh,
         }))
     }
 
@@ -142,16 +144,27 @@ export function EditProductForm({ initialData }: { initialData: any }) {
                                     />
                                 </div>
                             </div>
+                            
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="grid gap-2">
+                                    <Label htmlFor="rh">Material / RH</Label>
+                                    <Input
+                                        id="rh" name="rh"
+                                        value={formData.rh} onChange={handleChange}
+                                        placeholder="RH o NA"
+                                    />
+                                </div>
+                                <div className="grid gap-2">
+                                    <Label htmlFor="canto_puertas">Canto Puertas</Label>
+                                    <Input
+                                        id="canto_puertas" name="canto_puertas"
+                                        value={formData.canto_puertas} onChange={handleChange}
+                                        placeholder="Ej: CANTO 2MM"
+                                    />
+                                </div>
+                            </div>
 
                             <div className="flex flex-wrap gap-6 mt-6 p-5 bg-slate-50 border border-slate-100 rounded-xl">
-                                <div className="flex items-center space-x-2">
-                                    <Checkbox
-                                        id="rh_flag"
-                                        checked={formData.rh_flag}
-                                        onCheckedChange={(c) => setFormData(p => ({ ...p, rh_flag: !!c }))}
-                                    />
-                                    <Label htmlFor="rh_flag">Es RH</Label>
-                                </div>
                                 <div className="flex items-center space-x-2">
                                     <Checkbox
                                         id="assembled_flag"
@@ -159,14 +172,6 @@ export function EditProductForm({ initialData }: { initialData: any }) {
                                         onCheckedChange={(c) => setFormData(p => ({ ...p, assembled_flag: !!c }))}
                                     />
                                     <Label htmlFor="assembled_flag">Es Armado</Label>
-                                </div>
-                                <div className="flex items-center space-x-2">
-                                    <Checkbox
-                                        id="edge_2mm_flag"
-                                        checked={formData.edge_2mm_flag}
-                                        onCheckedChange={(c) => setFormData(p => ({ ...p, edge_2mm_flag: !!c }))}
-                                    />
-                                    <Label htmlFor="edge_2mm_flag">Canto 2mm</Label>
                                 </div>
                             </div>
 

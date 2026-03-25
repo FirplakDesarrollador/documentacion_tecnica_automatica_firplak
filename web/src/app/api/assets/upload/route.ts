@@ -21,8 +21,11 @@ export async function POST(request: Request) {
         const bucketPath = `assets/${fileName}`
 
         // Determine type
-        let type = 'icon'
-        if (ext.toLowerCase() === 'svg' || file.name.toLowerCase().includes('logo')) type = 'logo'
+        let type = data.get('type') as string || ''
+        if (!type) {
+            type = 'icon'
+            if (ext.toLowerCase() === 'svg' || file.name.toLowerCase().includes('logo')) type = 'logo'
+        }
 
         // Upload to Supabase Storage (bucket 'assets')
         const { error: storageError } = await supabase.storage

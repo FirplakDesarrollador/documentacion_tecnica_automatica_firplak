@@ -75,14 +75,16 @@ function translateField(f: string): string {
         'version_code': 'Versión',
         'familia_code': 'Familia',
         'product_type': 'Tipo de Producto',
-        'rh_flag': 'RH (Humedad)',
+        'rh': 'RH (Humedad)',
         'assembled_flag': 'Armado',
         'line': 'Línea/Modelo',
         'sap_description': 'Descripción SAP',
         'code': 'Código SKA',
         'final_name_es': 'Nombre en Español',
         'final_name_en': 'Nombre en Inglés',
-        'edge_2mm_flag': 'Canto 2mm'
+        'canto_puertas': 'Canto puertas',
+        'carb2': 'Certificación CARB2',
+        'private_label_client_name': 'Cliente marca propia'
     }
     return fields[f] || f
 }

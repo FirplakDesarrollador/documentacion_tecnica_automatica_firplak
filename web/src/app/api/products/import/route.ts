@@ -40,7 +40,6 @@ export async function POST(req: Request) {
                 ref_code: parsed.ref_code,
                 version_code: parsed.version_code,
                 color_code: parsed.color_code || record['Codigo C'] || null,
-                rh_flag: parsed.rh_flag,
                 product_type: record['Tipo de producto'] || parsed.product_type || null,
                 use_destination: record.Hogar || parsed.use_destination || null,
                 assembled_flag: record.Armado ? isTrue(record.Armado) : parsed.assembled_flag,
@@ -52,7 +51,8 @@ export async function POST(req: Request) {
                 commercial_measure: record.Medida || null,
                 accessory_text: accessoryText,
                 door_color_text: record['Color puertas'] || null,
-                edge_2mm_flag: isTrue(record.Canto),
+                canto_puertas: isTrue(record.Canto) ? 'CANTO 2 MM' : 'NA',
+                carb2: (record.SAPDescription || '').toUpperCase().includes('CARB') ? 'CARB2' : 'NA',
                 final_name_es: record['DESCRIPCION FINAL'] || null,
                 final_name_en: record['DESCRIPCION INGLES'] || null,
                 isometric_path: record.ISOMETRICO || null,
@@ -64,7 +64,7 @@ export async function POST(req: Request) {
                 height_in: parseFloat(record.H) || null,
                 width_in: parseFloat(record.W) || null,
                 weight_lb: parseFloat(record.Wg) || null,
-                icon_rh: parsed.rh_flag || iconsJson.includes('RH'),
+                icon_rh: isTrue(record.RH),
                 icon_full_extension: String(record.Riel || '').toUpperCase().includes('FULL EXTENSION'),
                 icon_soft_close: String(record.Accesorio || '').toUpperCase().includes('CIERRE LENTO') || iconsJson.includes('CIERRE LENTO'),
                 icon_edge_2mm: isTrue(record.Canto),
@@ -73,8 +73,8 @@ export async function POST(req: Request) {
 
             try {
                 await dbQuery(`
-                    INSERT INTO public.products (code, sap_description, familia_code, ref_code, version_code, color_code, rh_flag, product_type, use_destination, assembled_flag, private_label_flag, private_label_client_name, designation, furniture_name, line, commercial_measure, accessory_text, door_color_text, edge_2mm_flag, final_name_es, final_name_en, isometric_path, depth_cm, height_cm, width_cm, weight_kg, depth_in, height_in, width_in, weight_lb, icon_rh, icon_full_extension, icon_soft_close, icon_edge_2mm, sku_servicios_ref)
-                    VALUES (${esc(d.code)}, ${esc(d.sap_description)}, ${esc(d.familia_code)}, ${esc(d.ref_code)}, ${esc(d.version_code)}, ${esc(d.color_code)}, ${d.rh_flag ? 'true' : 'false'}, ${esc(d.product_type)}, ${esc(d.use_destination)}, ${d.assembled_flag ? 'true' : 'false'}, ${d.private_label_flag ? 'true' : 'false'}, ${esc(d.private_label_client_name)}, ${esc(d.designation)}, ${esc(d.furniture_name)}, ${esc(d.line)}, ${esc(d.commercial_measure)}, ${esc(d.accessory_text)}, ${esc(d.door_color_text)}, ${d.edge_2mm_flag ? 'true' : 'false'}, ${esc(d.final_name_es)}, ${esc(d.final_name_en)}, ${esc(d.isometric_path)}, ${d.depth_cm ? d.depth_cm : 'NULL'}, ${d.height_cm ? d.height_cm : 'NULL'}, ${d.width_cm ? d.width_cm : 'NULL'}, ${d.weight_kg ? d.weight_kg : 'NULL'}, ${d.depth_in ? d.depth_in : 'NULL'}, ${d.height_in ? d.height_in : 'NULL'}, ${d.width_in ? d.width_in : 'NULL'}, ${d.weight_lb ? d.weight_lb : 'NULL'}, ${d.icon_rh ? 'true' : 'false'}, ${d.icon_full_extension ? 'true' : 'false'}, ${d.icon_soft_close ? 'true' : 'false'}, ${d.icon_edge_2mm ? 'true' : 'false'}, ${esc(d.sku_servicios_ref)})
+                    INSERT INTO public.cabinet_products (code, sap_description, familia_code, ref_code, version_code, color_code, product_type, use_destination, assembled_flag, private_label_flag, private_label_client_name, designation, furniture_name, line, commercial_measure, accessory_text, door_color_text, canto_puertas, carb2, final_name_es, final_name_en, isometric_path, depth_cm, height_cm, width_cm, weight_kg, depth_in, height_in, width_in, weight_lb, icon_rh, icon_full_extension, icon_soft_close, icon_edge_2mm, sku_servicios_ref)
+                    VALUES (${esc(d.code)}, ${esc(d.sap_description)}, ${esc(d.familia_code)}, ${esc(d.ref_code)}, ${esc(d.version_code)}, ${esc(d.color_code)}, ${esc(d.product_type)}, ${esc(d.use_destination)}, ${d.assembled_flag ? 'true' : 'false'}, ${d.private_label_flag ? 'true' : 'false'}, ${esc(d.private_label_client_name)}, ${esc(d.designation)}, ${esc(d.furniture_name)}, ${esc(d.line)}, ${esc(d.commercial_measure)}, ${esc(d.accessory_text)}, ${esc(d.door_color_text)}, ${esc(d.canto_puertas)}, ${esc(d.carb2)}, ${esc(d.final_name_es)}, ${esc(d.final_name_en)}, ${esc(d.isometric_path)}, ${d.depth_cm ? d.depth_cm : 'NULL'}, ${d.height_cm ? d.height_cm : 'NULL'}, ${d.width_cm ? d.width_cm : 'NULL'}, ${d.weight_kg ? d.weight_kg : 'NULL'}, ${d.depth_in ? d.depth_in : 'NULL'}, ${d.height_in ? d.height_in : 'NULL'}, ${d.width_in ? d.width_in : 'NULL'}, ${d.weight_lb ? d.weight_lb : 'NULL'}, ${d.icon_rh ? 'true' : 'false'}, ${d.icon_full_extension ? 'true' : 'false'}, ${d.icon_soft_close ? 'true' : 'false'}, ${d.icon_edge_2mm ? 'true' : 'false'}, ${esc(d.sku_servicios_ref)})
                     ON CONFLICT (code) DO UPDATE SET
                         sap_description=EXCLUDED.sap_description, familia_code=EXCLUDED.familia_code,
                         ref_code=EXCLUDED.ref_code, version_code=EXCLUDED.version_code,
@@ -86,7 +86,8 @@ export async function POST(req: Request) {
                         final_name_es=EXCLUDED.final_name_es, final_name_en=EXCLUDED.final_name_en,
                         depth_cm=EXCLUDED.depth_cm, height_cm=EXCLUDED.height_cm, width_cm=EXCLUDED.width_cm,
                         weight_kg=EXCLUDED.weight_kg, icon_rh=EXCLUDED.icon_rh,
-                        icon_soft_close=EXCLUDED.icon_soft_close, edge_2mm_flag=EXCLUDED.edge_2mm_flag,
+                        icon_soft_close=EXCLUDED.icon_soft_close, canto_puertas=EXCLUDED.canto_puertas,
+                        carb2=EXCLUDED.carb2,
                         updated_at=now()
                 `)
                 successCount++

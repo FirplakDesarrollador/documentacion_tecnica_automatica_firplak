@@ -60,13 +60,16 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
                                         key={item.name}
                                         href={item.href}
                                         className={cn(
-                                            "flex items-center gap-3 rounded-md px-3 py-2 transition-all duration-200",
+                                            "group flex items-center gap-3 rounded-lg px-3 py-2.5 transition-all duration-200 relative",
                                             isActive 
                                                 ? "bg-indigo-500/10 text-indigo-400 font-semibold" 
-                                                : "text-slate-400 hover:text-white hover:bg-slate-800/50"
+                                                : "text-slate-400 hover:text-white hover:bg-slate-800/40"
                                         )}
                                     >
-                                        <item.icon className={cn("h-4 w-4", isActive ? "text-indigo-400" : "text-slate-400")} />
+                                        {isActive && (
+                                            <div className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-indigo-500 rounded-r-full" />
+                                        )}
+                                        <item.icon className={cn("h-4 w-4 transition-colors", isActive ? "text-indigo-400" : "text-slate-400 group-hover:text-white")} />
                                         {item.name}
                                     </Link>
                                 )
@@ -98,16 +101,16 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
                                 <span className="sr-only">Menú</span>
                             </div>
                         </SheetTrigger>
-                        <SheetContent side="left" className="flex flex-col p-0 w-72">
-                            <div className="flex h-16 items-center px-6 border-b border-slate-100">
-                                <Link href="/" className="flex items-center gap-3 font-bold text-slate-800">
-                                    <div className="bg-primary/10 p-2 rounded-lg text-primary">
+                        <SheetContent side="left" className="flex flex-col p-0 w-72 bg-slate-950 border-slate-800">
+                            <div className="flex h-16 items-center px-6 border-b border-slate-800/60">
+                                <Link href="/" className="flex items-center gap-3 font-bold text-white">
+                                    <div className="bg-indigo-500/20 p-2 rounded-lg text-indigo-400 ring-1 ring-indigo-500/30">
                                         <Package className="h-5 w-5" />
                                     </div>
                                     <span className="text-lg">DocGen MVP</span>
                                 </Link>
                             </div>
-                            <nav className="grid gap-1 px-4 py-6 text-sm font-medium">
+                            <nav className="grid gap-1 px-3 py-6 text-sm font-medium">
                                 {navItems.map((item) => {
                                     const isActive = pathname === item.href || (pathname.startsWith(item.href) && item.href !== '/')
                                     return (
@@ -115,13 +118,16 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
                                             key={item.href}
                                             href={item.href}
                                             className={cn(
-                                                "flex items-center gap-3 rounded-md px-3 py-2.5 transition-all",
+                                                "flex items-center gap-3 rounded-lg px-3 py-3 transition-all relative",
                                                 isActive 
-                                                    ? "bg-primary/10 text-primary font-semibold" 
-                                                    : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+                                                    ? "bg-indigo-500/10 text-indigo-400 font-semibold" 
+                                                    : "text-slate-400 hover:text-white hover:bg-slate-800/40"
                                             )}
                                         >
-                                            <item.icon className={cn("h-5 w-5", isActive ? "text-primary" : "text-slate-400")} />
+                                            {isActive && (
+                                                <div className="absolute left-0 top-2 bottom-2 w-1 bg-indigo-500 rounded-r-full" />
+                                            )}
+                                            <item.icon className={cn("h-5 w-5", isActive ? "text-indigo-400" : "text-slate-400")} />
                                             {item.name}
                                         </Link>
                                     )

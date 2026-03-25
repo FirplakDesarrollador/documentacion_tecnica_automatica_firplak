@@ -7,51 +7,53 @@ export default function SettingsPage() {
     return (
         <div className="flex flex-col gap-8 max-w-4xl">
             <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-3xl font-bold tracking-tight">Configuración</h1>
-                    <p className="text-muted-foreground">
-                        Administra las configuraciones de tu proyecto y las claves API.
+                <div className="flex flex-col gap-2">
+                    <h1 className="text-3xl font-bold tracking-tight text-slate-900">Configuración del Sistema</h1>
+                    <p className="text-slate-500 text-sm max-w-2xl leading-relaxed">
+                        Gestiona las credenciales de servicios externos, parámetros de renderizado y preferencias globales de la plataforma.
                     </p>
                 </div>
             </div>
 
             <div className="grid gap-6">
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Configuración del Asistente IA</CardTitle>
-                        <CardDescription>Configura la integración con Google Gemini.</CardDescription>
+                <Card className="border-slate-200/60 shadow-sm rounded-xl overflow-hidden">
+                    <CardHeader className="bg-slate-50/50 border-b border-slate-100">
+                        <CardTitle className="text-sm font-bold uppercase tracking-wider text-slate-900">Inteligencia Artificial</CardTitle>
+                        <CardDescription className="text-xs text-slate-500">Configuración del motor Google Gemini Pro.</CardDescription>
                     </CardHeader>
-                    <CardContent>
-                        <form className="flex flex-col gap-4">
-                            <div className="grid gap-2">
-                                <Label>Clave API de Gemini</Label>
-                                <Input type="password" placeholder="AIzaSyB..." defaultValue="*******************" disabled />
-                                <p className="text-xs text-muted-foreground">Actualmente esto se carga desde tu archivo .env (`GEMINI_API_KEY`).</p>
+                    <CardContent className="p-6">
+                        <form className="flex flex-col gap-6">
+                            <div className="grid gap-2.5">
+                                <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Gemini API Key</Label>
+                                <Input type="password" placeholder="AIzaSyB..." defaultValue="*******************" disabled className="bg-slate-50/50 border-slate-200 text-slate-400 font-mono text-xs" />
+                                <p className="text-[10px] text-indigo-600 font-medium">✨ Cargada automáticamente desde el entorno seguro (.env)</p>
                             </div>
-                            <div>
-                                <Button disabled>Guardar Cambios</Button>
+                            <div className="pt-2">
+                                <Button disabled className="bg-slate-100 text-slate-400 border-none shadow-none text-xs font-bold uppercase tracking-wider">Guardar Preferencias</Button>
                             </div>
                         </form>
                     </CardContent>
                 </Card>
 
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Servicio de Exportación Puppeteer</CardTitle>
-                        <CardDescription>Configuración para el motor de renderizado de PDF/Imágenes.</CardDescription>
+                <Card className="border-slate-200/60 shadow-sm rounded-xl overflow-hidden">
+                    <CardHeader className="bg-slate-50/50 border-b border-slate-100">
+                        <CardTitle className="text-sm font-bold uppercase tracking-wider text-slate-900">Motor de Renderizado</CardTitle>
+                        <CardDescription className="text-xs text-slate-500">Parámetros de exportación Puppeteer / PDF.</CardDescription>
                     </CardHeader>
-                    <CardContent>
-                        <form className="flex flex-col gap-4">
-                            <div className="grid gap-2">
-                                <Label>Tiempo de espera de renderizado (ms)</Label>
-                                <Input type="number" defaultValue={30000} disabled />
+                    <CardContent className="p-6">
+                        <form className="flex flex-col gap-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div className="grid gap-2.5">
+                                    <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Timeout de Renderizado (ms)</Label>
+                                    <Input type="number" defaultValue={30000} disabled className="bg-slate-50/50 border-slate-200 text-slate-600 font-mono text-xs" />
+                                </div>
+                                <div className="grid gap-2.5">
+                                    <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Resolución DPI Estándar</Label>
+                                    <Input type="number" defaultValue={300} disabled className="bg-slate-50/50 border-slate-200 text-slate-600 font-mono text-xs" />
+                                </div>
                             </div>
-                            <div className="grid gap-2">
-                                <Label>Resolución de Impresión por defecto (DPI)</Label>
-                                <Input type="number" defaultValue={300} disabled />
-                            </div>
-                            <div>
-                                <Button disabled>Guardar Cambios</Button>
+                            <div className="pt-2">
+                                <Button disabled className="bg-slate-100 text-slate-400 border-none shadow-none text-xs font-bold uppercase tracking-wider">Actualizar Motor</Button>
                             </div>
                         </form>
                     </CardContent>

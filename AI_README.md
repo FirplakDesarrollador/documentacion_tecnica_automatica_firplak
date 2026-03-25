@@ -4,7 +4,7 @@
 > **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estratégico y operativo necesario para navegar y construir eficientemente en este proyecto.
 
 ## 📌 Visión General
-Versión 1.0.4: Se migró a un motor interno de traducción (basado en reglas Firplak/SAP), se saneó la base de datos, se mejoraron los módulos de reglas, creación de ingresos, plantillas, recursos adjuntos e isométricos.
+Versión 1.0.5: Mejora del 'codeParser' para Kits (LVM) y Marcas Propias, optimización de evaluación de reglas (omisión de NA), cambio de origen de datos a 'cabinet_products' y refinamiento en visualización de plantillas.
 
 ## 🏗️ Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:

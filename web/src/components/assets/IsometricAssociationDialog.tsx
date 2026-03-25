@@ -104,9 +104,42 @@ export function IsometricAssociationDialog() {
         loadMeasures()
     }, [selectedFamilies, selectedReferences])
 
+    const fileInputRef = React.useRef<HTMLInputElement>(null)
+    const [uploading, setUploading] = React.useState(false)
+
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+
+        setUploading(true)
+        try {
+            const formData = new FormData()
+            formData.append('file', file)
+            formData.append('type', 'isometric')
+
+            const response = await fetch('/api/assets/upload', {
+                method: 'POST',
+                body: formData,
+            })
+
+            const result = await response.json()
+            if (!result.success) throw new Error(result.error)
+
+            toast.success('Archivo subido y listo para asociar')
+            const newAsset = result.asset
+            setAssets(prev => [newAsset, ...prev])
+            setSelectedAssetId(newAsset.id)
+        } catch (error: any) {
+            toast.error(error.message || 'Error al subir archivo')
+        } finally {
+            setUploading(false)
+            if (fileInputRef.current) fileInputRef.current.value = ''
+        }
+    }
+
     const handleSubmit = async () => {
         if (!selectedAssetId) {
-            toast.error("Por favor selecciona un isométrico")
+            toast.error("Por favor selecciona o sube un isométrico")
             return
         }
         if (selectedFamilies.length === 0 && selectedReferences.length === 0) {
@@ -139,8 +172,8 @@ export function IsometricAssociationDialog() {
                     Isométricos
                 </Button>
             } />
-            <DialogContent className="max-w-md sm:max-w-lg p-0 bg-white border-slate-200">
-                <DialogHeader className="p-6 pb-2">
+            <DialogContent className="max-w-md sm:max-w-xl p-0 bg-white border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+                <DialogHeader className="p-6 pb-2 shrink-0">
                     <DialogTitle className="text-xl font-bold text-slate-900 flex items-center gap-2">
                         <Box className="h-5 w-5 text-indigo-500" />
                         Asociar Isométricos SVG
@@ -150,18 +183,59 @@ export function IsometricAssociationDialog() {
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="p-6 space-y-6">
-                    {/* Step 1: Select Asset */}
-                    <div className="space-y-3">
-                        <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">1. Seleccionar Isométrico (SVG)</Label>
-                        <div className="grid grid-cols-1 gap-2 max-h-[160px] overflow-y-auto pr-1">
-                            {assets.length === 0 ? (
-                                <div className="border border-dashed border-slate-200 rounded-lg p-6 text-center">
-                                    <ImageIcon className="h-8 w-8 text-slate-300 mx-auto mb-2" />
-                                    <p className="text-xs text-slate-500">Primero sube archivos SVG con el tipo 'isometric'</p>
-                                </div>
+                <div className="p-6 space-y-6 overflow-y-auto flex-1 custom-scrollbar">
+                    {/* Step 1: Select or Upload Asset */}
+                    <div className="space-y-4">
+                        <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">1. SELECCIONAR O SUBIR ISOMÉTRICO (SVG)</Label>
+                        
+                        {/* Improved Upload Area */}
+                        <div 
+                            onClick={() => fileInputRef.current?.click()}
+                            onDragOver={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                            }}
+                            onDrop={async (e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                const file = e.dataTransfer.files?.[0]
+                                if (file && (file.type === 'image/svg+xml' || file.name.endsWith('.svg'))) {
+                                    // Manually construct the change event or call upload directly
+                                    const mockEvent = { target: { files: [file] } } as any
+                                    handleFileUpload(mockEvent)
+                                } else {
+                                    toast.error("Por favor suelta un archivo SVG válido")
+                                }
+                            }}
+                            className={cn(
+                                "border-2 border-dashed rounded-xl p-6 text-center transition-all cursor-pointer",
+                                uploading ? "bg-slate-50 border-slate-200 opacity-50 pointer-events-none" : "hover:bg-indigo-50/30 hover:border-indigo-300 border-slate-200"
+                            )}
+                        >
+                            <input 
+                                type="file"
+                                ref={fileInputRef}
+                                className="hidden"
+                                accept=".svg,image/svg+xml"
+                                onChange={handleFileUpload}
+                            />
+                            {uploading ? (
+                                <Loader2 className="h-8 w-8 text-indigo-500 mx-auto animate-spin mb-2" />
                             ) : (
-                                assets.map((asset) => (
+                                <ImageIcon className="h-8 w-8 text-slate-400 mx-auto mb-2" />
+                            )}
+                            <p className="text-sm font-medium text-slate-700">
+                                {uploading ? "Subiendo archivo..." : "Haz clic o arrastra para subir un SVG"}
+                            </p>
+                            <p className="text-[10px] text-slate-500 mt-1">
+                                Solo archivos SVG. Se guardará automáticamente como tipo 'isometric'.
+                            </p>
+                        </div>
+
+                        {/* Existing Assets List */}
+                        {assets.length > 0 && (
+                            <div className="grid grid-cols-1 gap-2 max-h-[180px] overflow-y-auto pr-1">
+                                {assets.map((asset) => (
                                     <div 
                                         key={asset.id}
                                         onClick={() => setSelectedAssetId(asset.id)}
@@ -172,8 +246,12 @@ export function IsometricAssociationDialog() {
                                                 : "bg-white border-slate-200 hover:border-slate-300"
                                         )}
                                     >
-                                        <div className="h-10 w-10 bg-slate-100 rounded-lg flex items-center justify-center shrink-0">
-                                            <ImageIcon className="h-5 w-5 text-slate-400" />
+                                        <div className="h-10 w-10 bg-slate-100 rounded-lg flex items-center justify-center shrink-0 overflow-hidden">
+                                            {asset.file_path ? (
+                                                <img src={asset.file_path} className="max-w-full max-h-full object-contain p-1" />
+                                            ) : (
+                                                <ImageIcon className="h-5 w-5 text-slate-400" />
+                                            )}
                                         </div>
                                         <div className="flex-1 min-w-0">
                                             <p className="text-sm font-medium text-slate-900 truncate">{asset.name}</p>
@@ -181,14 +259,14 @@ export function IsometricAssociationDialog() {
                                         </div>
                                         {selectedAssetId === asset.id && <CheckCircle2 className="h-5 w-5 text-indigo-500" />}
                                     </div>
-                                ))
-                            )}
-                        </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
 
                     {/* Step 2: Target Selection */}
-                    <div className="space-y-4 pt-2 border-t border-slate-100">
-                        <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">2. Selección de Destino</Label>
+                    <div className="space-y-4 pt-4 border-t border-slate-100">
+                        <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">2. SELECCIÓN DE DESTINO PARA ASOCIACIÓN</Label>
                         
                         <div className="space-y-4">
                             <div className="space-y-2">
@@ -228,25 +306,25 @@ export function IsometricAssociationDialog() {
                         </div>
                     </div>
 
-                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                        <p className="text-xs text-slate-500 flex items-start gap-2">
-                             <span className="font-bold text-indigo-600 block mt-0.5">ℹ️</span>
-                             Esto actualizará el campo isométrico de todos los productos de las familias/referencias elegidas.
+                    <div className="bg-amber-50 p-4 rounded-xl border border-amber-100">
+                        <p className="text-xs text-amber-700 flex items-start gap-2">
+                             <span className="font-bold text-amber-600 block mt-0.5">⚠️</span>
+                             Esta acción actualizará de forma masiva el campo "isometric_path" de todos los productos que coincidan con los filtros seleccionados.
                         </p>
                     </div>
                 </div>
 
-                <DialogFooter className="p-4 pt-0 border-t-0 bg-slate-50/50 rounded-b-xl">
-                    <Button variant="ghost" onClick={() => setOpen(false)} disabled={submitting}>
+                <DialogFooter className="p-4 bg-slate-50 border-t border-slate-100 shrink-0">
+                    <Button variant="ghost" className="hover:bg-slate-200" onClick={() => setOpen(false)} disabled={submitting || uploading}>
                         Cancelar
                     </Button>
                     <Button 
-                        disabled={submitting || !selectedAssetId || (selectedFamilies.length === 0 && selectedReferences.length === 0)}
+                        disabled={submitting || uploading || !selectedAssetId || (selectedFamilies.length === 0 && selectedReferences.length === 0)}
                         onClick={handleSubmit}
-                        className="bg-indigo-600 hover:bg-indigo-700 shadow-md h-10 px-6"
+                        className="bg-indigo-600 hover:bg-indigo-700 shadow-md h-10 px-6 transition-all"
                     >
                         {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-                        {submitting ? "Procesando..." : "Asociar Isométrico"}
+                        {submitting ? "Actualizando..." : "Asociar Isométrico"}
                     </Button>
                 </DialogFooter>
             </DialogContent>

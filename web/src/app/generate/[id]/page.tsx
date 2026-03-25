@@ -17,7 +17,7 @@ export default async function GeneratePreviewPage({
     const templateIdParam = typeof searchParams?.template_id === 'string' ? searchParams.template_id : null
 
     // Cargar el producto
-    const pRows = await dbQuery(`SELECT * FROM public.products WHERE id='${id}' LIMIT 1`)
+    const pRows = await dbQuery(`SELECT * FROM public.cabinet_products WHERE id='${id}' LIMIT 1`)
     const product = pRows?.[0]
 
     if (!product) {

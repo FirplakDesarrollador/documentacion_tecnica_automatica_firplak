@@ -14,6 +14,7 @@ import Link from 'next/link'
 import { ImportCsvButton } from '@/components/products/ImportCsvButton'
 import { ProductSearch } from '@/components/products/ProductSearch'
 import { AiTranslateButton } from '@/components/products/AiTranslateButton'
+import { cn } from '@/lib/utils'
 
 export default async function ProductsPage({
     searchParams: searchParamsPromise
@@ -40,10 +41,10 @@ export default async function ProductsPage({
         if (f.length > 0) conditions.push(`familia_code IN (${f.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
         if (r.length > 0) conditions.push(`ref_code IN (${r.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
         if (m.length > 0) conditions.push(`commercial_measure IN (${m.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
-        const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+        const where = conditions.length > 0 ? `WHERE status = 'ACTIVO' AND ${conditions.join(' AND ')}` : "WHERE status = 'ACTIVO'"
         products = await dbQuery(
             `SELECT p.*, c.name_color_sap as color_name
-             FROM public.products p
+             FROM public.cabinet_products p
              LEFT JOIN public.colors c ON p.color_code = c.code_4dig
              ${where} ORDER BY p.updated_at DESC LIMIT 100`
         ) || []
@@ -54,7 +55,7 @@ export default async function ProductsPage({
     const familiaRecords = await dbQuery(
         `SELECT familia_code, MAX(name) as name FROM (
             SELECT DISTINCT p.familia_code, f.name
-            FROM public.products p
+            FROM public.cabinet_products p
             LEFT JOIN public.familias f ON f.code = CASE 
                 WHEN p.familia_code ~ '^[VCP].*' THEN SUBSTRING(p.familia_code FROM 2)
                 ELSE p.familia_code 
@@ -74,8 +75,8 @@ export default async function ProductsPage({
         
         const refRecords = await dbQuery(`
             SELECT ref_code, MAX(furniture_name) as furniture_name 
-            FROM public.products 
-            WHERE ref_code IS NOT NULL AND familia_code IN (${fFilter}) ${mFilter}
+            FROM public.cabinet_products 
+            WHERE status = 'ACTIVO' AND ref_code IS NOT NULL AND familia_code IN (${fFilter}) ${mFilter}
             GROUP BY ref_code
         `) || []
         references = refRecords.map((rec: any) => ({ value: rec.ref_code as string, label: `${rec.ref_code} - ${rec.furniture_name || ''}` })).sort((a: any, b: any) => a.value.localeCompare(b.value))
@@ -88,8 +89,8 @@ export default async function ProductsPage({
 
         const measureRecords = await dbQuery(`
             SELECT DISTINCT commercial_measure 
-            FROM public.products 
-            WHERE commercial_measure IS NOT NULL AND commercial_measure != '' 
+            FROM public.cabinet_products 
+            WHERE status = 'ACTIVO' AND commercial_measure IS NOT NULL AND commercial_measure != '' 
             AND familia_code IN (${fFilter}) ${rFilter}
         `) || []
         measures = measureRecords.map((rec: any) => rec.commercial_measure as string).sort()
@@ -165,15 +166,15 @@ export default async function ProductsPage({
                 {/* Data Table */}
                 <div className="bg-white rounded-xl border border-slate-200 shadow-premium overflow-hidden">
                     <Table>
-                        <TableHeader>
+                        <TableHeader className="bg-slate-50/50">
                             <TableRow>
-                                <TableHead className="w-[140px]">Código</TableHead>
-                                <TableHead className="min-w-[200px]">Descripción SAP</TableHead>
-                                <TableHead className="min-w-[200px]">Nombre Final</TableHead>
-                                <TableHead className="min-w-[200px]">Nombre EN</TableHead>
-                                <TableHead className="w-[120px]">Color</TableHead>
-                                <TableHead className="w-[130px]">Estado</TableHead>
-                                <TableHead className="text-right w-[100px]">Acciones</TableHead>
+                                <TableHead className="w-[140px] uppercase tracking-wider text-[10px] font-bold text-slate-500">Código</TableHead>
+                                <TableHead className="min-w-[200px] uppercase tracking-wider text-[10px] font-bold text-slate-500">Descripción SAP</TableHead>
+                                <TableHead className="min-w-[200px] uppercase tracking-wider text-[10px] font-bold text-slate-500">Nombre Final (ES)</TableHead>
+                                <TableHead className="min-w-[200px] uppercase tracking-wider text-[10px] font-bold text-slate-500">Nombre Final (EN)</TableHead>
+                                <TableHead className="w-[120px] uppercase tracking-wider text-[10px] font-bold text-slate-500">Color</TableHead>
+                                <TableHead className="w-[130px] uppercase tracking-wider text-[10px] font-bold text-slate-500">Estado</TableHead>
+                                <TableHead className="text-right w-[100px] uppercase tracking-wider text-[10px] font-bold text-slate-500">Acciones</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -192,13 +193,14 @@ export default async function ProductsPage({
                                     </TableCell>
                                     <TableCell>
                                         <Badge
-                                            variant={
+                                            className={cn(
+                                                "text-[10px] px-2 py-0.5 font-semibold uppercase tracking-tight ring-1 ring-inset",
                                                 product.validation_status === 'ready'
-                                                    ? 'default'
+                                                    ? "bg-indigo-50 text-indigo-700 ring-indigo-700/10 hover:bg-indigo-50"
                                                     : product.validation_status === 'needs_review'
-                                                        ? 'destructive'
-                                                        : 'secondary'
-                                            }
+                                                        ? "bg-rose-50 text-rose-700 ring-rose-700/10 hover:bg-rose-50"
+                                                        : "bg-slate-50 text-slate-600 ring-slate-600/10 hover:bg-slate-50"
+                                            )}
                                         >
                                             {product.validation_status === 'incomplete' ? 'Incompleto' :
                                                 product.validation_status === 'needs_review' ? 'Revisar' : 'Listo'}

@@ -11,15 +11,23 @@ import { createProductAction, getUniquePropertiesAction, parseProductCodeAction,
 import { Checkbox } from '@/components/ui/checkbox'
 import { getColorByNameAction, getRulesAction } from '@/app/rules/actions'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
-import { FileBadge2, AlertTriangle, Sparkles } from 'lucide-react'
+import { FileBadge2, AlertTriangle, Sparkles, Building2, Image as ImageIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { Product } from '@prisma/client'
 import { UploadAssetButton } from '@/components/assets/UploadAssetButton'
+import { getClientsAction } from '../actions'
 
 export default function NewProductPage() {
     const router = useRouter()
     const [dupeAlertModal, setDupeAlertModal] = useState<string | null>(null)
     const [customValues, setCustomValues] = useState({ line: '', designation: '', product_type: '', use_destination: '' })
+    const [clients, setClients] = useState<{id: string, name: string}[]>([])
+    const [isPrivateLabel, setIsPrivateLabel] = useState(false)
+    const [privateLabelData, setPrivateLabelData] = useState({
+        client_id: '',
+        client_name: '',
+        logo_id: ''
+    })
     
     const [formData, setFormData] = useState({
         code: '',
@@ -28,9 +36,9 @@ export default function NewProductPage() {
         furniture_name: '',
         color_code: '',
         color_name: '',
-        rh_flag: false,
+        rh: 'NA',
         assembled_flag: false,
-        edge_2mm_flag: false,
+        canto_puertas: '',
         line: '',
         use_destination: '',
         commercial_measure: '',
@@ -66,6 +74,7 @@ export default function NewProductPage() {
     useEffect(() => {
         getRulesAction().then(r => setRules(r))
         getUniquePropertiesAction().then(res => setDatalistOptions(res as any))
+        getClientsAction().then(c => setClients(c))
     }, [])
 
     const handleCheckDupe = async (onSuccess: () => void) => {
@@ -91,7 +100,7 @@ export default function NewProductPage() {
     const handleAutoProcess = async () => {
         handleCheckDupe(async () => {
             if (formData.code.split('-').length >= 2 || formData.code.trim().length > 3) {
-            const parsed = await parseProductCodeAction(formData.code, formData.sap_description, formData.rh_flag)
+            const parsed = await parseProductCodeAction(formData.code, formData.sap_description, formData.rh === 'RH')
             
             let colorName = formData.color_name
             if (parsed.color_code && parsed.color_code !== formData.color_code) {
@@ -110,18 +119,8 @@ export default function NewProductPage() {
                 use_destination: parsed.use_destination || prev.use_destination || '',
                 zone_home: parsed.zone_home || prev.zone_home || '',
                 assembled_flag: parsed.assembled_flag ?? prev.assembled_flag ?? false,
-                rh_flag: parsed.rh_flag ?? prev.rh_flag ?? false,
-                commercial_measure: parsed.commercial_measure || prev.commercial_measure || '',
-                accessory_text: parsed.accessory_text || prev.accessory_text || '',
-                isometric_path: parsed.isometric_path || prev.isometric_path || '',
-                width_cm: parsed.width_cm ? String(parsed.width_cm) : (prev.width_cm || ''),
-                depth_cm: parsed.depth_cm ? String(parsed.depth_cm) : (prev.depth_cm || ''),
-                height_cm: parsed.height_cm ? String(parsed.height_cm) : (prev.height_cm || ''),
-                weight_kg: parsed.weight_kg ? String(parsed.weight_kg) : (prev.weight_kg || ''),
-                furniture_name: parsed.furniture_name || prev.furniture_name || '',
-                line: parsed.line || prev.line || '',
-                designation: parsed.designation || prev.designation || '',
-                edge_2mm_flag: parsed.edge_2mm_flag ?? prev.edge_2mm_flag ?? false,
+                rh: parsed.rh || prev.rh || 'NA',
+                canto_puertas: parsed.canto_puertas || prev.canto_puertas || '',
             }))
 
             if (!isAnalyzed) setIsAnalyzed(true)
@@ -236,7 +235,14 @@ export default function NewProductPage() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         try {
-            await createProductAction({ ...formData, _newFamily: isNewFamily ? familyData : undefined })
+            await createProductAction({ 
+                ...formData, 
+                _newFamily: isNewFamily ? familyData : undefined,
+                private_label_flag: isPrivateLabel,
+                private_label_client_id: privateLabelData.client_id,
+                private_label_client_name: privateLabelData.client_id === '__NEW__' ? privateLabelData.client_name : (clients.find(c => c.id === privateLabelData.client_id)?.name || ''),
+                private_label_logo_id: privateLabelData.logo_id
+            })
             toast.success("Producto guardado correctamente")
         } catch (err: any) {
             toast.error("Error al guardar: " + err.message)
@@ -300,6 +306,73 @@ export default function NewProductPage() {
                                     className="h-12 border-slate-300"
                                     value={formData.sap_description} onChange={handleChange}
                                 />
+                            </div>
+
+                            {/* Marca Propia Section */}
+                            <div className="mt-4 p-4 bg-indigo-50/50 rounded-xl border border-indigo-100 space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <Building2 className="w-5 h-5 text-indigo-600" />
+                                        <div>
+                                            <p className="text-sm font-bold text-indigo-900">¿Es Marca Propia?</p>
+                                            <p className="text-[10px] text-indigo-700/70">Marca personalizada para el cliente (ej: CHILEMAT)</p>
+                                        </div>
+                                    </div>
+                                    <Checkbox 
+                                        checked={isPrivateLabel} 
+                                        onCheckedChange={(c) => setIsPrivateLabel(!!c)}
+                                        className="h-6 w-6 border-indigo-300 data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600"
+                                    />
+                                </div>
+
+                                {isPrivateLabel && (
+                                    <div className="grid gap-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                                        <div className="grid gap-2">
+                                            <Label className="text-xs font-bold text-indigo-700 uppercase">Cliente / Marca</Label>
+                                            <select 
+                                                className="flex h-10 w-full rounded-md border border-indigo-200 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                                                value={privateLabelData.client_id}
+                                                onChange={(e) => setPrivateLabelData(p => ({ ...p, client_id: e.target.value }))}
+                                            >
+                                                <option value="" disabled>Seleccionar marca...</option>
+                                                <option value="__NEW__" className="font-bold text-indigo-600 bg-indigo-50">➕ Agregar nueva marca...</option>
+                                                {clients.map(c => (
+                                                    <option key={c.id} value={c.id}>{c.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        {privateLabelData.client_id === '__NEW__' && (
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-white rounded-lg border border-indigo-100 shadow-sm animate-in zoom-in-95 duration-200">
+                                                <div className="grid gap-2">
+                                                    <Label className="text-xs font-bold text-slate-500 uppercase">Nombre de la Marca</Label>
+                                                    <Input 
+                                                        placeholder="Ej: SODIMAC"
+                                                        value={privateLabelData.client_name}
+                                                        onChange={(e) => setPrivateLabelData(p => ({ ...p, client_name: e.target.value.toUpperCase() }))}
+                                                        className="border-indigo-100"
+                                                    />
+                                                </div>
+                                                <div className="grid gap-2">
+                                                    <Label className="text-xs font-bold text-slate-500 uppercase">Logo de Cliente</Label>
+                                                    <div className="flex items-center gap-2">
+                                                        <UploadAssetButton 
+                                                            onUploadComplete={(asset) => setPrivateLabelData(p => ({ ...p, logo_id: asset.id }))}
+                                                            variant="outline"
+                                                            className="flex-1 border-indigo-100 text-indigo-700 hover:bg-indigo-50"
+                                                            label="Subir Logo"
+                                                        />
+                                                        {privateLabelData.logo_id && (
+                                                            <div className="w-10 h-10 bg-green-50 border border-green-200 rounded flex items-center justify-center">
+                                                                <ImageIcon className="w-5 h-5 text-green-600" />
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
 
                             <div className="pt-2 flex justify-end gap-3">
@@ -370,6 +443,27 @@ export default function NewProductPage() {
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Medida Comercial</Label>
                                             {renderCreatableSelect('commercial_measure', datalistOptions.commercialMeasures || [], 'MEDIDA COMERCIAL')}
+                                        </div>
+                                        <div className="grid gap-2">
+                                            <Label className="text-xs font-bold text-slate-500 uppercase">Canto Puertas</Label>
+                                            <Input
+                                                name="canto_puertas"
+                                                placeholder="Ej: CANTO 2MM"
+                                                value={formData.canto_puertas}
+                                                onChange={handleChange}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="grid gap-2">
+                                            <Label className="text-xs font-bold text-slate-500 uppercase">Material / RH</Label>
+                                            <Input 
+                                                name="rh" 
+                                                value={formData.rh} 
+                                                onChange={handleChange} 
+                                                placeholder="RH / NA"
+                                            />
                                         </div>
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Accesorios / Rieles</Label>
@@ -463,16 +557,8 @@ export default function NewProductPage() {
 
                                     <div className="flex flex-wrap gap-6 mt-6 p-5 bg-slate-50 border border-slate-100 rounded-xl">
                                         <div className="flex items-center space-x-2">
-                                            <Checkbox id="rh_flag" checked={formData.rh_flag} onCheckedChange={(c) => setFormData(p => ({ ...p, rh_flag: !!c }))} />
-                                            <Label htmlFor="rh_flag" className="font-semibold text-slate-700">Es RH</Label>
-                                        </div>
-                                        <div className="flex items-center space-x-2">
                                             <Checkbox id="assembled_flag" checked={formData.assembled_flag} onCheckedChange={(c) => setFormData(p => ({ ...p, assembled_flag: !!c }))} />
                                             <Label htmlFor="assembled_flag" className="font-semibold text-slate-700">Es Armado</Label>
-                                        </div>
-                                        <div className="flex items-center space-x-2">
-                                            <Checkbox id="edge_2mm_flag" checked={formData.edge_2mm_flag} onCheckedChange={(c) => setFormData(p => ({ ...p, edge_2mm_flag: !!c }))} />
-                                            <Label htmlFor="edge_2mm_flag" className="font-semibold text-slate-700">Canto 2mm</Label>
                                         </div>
                                     </div>
                                 </CardContent>

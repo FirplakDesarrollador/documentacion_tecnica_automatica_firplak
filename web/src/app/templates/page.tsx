@@ -20,10 +20,12 @@ export default async function TemplatesPage() {
         <div className="flex flex-col gap-8">
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight">Plantillas</h1>
-                    <p className="text-muted-foreground">
-                        Administra visualmente los diseños de tus etiquetas y documentos.
+                <div>
+                    <h1 className="text-3xl font-bold tracking-tight text-slate-900">Diseñador de Plantillas</h1>
+                    <p className="text-slate-500 mt-2 text-sm max-w-2xl">
+                        Gestiona la estructura visual y las variables de datos para cada tipo de documento generado.
                     </p>
+                </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
                     <NewTemplateDialog />
@@ -32,16 +34,16 @@ export default async function TemplatesPage() {
 
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                 <Table>
-                    <TableHeader>
-                        <TableRow>
-                            <TableHead>Nombre</TableHead>
-                            <TableHead>Tipo</TableHead>
-                            <TableHead>Dimensiones</TableHead>
-                            <TableHead>Versión</TableHead>
-                            <TableHead>Estado</TableHead>
-                            <TableHead className="text-right">Acciones</TableHead>
-                        </TableRow>
-                    </TableHeader>
+                        <TableHeader className="bg-slate-50/50">
+                            <TableRow>
+                                <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500">Nombre de Plantilla</TableHead>
+                                <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500">Tipo de Doc</TableHead>
+                                <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500">Dimensiones (mm)</TableHead>
+                                <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500">Versión</TableHead>
+                                <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500">Estado</TableHead>
+                                <TableHead className="text-right uppercase tracking-wider text-[10px] font-bold text-slate-500">Acciones</TableHead>
+                            </TableRow>
+                        </TableHeader>
                     <TableBody>
                         {templates.length === 0 ? (
                             <TableRow>
@@ -57,19 +59,23 @@ export default async function TemplatesPage() {
                                     <TableCell>
                                         {template.width_mm}mm x {template.height_mm}mm ({template.orientation})
                                     </TableCell>
-                                    <TableCell>v{template.version}</TableCell>
+                                    <TableCell>
+                                        <Badge className="bg-slate-50 text-slate-500 ring-1 ring-slate-500/10 hover:bg-slate-50 text-[10px] px-2 py-0.5 font-bold uppercase tracking-tight">v{template.version}</Badge>
+                                    </TableCell>
                                     <TableCell>
                                         {template.active ? (
-                                            <Badge variant="default" className="bg-green-600">Activa</Badge>
+                                            <Badge className="bg-emerald-50 text-emerald-700 ring-1 ring-emerald-700/10 hover:bg-emerald-50 text-[10px] px-2 py-0.5 font-bold uppercase tracking-tight">Activa</Badge>
                                         ) : (
-                                            <Badge variant="secondary">Inactiva</Badge>
+                                            <Badge className="bg-slate-50 text-slate-400 ring-1 ring-slate-400/10 hover:bg-slate-50 text-[10px] px-2 py-0.5 font-bold uppercase tracking-tight">Inactiva</Badge>
                                         )}
                                     </TableCell>
-                                    <TableCell className="text-right flex items-center justify-end gap-2">
-                                        <Link href={`/templates/builder?id=${template.id}`}>
-                                            <Button variant="ghost" size="sm">Editar</Button>
-                                        </Link>
-                                        <DeleteTemplateButton id={template.id} />
+                                    <TableCell className="text-right">
+                                        <div className="flex items-center justify-end gap-2">
+                                            <Link href={`/templates/builder?id=${template.id}`}>
+                                                <Button variant="ghost" size="sm" className="font-semibold text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50">Configurar</Button>
+                                            </Link>
+                                            <DeleteTemplateButton id={template.id} />
+                                        </div>
                                     </TableCell>
                                 </TableRow>
                             ))

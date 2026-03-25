@@ -5,7 +5,7 @@ export interface ParsedCodeResult {
     ref_code: string | null
     version_code: string | null
     color_code: string | null
-    rh_flag: boolean
+    rh: string | null
     product_type: string | null
     use_destination: string | null
     zone_home: string | null
@@ -21,7 +21,10 @@ export interface ParsedCodeResult {
     height_cm: number | null
     weight_kg: number | null
     commercial_measure: string | null
-    edge_2mm_flag: boolean
+    canto_puertas: string | null
+    armado_con_lvm: string | null
+    carb2: string | null
+    private_label_client_name: string | null
 }
 
 export async function parseProductCode(
@@ -34,7 +37,7 @@ export async function parseProductCode(
         ref_code: null,
         version_code: null,
         color_code: null,
-        rh_flag: Boolean(manualRhFlag),
+        rh: manualRhFlag ? 'RH' : 'NA',
         product_type: null,
         use_destination: null,
         zone_home: null,
@@ -50,7 +53,10 @@ export async function parseProductCode(
         height_cm: null,
         weight_kg: null,
         commercial_measure: null,
-        edge_2mm_flag: false
+        canto_puertas: null,
+        armado_con_lvm: 'NA',
+        carb2: 'NA',
+        private_label_client_name: 'NA'
     }
 
     if (!code) return result
@@ -83,14 +89,33 @@ export async function parseProductCode(
                 result.use_destination = familia.use_destination
                 result.zone_home = familia.zone_home
                 result.assembled_flag = familia.assembled_default
-                if (familia.rh_default) result.rh_flag = true
+                if (familia.rh_default) result.rh = 'RH'
             }
         } catch (e) {
             console.error('codeParser: error querying familia', e)
         }
 
         if (result.version_code?.toUpperCase() === 'MRH') {
-            result.rh_flag = true
+            result.rh = 'RH'
+        }
+
+        // --- Detección de Versión desde Diccionario ---
+        if (result.version_code) {
+            try {
+                const verRows = await dbQuery(`SELECT code, description, automatic_rules FROM public.versions WHERE code = '${result.version_code.toUpperCase().replace(/'/g, "''")}' LIMIT 1`);
+                if (verRows && verRows.length > 0) {
+                    const ver = verRows[0];
+                    const rules = ver.automatic_rules || {};
+                    
+                    if (rules.rh) result.rh = rules.rh;
+                    if (rules.client_name) result.private_label_client_name = rules.client_name;
+                    
+                    // Guardamos la descripción para usarla en accessory_text si sapDescription existe
+                    (result as any)._version_description = ver.description;
+                }
+            } catch (e) {
+                console.error('codeParser: error querying version dictionary', e);
+            }
         }
     } else {
         result.familia_code = code
@@ -100,7 +125,11 @@ export async function parseProductCode(
         const descUpper = sapDescription.toUpperCase();
         
         if (descUpper.includes('RH')) {
-            result.rh_flag = true
+            result.rh = 'RH'
+        }
+
+        if (descUpper.includes('ARMADO')) {
+            result.assembled_flag = true;
         }
 
         // Detección de Medida Comercial
@@ -109,21 +138,27 @@ export async function parseProductCode(
             result.commercial_measure = measureMatch[1];
         }
 
-        // Detección de Cantos Especiales (e.g. 1.5MM vs 2MM)
+        // Detección de Cantos Especiales
         const cantoMatch = descUpper.match(/CANTO\s*(\d*\.?\d+)MM/);
         let cantoText = '';
         if (cantoMatch) {
             const mm = parseFloat(cantoMatch[1]);
             if (mm === 2) {
-                result.edge_2mm_flag = true;
+                result.canto_puertas = 'CANTO 2MM';
             } else {
                 cantoText = `CANTO ${mm}MM`;
             }
         }
 
-        // Detección de Accesorios (Específico CIERRE LENTO OCULTO)
+        // Detección de Accesorios
         let foundAccessories = []
         if (cantoText) foundAccessories.push(cantoText)
+
+        // Agregar descripción de la versión desde el diccionario si existe
+        const versionDesc = (result as any)._version_description;
+        if (versionDesc && versionDesc !== result.version_code) {
+            foundAccessories.push(versionDesc);
+        }
         
         if (descUpper.includes('CIERRE LENTO OCULTO')) {
             foundAccessories.push('CIERRE LENTO OCULTO');
@@ -132,7 +167,6 @@ export async function parseProductCode(
         }
 
         // --- Lógicas Especiales de Muebles ---
-        // 1. GODAI
         if (descUpper.includes('GODAI')) {
             if (descUpper.includes('ENTREPA')) {
                 result.designation = 'SOPORTE Y ESTRUCTURA CON ENTREPAÑO';
@@ -147,7 +181,6 @@ export async function parseProductCode(
             }
         }
 
-        // 2. VALDEZ y BÁSICOS
         if (descUpper.includes('VALDEZ') || descUpper.includes('BASICO') || descUpper.includes('BÁSICO')) {
             if (descUpper.includes('PISO')) {
                 result.designation = 'A PISO';
@@ -155,7 +188,6 @@ export async function parseProductCode(
                 result.designation = 'ELEVADO';
             }
             
-            // 3. Manijas para BÁSICOS
             if (descUpper.includes('BASICO') || descUpper.includes('BÁSICO')) {
                 if (descUpper.includes('SIN MANIJA')) {
                     foundAccessories.push('SIN MANIJAS');
@@ -175,13 +207,12 @@ export async function parseProductCode(
             try {
                 const dimRows = await dbQuery(`
                     SELECT width_cm, depth_cm, height_cm, weight_kg, furniture_name, line, designation, isometric_path, isometric_asset_id 
-                    FROM public.products 
+                    FROM public.cabinet_products 
                     WHERE ref_code = '${result.ref_code}' AND commercial_measure = '${result.commercial_measure}'
                     AND width_cm IS NOT NULL
                     ORDER BY created_at DESC
                     LIMIT 1
                 `);
-                console.log('--- DEBUG DIMROWS ---', JSON.stringify(dimRows));
                 if (dimRows && dimRows.length > 0) {
                     const dims = dimRows[0];
                     if (dims.width_cm !== null) result.width_cm = parseFloat(dims.width_cm);
@@ -190,7 +221,8 @@ export async function parseProductCode(
                     if (dims.weight_kg !== null) result.weight_kg = parseFloat(dims.weight_kg);
                     if (dims.furniture_name) result.furniture_name = dims.furniture_name;
                     if (dims.line) result.line = dims.line;
-                    if (dims.designation) result.designation = dims.designation;
+                    if (dims.designation && !result.designation) result.designation = dims.designation;
+                    
                     if (
                         (dims.isometric_path && String(dims.isometric_path).trim() !== '' && String(dims.isometric_path).trim() !== 'null') || 
                         (dims.isometric_asset_id && String(dims.isometric_asset_id).trim() !== '' && String(dims.isometric_asset_id).trim() !== 'null')
@@ -200,6 +232,35 @@ export async function parseProductCode(
                 }
             } catch (e) {
                 console.error('codeParser: error during smart lookup', e);
+            }
+        }
+
+        // Kits (Furniture prepared for Washbasin)
+        const washbasinMatch = sapDescription.match(/\bC\/\s*(?:LVM\s+)?([A-Z0-9]+(?:\s+[A-Z0-9]+)?)/i);
+        if (washbasinMatch && washbasinMatch[1]) {
+            const model = washbasinMatch[1].trim().toUpperCase();
+            if (model !== 'LVM' && model.length > 2) {
+                result.armado_con_lvm = model;
+            }
+        }
+
+        // --- Detección de Marca Propia (Al final de la descripción -CLIENTE) ---
+        const lastHyphenIndex = sapDescription.lastIndexOf('-');
+        if (lastHyphenIndex !== -1 && lastHyphenIndex < sapDescription.length - 1) {
+            const potentialClient = sapDescription.substring(lastHyphenIndex + 1).trim().toUpperCase();
+            if (potentialClient && potentialClient.length > 2) {
+                try {
+                    const clientRows = await dbQuery(`
+                        SELECT name FROM public.clients 
+                        WHERE UPPER(name) = '${potentialClient.replace(/'/g, "''")}'
+                        LIMIT 1
+                    `);
+                    if (clientRows && clientRows.length > 0) {
+                        result.private_label_client_name = clientRows[0].name;
+                    }
+                } catch (e) {
+                    console.error('codeParser: error checking client name', e);
+                }
             }
         }
     }

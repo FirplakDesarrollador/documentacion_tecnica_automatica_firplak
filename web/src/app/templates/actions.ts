@@ -51,7 +51,7 @@ export async function getPreviewProduct() {
     try {
         const products = await dbQuery(`
             SELECT p.*, c.name_color_sap
-            FROM public.products p
+            FROM public.cabinet_products p
             LEFT JOIN public.colors c ON p.color_code = c.code_4dig
             WHERE p.final_name_es IS NOT NULL
             ORDER BY p.updated_at DESC

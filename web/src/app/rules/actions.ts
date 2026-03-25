@@ -55,3 +55,115 @@ export async function deleteRuleAction(id: string) {
     await dbQuery(`DELETE FROM public.rules WHERE id = '${id}'`)
     revalidatePath('/rules')
 }
+
+export async function previewNamingRulesAction(productType: string, pendingRules: any[]) {
+    // Fetch 5 random products of the given type with all fields needed for name evaluation
+    const safeType = productType.replace(/'/g, "''")
+    const products = await dbQuery(`
+        SELECT id, code, product_type, furniture_name, line, designation, use_destination,
+               commercial_measure, accessory_text, door_color_text, rh, canto_puertas, 
+               armado_con_lvm, carb2, assembled_flag,
+               color_code, zone_home, ref_code, final_name_es, width_cm, depth_cm, height_cm,
+               weight_kg, barcode_text, sap_description, private_label_flag, private_label_client_name,
+               icon_rh, icon_full_extension, icon_soft_close, icon_edge_2mm
+        FROM public.cabinet_products
+        WHERE product_type = '${safeType}'
+          AND furniture_name IS NOT NULL
+        ORDER BY random()
+        LIMIT 5
+    `) || []
+
+    if (products.length === 0) return []
+
+    // Import the evaluator dynamically (server-side only)
+    const { evaluateProductRules } = await import('@/lib/engine/ruleEvaluator')
+
+    // Build Rule-compatible objects from pendingRules (they may lack id if newly added)
+    const rulesForEval = pendingRules.map((r: any, idx: number) => ({
+        id: r.id || `temp-${idx}`,
+        rule_type: r.rule_type,
+        target_entity: r.target_entity || productType,
+        condition_expression: r.condition_expression,
+        action_type: r.action_type,
+        action_payload: r.action_payload,
+        priority: r.priority ?? idx * 10,
+        enabled: r.enabled ?? true,
+        notes: r.notes || null,
+        target_value: r.target_value || productType,
+    }))
+
+    return products.map((p: any) => {
+        const result = evaluateProductRules(p as any, rulesForEval as any)
+        return {
+            id: p.id,
+            code: p.code,
+            currentName: p.final_name_es || '',
+            previewName: result.finalNameEs,
+            productData: p,
+        }
+    })
+}
+
+export async function applyNamesToProductTypeAction(productType: string) {
+    const safeType = productType.replace(/'/g, "''")
+
+    // Fetch ALL products of this type
+    const products = await dbQuery(`
+        SELECT id, code, product_type, furniture_name, line, designation, use_destination,
+               commercial_measure, accessory_text, door_color_text, rh, canto_puertas, carb2,
+               armado_con_lvm, assembled_flag, color_code, zone_home, ref_code, final_name_es,
+               width_cm, depth_cm, height_cm, weight_kg, barcode_text, sap_description,
+               private_label_flag, private_label_client_name,
+               icon_rh, icon_full_extension, icon_soft_close, icon_edge_2mm
+        FROM public.cabinet_products
+        WHERE product_type = '${safeType}'
+          AND furniture_name IS NOT NULL
+        ORDER BY code ASC
+    `) || []
+
+    if (products.length === 0) return { total: 0, results: [] }
+
+    // Load current saved rules for this product type
+    const rules = await dbQuery(`
+        SELECT * FROM public.rules 
+        WHERE enabled = true 
+          AND rule_type = 'name_component'
+          AND (target_entity = 'product' OR target_entity = '${safeType}')
+        ORDER BY priority ASC
+    `) || []
+
+    const { evaluateProductRules } = await import('@/lib/engine/ruleEvaluator')
+
+    const results: { code: string, newName: string, oldName: string, error?: string }[] = []
+
+    // Process in batches of 20
+    const BATCH_SIZE = 20
+    for (let i = 0; i < products.length; i += BATCH_SIZE) {
+        const batch = products.slice(i, i + BATCH_SIZE)
+        for (const p of batch) {
+            try {
+                const evalResult = evaluateProductRules(p as any, rules as any)
+                const newName = evalResult.finalNameEs
+
+                // Update in DB
+                if (newName && newName.trim() !== '') {
+                    await dbQuery(`
+                        UPDATE public.cabinet_products 
+                        SET final_name_es = '${newName.replace(/'/g, "''")}', updated_at = now()
+                        WHERE id = '${p.id}'
+                    `)
+                    results.push({ code: p.code, newName, oldName: p.final_name_es || '' })
+                } else {
+                    results.push({ code: p.code, newName: '', oldName: p.final_name_es || '', error: 'Nombre generado vacío — revisar reglas' })
+                }
+            } catch (err: any) {
+                results.push({ code: p.code, newName: '', oldName: p.final_name_es || '', error: err.message })
+            }
+        }
+    }
+
+    revalidatePath('/rules')
+    revalidatePath('/products')
+
+    return { total: products.length, results }
+}

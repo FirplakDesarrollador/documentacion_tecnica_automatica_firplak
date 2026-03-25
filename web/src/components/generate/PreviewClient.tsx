@@ -65,7 +65,24 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
             if (field === 'final_name_es') return engineResult.finalNameEs || product['final_name_es'] || ''
             if (field === 'color') return product.color_name || product.color_code || ''
             
-            if (['icon_rh', 'icon_edge_2mm', 'icon_soft_close', 'icon_full_extension'].includes(field)) {
+            if (field === 'icon_edge_2mm' || field === 'canto_puertas') {
+                const val = product.canto_puertas || ''
+                if (val && val !== 'NA') {
+                    const src = assetMap['sys_icon_edge_2mm'] ? (assetMap['sys_icon_edge_2mm'].startsWith('http') ? assetMap['sys_icon_edge_2mm'] : `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/${assetMap['sys_icon_edge_2mm']}`) : null
+                    const imgHtml = src ? `<img src="${src}" style="height: 1.2em; width: auto; vertical-align: middle; display: inline-block; margin: 0 0.1em;" />` : ''
+                    return `${imgHtml} ${val}`
+                }
+                return ''
+            }
+            if (field === 'icon_carb2') {
+                if (product.carb2 === 'CARB2') {
+                    const src = assetMap['sys_icon_carb2'] ? (assetMap['sys_icon_carb2'].startsWith('http') ? assetMap['sys_icon_carb2'] : `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/${assetMap['sys_icon_carb2']}`) : null
+                    if (src) return `<img src="${src}" style="height: 1.2em; width: auto; vertical-align: middle; display: inline-block; margin: 0 0.1em;" />`
+                }
+                return ''
+            }
+
+            if (['icon_rh', 'icon_soft_close', 'icon_full_extension'].includes(field)) {
                 const isTrue = product[field] === true || product[field] === 'true'
                 if (isTrue) {
                     const sysAssetKey = `sys_${field}`
@@ -141,7 +158,25 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                     el.content = rawContent.replace(/{([^}]+)}/g, (_: string, field: string) => {
                         if (field === 'color') return enrichedProduct.color_name || enrichedProduct.color_code || ''
                         
-                        if (['icon_rh', 'icon_edge_2mm', 'icon_soft_close', 'icon_full_extension'].includes(field)) {
+                        if (field === 'icon_edge_2mm' || field === 'canto_puertas') {
+                            const val = enrichedProduct.canto_puertas || ''
+                            if (val && val !== 'NA') {
+                                const src = assetMap['sys_icon_edge_2mm'] ? (assetMap['sys_icon_edge_2mm'].startsWith('http') ? assetMap['sys_icon_edge_2mm'] : `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/${assetMap['sys_icon_edge_2mm']}`) : null
+                                const imgHtml = src ? `<img src="${src}" style="height: 1.2em; width: auto; vertical-align: middle; display: inline-block; margin: 0 0.1em;" />` : ''
+                                return `${imgHtml} ${val}`
+                            }
+                            return ''
+                        }
+
+                        if (field === 'icon_carb2') {
+                            if (enrichedProduct.carb2 === 'CARB2') {
+                                const src = assetMap['sys_icon_carb2'] ? (assetMap['sys_icon_carb2'].startsWith('http') ? assetMap['sys_icon_carb2'] : `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/${assetMap['sys_icon_carb2']}`) : null
+                                if (src) return `<img src="${src}" style="height: 1.2em; width: auto; vertical-align: middle; display: inline-block; margin: 0 0.1em;" />`
+                            }
+                            return ''
+                        }
+
+                        if (['icon_rh', 'icon_soft_close', 'icon_full_extension'].includes(field)) {
                             const isTrue = enrichedProduct[field] === true || enrichedProduct[field] === 'true'
                             if (isTrue) {
                                 const sysAssetKey = `sys_${field}`

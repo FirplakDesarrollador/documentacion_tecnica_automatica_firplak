@@ -7,13 +7,14 @@ import {
   Package, AlertCircle, LayoutTemplate, GitMerge, FileImage, 
   FileText, PlusCircle, Upload, ArrowRight, Settings2, DatabaseZap
 } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 export default async function Home() {
   // Fetch real KPIs from Supabase
   const kpiRows = await dbQuery(`
     SELECT
-      (SELECT COUNT(*) FROM public.products) as total_products,
-      (SELECT COUNT(*) FROM public.products WHERE validation_status = 'incomplete') as incomplete_products,
+      (SELECT COUNT(*) FROM public.cabinet_products) as total_products,
+      (SELECT COUNT(*) FROM public.cabinet_products WHERE validation_status = 'incomplete') as incomplete_products,
       (SELECT COUNT(*) FROM public.templates WHERE active = true) as active_templates
   `)
   const kpi = kpiRows?.[0] || {}
@@ -24,7 +25,7 @@ export default async function Home() {
   // Recent activity
   const recentProducts = await dbQuery(`
     SELECT id, code, final_name_es, validation_status, updated_at
-    FROM public.products
+    FROM public.cabinet_products
     ORDER BY updated_at DESC
     LIMIT 5
   `) || []
@@ -84,26 +85,26 @@ export default async function Home() {
       {/* Header & Primary Actions */}
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 bg-white p-8 rounded-2xl border border-slate-200 shadow-soft">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900">Panel principal</h1>
-          <p className="text-slate-500 mt-2 text-base max-w-lg leading-relaxed">
-            Tu espacio de trabajo central para la gestión técnica, estructuración de datos y generación automatizada de etiquetas.
+          <h1 className="text-4xl font-extrabold tracking-tight text-slate-900 font-sans">Panel principal</h1>
+          <p className="text-slate-500 mt-2 text-lg max-w-lg leading-relaxed font-sans">
+            Tu espacio de trabajo central para la gestión técnica y automatización de documentación.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <Link href="/products">
-            <Button variant="outline" className="h-11 px-5 shadow-sm">
-              <Upload className="mr-2 h-4 w-4 text-slate-500" />
+            <Button variant="outline" className="h-12 px-6 shadow-sm border-slate-200 hover:bg-slate-50 text-slate-600 font-semibold">
+              <Upload className="mr-2 h-4 w-4 text-slate-400" />
               Importar CSV
             </Button>
           </Link>
           <Link href="/templates/new">
-            <Button variant="secondary" className="h-11 px-5 shadow-sm">
+            <Button variant="secondary" className="h-12 px-6 shadow-sm font-semibold">
               <LayoutTemplate className="mr-2 h-4 w-4 text-indigo-500" />
               Crear plantilla
             </Button>
           </Link>
           <Link href="/products/new">
-            <Button className="h-11 px-5 shadow-sm">
+            <Button className="h-12 px-6 shadow-md font-semibold bg-indigo-600 hover:bg-indigo-700 transition-all">
               <PlusCircle className="mr-2 h-4 w-4" />
               Agregar producto
             </Button>
@@ -113,58 +114,68 @@ export default async function Home() {
 
       {/* Summary KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <Card className="shadow-soft hover:shadow-md transition-shadow">
+        <Card className="shadow-soft border-slate-200/60 rounded-xl overflow-hidden group hover:shadow-premium transition-all duration-300">
           <CardContent className="p-6">
             <div className="flex items-center justify-between space-y-0 pb-2">
-              <p className="text-sm font-medium text-slate-500 tracking-wide uppercase">Productos Totales</p>
-              <Package className="h-4 w-4 text-slate-400" />
+              <p className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">Productos Totales</p>
+              <div className="p-1.5 bg-slate-100 rounded-md group-hover:bg-indigo-50 transition-colors">
+                <Package className="h-4 w-4 text-slate-400 group-hover:text-indigo-500" />
+              </div>
             </div>
-            <div className="text-3xl font-bold text-slate-900 mt-2">{totalProducts}</div>
-            <p className="text-xs text-slate-500 mt-1">Registrados en la base maestra</p>
+            <div className="text-3xl font-extrabold text-slate-900 mt-3 tabular-nums">{totalProducts}</div>
+            <p className="text-[10px] text-slate-400 mt-1 font-medium italic">Base maestra consolidada</p>
           </CardContent>
         </Card>
 
-        <Card className="shadow-soft hover:shadow-md transition-shadow">
+        <Card className="shadow-soft border-slate-200/60 rounded-xl overflow-hidden group hover:shadow-premium transition-all duration-300">
           <CardContent className="p-6">
             <div className="flex items-center justify-between space-y-0 pb-2">
-              <p className="text-sm font-medium text-slate-500 tracking-wide uppercase">Incompletos</p>
-              <DatabaseZap className="h-4 w-4 text-amber-500" />
+              <p className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">Incompletos</p>
+              <div className="p-1.5 bg-amber-50 rounded-md">
+                <DatabaseZap className="h-4 w-4 text-amber-500" />
+              </div>
             </div>
-            <div className="text-3xl font-bold text-slate-900 mt-2">{incompleteProducts}</div>
-            <p className="text-xs text-amber-600 mt-1 font-medium">Requieren completar datos</p>
+            <div className="text-3xl font-extrabold text-slate-900 mt-3 tabular-nums">{incompleteProducts}</div>
+            <p className="text-[10px] text-amber-600 mt-1 font-bold">ACCION REQUERIDA</p>
           </CardContent>
         </Card>
 
-        <Card className="shadow-soft hover:shadow-md transition-shadow">
+        <Card className="shadow-soft border-slate-200/60 rounded-xl overflow-hidden group hover:shadow-premium transition-all duration-300">
           <CardContent className="p-6">
             <div className="flex items-center justify-between space-y-0 pb-2">
-              <p className="text-sm font-medium text-slate-500 tracking-wide uppercase">Excepciones</p>
-              <AlertCircle className="h-4 w-4 text-rose-500" />
+              <p className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">Excepciones</p>
+              <div className="p-1.5 bg-rose-50 rounded-md">
+                <AlertCircle className="h-4 w-4 text-rose-500" />
+              </div>
             </div>
-            <div className="text-3xl font-bold text-slate-900 mt-2">{openExceptions}</div>
-            <p className="text-xs text-rose-600 mt-1 font-medium">Anomalías pendientes</p>
+            <div className="text-3xl font-extrabold text-slate-900 mt-3 tabular-nums">{openExceptions}</div>
+            <p className="text-[10px] text-rose-600 mt-1 font-bold">CASOS PENDIENTES</p>
           </CardContent>
         </Card>
 
-        <Card className="shadow-soft hover:shadow-md transition-shadow">
+        <Card className="shadow-soft border-slate-200/60 rounded-xl overflow-hidden group hover:shadow-premium transition-all duration-300">
           <CardContent className="p-6">
             <div className="flex items-center justify-between space-y-0 pb-2">
-              <p className="text-sm font-medium text-slate-500 tracking-wide uppercase">Plantillas Activas</p>
-              <LayoutTemplate className="h-4 w-4 text-emerald-500" />
+              <p className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">Plantillas Activas</p>
+              <div className="p-1.5 bg-emerald-50 rounded-md">
+                <LayoutTemplate className="h-4 w-4 text-emerald-500" />
+              </div>
             </div>
-            <div className="text-3xl font-bold text-slate-900 mt-2">{activeTemplates}</div>
-            <p className="text-xs text-emerald-600 mt-1 font-medium">Listas para producción</p>
+            <div className="text-3xl font-extrabold text-slate-900 mt-3 tabular-nums">{activeTemplates}</div>
+            <p className="text-[10px] text-emerald-600 mt-1 font-bold">SISTEMA LISTO</p>
           </CardContent>
         </Card>
 
-        <Card className="shadow-soft hover:shadow-md transition-shadow">
+        <Card className="shadow-soft border-slate-200/60 rounded-xl overflow-hidden group hover:shadow-premium transition-all duration-300">
           <CardContent className="p-6">
             <div className="flex items-center justify-between space-y-0 pb-2">
-              <p className="text-sm font-medium text-slate-500 tracking-wide uppercase">Docs. Generados</p>
-              <FileText className="h-4 w-4 text-purple-500" />
+              <p className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">Docs. Generados</p>
+              <div className="p-1.5 bg-purple-50 rounded-md">
+                <FileText className="h-4 w-4 text-purple-500" />
+              </div>
             </div>
-            <div className="text-3xl font-bold text-slate-900 mt-2">{generatedDocs}</div>
-            <p className="text-xs text-slate-500 mt-1">En el caché reciente</p>
+            <div className="text-3xl font-extrabold text-slate-900 mt-3 tabular-nums">{generatedDocs}</div>
+            <p className="text-[10px] text-slate-400 mt-1 font-medium">Historial 24h</p>
           </CardContent>
         </Card>
       </div>
@@ -207,10 +218,19 @@ export default async function Home() {
                 {recentProducts.length > 0 ? recentProducts.map((p: any) => (
                   <div key={p.id} className="p-4 flex flex-col gap-1 hover:bg-slate-50 transition-colors">
                     <div className="flex justify-between items-start">
-                      <Link href={`/products/${p.id}`} className="font-medium text-sm text-slate-900 hover:text-indigo-600 truncate max-w-[180px]">
+                      <Link href={`/products/${p.id}`} className="font-semibold text-sm text-slate-900 hover:text-indigo-600 truncate max-w-[180px] transition-colors">
                         {p.code}
                       </Link>
-                      <Badge variant={p.validation_status === 'ready' ? 'default' : p.validation_status === 'needs_review' ? 'destructive' : 'secondary'} className="text-[10px] px-2 py-0 h-5">
+                      <Badge
+                        className={cn(
+                          "text-[9px] px-1.5 py-0 h-4 font-bold uppercase tracking-tight ring-1 ring-inset",
+                          p.validation_status === 'ready'
+                            ? "bg-indigo-50 text-indigo-700 ring-indigo-700/10 hover:bg-indigo-50"
+                            : p.validation_status === 'needs_review'
+                              ? "bg-rose-50 text-rose-700 ring-rose-700/10 hover:bg-rose-50"
+                              : "bg-slate-50 text-slate-600 ring-slate-600/10 hover:bg-slate-50"
+                        )}
+                      >
                         {p.validation_status === 'incomplete' ? 'Incompleto' : p.validation_status === 'needs_review' ? 'Revisar' : 'Listo'}
                       </Badge>
                     </div>

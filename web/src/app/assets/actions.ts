@@ -6,7 +6,7 @@ import { revalidatePath } from 'next/cache'
 export async function getFamiliesAction() {
     const families = await dbQuery(`
         SELECT DISTINCT p.familia_code, f.name
-        FROM public.products p
+        FROM public.cabinet_products p
         LEFT JOIN public.familias f ON f.code = CASE 
             WHEN p.familia_code ~ '^[VCP].*' THEN SUBSTRING(p.familia_code FROM 2)
             ELSE p.familia_code 
@@ -27,7 +27,7 @@ export async function getReferencesByFamilyAction(familyCodes: string[]) {
     const filter = familyCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')
     const refRecords = await dbQuery(`
         SELECT DISTINCT ref_code, furniture_name 
-        FROM public.products 
+        FROM public.cabinet_products 
         WHERE ref_code IS NOT NULL AND familia_code IN (${filter})
         ORDER BY ref_code ASC
     `) || []
@@ -51,7 +51,7 @@ export async function getMeasuresByFamilyAndRefAction(familyCodes: string[], ref
 
     const measureRecords = await dbQuery(`
         SELECT DISTINCT commercial_measure 
-        FROM public.products 
+        FROM public.cabinet_products 
         WHERE commercial_measure IS NOT NULL AND (${whereParts.join(' OR ')})
         ORDER BY commercial_measure ASC
     `) || []
@@ -97,7 +97,7 @@ export async function associateIsometricAction(data: {
     const whereClause = `WHERE ${whereParts.join(' AND ')}`
 
     await dbQuery(`
-        UPDATE public.products 
+        UPDATE public.cabinet_products 
         SET isometric_asset_id = '${assetId}', 
             isometric_path = '${filePath}',
             updated_at = now()
@@ -118,7 +118,12 @@ export async function deleteAssetAction(assetId: string) {
         'Icono RH Fijo',
         'Icono Canto 2mm',
         'Icono Cierre Lento',
-        'Icono Extensión Total'
+        'Icono Extensión Total',
+        'Icono CARB2',
+        'Logo CHILEMAT',
+        "Logo D-ACQUA",
+    "Logo PROMART",
+    "Logo FERMETAL"
     )`) || []
     
     if (defaults.some((d: any) => d.id === assetId)) {

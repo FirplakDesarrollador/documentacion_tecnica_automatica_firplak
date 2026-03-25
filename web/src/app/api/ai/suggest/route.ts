@@ -27,7 +27,7 @@ export async function POST(req: Request) {
     - "color_name": string (The color of the product, e.g., "BLANCO", "WENGUE", "ROBLE", "GRIS").
     - "rh_flag": boolean (True if it mentions RH, Resistente a Humedad, etc.)
     - "assembled_flag": boolean (True if it explicitly mentions ARMADO or ENSAMBLADO. False if DESARMADO or missing)
-    - "edge_2mm_flag": boolean (True if it mentions CANTO 2MM or similar)
+    - "canto_puertas": string (Specify the type of edge mentioned, e.g., "CANTO 2MM", "CANTO 1MM", or "NA")
     - "accessory_text": string (Extract mentions of accessories like "MANIJAS", "RIEL FULL EXTENSION", "CIERRE LENTO", "BISAGRAS CIERRE LENTO")
     - "line": string (The product line, e.g., "LINEA BLANCA", "PREMIUM", "BASICS")
     - "use_destination": string (Where it's used, e.g., "LAVARROPAS", "LAVATRAPEROS", "AREA DE TRABAJO", "LAVAMANOS", "COCINAS")

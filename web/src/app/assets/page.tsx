@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { UploadAssetButton } from '@/components/assets/UploadAssetButton'
 import { EditAssetDialog } from '@/components/assets/EditAssetDialog'
 import { DeleteAssetDialog } from '@/components/assets/DeleteAssetDialog'
+import { ViewAssetDialog } from '@/components/assets/ViewAssetDialog'
 import { IsometricAssociationDialog } from '@/components/assets/IsometricAssociationDialog'
 
 export default async function AssetsPage() {
@@ -25,16 +26,21 @@ export default async function AssetsPage() {
         'Icono RH Fijo',
         'Icono Canto 2mm',
         'Icono Cierre Lento',
-        'Icono Extensión Total'
-    ]
+        'Icono Extensión Total',
+        { name: 'Icono CARB2', type: 'image' },
+    { name: 'Logo CHILEMAT', type: 'image' },
+    { name: 'Logo D-ACQUA', type: 'image' },
+    { name: 'Logo PROMART', type: 'image' },
+    { name: 'Logo FERMETAL', type: 'image' }
+]
 
     return (
         <div className="flex flex-col gap-8">
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight">Recursos</h1>
-                    <p className="text-muted-foreground">
-                        Administra tus logotipos, íconos y símbolos de manejo.
+                    <h1 className="text-3xl font-bold tracking-tight text-slate-900">Recursos Multimedia</h1>
+                    <p className="text-slate-500 mt-2 text-sm max-w-2xl">
+                        Biblioteca centralizada de logotipos, iconos de herrajes e isométricos técnicos para la documentación.
                     </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
@@ -55,13 +61,13 @@ export default async function AssetsPage() {
                     </div>
                 </div>
                 <Table>
-                    <TableHeader>
+                    <TableHeader className="bg-slate-50/50">
                         <TableRow>
-                            <TableHead className="w-[80px]">Vista Previa</TableHead>
-                            <TableHead>Tipo</TableHead>
-                            <TableHead>Nombre</TableHead>
-                            <TableHead>Ruta</TableHead>
-                            <TableHead className="w-[140px] text-right">Acciones</TableHead>
+                            <TableHead className="w-[100px] uppercase tracking-wider text-[10px] font-bold text-slate-500">Vista</TableHead>
+                            <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500">Categoría</TableHead>
+                            <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500">Identificador</TableHead>
+                            <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500">Ruta de Archivo</TableHead>
+                            <TableHead className="w-[140px] text-right uppercase tracking-wider text-[10px] font-bold text-slate-500">Acciones</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -77,20 +83,22 @@ export default async function AssetsPage() {
                                 return (
                                     <TableRow key={asset.id}>
                                         <TableCell>
-                                            <div className="w-10 h-10 rounded bg-muted flex items-center justify-center overflow-hidden border">
-                                                {asset.file_path ? (
-                                                    <img 
-                                                        src={asset.file_path} 
-                                                        alt={asset.name} 
-                                                        className="max-w-full max-h-full object-contain p-1"
-                                                    />
-                                                ) : (
-                                                    <ImageIcon className="h-5 w-5 text-muted-foreground" />
-                                                )}
-                                            </div>
+                                            <ViewAssetDialog assetName={asset.name} assetUrl={asset.file_path}>
+                                                <div className="w-12 h-12 rounded-lg bg-slate-50 flex items-center justify-center overflow-hidden border border-slate-200 cursor-pointer hover:ring-2 hover:ring-indigo-500/50 hover:border-indigo-500 transition-all shadow-sm">
+                                                    {asset.file_path ? (
+                                                        <img 
+                                                            src={asset.file_path} 
+                                                            alt={asset.name} 
+                                                            className="max-w-full max-h-full object-contain p-1.5"
+                                                        />
+                                                    ) : (
+                                                        <ImageIcon className="h-5 w-5 text-slate-300" />
+                                                    )}
+                                                </div>
+                                            </ViewAssetDialog>
                                         </TableCell>
                                         <TableCell>
-                                            <Badge variant="outline" className="capitalize">
+                                            <Badge className="bg-slate-50 text-slate-600 ring-1 ring-slate-600/10 hover:bg-slate-50 text-[9px] px-1.5 py-0 font-bold uppercase tracking-tight">
                                                 {asset.type}
                                             </Badge>
                                         </TableCell>
@@ -102,6 +110,7 @@ export default async function AssetsPage() {
                                             {asset.file_path || 'Sin archivo'}
                                         </TableCell>
                                         <TableCell className="text-right flex items-center justify-end gap-1">
+                                            <ViewAssetDialog assetName={asset.name} assetUrl={asset.file_path} />
                                             <EditAssetDialog 
                                                 assetId={asset.id} 
                                                 assetName={asset.name} 

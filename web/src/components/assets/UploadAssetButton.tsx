@@ -8,9 +8,12 @@ import { useRouter } from 'next/navigation'
 
 interface Props {
     onUploadComplete?: (asset: any) => void;
+    variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link";
+    className?: string;
+    label?: string;
 }
 
-export function UploadAssetButton({ onUploadComplete }: Props = {}) {
+export function UploadAssetButton({ onUploadComplete, variant = "default", className, label }: Props = {}) {
     const [isUploading, setIsUploading] = useState(false)
     const fileInputRef = useRef<HTMLInputElement>(null)
     const router = useRouter()
@@ -66,9 +69,11 @@ export function UploadAssetButton({ onUploadComplete }: Props = {}) {
             <Button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isUploading}
+                variant={variant}
+                className={className}
             >
                 {isUploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlusCircle className="mr-2 h-4 w-4" />}
-                {isUploading ? 'Subiendo...' : 'Adjuntar recurso'}
+                {isUploading ? 'Subiendo...' : (label || 'Adjuntar recurso')}
             </Button>
         </>
     )

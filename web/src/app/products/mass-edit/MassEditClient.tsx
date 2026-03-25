@@ -9,7 +9,11 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
 import { massUpdateProducts } from '../actions'
 import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, CheckCircle2, RotateCcw, Trash2, AlertTriangle, Search, Loader2 } from 'lucide-react'
+import { 
+    Search, Filter, Save, Download, RefreshCcw, Loader2, 
+    CheckCircle2, AlertCircle, Trash2, Edit3, X, ChevronRight,
+    ArrowLeft, RotateCcw, PlusCircle, Settings, AlertTriangle
+} from 'lucide-react'
 import Link from 'next/link'
 import { deleteProducts, translateProductsAction } from '../actions'
 import { cn } from "@/lib/utils"
@@ -28,7 +32,8 @@ interface Product {
     familia_code: string | null
     ref_code: string | null
     furniture_name: string | null
-    edge_2mm_flag: boolean
+    canto_puertas: string | null
+    rh: string | null
     rh_flag: boolean
     assembled_flag: boolean
     commercial_measure: string | null
@@ -44,6 +49,8 @@ interface Product {
     final_name_en: string | null
     final_name_es: string | null
     designation: string | null
+    status: string
+    special_label: string
 }
 
 import { MultiSelectSearchField } from '@/components/ui-custom/MultiSelectSearchField'
@@ -76,12 +83,14 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
 
     // Batch update state
     const [batchUpdates, setBatchUpdates] = useState({
-        edge_2mm_flag: false,
-        rh_flag: false,
-        assembled_flag: false,
+        canto_puertas: '',
+        rh: '',
+        assembled_flag: '', // Cambiado a string para consistencia con los demás selects
         validation_status: '',
         zone_home: '',
         designation: '',
+        status: '',
+        special_label: '',
     })
 
     const filteredProducts = useMemo(() => {
@@ -178,9 +187,15 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
         const idsArray = Array.from(selectedIds)
         const updates: any = {}
 
-        updates.edge_2mm_flag = batchUpdates.edge_2mm_flag
-        updates.rh_flag = batchUpdates.rh_flag
-        updates.assembled_flag = batchUpdates.assembled_flag
+        if (batchUpdates.canto_puertas) {
+            updates.canto_puertas = batchUpdates.canto_puertas
+        }
+        if (batchUpdates.rh) {
+            updates.rh = batchUpdates.rh
+        }
+        if (batchUpdates.assembled_flag !== '') {
+            updates.assembled_flag = batchUpdates.assembled_flag === 'true'
+        }
         if (batchUpdates.validation_status) {
             updates.validation_status = batchUpdates.validation_status
         }
@@ -189,6 +204,12 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
         }
         if (batchUpdates.designation) {
             updates.designation = batchUpdates.designation
+        }
+        if (batchUpdates.status) {
+            updates.status = batchUpdates.status
+        }
+        if (batchUpdates.special_label) {
+            updates.special_label = batchUpdates.special_label
         }
 
         try {
@@ -321,28 +342,38 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
 
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3 mb-4">
                             <div className="flex items-center space-x-2">
-                                <Checkbox
-                                    id="batch_edge"
-                                    checked={batchUpdates.edge_2mm_flag}
-                                    onCheckedChange={(c) => setBatchUpdates(p => ({ ...p, edge_2mm_flag: !!c }))}
-                                />
-                                <Label htmlFor="batch_edge" className="text-xs cursor-pointer">Canto 2mm</Label>
+                                <select
+                                    className="flex h-7 w-full rounded-md border border-input bg-background px-2 py-0 text-[10px] shadow-sm transition-colors cursor-pointer"
+                                    value={batchUpdates.canto_puertas}
+                                    onChange={(e) => setBatchUpdates(p => ({ ...p, canto_puertas: e.target.value }))}
+                                >
+                                    <option value="">(Canto)</option>
+                                    <option value="CANTO 2 MM">CANTO 2 MM</option>
+                                    <option value="CANTO 1.5 MM">CANTO 1.5 MM</option>
+                                    <option value="CANTO 0.45 MM">CANTO 0.45 MM</option>
+                                </select>
                             </div>
                             <div className="flex items-center space-x-2">
-                                <Checkbox
-                                    id="batch_rh"
-                                    checked={batchUpdates.rh_flag}
-                                    onCheckedChange={(c) => setBatchUpdates(p => ({ ...p, rh_flag: !!c }))}
-                                />
-                                <Label htmlFor="batch_rh" className="text-xs cursor-pointer">RH</Label>
+                                <select
+                                    className="flex h-7 w-full rounded-md border border-input bg-background px-2 py-0 text-[10px] shadow-sm transition-colors cursor-pointer"
+                                    value={batchUpdates.rh}
+                                    onChange={(e) => setBatchUpdates(p => ({ ...p, rh: e.target.value }))}
+                                >
+                                    <option value="">(RH)</option>
+                                    <option value="RH">RH (Resist. Humedad)</option>
+                                    <option value="NA">NA (No Aplica)</option>
+                                </select>
                             </div>
                             <div className="flex items-center space-x-2">
-                                <Checkbox
-                                    id="batch_assembled"
-                                    checked={batchUpdates.assembled_flag}
-                                    onCheckedChange={(c) => setBatchUpdates(p => ({ ...p, assembled_flag: !!c }))}
-                                />
-                                <Label htmlFor="batch_assembled" className="text-xs cursor-pointer">Armado</Label>
+                                <select
+                                    className="flex h-7 w-full rounded-md border border-input bg-background px-2 py-0 text-[10px] shadow-sm transition-colors cursor-pointer"
+                                    value={batchUpdates.assembled_flag}
+                                    onChange={(e) => setBatchUpdates(p => ({ ...p, assembled_flag: e.target.value }))}
+                                >
+                                    <option value="">(Armado)</option>
+                                    <option value="true">SÍ (ARMADO)</option>
+                                    <option value="false">NO (DESARMADO)</option>
+                                </select>
                             </div>
                             <div className="flex items-center space-x-2">
                                 <select
@@ -374,11 +405,33 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                                     value={batchUpdates.designation}
                                     onChange={(e) => setBatchUpdates(p => ({ ...p, designation: e.target.value }))}
                                 >
-                                    <option value="">(Cambiar Uso Masivo)</option>
+                                    <option value="">(Uso Masivo)</option>
                                     <option value="ELEVADO">ELEVADO</option>
                                     <option value="PISO">PISO</option>
                                     <option value="PARED">PARED (EMPOTRADO)</option>
                                     <option value="N/A">N/A</option>
+                                </select>
+                            </div>
+                            <div className="flex items-center space-x-2 col-span-2 md:col-span-1 border-l pl-2">
+                                <select
+                                    className="flex h-7 w-full rounded-md border border-indigo-200 bg-indigo-50 px-2 py-0 text-[10px] shadow-sm transition-colors cursor-pointer font-bold text-indigo-900"
+                                    value={batchUpdates.status}
+                                    onChange={(e) => setBatchUpdates(p => ({ ...p, status: e.target.value }))}
+                                >
+                                    <option value="">(Cambiar Estado)</option>
+                                    <option value="ACTIVO">ACTIVO</option>
+                                    <option value="INACTIVO">INACTIVO</option>
+                                </select>
+                            </div>
+                            <div className="flex items-center space-x-2 col-span-2 md:col-span-1 border-l pl-2">
+                                <select
+                                    className="flex h-7 w-full rounded-md border border-amber-200 bg-amber-50 px-2 py-0 text-[10px] shadow-sm transition-colors cursor-pointer font-bold text-amber-900"
+                                    value={batchUpdates.special_label}
+                                    onChange={(e) => setBatchUpdates(p => ({ ...p, special_label: e.target.value }))}
+                                >
+                                    <option value="">(Marca Especial)</option>
+                                    <option value="NA">NA</option>
+                                    <option value="ESPECIAL OBRA">ESPECIAL OBRA</option>
                                 </select>
                             </div>
                         </div>
@@ -409,9 +462,14 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                     <div className="grid grid-cols-1 gap-2 mt-4 pt-4 border-t border-blue-200/50">
                         <div className="flex items-center justify-between">
                             <Label className="text-[10px] uppercase font-bold text-blue-800">Motor de Traducción (Glosario)</Label>
-                            <Link href="/products/glossary">
-                                <Button variant="link" className="h-4 p-0 text-[10px] text-blue-600">Configurar</Button>
-                            </Link>
+                            <div className="flex items-center gap-2">
+                                <Link href="/products/glossary">
+                                    <Button variant="outline" size="sm" className="h-7 text-[10px] border-slate-200 text-blue-600 hover:text-blue-700 hover:bg-white font-bold uppercase transition-all shadow-sm">
+                                        <PlusCircle className="h-3 w-3 mr-1" />
+                                        Glosario Técnico
+                                    </Button>
+                                </Link>
+                            </div>
                         </div>
                         <div className="flex gap-2">
                             <Button
@@ -505,8 +563,8 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                                     <TableHead className="whitespace-nowrap">Color</TableHead>
                                     <TableHead className="whitespace-nowrap">WxDxH (cm)</TableHead>
                                     <TableHead>Medida / Ref</TableHead>
-                                    <TableHead className="text-center">Canto 2mm</TableHead>
-                                    <TableHead className="text-center">RH</TableHead>
+                                    <TableHead className="text-center">Canto</TableHead>
+                                    <TableHead className="text-center">Material (RH)</TableHead>
                                     <TableHead className="text-center">Armado</TableHead>
                                     <TableHead className="text-right">Acciones</TableHead>
                                 </TableRow>
@@ -606,10 +664,20 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                                                 </div>
                                             </TableCell>
                                             <TableCell className="text-center">
-                                                {p.edge_2mm_flag ? <Badge variant="outline" className="bg-emerald-50 text-emerald-700">Sí</Badge> : <span className="text-muted-foreground text-xs">-</span>}
+                                                {p.canto_puertas ? <Badge variant="outline" className={cn("text-[10px]", p.canto_puertas === 'CANTO 2 MM' ? "bg-emerald-50 text-emerald-700" : "bg-slate-50 text-slate-700")}>{p.canto_puertas.replace('CANTO ', '')}</Badge> : <span className="text-muted-foreground text-[10px]">-</span>}
                                             </TableCell>
                                             <TableCell className="text-center">
-                                                {p.rh_flag ? <Badge variant="outline" className="bg-blue-50 text-blue-700">Sí</Badge> : <span className="text-muted-foreground text-xs">-</span>}
+                                                <Badge variant="outline" className={cn("text-[10px] font-bold", p.status === 'ACTIVO' ? "bg-green-50 text-green-700 border-green-100" : "bg-red-50 text-red-700 border-red-100")}>
+                                                    {p.status}
+                                                </Badge>
+                                            </TableCell>
+                                            <TableCell className="text-center">
+                                                <Badge variant="outline" className={cn("text-[10px]", p.special_label && p.special_label !== 'NA' ? "bg-amber-50 text-amber-700 border-amber-100" : "text-slate-400 border-slate-100")}>
+                                                    {p.special_label || 'NA'}
+                                                </Badge>
+                                            </TableCell>
+                                            <TableCell className="text-center">
+                                                {p.rh ? <Badge variant="outline" className={cn("text-[10px]", p.rh === 'RH' ? "bg-blue-50 text-blue-700" : "bg-slate-50 text-slate-700")}>{p.rh}</Badge> : <span className="text-muted-foreground text-[10px]">-</span>}
                                             </TableCell>
                                             <TableCell className="text-center">
                                                 {p.assembled_flag ? <Badge variant="outline" className="bg-purple-50 text-purple-700">Sí</Badge> : <span className="text-muted-foreground text-xs">-</span>}

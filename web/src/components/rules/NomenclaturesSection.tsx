@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Settings2, ArrowRight } from 'lucide-react'
 import { NamingRulesManager } from './NamingRulesManager'
+import { cn } from '@/lib/utils'
 
 interface NomenclaturesSectionProps {
     namingRules: any[];
@@ -63,20 +64,25 @@ export function NomenclaturesSection({ namingRules }: NomenclaturesSectionProps)
                     <Card key={pt.value} className={`border-2 transition-all ${editingType === pt.value ? 'border-blue-500 shadow-md ring-4 ring-blue-50' : 'border-slate-200 hover:border-blue-300'}`}>
                         <CardHeader className="pb-3 bg-slate-50/50">
                             <div className="flex items-center justify-between">
-                                <CardTitle className="text-lg text-slate-700 font-extrabold">{pt.label}</CardTitle>
+                                <CardTitle className="text-sm font-bold text-slate-900 uppercase tracking-wider">{pt.label}</CardTitle>
                                 <Button 
-                                    variant={editingType === pt.value ? "default" : "outline"} 
+                                    variant={editingType === pt.value ? "default" : "secondary"} 
                                     size="sm"
                                     onClick={() => setEditingType(editingType === pt.value ? null : pt.value)}
-                                    className={editingType === pt.value ? "bg-blue-600 shadow-sm" : "text-blue-600 border-blue-200 hover:bg-blue-50"}
+                                    className={cn(
+                                        "h-8 px-3 text-[11px] font-bold uppercase transition-all shadow-sm",
+                                        editingType === pt.value 
+                                            ? "bg-indigo-600 hover:bg-indigo-700 text-white" 
+                                            : "bg-slate-100 text-slate-600 hover:bg-slate-200 border-none"
+                                    )}
                                 >
-                                    <Settings2 className="w-4 h-4 mr-2" />
-                                    {editingType === pt.value ? 'Cerrar Edición' : 'Modificar'}
+                                    <Settings2 className="w-3.5 h-3.5 mr-1.5" />
+                                    {editingType === pt.value ? 'Cerrar' : 'Ajustar'}
                                 </Button>
                             </div>
                         </CardHeader>
                         <CardContent className="pt-4 pb-4">
-                            <div className="bg-slate-50 border border-slate-100 p-3 rounded-lg w-full min-h-[60px] flex items-center shadow-inner">
+                            <div className="bg-slate-50/50 border border-slate-100 p-4 rounded-xl w-full min-h-[70px] flex items-center shadow-inner group-hover:bg-white transition-colors">
                                 {generatePreview(pt.value)}
                             </div>
                         </CardContent>

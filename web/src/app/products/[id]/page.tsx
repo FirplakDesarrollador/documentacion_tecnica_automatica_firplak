@@ -5,7 +5,7 @@ import { EditProductForm } from './EditProductForm'
 export default async function EditProductPage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = await params
 
-    const rows = await dbQuery(`SELECT * FROM public.products WHERE id='${id}' LIMIT 1`)
+    const rows = await dbQuery(`SELECT * FROM public.cabinet_products WHERE id='${id}' LIMIT 1`)
     const product = rows?.[0]
 
     if (!product) {

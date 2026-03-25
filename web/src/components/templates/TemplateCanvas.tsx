@@ -34,13 +34,14 @@ export interface TemplateElement {
     borderWidth?: number
     required?: boolean
     lineHeight?: number
+    letterSpacing?: number
     textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize' | 'sentence'
 }
 
 const PIXELS_PER_MM = 4
 const MAX_HISTORY = 10
 
-function OverflowText({ text, textAlign = 'left', isPreviewMode, type, previewData, dataField, lineHeight, textTransform }: { text: string, textAlign?: 'left' | 'center' | 'right' | undefined, isPreviewMode: boolean, type: string, previewData?: any, dataField?: string, lineHeight?: number, textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize' | 'sentence' }) {
+function OverflowText({ text, textAlign = 'left', isPreviewMode, type, previewData, dataField, lineHeight, letterSpacing, textTransform }: { text: string, textAlign?: 'left' | 'center' | 'right' | undefined, isPreviewMode: boolean, type: string, previewData?: any, dataField?: string, lineHeight?: number, letterSpacing?: number, textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize' | 'sentence' }) {
     const textRef = useRef<HTMLDivElement>(null)
     const [isOverflowing, setIsOverflowing] = useState(false)
 
@@ -170,7 +171,8 @@ function OverflowText({ text, textAlign = 'left', isPreviewMode, type, previewDa
                 wordBreak: 'break-word', 
                 whiteSpace: 'pre-wrap', 
                 padding: '0 2px', 
-                lineHeight: lineHeight || 1.2
+                lineHeight: lineHeight || 1.2,
+                letterSpacing: letterSpacing ? `${letterSpacing}em` : undefined
             }}>
                 {renderTextContent()}
             </div>
@@ -180,7 +182,8 @@ function OverflowText({ text, textAlign = 'left', isPreviewMode, type, previewDa
 
 function RichTextEditor({ content, onChange, onInsertVariable }: { content: string, onChange: (val: string) => void, onInsertVariable: (v: string) => void }) {
     const editorRef = useRef<HTMLDivElement>(null);
-    const [isFocused, setIsFocused] = useState(false);
+    const inputRef = useRef<HTMLInputElement>(null);
+    const [isInputFocused, setIsInputFocused] = useState(false);
 
     // Initial load only if empty
     useEffect(() => {
@@ -188,6 +191,28 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
             editorRef.current.innerHTML = content;
         }
     }, [content]);
+
+    // Update input value when selection changes
+    useEffect(() => {
+        const handleSelectionChange = () => {
+            if (!isInputFocused && inputRef.current) {
+                const selection = window.getSelection();
+                if (selection && selection.rangeCount > 0 && editorRef.current?.contains(selection.anchorNode)) {
+                    let node = selection.anchorNode;
+                    if (node?.nodeType === 3) node = node.parentNode;
+                    const element = node as HTMLElement;
+                    
+                    // Important: find the nearest ancestor with a font-size style or just compute from selection
+                    const currentPx = parseFloat(window.getComputedStyle(element).fontSize);
+                    const currentPt = Math.round(currentPx * 0.75 * 2) / 2;
+                    inputRef.current.value = currentPt.toString();
+                }
+            }
+        };
+
+        document.addEventListener('selectionchange', handleSelectionChange);
+        return () => document.removeEventListener('selectionchange', handleSelectionChange);
+    }, [isInputFocused]);
 
     const execCommand = (command: string, e: React.MouseEvent) => {
         e.preventDefault();
@@ -204,7 +229,7 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
 
     return (
         <div className="flex flex-col border border-input rounded-md overflow-hidden bg-white focus-within:ring-1 focus-within:ring-ring">
-            <div className="flex bg-slate-50 border-b p-1 gap-1 items-center">
+            <div className="flex flex-wrap bg-slate-50 border-b p-1 gap-1 items-center">
                 <Button variant="ghost" size="icon-sm" className="h-6 w-6" onMouseDown={(e) => execCommand('bold', e)} title="Negrita">
                     <b>B</b>
                 </Button>
@@ -220,86 +245,187 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                 
                 <div className="h-4 w-px bg-slate-300 mx-1" />
 
-                <select
-                    className="h-6 text-[10px] rounded border bg-white hover:bg-slate-50 cursor-pointer px-1 outline-none font-bold text-slate-600"
-                    onChange={(e) => {
-                        const size = e.target.value;
-                        if (!size) return;
-                        
-                        // Use a more robust way to apply font size via execCommand + span replacement
-                        // since browser fontSize only supports 1-7
-                        document.execCommand('styleWithCSS', false, "true");
-                        document.execCommand('fontSize', false, "7");
-                        
-                        if (editorRef.current) {
-                            const fontEls = editorRef.current.getElementsByTagName('font');
-                            const spanEls = editorRef.current.getElementsByTagName('span');
-                            
-                            // Process both possible outcomes (some browsers use font, others use span with styleWithCSS)
-                            Array.from(fontEls).forEach(el => {
-                                if (el.getAttribute('size') === "7") {
-                                    el.removeAttribute('size');
-                                    el.style.fontSize = `${size}pt`;
+                <div className="flex items-center bg-white border rounded">
+                    <Button 
+                        variant="ghost" 
+                        size="icon-sm" 
+                        className="h-6 w-6 rounded-none border-r"
+                        onMouseDown={(e) => {
+                            e.preventDefault();
+                            const adjust = (val: number) => {
+                                // Get current size from selection
+                                const selection = window.getSelection();
+                                if (!selection || selection.rangeCount === 0) return;
+                                let node = selection.anchorNode;
+                                if (node?.nodeType === 3) node = node.parentNode;
+                                const element = node as HTMLElement;
+                                const currentPx = parseFloat(window.getComputedStyle(element).fontSize);
+                                const currentPt = Math.round(currentPx * 0.75 * 2) / 2; // Round to 0.5
+                                
+                                const newSize = Math.max(6, Math.min(100, currentPt + val));
+                                if (inputRef.current) inputRef.current.value = newSize.toString();
+                                
+                                // Apply using the robust method
+                                editorRef.current?.focus();
+                                const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
+                                existingElements.forEach(el => el.setAttribute('data-pre-existing', 'true'));
+                                document.execCommand('styleWithCSS', false, "true");
+                                document.execCommand('fontSize', false, "7");
+                                
+                                if (editorRef.current) {
+                                    const allFontOrSpan = editorRef.current.querySelectorAll('font, span');
+                                    allFontOrSpan.forEach(el => {
+                                        const htmlEl = el as HTMLElement;
+                                        if (el.tagName === 'FONT' && el.getAttribute('size') === '7') {
+                                            htmlEl.style.fontSize = `${newSize}pt`;
+                                            el.removeAttribute('size');
+                                        } 
+                                        else if (
+                                            htmlEl.style.fontSize === 'xxx-large' || 
+                                            htmlEl.style.fontSize === '48px' || 
+                                            htmlEl.style.fontSize === '36pt' ||
+                                            htmlEl.style.fontSize === '7' ||
+                                            htmlEl.getAttribute('size') === '7'
+                                        ) {
+                                            htmlEl.style.fontSize = `${newSize}pt`;
+                                        }
+                                    });
+                                    existingElements.forEach(el => el.removeAttribute('data-pre-existing'));
+                                    onChange(editorRef.current.innerHTML);
                                 }
-                            });
-                            Array.from(spanEls).forEach(el => {
-                                if (el.style.fontSize === 'xxx-large' || el.style.fontSize === '48px') {
-                                    el.style.fontSize = `${size}pt`;
+                            };
+
+                            adjust(-0.5);
+                            const interval = setInterval(() => adjust(-0.5), 150);
+                            const stop = () => {
+                                clearInterval(interval);
+                                window.removeEventListener('mouseup', stop);
+                            };
+                            window.addEventListener('mouseup', stop);
+                        }}
+                    >
+                        -
+                    </Button>
+                    <input 
+                        ref={inputRef}
+                        type="text" 
+                        className="h-6 w-10 text-[10px] text-center outline-none bg-transparent"
+                        placeholder="Size"
+                        onFocus={() => setIsInputFocused(true)}
+                        onBlur={() => setIsInputFocused(false)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                                const newSize = parseFloat((e.target as HTMLInputElement).value);
+                                if (!isNaN(newSize)) {
+                                    editorRef.current?.focus();
+                                    document.execCommand('styleWithCSS', false, "true");
+                                    document.execCommand('fontSize', false, "7");
+                                    if (editorRef.current) {
+                                        const allFontOrSpan = editorRef.current.querySelectorAll('font, span');
+                                        allFontOrSpan.forEach(el => {
+                                            const htmlEl = el as HTMLElement;
+                                            if (
+                                                (el.tagName === 'FONT' && el.getAttribute('size') === '7') ||
+                                                htmlEl.style.fontSize === 'xxx-large' || htmlEl.style.fontSize === '48px' || htmlEl.style.fontSize === '36pt'
+                                            ) {
+                                                htmlEl.style.fontSize = `${newSize}pt`;
+                                                if (el.tagName === 'FONT') el.removeAttribute('size');
+                                            }
+                                        });
+                                        onChange(editorRef.current.innerHTML);
+                                    }
                                 }
-                            });
-                            
-                            onChange(editorRef.current.innerHTML);
-                        }
-                        e.target.value = "";
-                    }}
-                    value=""
-                >
-                    <option value="" disabled>Tamaño</option>
-                    {[6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48].map(s => (
-                        <option key={s} value={s}>{s}pt</option>
-                    ))}
-                </select>
+                                (e.target as HTMLInputElement).blur();
+                            }
+                        }}
+                    />
+                    <Button 
+                        variant="ghost" 
+                        size="icon-sm" 
+                        className="h-6 w-6 rounded-none border-l"
+                        onMouseDown={(e) => {
+                            e.preventDefault();
+                            const adjust = (val: number) => {
+                                const selection = window.getSelection();
+                                if (!selection || selection.rangeCount === 0) return;
+                                let node = selection.anchorNode;
+                                if (node?.nodeType === 3) node = node.parentNode;
+                                const currentPx = parseFloat(window.getComputedStyle(node as HTMLElement).fontSize);
+                                const currentPt = Math.round(currentPx * 0.75 * 2) / 2;
+                                const newSize = Math.max(6, Math.min(100, currentPt + val));
+                                if (inputRef.current) inputRef.current.value = newSize.toString();
+                                
+                                editorRef.current?.focus();
+                                const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
+                                existingElements.forEach(el => el.setAttribute('data-pre-existing', 'true'));
+                                document.execCommand('styleWithCSS', false, "true");
+                                document.execCommand('fontSize', false, "7");
+                                
+                                if (editorRef.current) {
+                                    const allFontOrSpan = editorRef.current.querySelectorAll('font, span');
+                                    allFontOrSpan.forEach(el => {
+                                        const htmlEl = el as HTMLElement;
+                                        if (
+                                            (el.tagName === 'FONT' && el.getAttribute('size') === '7') ||
+                                            htmlEl.style.fontSize === 'xxx-large' || htmlEl.style.fontSize === '48px' || htmlEl.style.fontSize === '36pt'
+                                        ) {
+                                            htmlEl.style.fontSize = `${newSize}pt`;
+                                            if (el.tagName === 'FONT') el.removeAttribute('size');
+                                        }
+                                    });
+                                    existingElements.forEach(el => el.removeAttribute('data-pre-existing'));
+                                    onChange(editorRef.current.innerHTML);
+                                }
+                            };
+
+                            adjust(0.5);
+                            const interval = setInterval(() => adjust(0.5), 150);
+                            const stop = () => {
+                                clearInterval(interval);
+                                window.removeEventListener('mouseup', stop);
+                            };
+                            window.addEventListener('mouseup', stop);
+                        }}
+                    >
+                        +
+                    </Button>
+                </div>
 
                 <select
                     className="h-6 text-[10px] rounded border bg-slate-100 hover:bg-slate-200 cursor-pointer px-1 outline-none ml-auto"
                     onChange={(e) => {
-                        if (e.target.value) {
-                            onInsertVariable(e.target.value);
-                            e.target.value = "";
-                        }
+                        onInsertVariable(e.target.value);
+                        e.target.value = "";
                     }}
-                    value=""
                 >
-                    <option value="" disabled>+ Insertar Variable</option>
-                    <option value="final_name_es">Nombre (ES)</option>
-                    <option value="final_name_en">Nombre (EN)</option>
-                    <option value="code">Código Artículo (SKU)</option>
-                    <option value="sku_base">SKU Sin Color</option>
-                    <option value="barcode_text">Código de Barras EAN</option>
-                    <option value="color">Color (Nombre)</option>
-                    <option value="color_code">Color (Código)</option>
-                    <option value="sap_description">Descripción SAP</option>
-                    <option value="furniture_name">Nombre Mueble Genérico</option>
-                    <option value="line">Línea</option>
-                    <option value="commercial_measure">Medida Comercial</option>
-                    <option value="use_destination">Uso</option>
-                    <option value="zone_home">Zona</option>
-                    <option value="width_cm">Ancho (cm)</option>
-                    <option value="depth_cm">Fondo (cm)</option>
-                    <option value="height_cm">Alto (cm)</option>
-                    <option value="weight_kg">Peso (kg)</option>
-                    <option value="width_in">Ancho (in)</option>
-                    <option value="depth_in">Fondo (in)</option>
-                    <option value="height_in">Alto (in)</option>
-                    <option value="weight_lb">Peso (lb)</option>
-                    <option value="technical_description_es">Descripción Técnica (ES)</option>
-                    <option value="technical_description_en">Descripción Técnica (EN)</option>
-                    <option value="zone_home_en">Zona (EN)</option>
-                    <optgroup label="Iconos Dinámicos">
+                    <option value="" disabled selected>+ Variable</option>
+                    <optgroup label="Producto">
+                        <option value="sku_base">Código SKU</option>
+                        <option value="final_name_es">Nombre (ES)</option>
+                        <option value="final_name_en">Nombre (EN)</option>
+                        <option value="technical_description_es">Descripción Técnica (ES)</option>
+                        <option value="technical_description_en">Descripción Técnica (EN)</option>
+                        <option value="color_code">Código Color</option>
+                        <option value="color">Color</option>
+                        <option value="use_destination">Uso (Designación)</option>
+                        <option value="zone_home">Zona Firplak</option>
+                        <option value="carb2">Certificación CARB2</option>
+                    </optgroup>
+                    <optgroup label="Medidas">
+                        <option value="width_cm">Ancho (cm)</option>
+                        <option value="height_cm">Alto (cm)</option>
+                        <option value="depth_cm">Profundidad (cm)</option>
+                    </optgroup>
+                    <optgroup label="Otros">
+                        <option value="commercial_measure">Medida Comercial</option>
+                        <option value="line">Línea</option>
+                    </optgroup>
+                    <optgroup label="Iconos Condicionales">
                         <option value="icon_rh">Icono RH</option>
-                        <option value="icon_edge_2mm">Icono Canto</option>
-                        <option value="icon_soft_close">Icono Cierre</option>
-                        <option value="icon_full_extension">Icono Extensión</option>
+                        <option value="icon_edge_2mm">Icono Canto 2mm</option>
+                        <option value="icon_soft_close">Icono Cierre Lento</option>
+                        <option value="icon_full_extension">Icono Extensión Total</option>
+                        <option value="icon_carb2">Icono CARB2</option>
                     </optgroup>
                 </select>
             </div>
@@ -307,8 +433,8 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                 ref={editorRef}
                 contentEditable
                 onInput={handleInput}
-                onFocus={() => setIsFocused(true)}
-                onBlur={() => setIsFocused(false)}
+                onFocus={() => {}}
+                onBlur={() => {}}
                 className="min-h-[80px] p-2 text-sm outline-none"
                 style={{ direction: 'ltr', whiteSpace: 'pre-wrap' }}
             />
@@ -648,7 +774,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
         }
 
         if (type === 'image') {
-            newEl.content = 'logo_empresa'
+            newEl.content = 'Logo Firplak general'
             newEl.width = 150
             newEl.height = 50
         }
@@ -973,9 +1099,9 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                                         return <img src={systemAsset.file_path} className="max-w-full max-h-full object-contain pointer-events-none" />
                                                     }
 
-                                                    // 2. Special case for legacy 'logo_empresa' if not found by name
-                                                    if (el.content === 'logo_empresa') {
-                                                        const logoAsset = assets.find(a => a.type === 'logo' && a.name.toLowerCase().includes('logo'));
+                                                    // 2. Special case for legacy 'logo_empresa' or 'Logo Firplak general' if not found by name
+                                                    if (el.content === 'logo_empresa' || el.content === 'Logo Firplak general') {
+                                                        const logoAsset = assets.find(a => (a.name === 'Logo Firplak general') || (a.type === 'logo' && a.name.toLowerCase().includes('logo')));
                                                         if (logoAsset && logoAsset.file_path) return <img src={logoAsset.file_path} className="max-w-full max-h-full object-contain pointer-events-none" />
                                                         return <span className="text-gray-400 text-[10px] text-center">[Logo Empresa No Encontrado]</span>
                                                     }
@@ -1127,30 +1253,33 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                         value={activeEl.content || ''}
                                         onChange={(e) => updateSelectedElements({ content: e.target.value })}
                                     >
-                                        <option value="Logo Empresa Pordefecto">Logo Empresa Pordefecto</option>
+                                        <option value="Logo Firplak general">Logo Firplak general</option>
                                         <option value="Isométrico">Isométrico (Dinámico)</option>
                                         <option value="Icono RH Fijo">Icono RH Fijo</option>
                                         <option value="Icono Canto 2mm">Icono Canto 2mm</option>
                                         <option value="Icono Cierre Lento">Icono Cierre Lento</option>
                                         <option value="Icono Extensión Total">Icono Extensión Total</option>
+                                        <option value="Icono Canto 2 mm">Icono Canto 2 mm</option>
 
                                         {assets.filter(a => ![
-                                            'Logo Empresa Pordefecto',
+                                            'Logo Firplak general',
                                             'Isométrico',
                                             'Icono RH Fijo',
                                             'Icono Canto 2mm',
                                             'Icono Cierre Lento',
-                                            'Icono Extensión Total'
+                                            'Icono Extensión Total',
+                                            'Icono Canto 2 mm'
                                         ].includes(a.name)).length > 0 && (
                                             <optgroup label="Assets (Base de Datos)">
                                                 {assets
                                                     .filter(a => ![
-                                                        'Logo Empresa Pordefecto',
+                                                        'Logo Firplak general',
                                                         'Isométrico',
                                                         'Icono RH Fijo',
                                                         'Icono Canto 2mm',
                                                         'Icono Cierre Lento',
-                                                        'Icono Extensión Total'
+                                                        'Icono Extensión Total',
+                                                        'Icono Canto 2 mm'
                                                     ].includes(a.name))
                                                     .map(a => (
                                                         <option key={a.id} value={a.id}>{a.name}</option>
@@ -1206,11 +1335,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                 <div className="space-y-4 border-t pt-4 border-slate-200">
                                     <Label className="font-semibold text-xs text-muted-foreground uppercase flex items-center">Tipografía (Fuente de Letra)</Label>
 
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <div>
-                                            <Label className="text-[11px] mb-1 block">Tamaño (Puntos - pt)</Label>
-                                            <Input type="number" className="bg-white h-8" value={activeEl.fontSize || 10} onChange={(e) => updateSelectedElements({ fontSize: parseInt(e.target.value) || 10 })} />
-                                        </div>
+                                    <div className="grid grid-cols-1 gap-3">
                                         <div>
                                             <Label className="text-[11px] mb-1 block">Interlineado (Ej: 0.9)</Label>
                                             <Input type="number" step="0.1" className="bg-white h-8" value={activeEl.lineHeight || 1.2} onChange={(e) => updateSelectedElements({ lineHeight: parseFloat(e.target.value) || 1.2 })} />
@@ -1248,11 +1373,16 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
 
                                     <div className="grid grid-cols-2 gap-3">
                                         <div>
-                                            <Label className="text-[11px] mb-1 block">Cursiva</Label>
-                                            <div className="flex gap-1">
-                                                <Button size="sm" variant={activeEl.fontStyle === 'italic' ? 'default' : 'outline'} className="h-8 w-full bg-white text-xs" onClick={() => updateSelectedElements({ fontStyle: activeEl.fontStyle === 'italic' ? 'normal' : 'italic' })}>
-                                                    <Italic className="h-3 w-3 mr-1" /> Activar
-                                                </Button>
+                                            <Label className="text-[11px] mb-1 block">Kerning (espaciado)</Label>
+                                            <div className="flex items-center gap-1">
+                                                <Input
+                                                    type="number"
+                                                    step="0.01"
+                                                    className="bg-white h-8 text-xs"
+                                                    value={activeEl.letterSpacing ?? 0}
+                                                    onChange={(e) => updateSelectedElements({ letterSpacing: parseFloat(e.target.value) || 0 })}
+                                                />
+                                                <span className="text-[10px] text-gray-400 shrink-0">em</span>
                                             </div>
                                         </div>
                                         <div>

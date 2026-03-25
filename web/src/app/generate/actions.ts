@@ -7,9 +7,11 @@ export async function resolveAssetsAction(assetIds: string[]) {
     
     // 1. Buscar assets por nombres específicos del sistema
     const systemNames = [
-        'Logo Empresa Pordefecto',
+        'Logo Firplak general',
         'Icono RH Fijo',
         'Icono Canto 2mm',
+        'Icono Canto 1.5mm',
+        'Icono CARB2',
         'Icono Cierre Lento',
         'Icono Extensión Total'
     ]
@@ -24,10 +26,12 @@ export async function resolveAssetsAction(assetIds: string[]) {
         if (a.name) {
             map[a.name] = a.file_path
             // Map to legacy keys too
-            if (a.name === 'Logo Empresa Pordefecto') map['logo_empresa'] = a.file_path
+            if (a.name === 'Logo Firplak general') map['logo_empresa'] = a.file_path
             if (a.name === 'Isométrico (Placeholder)') map['isometrico_placeholder'] = a.file_path
             if (a.name === 'Icono RH Fijo') map['sys_icon_rh'] = a.file_path
             if (a.name === 'Icono Canto 2mm') map['sys_icon_edge_2mm'] = a.file_path
+            if (a.name === 'Icono Canto 1.5mm') map['sys_icon_edge_1_5mm'] = a.file_path
+            if (a.name === 'Icono CARB2') map['sys_icon_carb2'] = a.file_path
             if (a.name === 'Icono Cierre Lento') map['sys_icon_soft_close'] = a.file_path
             if (a.name === 'Icono Extensión Total') map['sys_icon_full_extension'] = a.file_path
         }

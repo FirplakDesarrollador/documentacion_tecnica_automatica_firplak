@@ -28,7 +28,9 @@ function evaluateCondition(expression: string, product: Product): boolean {
         return parts.every(expr => {
             if (expr.includes('!=null')) {
                 const field = expr.split('!=null')[0] as keyof Product
-                return product[field] !== null && product[field] !== undefined && product[field] !== ''
+                const val = product[field]
+                // 'NA' means "No Aplica" — treat as falsy (omit from name)
+                return val !== null && val !== undefined && val !== '' && String(val).trim().toUpperCase() !== 'NA'
             }
 
             if (expr.includes('==true')) {
