@@ -4,7 +4,7 @@
 > **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estratégico y operativo necesario para navegar y construir eficientemente en este proyecto.
 
 ## 📌 Visión General
-Versión 1.0.5: Mejora del 'codeParser' para Kits (LVM) y Marcas Propias, optimización de evaluación de reglas (omisión de NA), cambio de origen de datos a 'cabinet_products' y refinamiento en visualización de plantillas.
+Versión 1.0.6: Refinado de detección de Marcas Propias (Sodimac, D-Acqua), soporte para etiquetas especiales ('FRENTES 18MM') y optimización del motor de reglas para filtrar únicamente productos 'ACTIVO'.
 
 ## 🏗️ Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:

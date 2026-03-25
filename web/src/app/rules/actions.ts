@@ -69,6 +69,7 @@ export async function previewNamingRulesAction(productType: string, pendingRules
         FROM public.cabinet_products
         WHERE product_type = '${safeType}'
           AND furniture_name IS NOT NULL
+          AND status = 'ACTIVO'
         ORDER BY random()
         LIMIT 5
     `) || []
@@ -114,6 +115,7 @@ export async function applyNamesToProductTypeAction(productType: string) {
                armado_con_lvm, assembled_flag, color_code, zone_home, ref_code, final_name_es,
                width_cm, depth_cm, height_cm, weight_kg, barcode_text, sap_description,
                private_label_flag, private_label_client_name,
+               status,
                icon_rh, icon_full_extension, icon_soft_close, icon_edge_2mm
         FROM public.cabinet_products
         WHERE product_type = '${safeType}'
@@ -152,12 +154,18 @@ export async function applyNamesToProductTypeAction(productType: string) {
                         SET final_name_es = '${newName.replace(/'/g, "''")}', updated_at = now()
                         WHERE id = '${p.id}'
                     `)
-                    results.push({ code: p.code, newName, oldName: p.final_name_es || '' })
+                    if (p.status === 'ACTIVO') {
+                        results.push({ code: p.code, newName, oldName: p.final_name_es || '' })
+                    }
                 } else {
-                    results.push({ code: p.code, newName: '', oldName: p.final_name_es || '', error: 'Nombre generado vacío — revisar reglas' })
+                    if (p.status === 'ACTIVO') {
+                        results.push({ code: p.code, newName: '', oldName: p.final_name_es || '', error: 'Nombre generado vacío — revisar reglas' })
+                    }
                 }
             } catch (err: any) {
-                results.push({ code: p.code, newName: '', oldName: p.final_name_es || '', error: err.message })
+                if (p.status === 'ACTIVO') {
+                    results.push({ code: p.code, newName: '', oldName: p.final_name_es || '', error: err.message })
+                }
             }
         }
     }

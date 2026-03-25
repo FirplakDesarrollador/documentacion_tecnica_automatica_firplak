@@ -25,6 +25,7 @@ export interface ParsedCodeResult {
     armado_con_lvm: string | null
     carb2: string | null
     private_label_client_name: string | null
+    special_label: string | null
 }
 
 export async function parseProductCode(
@@ -56,7 +57,8 @@ export async function parseProductCode(
         canto_puertas: null,
         armado_con_lvm: 'NA',
         carb2: 'NA',
-        private_label_client_name: 'NA'
+        private_label_client_name: 'NA',
+        special_label: 'NA'
     }
 
     if (!code) return result
@@ -244,15 +246,46 @@ export async function parseProductCode(
             }
         }
 
-        // --- Detección de Marca Propia (Al final de la descripción -CLIENTE) ---
-        const lastHyphenIndex = sapDescription.lastIndexOf('-');
-        if (lastHyphenIndex !== -1 && lastHyphenIndex < sapDescription.length - 1) {
-            const potentialClient = sapDescription.substring(lastHyphenIndex + 1).trim().toUpperCase();
-            if (potentialClient && potentialClient.length > 2) {
+        // --- Detección de Marca Propia (Contenido de la descripción) ---
+        // Solo procedemos si no se ha detectado cliente por versión, o si la versión es genérica
+        if (result.private_label_client_name === 'NA' || result.private_label_client_name === null) {
+            const knownClients = ['CHILEMAT', 'D-ACQUA', 'PROMART', 'FERMETAL', 'SODIMAC CHILE'];
+            let matchedClient = '';
+
+            // Prioridad 1: Búsqueda exacta de nombres conocidos en la descripción
+            for (const client of knownClients) {
+                if (descUpper.includes(client.toUpperCase())) {
+                    matchedClient = client;
+                    break;
+                }
+            }
+
+            // Prioridad 2: Alias comunes o variaciones que no están en la lista exacta
+            if (!matchedClient) {
+                if (descUpper.includes('SODIMAC')) matchedClient = 'SODIMAC CHILE';
+                else if (descUpper.includes('DAC ')) matchedClient = 'D-ACQUA';
+                else if (descUpper.includes('FMT ')) matchedClient = 'FERMETAL';
+            }
+
+            // Prioridad 3: Fallback al método del último guión
+            if (!matchedClient) {
+                const lastHyphenIndex = sapDescription.lastIndexOf('-');
+                if (lastHyphenIndex !== -1 && lastHyphenIndex < sapDescription.length - 1) {
+                    const potential = sapDescription.substring(lastHyphenIndex + 1).trim().toUpperCase();
+                    if (potential.length > 2) {
+                        matchedClient = potential;
+                    }
+                }
+            }
+
+            if (matchedClient) {
                 try {
                     const clientRows = await dbQuery(`
                         SELECT name FROM public.clients 
-                        WHERE UPPER(name) = '${potentialClient.replace(/'/g, "''")}'
+                        WHERE UPPER(name) = '${matchedClient.replace(/'/g, "''")}'
+                           OR (name = 'SODIMAC CHILE' AND '${matchedClient.replace(/'/g, "''")}' LIKE 'SODIMAC%')
+                           OR (name = 'D-ACQUA' AND '${matchedClient.replace(/'/g, "''")}' = 'ACQUA')
+                           OR (name = 'D-ACQUA' AND '${matchedClient.replace(/'/g, "''")}' = 'DAC')
                         LIMIT 1
                     `);
                     if (clientRows && clientRows.length > 0) {
@@ -262,6 +295,11 @@ export async function parseProductCode(
                     console.error('codeParser: error checking client name', e);
                 }
             }
+        }
+
+        // --- Detección de Etiquetas Especiales ---
+        if (descUpper.includes('FRENTES 18MM')) {
+            result.special_label = 'FRENTES 18MM';
         }
     }
 
