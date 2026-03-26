@@ -288,7 +288,7 @@ async function run() {
             `;
             try {
                 await dbQuery(q);
-            } catch (err) {
+            } catch (err: any) {
                 console.error(`Error inserting code ${code}:`, err.message);
             }
         }

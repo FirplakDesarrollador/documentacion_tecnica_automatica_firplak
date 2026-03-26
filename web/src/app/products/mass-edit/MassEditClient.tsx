@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
 import { massUpdateProducts } from '../actions'
+import { applyNamingRulesAction, NamingBatchResult } from '../naming-actions'
 import { Badge } from '@/components/ui/badge'
 import { 
     Search, Filter, Save, Download, RefreshCcw, Loader2, 
@@ -230,6 +231,42 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
     const [isTranslating, setIsTranslating] = useState(false)
     const [missingTerms, setMissingTerms] = useState<string[]>([])
     const [missingTermsDialogOpen, setMissingTermsDialogOpen] = useState(false)
+
+    // Naming RPC progress state
+    const [isNaming, setIsNaming] = useState(false)
+    const [namingProgress, setNamingProgress] = useState(0)
+    const [namingBatches, setNamingBatches] = useState<NamingBatchResult[]>([])
+    const [namingTotal, setNamingTotal] = useState(0)
+
+    const handleApplyNamingRules = async () => {
+        if (selectedIds.size === 0) {
+            toast.error('Selecciona al menos un producto para aplicar las reglas de nomenclatura')
+            return
+        }
+        const idsArray = Array.from(selectedIds)
+        setIsNaming(true)
+        setNamingProgress(0)
+        setNamingBatches([])
+        setNamingTotal(idsArray.length)
+
+        try {
+            const result = await applyNamingRulesAction(idsArray)
+            setNamingBatches(result.batches)
+            setNamingProgress(100)
+
+            if (result.success) {
+                toast.success(`Motor de nombrado aplicado: ${result.totalUpdated} productos actualizados.`)
+                // Reload page to reflect updated names
+                window.location.reload()
+            } else {
+                toast.error(`Error en el proceso: ${result.batches.find(b => b.error)?.error}`)
+            }
+        } catch (err: any) {
+            toast.error(`Error inesperado: ${err.message}`)
+        } finally {
+            setIsNaming(false)
+        }
+    }
 
     const handleBatchTranslate = async (mode: 'missing' | 'repair' | 'all') => {
         if (selectedIds.size === 0) {
@@ -460,7 +497,45 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                     </div>
 
                     <div className="grid grid-cols-1 gap-2 mt-4 pt-4 border-t border-blue-200/50">
+                        {/* Motor de Nombrado RPC */}
                         <div className="flex items-center justify-between">
+                            <Label className="text-[10px] uppercase font-bold text-emerald-800">Motor de Nomenclatura (Reglas)</Label>
+                        </div>
+                        <Button
+                            size="sm"
+                            onClick={handleApplyNamingRules}
+                            disabled={selectedIds.size === 0 || isNaming}
+                            title="Aplica las reglas de nombrado activas a los productos seleccionados"
+                            className="w-full text-[10px] h-7 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                        >
+                            {isNaming ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Settings className="w-3 h-3 mr-1" />}
+                            {isNaming ? `Aplicando... (${namingBatches.reduce((a, b) => a + b.updated, 0)}/${namingTotal})` : 'Aplicar Reglas de Nombre'}
+                        </Button>
+                        {/* Barra de progreso de nombrado */}
+                        {isNaming && (
+                            <div className="w-full bg-emerald-100 rounded-full h-1.5 mt-1">
+                                <div
+                                    className="bg-emerald-500 h-1.5 rounded-full transition-all duration-300"
+                                    style={{ width: `${namingProgress}%` }}
+                                />
+                            </div>
+                        )}
+                        {/* Resultados por batch */}
+                        {namingBatches.length > 0 && !isNaming && (
+                            <div className="text-[9px] text-emerald-700 font-mono bg-emerald-50 rounded p-1">
+                                {namingBatches.map((b, i) => (
+                                    <div key={i}>
+                                        {b.error
+                                            ? `Batch ${i+1}: ❌ ${b.error}`
+                                            : `Batch ${i+1}: ✅ ${b.updated}/${b.processed} actualizados`
+                                        }
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* Motor de Traducción */}
+                        <div className="flex items-center justify-between mt-2">
                             <Label className="text-[10px] uppercase font-bold text-blue-800">Motor de Traducción (Glosario)</Label>
                             <div className="flex items-center gap-2">
                                 <Link href="/products/glossary">

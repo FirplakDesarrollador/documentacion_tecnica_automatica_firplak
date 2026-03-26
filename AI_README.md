@@ -4,7 +4,7 @@
 > **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estratégico y operativo necesario para navegar y construir eficientemente en este proyecto.
 
 ## 📌 Visión General
-Versión 1.0.6: Refinado de detección de Marcas Propias (Sodimac, D-Acqua), soporte para etiquetas especiales ('FRENTES 18MM') y optimización del motor de reglas para filtrar únicamente productos 'ACTIVO'.
+Versión 1.0.7: Optimización del módulo de edición de nombres masivos (Mass Edit) y mejoras en acciones asíncronas de base de datos. Se mejoró la estabilidad en la creación y edición de familias de productos.
 
 ## 🏗️ Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:

@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { upsertRuleAction, previewNamingRulesAction, applyNamesToProductTypeAction } from '@/app/rules/actions'
+import { upsertRuleAction, previewNamingRulesAction, getProductsCountByFamilyAction, applyNamesToProductTypeBatchAction, revalidateRulesAndProductsAction } from '@/app/rules/actions'
 import { toast } from 'sonner'
 import { ArrowUp, ArrowDown, Plus, Trash2, Eye, Settings2, Loader2, RefreshCw, CheckCircle2, AlertTriangle, Zap, ChevronDown } from 'lucide-react'
 
@@ -246,10 +246,36 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
     const handleMassApply = async () => {
         setIsApplying(true)
         setMassApplyMode(true)
+        setMassResults([])
+        setMassTotal(0)
+        
         try {
-            const result = await applyNamesToProductTypeAction(productType)
-            setMassTotal(result.total)
-            setMassResults(result.results)
+            // 1. Get total count
+            const total = await getProductsCountByFamilyAction(productType)
+            setMassTotal(total)
+            
+            if (total === 0) {
+                setIsApplying(false)
+                return
+            }
+
+            // 2. Process in batches from frontend
+            const BATCH_SIZE = 25
+            let allResults: MassApplyResult[] = []
+            
+            for (let offset = 0; offset < total; offset += BATCH_SIZE) {
+                const batchResults = await applyNamesToProductTypeBatchAction(productType, offset, BATCH_SIZE)
+                
+                // Track results (we only show results for ACTIVO in the list to avoid clutter, as per previous requirement, 
+                // but we process all)
+                allResults = [...allResults, ...batchResults]
+                setMassResults([...allResults])
+            }
+            
+            // 3. Final Revalidation
+            await revalidateRulesAndProductsAction()
+            
+            toast.success(`Proceso completado: ${total} productos actualizados`)
         } catch (err: any) {
             toast.error("Error en la aplicación masiva: " + err.message)
         } finally {
@@ -526,18 +552,37 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                                 </div>
                             </div>
 
+                            {/* Progress bar */}
+                            {(isApplying || massResults.length > 0) && (
+                                <div className="space-y-1.5">
+                                    <div className="flex justify-between text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                                        <span>Progreso</span>
+                                        <span>{Math.round((massResults.length / (massTotal || 1)) * 100)}%</span>
+                                    </div>
+                                    <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
+                                        <div 
+                                            className="h-full bg-emerald-500 transition-all duration-300 ease-out"
+                                            style={{ width: `${(massResults.length / (massTotal || 1)) * 100}%` }}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
                             {massResults.length > 0 && (
-                                <div className="max-h-[45vh] overflow-y-auto space-y-1.5">
-                                    {massResults.map((r, idx) => (
-                                        <div key={idx} className={`flex items-start gap-2 p-2.5 rounded-lg text-xs ${r.error ? 'bg-red-50 border border-red-100' : 'bg-white border border-slate-100'}`}>
-                                            <span className="shrink-0 mt-0.5">{r.error ? '⚠️' : '✅'}</span>
+                                <div className="max-h-[45vh] overflow-y-auto space-y-1.5 border border-slate-100 rounded-xl p-2 bg-slate-50/50">
+                                    {massResults.filter(r => (r as any).status === 'ACTIVO' || r.error).map((r, idx) => (
+                                        <div key={idx} className={`flex items-start gap-2 p-2.5 rounded-lg text-[11px] shadow-sm ${r.error ? 'bg-red-50 border-red-100' : 'bg-white border-slate-100'}`}>
+                                            <span className="shrink-0 mt-0.5">{r.error ? '❌' : '✅'}</span>
                                             <div className="flex-1 min-w-0">
-                                                <span className="font-mono font-bold text-slate-700">{r.code}</span>
+                                                <div className="flex justify-between items-start">
+                                                    <span className="font-mono font-bold text-slate-700">{r.code}</span>
+                                                    {(r as any).status === 'INACTIVO' && <span className="text-[9px] bg-slate-200 text-slate-500 px-1 rounded">INACTIVO (Actualizado silenciosamente)</span>}
+                                                </div>
                                                 {r.newName && !r.error && (
-                                                    <span className="ml-2 text-slate-500 truncate block">{r.newName}</span>
+                                                    <span className="text-slate-500 truncate block mt-0.5">{r.newName}</span>
                                                 )}
                                                 {r.error && (
-                                                    <span className="ml-2 text-red-600">{r.error}</span>
+                                                    <span className="text-red-600 font-medium block mt-0.5">{r.error}</span>
                                                 )}
                                             </div>
                                         </div>

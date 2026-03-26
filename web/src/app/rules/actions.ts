@@ -56,6 +56,11 @@ export async function deleteRuleAction(id: string) {
     revalidatePath('/rules')
 }
 
+export async function revalidateRulesAndProductsAction() {
+    revalidatePath('/rules')
+    revalidatePath('/products')
+}
+
 export async function previewNamingRulesAction(productType: string, pendingRules: any[]) {
     // Fetch 5 random products of the given type with all fields needed for name evaluation
     const safeType = productType.replace(/'/g, "''")
@@ -105,10 +110,21 @@ export async function previewNamingRulesAction(productType: string, pendingRules
     })
 }
 
-export async function applyNamesToProductTypeAction(productType: string) {
+export async function getProductsCountByFamilyAction(productType: string) {
+    const safeType = productType.replace(/'/g, "''")
+    const res = await dbQuery(`
+        SELECT count(*)::int as count 
+        FROM public.cabinet_products 
+        WHERE product_type = '${safeType}'
+          AND furniture_name IS NOT NULL
+    `)
+    return res && res.length > 0 ? res[0].count : 0
+}
+
+export async function applyNamesToProductTypeBatchAction(productType: string, offset: number, limit: number) {
     const safeType = productType.replace(/'/g, "''")
 
-    // Fetch ALL products of this type
+    // Fetch batch of products
     const products = await dbQuery(`
         SELECT id, code, product_type, furniture_name, line, designation, use_destination,
                commercial_measure, accessory_text, door_color_text, rh, canto_puertas, carb2,
@@ -121,11 +137,12 @@ export async function applyNamesToProductTypeAction(productType: string) {
         WHERE product_type = '${safeType}'
           AND furniture_name IS NOT NULL
         ORDER BY code ASC
+        LIMIT ${limit} OFFSET ${offset}
     `) || []
 
-    if (products.length === 0) return { total: 0, results: [] }
+    if (products.length === 0) return []
 
-    // Load current saved rules for this product type
+    // Load current saved rules
     const rules = await dbQuery(`
         SELECT * FROM public.rules 
         WHERE enabled = true 
@@ -136,42 +153,47 @@ export async function applyNamesToProductTypeAction(productType: string) {
 
     const { evaluateProductRules } = await import('@/lib/engine/ruleEvaluator')
 
-    const results: { code: string, newName: string, oldName: string, error?: string }[] = []
+    // ── Preview pass (TypeScript engine) ─────────────────────────────────────
+    // Generates the SAP name vs new name comparison shown in the UI.
+    // This logic is preserved exactly as-is.
+    const results: { code: string, newName: string, oldName: string, error?: string, status?: string }[] = []
+    const idsToApply: string[] = []
 
-    // Process in batches of 20
-    const BATCH_SIZE = 20
-    for (let i = 0; i < products.length; i += BATCH_SIZE) {
-        const batch = products.slice(i, i + BATCH_SIZE)
-        for (const p of batch) {
-            try {
-                const evalResult = evaluateProductRules(p as any, rules as any)
-                const newName = evalResult.finalNameEs
+    for (const p of products) {
+        try {
+            const evalResult = evaluateProductRules(p as any, rules as any)
+            const newName = evalResult.finalNameEs
 
-                // Update in DB
-                if (newName && newName.trim() !== '') {
-                    await dbQuery(`
-                        UPDATE public.cabinet_products 
-                        SET final_name_es = '${newName.replace(/'/g, "''")}', updated_at = now()
-                        WHERE id = '${p.id}'
-                    `)
-                    if (p.status === 'ACTIVO') {
-                        results.push({ code: p.code, newName, oldName: p.final_name_es || '' })
-                    }
-                } else {
-                    if (p.status === 'ACTIVO') {
-                        results.push({ code: p.code, newName: '', oldName: p.final_name_es || '', error: 'Nombre generado vacío — revisar reglas' })
-                    }
-                }
-            } catch (err: any) {
-                if (p.status === 'ACTIVO') {
-                    results.push({ code: p.code, newName: '', oldName: p.final_name_es || '', error: err.message })
-                }
+            if (newName && newName.trim() !== '') {
+                results.push({ code: p.code, newName, oldName: p.final_name_es || '', status: p.status })
+                idsToApply.push(p.id)
+            } else {
+                results.push({ code: p.code, newName: '', oldName: p.final_name_es || '', error: 'Nombre generado vacío', status: p.status })
             }
+        } catch (err: any) {
+            results.push({ code: p.code, newName: '', oldName: p.final_name_es || '', error: err.message, status: p.status })
         }
     }
 
-    revalidatePath('/rules')
-    revalidatePath('/products')
+    // ── Apply pass (RPC) ──────────────────────────────────────────────────────
+    // Replaces individual UPDATE-per-product (Management API) with a single
+    // batch RPC call. No Management API, no direct DB, no secret keys.
+    if (idsToApply.length > 0) {
+        const { createClient } = await import('@supabase/supabase-js')
+        const supabase = createClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY ||
+            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        )
 
-    return { total: products.length, results }
+        const { error } = await supabase.rpc('bulk_update_product_names', {
+            product_ids: idsToApply
+        })
+
+        if (error) {
+            return results.map(r => ({ ...r, error: `RPC error: ${error.message}` }))
+        }
+    }
+
+    return results
 }
