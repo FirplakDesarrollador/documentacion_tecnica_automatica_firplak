@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { upsertRuleAction, previewNamingRulesAction, getProductsCountByFamilyAction, applyNamesToProductTypeBatchAction, revalidateRulesAndProductsAction } from '@/app/rules/actions'
+import { upsertRuleAction, deleteRuleAction, previewNamingRulesAction, getProductsCountByFamilyAction, applyNamesToProductTypeBatchAction, revalidateRulesAndProductsAction, getEnConfigAction, saveEnConfigAction } from '@/app/rules/actions'
 import { toast } from 'sonner'
 import { ArrowUp, ArrowDown, Plus, Trash2, Eye, Settings2, Loader2, RefreshCw, CheckCircle2, AlertTriangle, Zap, ChevronDown } from 'lucide-react'
 
@@ -100,7 +100,13 @@ type MassApplyResult = { code: string; newName: string; oldName: string; error?:
 export function NamingRulesManager({ open, productType, onClose, initialRules }: NamingRulesManagerProps) {
     const [rules, setRules] = useState<any[]>([])
     const [loading, setLoading] = useState(false)
-    const [activeTab, setActiveTab] = useState<'structure' | 'preview'>('structure')
+    const [activeTab, setActiveTab] = useState<'structure' | 'preview' | 'en_config'>('structure')
+
+    // EN Config tab state
+    const [enConfig, setEnConfig] = useState<any[]>([])
+    const [enConfigLoading, setEnConfigLoading] = useState(false)
+    const [enConfigSaving, setEnConfigSaving] = useState<string | null>(null) // variable_id being saved
+    const [showEnSyncAlert, setShowEnSyncAlert] = useState(false)
 
     // Preview state
     const [previewResults, setPreviewResults] = useState<PreviewResult[]>([])
@@ -113,6 +119,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
     const [isApplying, setIsApplying] = useState(false)
     const [massResults, setMassResults] = useState<MassApplyResult[]>([])
     const [massTotal, setMassTotal] = useState(0)
+    const [deletedIds, setDeletedIds] = useState<string[]>([])
 
     // Add variable dialog
     const [showAddVar, setShowAddVar] = useState(false)
@@ -129,6 +136,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
             setPreviewResults([])
             setMassApplyMode(false)
             setMassResults([])
+            setDeletedIds([])
         }
     }, [initialRules])
 
@@ -152,11 +160,18 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
     const handleSaveOrder = async () => {
         setLoading(true)
         try {
+            // 1. Delete removed rules
+            for (const id of deletedIds) {
+                await deleteRuleAction(id)
+            }
+            
+            // 2. Upsert existing ones
             for (const rule of rules) {
                 await upsertRuleAction(rule)
             }
             toast.success("Orden de nomenclatura guardado")
             setSavedSuccessfully(true)
+            setDeletedIds([]) // Clear after success
         } catch (err: any) {
             toast.error("Error al guardar orden: " + err.message)
         } finally {
@@ -218,7 +233,10 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
 
     const removeRule = (index: number) => {
         const nr = [...rules]
-        nr.splice(index, 1)
+        const removed = nr.splice(index, 1)[0]
+        if (removed.id) {
+            setDeletedIds(prev => [...prev, removed.id])
+        }
         setRules(nr)
         markDirty()
     }
@@ -236,10 +254,55 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
         }
     }
 
-    const handleTabChange = (tab: 'structure' | 'preview') => {
+    const handleTabChange = async (tab: 'structure' | 'preview' | 'en_config') => {
         setActiveTab(tab)
         if (tab === 'preview' && !previewGenerated) {
             handleLoadPreview()
+        } else if (tab === 'en_config' && enConfig.length === 0) {
+            setEnConfigLoading(true)
+            try {
+                const cfg = await getEnConfigAction('MUEBLE') // Simplified to target 'MUEBLE' generic for all products currently
+                setEnConfig(cfg)
+                // Check sync status against current ES active rules
+                const esVariables = [...new Set(rules
+                    .filter(r => r.condition_expression !== 'true')
+                    .map(r => r.condition_expression.split('!=')[0].split('==')[0].trim())
+                )]
+                const enVariables = [...new Set(cfg
+                    .filter((c: any) => c.emit || c.behavior === 'classify_and_resolve')
+                    .map((c: any) => c.variable_id)
+                )]
+                
+                // Compare sets
+                const missingInEn = esVariables.filter(v => !enVariables.includes(v))
+                const extraInEn = enVariables.filter(v => !esVariables.includes(v) && v !== 'resolved_type')
+                
+                if (missingInEn.length > 0 || extraInEn.length > 0) {
+                    setShowEnSyncAlert(true)
+                    if (missingInEn.length > 0) {
+                        console.warn(`Sync Alert: ES variables missing in EN config: ${missingInEn.join(', ')}`)
+                    }
+                } else {
+                    setShowEnSyncAlert(false)
+                }
+            } catch (err: any) {
+                toast.error("Error al cargar config EN: " + err.message)
+            } finally {
+                setEnConfigLoading(false)
+            }
+        }
+    }
+
+    const updateEnConfigField = async (variable_id: string, field: string, value: any) => {
+        setEnConfigSaving(variable_id)
+        try {
+            await saveEnConfigAction('MUEBLE', variable_id, { [field]: value })
+            setEnConfig(prev => prev.map(c => c.variable_id === variable_id ? { ...c, [field]: value } : c))
+            toast.success(`Configuración actualizada`)
+        } catch (err: any) {
+            toast.error("Error al guardar: " + err.message)
+        } finally {
+            setEnConfigSaving(null)
         }
     }
 
@@ -298,7 +361,20 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                             className={`flex items-center gap-1.5 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'structure' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}
                         >
                             <Settings2 className="w-3.5 h-3.5" />
-                            Estructura
+                            Estructura ES
+                        </button>
+                        <button
+                            onClick={() => handleTabChange('en_config')}
+                            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-md text-sm font-medium transition-all relative ${activeTab === 'en_config' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                            <Zap className="w-3.5 h-3.5" />
+                            Orden EN
+                            {showEnSyncAlert && (
+                                <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                                </span>
+                            )}
                         </button>
                         <button
                             onClick={() => handleTabChange('preview')}
@@ -433,6 +509,158 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                         </div>
                     )}
 
+                    {/* ── EN CONFIG TAB ── */}
+                    {activeTab === 'en_config' && (
+                        <div className="px-6 py-4 space-y-4">
+                            {enConfigLoading ? (
+                                <div className="flex flex-col items-center justify-center py-16 gap-3">
+                                    <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+                                    <p className="text-sm text-slate-500">Cargando configuración de inglés...</p>
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3 text-xs text-indigo-700 leading-relaxed mb-4">
+                                        <div className="flex gap-2">
+                                            <Zap className="w-4 h-4 shrink-0 text-amber-500" />
+                                            <div>
+                                                <p className="font-bold mb-1 italic">Traducción Técnica y Adaptativa</p>
+                                                El nombre en inglés se construye a partir de las variables que ya fueron aprobadas por el motor de español. Aquí defines cómo se reorganizan esas variables activas, si se traducen o se conservan, y qué hacer si falta una traducción.
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden overflow-x-auto">
+                                        <table className="w-full text-left border-collapse">
+                                            <thead className="bg-slate-50 text-[10px] uppercase font-bold text-slate-500 border-b border-slate-200">
+                                                <tr>
+                                                    <th className="px-4 py-2 w-12 text-center">N°</th>
+                                                    <th className="px-4 py-2">Variable</th>
+                                                    <th className="px-4 py-2 text-center">Mostrar en Nombre EN</th>
+                                                    <th className="px-4 py-2">Tratamiento</th>
+                                                    <th className="px-4 py-2 text-center">Si no existe traducción</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100">
+                                                {enConfig.map((c) => {
+                                                    // Logic to detect if it's active in ES
+                                                    const esVariables = rules.filter(r => r.condition_expression !== 'true').map(r => r.condition_expression.split('!=')[0].split('==')[0].trim())
+                                                    
+                                                    // Mapping: EN var -> possible ES fields
+                                                    const mapping: Record<string, string[]> = {
+                                                        'rh': ['rh_flag', 'rh'],
+                                                        'canto_puertas': ['edge_2mm_flag', 'canto_puertas'],
+                                                        'door_color_text': ['door_color_text', 'id_color_frente'],
+                                                        'resolved_type': ['product_type', 'designation', 'use_destination']
+                                                    }
+                                                    const matchKeys = mapping[c.variable_id] || [c.variable_id]
+                                                    const isActiveInEs = matchKeys.some(k => esVariables.includes(k))
+                                                    const isResolvedTypePart = ['product_type', 'designation', 'use_destination'].includes(c.variable_id)
+
+                                                    return (
+                                                        <tr 
+                                                            key={c.variable_id} 
+                                                            className={`hover:bg-slate-50/50 transition-colors ${!isActiveInEs ? 'bg-slate-50/70 opacity-60' : ''}`}
+                                                            title={!isActiveInEs ? 'Esta variable no participa en el nombre en español actual (No pasó el filtro del motor ES)' : ''}
+                                                        >
+                                                            <td className="px-4 py-2">
+                                                                <Input 
+                                                                    type="number" 
+                                                                    defaultValue={c.order_index} 
+                                                                    onBlur={(e) => updateEnConfigField(c.variable_id, 'order_index', parseInt(e.target.value))}
+                                                                    className="h-7 w-12 text-center text-[11px] px-1 font-mono"
+                                                                />
+                                                            </td>
+                                                            <td className="px-4 py-2">
+                                                                <div className="flex flex-col">
+                                                                    <div className="flex items-center gap-1.5">
+                                                                        <span className="text-xs font-mono font-bold text-slate-700">{c.variable_id}</span>
+                                                                        {!isActiveInEs && (
+                                                                            <span className="text-[9px] bg-slate-200 text-slate-500 px-1 rounded font-bold uppercase tracking-tighter">Ignorada por ES</span>
+                                                                        )}
+                                                                        {isResolvedTypePart && (
+                                                                            <span className="text-[9px] bg-amber-100 text-amber-600 px-1 rounded font-bold flex items-center gap-0.5" title="Esta variable se agrupa para formar el 'Tipo Comercial' (Resolved Type)">
+                                                                                INFO
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                    <span className="text-[10px] text-slate-400 italic max-w-[200px] truncate">{c.notes}</span>
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-4 py-2 text-center align-middle">
+                                                                <div className="flex justify-center">
+                                                                    <button 
+                                                                        onClick={() => updateEnConfigField(c.variable_id, 'emit', !c.emit)}
+                                                                        disabled={enConfigSaving === c.variable_id}
+                                                                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-2 ${c.emit ? 'bg-indigo-600' : 'bg-slate-200'} ${!isActiveInEs ? 'cursor-not-allowed opacity-50' : ''}`}
+                                                                    >
+                                                                        <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${c.emit ? 'translate-x-4' : 'translate-x-0'}`} />
+                                                                    </button>
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-4 py-2">
+                                                                <select 
+                                                                    className={`h-7 text-[11px] rounded border border-slate-200 bg-white w-full max-w-[160px] ${isResolvedTypePart ? 'bg-slate-50 cursor-not-allowed text-slate-500' : ''}`}
+                                                                    value={c.behavior}
+                                                                    onChange={(e) => {
+                                                                        const newBehavior = e.target.value
+                                                                        updateEnConfigField(c.variable_id, 'behavior', newBehavior)
+                                                                        
+                                                                        // Automatic fallback strategy based on treatment
+                                                                        if (newBehavior === 'translate_and_emit') {
+                                                                            updateEnConfigField(c.variable_id, 'fallback_strategy', 'translate')
+                                                                        } else {
+                                                                            updateEnConfigField(c.variable_id, 'fallback_strategy', 'preserve')
+                                                                        }
+                                                                    }}
+                                                                    disabled={enConfigSaving === c.variable_id || isResolvedTypePart}
+                                                                >
+                                                                    <option value="translate_and_emit">Traducir y mostrar</option>
+                                                                    <option value="preserve">Conservar sin traducir</option>
+                                                                    {isResolvedTypePart && <option value="classify_and_resolve">Usar para resolver tipo</option>}
+                                                                </select>
+                                                            </td>
+                                                            <td className="px-4 py-2">
+                                                                <div className="flex items-center gap-2 justify-center">
+                                                                    {c.variable_id === 'special_label' ? (
+                                                                        <select 
+                                                                            className="h-7 text-[11px] rounded border border-slate-200 bg-indigo-50 w-full max-w-[150px]"
+                                                                            value={c.fallback_strategy === 'translate' ? 'traducir' : (c.behavior === 'preserve' ? 'no_traducir' : 'solo_si_existe')}
+                                                                            onChange={(e) => {
+                                                                                const v = e.target.value;
+                                                                                if (v === 'traducir') {
+                                                                                    updateEnConfigField(c.variable_id, 'fallback_strategy', 'translate')
+                                                                                } else if (v === 'no_traducir') {
+                                                                                    updateEnConfigField(c.variable_id, 'behavior', 'preserve')
+                                                                                    updateEnConfigField(c.variable_id, 'fallback_strategy', 'preserve')
+                                                                                } else {
+                                                                                    updateEnConfigField(c.variable_id, 'behavior', 'translate_and_emit')
+                                                                                    updateEnConfigField(c.variable_id, 'fallback_strategy', 'preserve')
+                                                                                }
+                                                                            }}
+                                                                        >
+                                                                            <option value="traducir">Traducir (Obligatorio)</option>
+                                                                            <option value="no_traducir">No traducir (Original)</option>
+                                                                            <option value="solo_si_existe">Traducir solo si existe</option>
+                                                                        </select>
+                                                                    ) : (
+                                                                        <div className="text-[10px] font-medium text-slate-500 uppercase tracking-tight bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                                                                            {c.fallback_strategy === 'translate' ? 'Bloquear y pedir traducción' : 'No aplica'}
+                                                                        </div>
+                                                                    )}
+                                                                    {enConfigSaving === c.variable_id && <Loader2 className="w-3 h-3 animate-spin text-indigo-400" />}
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    )
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    )}
+
                     {/* ── PREVIEW TAB ── */}
                     {activeTab === 'preview' && !massApplyMode && (
                         <div className="px-6 py-4 space-y-4">
@@ -491,8 +719,19 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                                                     <div className="text-[11px] text-indigo-500 font-medium mb-1">
                                                         VS SAP: <span className="font-bold">{item.productData?.sap_description || '—'}</span>
                                                     </div>
-                                                    <div className={`text-sm font-bold mb-3 ${empty ? 'text-red-600 italic' : changed ? 'text-amber-800' : 'text-green-800'}`}>
+                                                    <div className={`text-sm font-bold mb-1 ${empty ? 'text-red-600 italic' : changed ? 'text-amber-800' : 'text-green-800'}`}>
                                                         {item.previewName || '(vacío — revisa las variables)'}
+                                                    </div>
+
+                                                    {/* English Name (Adaptive) */}
+                                                    <div className="mt-2 pt-2 border-t border-slate-200/50">
+                                                        <div className="text-[10px] uppercase font-black text-slate-400 mb-1 flex items-center gap-1.5">
+                                                            <Zap className="w-2.5 h-2.5" />
+                                                            Motor EN: {(item as any).previewNameEn && (item as any).isValidEn ? <span className="text-emerald-500">READY</span> : <span className="text-red-500">BLOCKED</span>}
+                                                        </div>
+                                                        <div className={`text-xs font-bold leading-relaxed ${(item as any).isValidEn ? 'text-indigo-600' : 'text-slate-400 italic'}`}>
+                                                            {(item as any).previewNameEn || (item as any).errorEn || (item.previewName === '' ? 'Esperando nombre ES...' : 'Traducción no disponible')}
+                                                        </div>
                                                     </div>
 
                                                     {/* Variable audit */}
@@ -623,14 +862,22 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                             <span className="text-xs text-slate-400">{previewResults.length} de muestra</span>
                             <div className="flex gap-2 items-center">
                                 {savedSuccessfully ? (
-                                    <Button
-                                        size="sm"
-                                        className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 animate-in zoom-in-95 duration-200"
-                                        onClick={handleMassApply}
-                                    >
-                                        <Zap className="w-3.5 h-3.5" />
-                                        Aplicar cambio de nombres MASIVO
-                                    </Button>
+                                    <div className="flex flex-col items-end gap-1">
+                                        {!previewResults.every((r: any) => r.isValidEn) && (
+                                            <span className="text-[10px] text-red-500 font-bold animate-pulse mb-1">
+                                                ⚠ Bloqueado: Hay errores en nombres EN (Glosario faltante)
+                                            </span>
+                                        )}
+                                        <Button
+                                            size="sm"
+                                            className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 animate-in zoom-in-95 duration-200"
+                                            onClick={handleMassApply}
+                                            disabled={!previewResults.every((r: any) => r.isValidEn)}
+                                        >
+                                            <Zap className="w-3.5 h-3.5" />
+                                            Aplicar cambio de nombres MASIVO
+                                        </Button>
+                                    </div>
                                 ) : (
                                     <Button 
                                         onClick={handleSaveOrder} 

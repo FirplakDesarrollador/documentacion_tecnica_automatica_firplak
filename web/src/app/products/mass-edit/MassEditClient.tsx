@@ -16,7 +16,7 @@ import {
     ArrowLeft, RotateCcw, PlusCircle, Settings, AlertTriangle
 } from 'lucide-react'
 import Link from 'next/link'
-import { deleteProducts, translateProductsAction } from '../actions'
+import { deleteProducts, translateProductsAction, saveGlossaryTermsAction } from '../actions'
 import { cn } from "@/lib/utils"
 import {
     Dialog,
@@ -32,6 +32,8 @@ interface Product {
     code: string
     familia_code: string | null
     ref_code: string | null
+    product_type: string | null
+    designation: string | null
     furniture_name: string | null
     canto_puertas: string | null
     rh: string | null
@@ -39,9 +41,15 @@ interface Product {
     assembled_flag: boolean
     commercial_measure: string | null
     accessory_text: string | null
+    door_color_text: string | null
+    carb2: string | null
+    special_label: string | null
+    private_label_client_name: string | null
+    armado_con_lvm: string | null
+    line: string | null
+    use_destination: string | null
     validation_status: string
     sap_description: string | null
-    line: string | null
     zone_home: string | null
     color_code: string | null
     width_cm: number | null
@@ -49,9 +57,7 @@ interface Product {
     height_cm: number | null
     final_name_en: string | null
     final_name_es: string | null
-    designation: string | null
     status: string
-    special_label: string
 }
 
 import { MultiSelectSearchField } from '@/components/ui-custom/MultiSelectSearchField'
@@ -229,8 +235,9 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
     }
 
     const [isTranslating, setIsTranslating] = useState(false)
-    const [missingTerms, setMissingTerms] = useState<string[]>([])
+    const [missingTermsData, setMissingTermsData] = useState<{ term_es: string, term_en: string, category: string, priority: number }[]>([])
     const [missingTermsDialogOpen, setMissingTermsDialogOpen] = useState(false)
+    const [isSavingGlossary, setIsSavingGlossary] = useState(false)
 
     // Naming RPC progress state
     const [isNaming, setIsNaming] = useState(false)
@@ -294,7 +301,12 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                 }
 
                 if (result.missingTerms && result.missingTerms.length > 0) {
-                    setMissingTerms(result.missingTerms)
+                    setMissingTermsData(result.missingTerms.map((term: string) => ({
+                        term_es: term,
+                        term_en: '',
+                        category: 'MODEL',
+                        priority: 10
+                    })))
                     setMissingTermsDialogOpen(true)
                 }
             } else {
@@ -305,6 +317,31 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
             toast.error("Error en la traducción masiva")
         } finally {
             setIsTranslating(false)
+        }
+    }
+
+    const handleSaveGlossary = async () => {
+        const validTerms = missingTermsData.filter(t => t.term_en.trim() !== '')
+        if (validTerms.length === 0) {
+            toast.error("Ingresa al menos una traducción para guardar")
+            return
+        }
+
+        setIsSavingGlossary(true)
+        try {
+            const res = await saveGlossaryTermsAction(validTerms)
+            if (res.success) {
+                toast.success(res.message)
+                setMissingTermsDialogOpen(false)
+                // Re-ejecutar traducción automáticamente para los seleccionados
+                setTimeout(() => handleBatchTranslate('repair'), 500)
+            } else {
+                toast.error(res.message)
+            }
+        } catch (error: any) {
+            toast.error("Error al guardar en el glosario")
+        } finally {
+            setIsSavingGlossary(false)
         }
     }
 
@@ -803,31 +840,91 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
             </Dialog>
 
             <Dialog open={missingTermsDialogOpen} onOpenChange={setMissingTermsDialogOpen}>
-                <DialogContent className="max-w-md">
+                <DialogContent className="max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2 text-amber-600">
                             <AlertTriangle className="h-5 w-5" />
-                            Términos Faltantes en el Glosario
+                            Configurar Términos Faltantes
                         </DialogTitle>
                         <DialogDescription>
-                            Los siguientes términos en español no tienen una traducción definida. Los productos afectados se han marcado en estado "Revisar".
+                            El motor no reconoce estos términos. Configúralos aquí mismo para completar la traducción sin salir de esta página.
                         </DialogDescription>
                     </DialogHeader>
-                    <div className="bg-slate-50 p-4 rounded-md border max-h-[40vh] overflow-auto">
-                        <div className="flex flex-wrap gap-2">
-                            {missingTerms.map((term, idx) => (
-                                <Badge key={idx} variant="outline" className="bg-white border-amber-200 text-amber-800">
-                                    {term}
-                                </Badge>
-                            ))}
-                        </div>
+                    
+                    <div className="flex-1 overflow-auto py-4">
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead className="w-[30%]">Término (ES)</TableHead>
+                                    <TableHead className="w-[35%]">Traducción (EN)</TableHead>
+                                    <TableHead className="w-[20%]">Categoría</TableHead>
+                                    <TableHead className="w-[15%]">Prioridad</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {missingTermsData.map((term, idx) => (
+                                    <TableRow key={idx}>
+                                        <TableCell className="font-bold text-slate-700">{term.term_es}</TableCell>
+                                        <TableCell>
+                                            <Input 
+                                                value={term.term_en}
+                                                placeholder="Ej: CABINET"
+                                                className="h-8 text-xs bg-amber-50/30 border-amber-200 focus:border-amber-500"
+                                                onChange={(e) => {
+                                                    const newData = [...missingTermsData]
+                                                    newData[idx].term_en = e.target.value.toUpperCase()
+                                                    setMissingTermsData(newData)
+                                                }}
+                                            />
+                                        </TableCell>
+                                        <TableCell>
+                                            <select 
+                                                className="flex h-8 w-full rounded-md border border-input bg-background px-2 py-1 text-xs shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                value={term.category}
+                                                onChange={(e) => {
+                                                    const newData = [...missingTermsData]
+                                                    newData[idx].category = e.target.value
+                                                    setMissingTermsData(newData)
+                                                }}
+                                            >
+                                                <option value="MODEL">MODEL</option>
+                                                <option value="FEATURE">FEATURE</option>
+                                                <option value="MATERIAL">MATERIAL</option>
+                                                <option value="FINISH">FINISH</option>
+                                                <option value="TYPE">TYPE</option>
+                                                <option value="INSTALLATION">INSTALLATION</option>
+                                            </select>
+                                        </TableCell>
+                                        <TableCell>
+                                            <Input 
+                                                type="number"
+                                                value={term.priority}
+                                                className="h-8 text-xs"
+                                                onChange={(e) => {
+                                                    const newData = [...missingTermsData]
+                                                    newData[idx].priority = parseInt(e.target.value) || 0
+                                                    setMissingTermsData(newData)
+                                                }}
+                                            />
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
                     </div>
-                    <DialogFooter>
-                        <Link href="/products/glossary" className="w-full">
-                            <Button className="w-full bg-blue-600 hover:bg-blue-700" onClick={() => setMissingTermsDialogOpen(false)}>
-                                Ir al Glosario para Agregarlos
-                            </Button>
-                        </Link>
+
+                    <DialogFooter className="pt-4 border-t">
+                        <Button variant="outline" onClick={() => setMissingTermsDialogOpen(false)}>
+                            Cancelar
+                        </Button>
+                        <Button 
+                            className="bg-blue-600 hover:bg-blue-700 text-white gap-2"
+                            onClick={handleSaveGlossary}
+                            disabled={isSavingGlossary}
+                        >
+                            {isSavingGlossary ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                            Guardar y Seguir
+                        </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

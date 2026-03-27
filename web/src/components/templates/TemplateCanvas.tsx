@@ -448,7 +448,13 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
     const [elements, setElements] = useState<TemplateElement[]>([])
     const [selectedIds, setSelectedIds] = useState<string[]>([])
     const [isSaving, setIsSaving] = useState(false)
-    const [isModified, setIsModified] = useState(false)
+    const [isModified, setIsModifiedState] = useState(false)
+    const isModifiedRef = useRef(false)
+
+    const setIsModified = useCallback((val: boolean) => {
+        isModifiedRef.current = val
+        setIsModifiedState(val)
+    }, [])
 
     // Unsaved Changes Interception State
     const [showExitDialog, setShowExitDialog] = useState(false)
@@ -504,7 +510,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
     // Warn before leaving if unsaved changes exist
     useEffect(() => {
         const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-            if (isModified) {
+            if (isModifiedRef.current) {
                 e.preventDefault()
                 e.returnValue = ''
             }
@@ -537,7 +543,8 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
 
     const handleExitWithoutSaving = () => {
         setShowExitDialog(false);
-        setIsModified(false); // remove the block
+        setIsModified(false); 
+        isModifiedRef.current = false; // Synchronous bypass
         if (pendingHref) {
             window.location.href = pendingHref;
         }
@@ -546,6 +553,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
     const handleExitAndSave = async () => {
         await handleSave();
         setShowExitDialog(false);
+        isModifiedRef.current = false; // Synchronous bypass
         if (pendingHref) {
             window.location.href = pendingHref;
         }

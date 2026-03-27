@@ -3,7 +3,7 @@
 import { dbQuery } from '@/lib/supabase'
 import { Product } from '@prisma/client'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
-import { translateSpanishToEnglish } from '@/lib/engine/translator'
+import { translateProductToEnglish } from '@/lib/engine/translator'
 import { parseProductCode } from '@/lib/engine/codeParser'
 import { redirect } from 'next/navigation'
 import { GoogleGenAI } from '@google/genai'
@@ -13,7 +13,10 @@ export async function parseProductCodeAction(code: string, sapDesc: string, rhFl
 }
 
 export async function translateAction(nameEs: string, ctx?: any) {
-    return await translateSpanishToEnglish(nameEs, ctx)
+    if (ctx && ctx.product_type) {
+        return await translateProductToEnglish(ctx, ctx.product_type || 'MUEBLE')
+    }
+    return { translatedName: '', missingTerms: [], isValid: false, errorReason: 'Motor adaptativo requiere el objeto producto completo.', warnings: [] }
 }
 
 export async function checkFamilyExists(code: string) {
@@ -262,17 +265,11 @@ export async function translateProductsAction(ids?: string[], mode: 'missing' | 
     try {
         let query = `
             SELECT 
-                id, 
-                final_name_es, 
-                final_name_en,
-                use_destination, 
-                width_cm, 
-                rh_flag, 
-                icon_soft_close, 
-                canto_puertas,
-                carb2,
-                line as model,
-                validation_status
+                id, code, product_type, designation, furniture_name, line,
+                use_destination, commercial_measure, accessory_text, canto_puertas,
+                door_color_text, rh, carb2, assembled_flag, special_label,
+                private_label_client_name, armado_con_lvm,
+                final_name_es, final_name_en, validation_status
             FROM public.cabinet_products 
             WHERE final_name_es IS NOT NULL 
         `
@@ -300,23 +297,31 @@ export async function translateProductsAction(ids?: string[], mode: 'missing' | 
         const updatedProducts: { id: string, final_name_en: string }[] = []
 
         for (const product of toTranslate) {
-            const { translatedName, missingTerms } = await translateSpanishToEnglish(product.final_name_es || '')
-            
+            const result = await translateProductToEnglish(product, product.product_type || 'MUEBLE')
+            const { translatedName, missingTerms, isValid } = result
+
             if (missingTerms.length > 0) {
                 totalMissingTerms.push(...missingTerms)
             }
 
-            // If we have missing terms, we mark it but still update if possible, or mark as incomplete
+            // Block update if there are critical missing terms with translate strategy
+            if (!isValid && missingTerms.length > 0) {
+                updatedProducts.push({ id: product.id, final_name_en: '' })
+                updatedCount++
+                continue
+            }
+
             const status = missingTerms.length > 0 ? 'needs_review' : 'ready'
-            
+            const safeTranslated = translatedName.replace(/'/g, "''")
+
             await dbQuery(`
                 UPDATE public.cabinet_products 
-                SET final_name_en='${translatedName.replace(/'/g, "''")}', 
+                SET final_name_en='${safeTranslated}', 
                     validation_status='${status}', 
                     updated_at=now() 
                 WHERE id='${product.id}'
             `)
-            
+
             updatedCount++
             updatedProducts.push({ id: product.id, final_name_en: translatedName })
         }
@@ -460,4 +465,24 @@ export async function createClientAction(name: string, logoAssetId?: string) {
     
     if (!res || res.length === 0) throw new Error("No se pudo crear el cliente")
     return res[0]
+}
+export async function saveGlossaryTermsAction(terms: { term_es: string, term_en: string, category: string, priority: number }[]) {
+    if (!terms || terms.length === 0) return { success: true }
+    
+    try {
+        for (const t of terms) {
+            await dbQuery(`
+                INSERT INTO public.glossary (term_es, term_en, category, priority, active)
+                VALUES ('${t.term_es.toUpperCase().replace(/'/g, "''")}', '${t.term_en.toUpperCase().replace(/'/g, "''")}', '${t.category}', ${t.priority}, true)
+                ON CONFLICT (term_es) DO UPDATE 
+                SET term_en = EXCLUDED.term_en,
+                    category = EXCLUDED.category,
+                    priority = EXCLUDED.priority;
+            `)
+        }
+        return { success: true, message: `Se guardaron ${terms.length} términos correctamente.` }
+    } catch (error: any) {
+        console.error("Error saving glossary terms:", error)
+        return { success: false, message: `Error al guardar términos: ${error.message}` }
+    }
 }

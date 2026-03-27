@@ -14,6 +14,7 @@ export interface RuleEngineResult {
     finalNameEs: string
     activeIcons: string[]
     trace: EvaluationTrace[]
+    activeVariableIds: string[] // Tracking which fields were used in the final name
     transformedProduct: Product // Returned to show modified attributes (e.g. rh_flag)
 }
 
@@ -73,6 +74,7 @@ export function evaluateProductRules(product: Product, rules: Rule[]): RuleEngin
         finalNameEs: '',
         activeIcons: [],
         trace: [],
+        activeVariableIds: [],
         transformedProduct: { ...product } 
     }
 
@@ -145,6 +147,29 @@ export function evaluateProductRules(product: Product, rules: Rule[]): RuleEngin
                     nameComponents.push(textToAppend.trim())
                     traceRecord.actionTaken = 'appended_name_component'
                     traceRecord.payload = textToAppend.trim()
+
+                    // Extract variable IDs from action_payload (e.g., {furniture_name})
+                    const matches = rule.action_payload.match(/{([^}]+)}/g)
+                    if (matches) {
+                        matches.forEach(m => {
+                            const field = m.replace(/[{}]/g, '')
+                            if (!result.activeVariableIds.includes(field)) {
+                                result.activeVariableIds.push(field)
+                            }
+                        })
+                    }
+
+                    // Extract variable IDs from condition_expression (for fixed text components)
+                    // e.g. "rh_flag == true" -> it uses 'rh' conceptually
+                    const condTokens = rule.condition_expression.split(/[&|!=\s<>]+/).filter(Boolean)
+                    condTokens.forEach(t => {
+                        // Check if t is a likely field name (not a keyword or literal)
+                        if (t !== 'true' && t !== 'false' && t !== 'null' && isNaN(Number(t))) {
+                            if (!result.activeVariableIds.includes(t)) {
+                                result.activeVariableIds.push(t)
+                            }
+                        }
+                    })
                 }
             }
 

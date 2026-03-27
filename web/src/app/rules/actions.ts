@@ -81,8 +81,9 @@ export async function previewNamingRulesAction(productType: string, pendingRules
 
     if (products.length === 0) return []
 
-    // Import the evaluator dynamically (server-side only)
+    // Import the evaluator and translator dynamically (server-side only)
     const { evaluateProductRules } = await import('@/lib/engine/ruleEvaluator')
+    const { translateProductToEnglish } = await import('@/lib/engine/translator')
 
     // Build Rule-compatible objects from pendingRules (they may lack id if newly added)
     const rulesForEval = pendingRules.map((r: any, idx: number) => ({
@@ -98,16 +99,23 @@ export async function previewNamingRulesAction(productType: string, pendingRules
         target_value: r.target_value || productType,
     }))
 
-    return products.map((p: any) => {
-        const result = evaluateProductRules(p as any, rulesForEval as any)
+    return await Promise.all(products.map(async (p: any) => {
+        const resultEs = evaluateProductRules(p as any, rulesForEval as any)
+        
+        // Use the newly implemented translation engine with synchronized variables
+        const resultEn = await translateProductToEnglish(p as any, productType, resultEs.activeVariableIds)
+
         return {
             id: p.id,
             code: p.code,
             currentName: p.final_name_es || '',
-            previewName: result.finalNameEs,
+            previewName: resultEs.finalNameEs,
+            previewNameEn: resultEn.translatedName,
+            isValidEn: resultEn.isValid,
+            errorEn: resultEn.errorReason,
             productData: p,
         }
-    })
+    }))
 }
 
 export async function getProductsCountByFamilyAction(productType: string) {
@@ -154,8 +162,6 @@ export async function applyNamesToProductTypeBatchAction(productType: string, of
     const { evaluateProductRules } = await import('@/lib/engine/ruleEvaluator')
 
     // ── Preview pass (TypeScript engine) ─────────────────────────────────────
-    // Generates the SAP name vs new name comparison shown in the UI.
-    // This logic is preserved exactly as-is.
     const results: { code: string, newName: string, oldName: string, error?: string, status?: string }[] = []
     const idsToApply: string[] = []
 
@@ -176,8 +182,6 @@ export async function applyNamesToProductTypeBatchAction(productType: string, of
     }
 
     // ── Apply pass (RPC) ──────────────────────────────────────────────────────
-    // Replaces individual UPDATE-per-product (Management API) with a single
-    // batch RPC call. No Management API, no direct DB, no secret keys.
     if (idsToApply.length > 0) {
         const { createClient } = await import('@supabase/supabase-js')
         const supabase = createClient(
@@ -197,3 +201,33 @@ export async function applyNamesToProductTypeBatchAction(productType: string, of
 
     return results
 }
+
+// ─── EN Config Actions ────────────────────────────────────────────────────────
+
+export async function getEnConfigAction(targetEntity: string) {
+    const safe = targetEntity.replace(/'/g, "''")
+    return await dbQuery(`
+        SELECT variable_id, order_index, emit, behavior, drop_if_resolved, resolved_by, fallback_strategy, group_key, notes
+        FROM public.naming_config_en
+        WHERE target_entity = '${safe}'
+        ORDER BY order_index ASC
+    `) || []
+}
+
+export async function saveEnConfigAction(targetEntity: string, variable_id: string, patch: {
+    order_index?: number
+    emit?: boolean
+    behavior?: string
+    fallback_strategy?: string
+}) {
+    const safe = targetEntity.replace(/'/g, "''")
+    const safeVar = variable_id.replace(/'/g, "''")
+    const sets: string[] = [`updated_at = now()`]
+    if (patch.order_index !== undefined) sets.push(`order_index = ${patch.order_index}`)
+    if (patch.emit !== undefined) sets.push(`emit = ${patch.emit}`)
+    if (patch.behavior !== undefined) sets.push(`behavior = '${patch.behavior.replace(/'/g, "''")}'`)
+    if (patch.fallback_strategy !== undefined) sets.push(`fallback_strategy = '${patch.fallback_strategy.replace(/'/g, "''")}'`)
+    await dbQuery(`UPDATE public.naming_config_en SET ${sets.join(', ')} WHERE target_entity = '${safe}' AND variable_id = '${safeVar}'`)
+    revalidatePath('/rules')
+}
+

@@ -4,7 +4,7 @@
 > **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estratégico y operativo necesario para navegar y construir eficientemente en este proyecto.
 
 ## 📌 Visión General
-Versión 1.0.7: Optimización del módulo de edición de nombres masivos (Mass Edit) y mejoras en acciones asíncronas de base de datos. Se mejoró la estabilidad en la creación y edición de familias de productos.
+Versión 1.0.8: Refactorización masiva del motor de traducción (translator.ts). Migración de traducción basada en strings a motor adaptativo basado en campos (15+ variables). Inclusión de lógica de deduplicación y chequeo de redundancias inteligentes (ej. Vanity vs LVM).
 
 ## 🏗️ Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
