@@ -77,7 +77,7 @@ export async function createProductAction(data: any) {
 
     await dbQuery(`
         INSERT INTO public.cabinet_products (
-            code, sap_description, product_type, furniture_name, color_code, rh_flag, rh,
+            code, sap_description, product_type, cabinet_name, color_code, rh_flag, rh,
             assembled_flag, canto_puertas, carb2, line, use_destination, zone_home, 
             commercial_measure, accessory_text, designation, width_cm, depth_cm, height_cm, weight_kg, 
             width_in, depth_in, height_in, weight_lb,
@@ -86,7 +86,7 @@ export async function createProductAction(data: any) {
             private_label_flag, private_label_client_name, private_label_client_id
         ) VALUES (
             ${esc(data.code)}, ${esc(data.sap_description)}, ${esc(data.product_type || parsed.product_type)}, 
-            ${esc(data.furniture_name)}, ${esc(data.color_code || parsed.color_code)}, ${data.rh === 'RH' || parsed.rh === 'RH' ? 'true' : 'false'}, ${esc(data.rh || parsed.rh || 'NA')},
+            ${esc(data.cabinet_name)}, ${esc(data.color_code || parsed.color_code)}, ${data.rh === 'RH' || parsed.rh === 'RH' ? 'true' : 'false'}, ${esc(data.rh || parsed.rh || 'NA')},
             ${data.assembled_flag || parsed.assembled_flag ? 'true' : 'false'}, ${esc(data.canto_puertas || 'CANTO 2 MM')}, 
             ${esc(data.carb2 || 'NA')},
             ${esc(data.line)}, ${esc(data.use_destination || parsed.use_destination)}, ${esc(data.zone_home || parsed.zone_home)}, 
@@ -137,7 +137,7 @@ export async function updateProductAction(id: string, data: any) {
     await dbQuery(`
         UPDATE public.cabinet_products SET
             code=${esc(data.code)}, sap_description=${esc(data.sap_description)}, product_type=${esc(data.product_type || parsed.product_type)},
-            furniture_name=${esc(data.furniture_name)}, color_code=${esc(data.color_code || parsed.color_code)},
+            cabinet_name=${esc(data.cabinet_name)}, color_code=${esc(data.color_code || parsed.color_code)},
             rh_flag=${data.rh === 'RH' || parsed.rh === 'RH' ? 'true' : 'false'}, rh=${esc(data.rh || parsed.rh || 'NA')}, assembled_flag=${data.assembled_flag ? 'true' : 'false'},
             canto_puertas=${esc(data.canto_puertas)}, carb2=${esc(data.carb2)}, line=${esc(data.line || parsed.line)},
             use_destination=${esc(data.use_destination)}, zone_home=${esc(data.zone_home || parsed.zone_home)}, commercial_measure=${esc(data.commercial_measure)},
@@ -265,7 +265,7 @@ export async function translateProductsAction(ids?: string[], mode: 'missing' | 
     try {
         let query = `
             SELECT 
-                id, code, product_type, designation, furniture_name, line,
+                id, code, product_type, designation, cabinet_name, line,
                 use_destination, commercial_measure, accessory_text, canto_puertas,
                 door_color_text, rh, carb2, assembled_flag, special_label,
                 private_label_client_name, armado_con_lvm,
@@ -367,7 +367,7 @@ export async function getUniquePropertiesAction() {
     const useDestinations = await dbQuery(`SELECT DISTINCT use_destination FROM public.cabinet_products WHERE use_destination IS NOT NULL AND use_destination != '' ORDER BY use_destination ASC`) || []
     
     // Nuevas variables unicas
-    const furnitureNames = await dbQuery(`SELECT DISTINCT furniture_name FROM public.cabinet_products WHERE furniture_name IS NOT NULL AND furniture_name != '' ORDER BY furniture_name ASC`) || []
+    const cabinetNames = await dbQuery(`SELECT DISTINCT cabinet_name FROM public.cabinet_products WHERE cabinet_name IS NOT NULL AND cabinet_name != '' ORDER BY cabinet_name ASC`) || []
     const commercialMeasures = await dbQuery(`SELECT DISTINCT commercial_measure FROM public.cabinet_products WHERE commercial_measure IS NOT NULL AND commercial_measure != '' ORDER BY commercial_measure ASC`) || []
     const accessoryTexts = await dbQuery(`SELECT DISTINCT accessory_text FROM public.cabinet_products WHERE accessory_text IS NOT NULL AND accessory_text != '' ORDER BY accessory_text ASC`) || []
     const colors = await dbQuery(`SELECT code_4dig as code_color, name_color_sap FROM public.colors ORDER BY code_4dig ASC`) || []
@@ -377,7 +377,7 @@ export async function getUniquePropertiesAction() {
         designations: designations.map((r: any) => r.designation),
         productTypes: productTypes.map((r: any) => r.product_type),
         useDestinations: useDestinations.map((r: any) => r.use_destination),
-        furnitureNames: furnitureNames.map((r: any) => r.furniture_name),
+        cabinetNames: cabinetNames.map((r: any) => r.cabinet_name),
         commercialMeasures: commercialMeasures.map((r: any) => r.commercial_measure),
         accessoryTexts: accessoryTexts.map((r: any) => r.accessory_text),
         colors: colors.map((r: any) => ({ code: r.code_color, name: r.name_color_sap }))

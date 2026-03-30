@@ -8,7 +8,7 @@ async function run() {
         {
             es: 'KIT LVM SIENA 79X48 MARFIL MUEBLE BASICO ELEVADO SIN MANIJAS GRACIA/SIKUANI',
             expected: 'KIT SIENA LAV 31INX19IN IVORY BASIC WALL MOUNTED VANITY WITHOUT HANDLES GRACIA/SIKUANI',
-            ctx: { furniture_name: 'SIENA', color_name: 'MARFIL GRACIA/SIKUANI' }
+            ctx: { cabinet_name: 'SIENA', color_name: 'MARFIL GRACIA/SIKUANI' }
         },
         {
             es: 'MBLE SUP COC 2 PUERTAS 2 ENTREPAÑOS CIERRE LENTO CANTO 2MM CANDELARIA AMAZONAS RH',
@@ -28,7 +28,7 @@ async function run() {
         {
             es: 'KIT HIDROMASAJE CHATTANOOGAN 200X200 FULL PRE ENSAMBLE PULSADORES',
             expected: 'CHATTANOOGAN WHIRLPOOL KIT 79INX79IN FULL PREASSEMBLY PUSH BUTTONS',
-            ctx: { furniture_name: 'CHATTANOOGAN', line: 'FULL' }
+            ctx: { cabinet_name: 'CHATTANOOGAN', line: 'FULL' }
         }
     ];
 

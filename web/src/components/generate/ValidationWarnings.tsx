@@ -27,7 +27,7 @@ const FIELD_LABELS: Record<string, string> = {
     depth_cm: 'Profundidad (cm)',
     height_cm: 'Alto (cm)',
     sap_description: 'Descripción SAP',
-    furniture_name: 'Nombre del mueble',
+    cabinet_name: 'Nombre del gabinete',
     color_code: 'Código de color',
     familia_code: 'Familia',
 }

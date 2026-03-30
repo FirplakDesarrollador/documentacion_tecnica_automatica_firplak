@@ -23,7 +23,7 @@ const REAL_PRODUCTS: ProductPayload[] = [
         product_type: "MUEBLE",
         designation: "CUBO",
         use_destination: "LAVAMANOS",
-        furniture_name: "GODAI",
+        cabinet_name: "GODAI",
         line: "CLASS",
         commercial_measure: "63X48",
         accessory_text: "NA",
@@ -38,7 +38,7 @@ const REAL_PRODUCTS: ProductPayload[] = [
         product_type: "MUEBLE",
         designation: "ELEVADO",
         use_destination: "LAVAMANOS",
-        furniture_name: "TIZIANO",
+        cabinet_name: "TIZIANO",
         line: "LIFE",
         commercial_measure: "124X48",
         accessory_text: "RFE",
@@ -58,9 +58,9 @@ async function runControlledTest() {
     for (const p of REAL_PRODUCTS) {
         try {
             // Simplified active vars as they would come from the UI
-            const activeVars = ['product_type', 'designation', 'use_destination', 'furniture_name', 'line', 'commercial_measure', 'canto_puertas']
+            const activeVars = ['product_type', 'designation', 'use_destination', 'cabinet_name', 'line', 'commercial_measure', 'canto_puertas']
             const result = await translateProductToEnglish(p, 'MUEBLE', activeVars)
-            const context = `${p.furniture_name} ${p.line} ${p.commercial_measure}`
+            const context = `${p.cabinet_name} ${p.line} ${p.commercial_measure}`
             console.log(`| ${context} | ${result.translatedName} | ${result.isValid ? '✅' : '❌'} |`)
         } catch (e: any) {
             console.log(`| ERROR | ${e.message} | ❌ |`)

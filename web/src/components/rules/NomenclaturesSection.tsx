@@ -19,6 +19,7 @@ const PRODUCT_TYPES = [
     { value: 'MESON', label: 'Mesones' },
     { value: 'QUARTZSTONE', label: 'Quartzstone' },
     { value: 'BAÑERA', label: 'Bañeras' },
+    { value: 'TAPA', label: 'Tapas' },
 ]
 
 export function NomenclaturesSection({ namingRules }: NomenclaturesSectionProps) {

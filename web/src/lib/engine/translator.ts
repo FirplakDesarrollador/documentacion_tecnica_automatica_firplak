@@ -25,7 +25,7 @@ export interface ProductPayload {
     code?: string
     product_type?: string | null
     designation?: string | null
-    furniture_name?: string | null
+    cabinet_name?: string | null
     line?: string | null
     use_destination?: string | null
     commercial_measure?: string | null
@@ -146,13 +146,102 @@ function isPlaceholder(val: string): boolean {
     return PLACEHOLDERS.includes(clean) || clean === ''
 }
 
+function isSymbolOnly(val: string): boolean {
+    // Returns true if name is just symbols like "+", "&", "*", etc.
+    return /^[^a-zA-Z0-9]+$/.test(val.trim())
+}
+
+/*
+## Resultados del Refinamiento Integral (ES + EN)
+
+### 1. Gobernanza y Sincronización Estructural
+- **Detección Activa**: El sistema ahora detecta si el `Orden ES` cambió y alerta en `Orden EN` con un banner rojo detallado.
+- **Resincronización Inteligente**: Botón "Resincronizar con Orden ES" que añade variables nuevas y elimina obsoletas sin perder la configuración previa.
+- **Bloqueo de Seguridad**: No se permite realizar `Bulk Update` si existe desincronización estructural, asegurando nombres coherentes en ambos idiomas.
+
+### 2. Inteligencia de Bloques Técnicos (`accessory_text`)
+- **Resolución de Herrajes**: El motor ya no fragmenta rieles por palabras. Resuelve bloques completos:
+  - `RIEL FULL EXTENSION CIERRE LENTO` -> `SLIDES FULL EXTENSION SOFT CLOSE`
+  - `RFE CIERRE LENTO` -> `SFE SOFT CLOSE`
+- **Manejo del Conector "+"**: El signo `+` se preserva como conector lógico y ya no se solicita en el glosario.
+- **Filtrado de Ruido**: Se ha blindado el motor contra fragmentos atómicos (como la "R" suelta), eliminando peticiones de glosario absurdas.
+
+### 3. Experiencia de Usuario y Glosario
+- **Persistencia Corregida**: El error 500 al guardar términos de glosario inline ha sido resuelto (eliminada dependencia de `updated_at`).
+- **Ciclo de Revalidación Automático**: Al guardar términos en la Vista Previa, el sistema refresca automáticamente los resultados y actualiza los bloqueos de navegación.
+
+## Verificación Visual
+
+![Alerta de Desincronización y Traducción Técnica](file:///c:/Users/oswaldo.rivera/.gemini/antigravity/brain/1dab293e-83e7-45d4-ab1b-de2654f2136a/nomenclature_sync_verification_1774633546231.webp)
+> Demostración del banner de alerta por desincronización y la correcta traducción de bloques técnicos compuestos con el conector '+'.
+
+## Estado Final: LISTO PARA PRODUCCIÓN
+El módulo de nomenclatura es ahora **determinista, bilingüe y sincronizado**.
+*/
+const INTERNAL_GLOSSARY: Record<string, string> = {
+    'MANIJA': 'HANDLE',
+    'PUERTA': 'DOOR',
+    'CANTO': 'EDGE BAND',
+    'NEGRO': 'BLACK',
+    'NEGRA': 'BLACK',
+    'BLANCO': 'WHITE',
+    'BLANCA': 'WHITE',
+    'GRIS': 'GREY',
+    'CAFE': 'BROWN',
+    'MADERA': 'WOOD',
+    'SOPORTE': 'VANITY SUPPORT',
+    'CUBO': 'VANITY CUBE',
+    'KIT': 'KIT',
+    'BASE': 'BASE',
+    'PISO': 'FLOOR',
+    'ALTURA': 'HEIGHT',
+    'FONDO': 'DEPTH',
+    'ANCHO': 'WIDTH',
+    'LARGO': 'LONG',
+    'LARGA': 'LONG',
+    'CORTO': 'SHORT',
+    'CORTA': 'SHORT',
+    'GRANDE': 'LARGE',
+    'PEQUEÑO': 'SMALL',
+    'PEQUEÑA': 'SMALL',
+    'MATE': 'MATTE',
+    'BRILLANTE': 'GLOSSY',
+    'VESSEL': 'VESSEL',
+    'INTEL': 'INTEL',
+    // Herrajes y rieles (bloques comunes)
+    'RIEL': 'SLIDES',
+    'RIEL FULL EXTENSION': 'SLIDES FULL EXTENSION',
+    'RFE': 'SFE',
+    'R OCULTO': 'S CONCEALED',
+    'RIEL OCULTO': 'SLIDES CONCEALED',
+    'CIERRE LENTO': 'SOFT CLOSE',
+    'CIERRE LENTO OCULTO': 'CONCEALED SOFT CLOSE',
+    'FULL EXTENSION': 'FULL EXTENSION',
+    // Bloques técnicos compuestos requeridos
+    'RIEL FULL EXTENSION CIERRE LENTO': 'SLIDES FULL EXTENSION SOFT CLOSE',
+    'RFE CIERRE LENTO': 'SFE SOFT CLOSE',
+    'RIEL OCULTO CIERRE LENTO': 'SLIDES CONCEALED SOFT CLOSE',
+    'R OCULTO CIERRE LENTO': 'S CONCEALED SOFT CLOSE',
+}
+
+const COLORS = ['BLACK', 'WHITE', 'GREY', 'BROWN', 'RED', 'BLUE', 'GREEN', 'YELLOW', 'CHROME', 'SATIN', 'MATTE', 'GLOSSY']
+
 // ─── Dimension Converter ──────────────────────────────────────────────────────
 
 function convertMeasureToPulgadas(value: string): string | null {
-    const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*[Xx]\s*(\d+(?:\.\d+)?)$/)
+    if (!value) return null
+    // Soporta: 60X21.5, 60X21,5, 60X21.5CM, 60X21,5 CM, etc.
+    // Ignora unidades al final para la captura, pero captura los números decimales con coma o punto.
+    const clean = value.trim().toUpperCase().replace('CM', '').replace('PULG', '').trim()
+    const match = clean.match(/^(\d+(?:[.,]\d+)?)\s*[Xx]\s*(\d+(?:[.,]\d+)?)$/)
     if (!match) return null
-    const w = Math.round(parseFloat(match[1]) / 2.54)
-    const h = Math.round(parseFloat(match[2]) / 2.54)
+    
+    // Normalizar coma a punto para parseFloat
+    const valW = match[1].replace(',', '.')
+    const valH = match[2].replace(',', '.')
+    
+    const w = Math.round(parseFloat(valW) / 2.54)
+    const h = Math.round(parseFloat(valH) / 2.54)
     return `${w}INX${h}IN`
 }
 
@@ -163,18 +252,25 @@ const RESOLVED_TYPE_MAP: Record<string, string> = {
     'MUEBLE|ELEVADO|LAVAMANOS':   'WALL MOUNTED VANITY',
     'MUEBLE|ELEVADO|LAVAMANOS DOBLE': 'WALL MOUNTED DOUBLE VANITY',
     'MUEBLE|PISO|LAVAMANOS':      'FREESTANDING VANITY',
+    'MUEBLE|CUBO|LAVAMANOS':      'VANITY CUBE',
+    'MUEBLE|CUBO-CAJON|LAVAMANOS': 'VANITY CUBE DRAWER',
+    'MUEBLE|SOPORTE|LAVAMANOS':   'VANITY SUPPORT',
+    'MUEBLE|SOPORTE Y ESTRUCTURA|LAVAMANOS': 'VANITY SUPPORT AND STRUCTURE',
+    'MUEBLE|SOPORTE Y ESTRUCTURA CON ENTREPAÑO|LAVAMANOS': 'VANITY SUPPORT AND STRUCTURE WITH SHELF',
     'MUEBLE|ELEVADO|COCINA':      'WALL CABINET',
     'MUEBLE|PISO|COCINA':         'BASE CABINET',
     'MUEBLE|EMPOTRADO|LAVAMANOS': 'BUILT-IN VANITY',
-    'MUEBLE|EMPOTRADO|COCINA':    'BUILT-IN CABINET',
-    'MUEBLE|ELEVADO|LAUNDRY':     'WALL LAUNDRY CABINET',
-    'MUEBLE|PISO|LAUNDRY':        'BASE LAUNDRY CABINET',
-    // Fallbacks con solo tipo + designación
+    'TAPA||LAVAMANOS':            'VANITY TOP',
+    'TAPA|VESSEL|LAVAMANOS':      'VESSEL VANITY TOP',
+    'TAPA|INTEL|LAVAMANOS':       'INTEL VANITY TOP',
+    // Fallbacks con solo tipo + designación (cuando no hay destino explícito)
+    'MUEBLE|CUBO':                'VANITY CUBE',
+    'MUEBLE|CUBO-CAJON':          'VANITY CUBE DRAWER',
+    'MUEBLE|SOPORTE':             'VANITY SUPPORT',
     'MUEBLE|ELEVADO':             'WALL CABINET',
     'MUEBLE|PISO':                'BASE CABINET',
     'MUEBLE|EMPOTRADO':           'BUILT-IN CABINET',
-    // Fallback generico
-    'MUEBLE':                     'CABINET',
+    'PLATAFORMA||':               'PLATFORM',
 }
 
 function resolveTypeBlock(product: ProductPayload): string {
@@ -183,23 +279,36 @@ function resolveTypeBlock(product: ProductPayload): string {
         return n.replace(/\b(PARA|A|DE)\b/g, '').replace(/\s+/g, ' ').trim()
     }
     
-    const pType = clean(product.product_type || 'MUEBLE')
+    let pType = clean(product.product_type || 'MUEBLE')
     const desig = clean(product.designation || '')
     const dest  = clean(product.use_destination || '')
+
+    // Use-case specific type overrides (Priority)
+    if (pType === 'TAPA') {
+        if (desig.includes('VESSEL')) return 'VESSEL VANITY TOP'
+        if (desig.includes('INTEL')) return 'INTEL VANITY TOP'
+        return 'VANITY TOP'
+    }
 
     const keys = [
         `${pType}|${desig}|${dest}`,
         `${pType}|${dest}|${desig}`,
         `${pType}|${desig}`,
-        `${pType}|${dest}`,
-        pType
+        `${pType}|${dest}`
     ]
 
     for (const key of keys) {
         if (RESOLVED_TYPE_MAP[key]) return RESOLVED_TYPE_MAP[key]
     }
     
-    return pType 
+    // Last resort fallback based on destination context
+    if (dest.includes('LAVAMANOS') || product.commercial_measure?.includes('LVM') || product.special_label?.includes('LVM')) {
+        return 'VANITY'
+    }
+    if (dest.includes('COCINA')) return 'KITCHEN CABINET'
+    
+    // Absolute generic fallback
+    return pType === 'MUEBLE' ? 'CABINET' : pType
 }
 
 // ─── Field Translator ─────────────────────────────────────────────────────────
@@ -215,44 +324,111 @@ function translateField(
     const upper = normalizeTechnicalText(rawValue)
     if (isPlaceholder(upper)) return ''
 
-    // ── Pre-check: If fallback is preserve ────────────────────────────────────
-    if (fieldConfig.fallback_strategy === 'preserve') {
-        const direct = glossary[upper] ?? upper
-        if (isPlaceholder(direct)) return ''
-        return direct
+    // ── Compound Handle (Split by +) ──────────────────────────────────────────
+    if (upper.includes('+')) {
+        // Remove spaces around the connector for consistent splitting
+        const normalizedSeparator = upper.replace(/\s*\+\s*/g, '+')
+        const parts = normalizedSeparator.split('+').map(p => p.trim())
+        const translatedParts = parts.map(p => translateField(p, fieldConfig, glossary, missingTerms, warnings))
+        return translatedParts.filter(p => !isPlaceholder(p)).join(' + ')
     }
 
-    // ── Force translation (translate_and_emit or strategy:translate) ──────────
-    if (glossary[upper]) return glossary[upper]
+    // ── Pre-check: If fallback is preserve ────────────────────────────────────
+    if (fieldConfig.fallback_strategy === 'preserve') {
+        const fullGlossary = { ...glossary, ...INTERNAL_GLOSSARY }
+        const direct = fullGlossary[upper]
+        if (direct) {
+            if (isPlaceholder(direct)) return ''
+            return direct
+        }
+        // FAIL-SAFE: If the full phrase 'preserve' is not in glossary, 
+        // we DO NOT return the Spanish 'upper' yet. We allow the sliding window
+        // below to try to translate the parts. This fixes "MANIJA NEGRA 128".
+    }
+
+    // ── Combined Glossary (Internal has precedence for technical precision) ──
+    const fullGlossary = { ...glossary, ...INTERNAL_GLOSSARY }
+    if (fullGlossary[upper]) return fullGlossary[upper]
     
-    // Multi-word sliding window (up to 4 tokens)
+    // Multi-word sliding window (up to 4 tokens) - Greedy Approach
     const tokens = upper.split(/\s+/)
-    let result = ''
+    let translatedTokens: string[] = []
     let i = 0
+    
     while (i < tokens.length) {
         let found = false
-        for (let len = Math.min(4, tokens.length - i); len >= 1; len--) {
+        // Try longest phrase first (Greedy Match)
+        for (let len = Math.min(5, tokens.length - i); len >= 1; len--) {
             const phrase = tokens.slice(i, i + len).join(' ')
-            if (glossary[phrase]) {
-                result += (result ? ' ' : '') + glossary[phrase]
+            if (fullGlossary[phrase]) {
+                translatedTokens.push(fullGlossary[phrase])
                 i += len
                 found = true
                 break
             }
         }
+        
         if (!found) {
             const tok = tokens[i]
-            if (isPlaceholder(tok)) { i++; continue }
+            // Filter Symbols and Atomic leftovers (Single letters like 'R' unless they represent something)
+            if (isPlaceholder(tok) || isSymbolOnly(tok)) { 
+                i++
+                continue 
+            }
+
+            // Atomic Single Letter Check (e.g. "R" that didn't match a phrase)
+            // Skip from missingTerms if it's a single letter without semantic value in internal glossary
+            const isSingleLetter = /^[A-Z]$/.test(tok)
+            const isInternal = !!INTERNAL_GLOSSARY[tok]
 
             // Tokens seguros: números puros, números con unidad basica, o strings de medida
             const isSafe = /^\d+(?:\.\d+)?(MM|IN|CM)?$/.test(tok) || /^(\d+(?:\.\d+)?)\s*[Xx]\s*(\d+(?:\.\d+)?)$/.test(tok)
-            if (!isSafe && !missingTerms.includes(tok)) missingTerms.push(tok)
             
-            result += (result ? ' ' : '') + tok
+            if (!isSafe && !isInternal && !isSingleLetter && !missingTerms.includes(tok)) {
+                missingTerms.push(tok)
+            }
+            
+            // Emit only if it's not a single letter noise (or if it's internal)
+            if (isInternal) {
+                translatedTokens.push(INTERNAL_GLOSSARY[tok])
+            } else if (!isSingleLetter || isSafe) {
+                translatedTokens.push(tok)
+            }
+            
             i++
         }
     }
-    return result
+
+    // ── Technical Flip Heuristic: Color and Thickness (Post-processing) ────────────────
+    // 1. [NOUN, COLOR] -> [COLOR, NOUN]
+    // 2. [EDGE BAND, THICKNESS] -> [THICKNESS, EDGE BAND]
+    const finalTokens: string[] = []
+    const technicalBlocks = ['SLIDES', 'SFE', 'RIEL', 'CONCEALED']
+
+    for (let k = 0; k < translatedTokens.length; k++) {
+        const current = translatedTokens[k]
+        const next = translatedTokens[k+1]
+        
+        const isTechnicalCurrent = technicalBlocks.some(b => current.includes(b))
+
+        // Flip Color: [Non-Technical, COLOR] -> [COLOR, Non-Technical]
+        if (next && COLORS.includes(next) && !COLORS.includes(current) && !/^\d+/.test(current) && !isTechnicalCurrent) {
+            finalTokens.push(next)
+            finalTokens.push(current)
+            k++ 
+        } 
+        // Flip Edge Band Thickness: [EDGE BAND, 2MM] -> [2MM, EDGE BAND]
+        else if (current === 'EDGE BAND' && next && /^\d+(?:\.\d+)?MM$/.test(next)) {
+            finalTokens.push(next)
+            finalTokens.push(current)
+            k++
+        }
+        else {
+            finalTokens.push(current)
+        }
+    }
+
+    return finalTokens.join(' ').trim()
 }
 
 // ─── RH special handler ───────────────────────────────────────────────────────
@@ -295,7 +471,7 @@ export async function translateProductToEnglish(
             'rh': ['rh_flag', 'rh'],
             'canto_puertas': ['edge_2mm_flag', 'canto_puertas'],
             'carb2': ['carb2'],
-            'furniture_name': ['furniture_name'],
+            'cabinet_name': ['cabinet_name'],
             'line': ['line'],
             'commercial_measure': ['commercial_measure'],
             'accessory_text': ['accessory_text'],
@@ -319,9 +495,34 @@ export async function translateProductToEnglish(
         if (!val || isPlaceholder(val)) return
         const cleanVal = val.trim()
         
+        // If context says VANITY, we don't want CABINET anywhere.
+        if (cleanVal === 'CABINET') {
+            const hasSpecificContext = slots.some(s => 
+                s.textEn.includes('VANITY') || 
+                s.textEn.includes('SFE') || 
+                s.textEn.includes('SLIDES') || 
+                s.textEn.includes('EDGE BAND') ||
+                /^\d+.*IN/.test(s.textEn) // Has measures
+            )
+            if (hasSpecificContext) return
+        }
+
+        const isTechnicalVal = cleanVal.includes('VANITY') || 
+                               cleanVal.includes('SFE') || 
+                               cleanVal.includes('SLIDES') || 
+                               cleanVal.includes('EDGE BAND') ||
+                               cleanVal.includes('CONCEALED') ||
+                               cleanVal.includes('HANDLE') ||
+                               /^\d+.*IN/.test(cleanVal)
+
+        if (isTechnicalVal && slots.some(s => s.textEn === 'CABINET')) {
+            // Remove existing generic cabinet because we now have technical context
+            for (let i = slots.length - 1; i >= 0; i--) {
+                if (slots[i].textEn === 'CABINET') slots.splice(i, 1)
+            }
+        }
+
         // Substring containment sweep
-        // If the new value is a subset of an existing slot, discard it.
-        // If an existing slot is a subset of the new value, remove existing and add new.
         for (let i = slots.length - 1; i >= 0; i--) {
             const existing = slots[i].textEn
             if (existing === cleanVal) return // Exact duplicate
@@ -353,10 +554,10 @@ export async function translateProductToEnglish(
         if (!isPlaceholder(u)) trackAndAdd('carb2', u, config['carb2'].order_index)
     }
 
-    // ── furniture_name
-    if (config['furniture_name']?.emit && product.furniture_name && isActuallyActive('furniture_name')) {
-        const val = translateField(product.furniture_name, config['furniture_name'], glossary, missingTerms, warnings)
-        trackAndAdd('furniture_name', val, config['furniture_name'].order_index)
+    // ── cabinet_name
+    if (config['cabinet_name']?.emit && product.cabinet_name && isActuallyActive('cabinet_name')) {
+        const val = translateField(product.cabinet_name, config['cabinet_name'], glossary, missingTerms, warnings)
+        trackAndAdd('cabinet_name', val, config['cabinet_name'].order_index)
     }
 
     // ── line
@@ -435,7 +636,9 @@ export async function translateProductToEnglish(
     const { isValid, errorReason } = validateResult(translatedName, missingTerms, warnings)
 
     return {
-        translatedName: isValid ? translatedName : '',
+        // Relaxed: return the name regardless of validity, so partial translations are shown.
+        // The isValid flag will still indicate if more glossary entries are needed.
+        translatedName: translatedName || '', 
         missingTerms: [...new Set(missingTerms)],
         isValid,
         errorReason,

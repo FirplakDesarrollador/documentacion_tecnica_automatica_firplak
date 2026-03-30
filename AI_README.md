@@ -4,7 +4,7 @@
 > **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estratégico y operativo necesario para navegar y construir eficientemente en este proyecto.
 
 ## 📌 Visión General
-Versión 1.0.8: Refactorización masiva del motor de traducción (translator.ts). Migración de traducción basada en strings a motor adaptativo basado en campos (15+ variables). Inclusión de lógica de deduplicación y chequeo de redundancias inteligentes (ej. Vanity vs LVM).
+Versión 1.0.9: Evolución del motor de traducción adaptativo. Se migró el campo 'furniture_name' a 'cabinet_name' para mayor precisión técnica. Implementación de 'Smart Context Removal' para eliminar redundancias genéricas (ej. CABINET vs VANITY). Mejora en la visibilidad de resultados parciales permitiendo ver traducciones no validadas.
 
 ## 🏗️ Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:

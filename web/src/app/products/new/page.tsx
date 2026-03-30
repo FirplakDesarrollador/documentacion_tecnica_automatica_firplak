@@ -33,7 +33,7 @@ export default function NewProductPage() {
         code: '',
         sap_description: '',
         product_type: '',
-        furniture_name: '',
+        cabinet_name: '',
         color_code: '',
         color_name: '',
         rh: 'NA',
@@ -58,7 +58,7 @@ export default function NewProductPage() {
         isometric_path: ''
     })
 
-    const [datalistOptions, setDatalistOptions] = useState({ lines: [] as string[], designations: [] as string[], productTypes: [] as string[], useDestinations: [] as string[], furnitureNames: [] as string[], commercialMeasures: [] as string[], accessoryTexts: [] as string[], colors: [] as {code: string, name: string}[] })
+    const [datalistOptions, setDatalistOptions] = useState({ lines: [] as string[], designations: [] as string[], productTypes: [] as string[], useDestinations: [] as string[], cabinetNames: [] as string[], commercialMeasures: [] as string[], accessoryTexts: [] as string[], colors: [] as {code: string, name: string}[] })
 
     const [isAnalyzed, setIsAnalyzed] = useState(false)
     const [isNewFamily, setIsNewFamily] = useState(false)
@@ -125,7 +125,7 @@ export default function NewProductPage() {
 
             if (!isAnalyzed) setIsAnalyzed(true)
 
-            if (!parsed.furniture_name && !parsed.width_cm) {
+            if (!parsed.cabinet_name && !parsed.width_cm) {
                 toast.warning("Completar campo de nombre.", {
                     description: "No se encontraron hermanos históricos para este código."
                 })
@@ -410,7 +410,7 @@ export default function NewProductPage() {
                                         </div>
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Nombre del Producto</Label>
-                                            {renderCreatableSelect('furniture_name', datalistOptions.furnitureNames || [], 'NOMBRE DEL PRODUCTO')}
+                                            {renderCreatableSelect('cabinet_name', datalistOptions.cabinetNames || [], 'NOMBRE DEL PRODUCTO')}
                                         </div>
                                     </div>
 

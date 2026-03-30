@@ -26,7 +26,7 @@ export async function getReferencesByFamilyAction(familyCodes: string[]) {
     
     const filter = familyCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')
     const refRecords = await dbQuery(`
-        SELECT DISTINCT ref_code, furniture_name 
+        SELECT DISTINCT ref_code, cabinet_name 
         FROM public.cabinet_products 
         WHERE ref_code IS NOT NULL AND familia_code IN (${filter})
         ORDER BY ref_code ASC
@@ -34,7 +34,7 @@ export async function getReferencesByFamilyAction(familyCodes: string[]) {
     
     return refRecords.map((rec: any) => ({ 
         value: rec.ref_code as string, 
-        label: `${rec.ref_code} - ${rec.furniture_name || ''}` 
+        label: `${rec.ref_code} - ${rec.cabinet_name || ''}` 
     }))
 }
 

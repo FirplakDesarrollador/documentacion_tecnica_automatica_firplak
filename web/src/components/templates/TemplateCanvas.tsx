@@ -56,7 +56,7 @@ function OverflowText({ text, textAlign = 'left', isPreviewMode, type, previewDa
             const refs: string[] = [];
             if (previewData) {
                 if (previewData.line) refs.push(String(previewData.line).toUpperCase());
-                if (previewData.furniture_name) refs.push(String(previewData.furniture_name).toUpperCase());
+                if (previewData.cabinet_name) refs.push(String(previewData.cabinet_name).toUpperCase());
             }
 
             const words = s.split(' ');
@@ -1215,7 +1215,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                         <option value="color">Color (Nombre)</option>
                                         <option value="color_code">Color (Código)</option>
                                         <option value="sap_description">Descripción SAP</option>
-                                        <option value="furniture_name">Nombre Mueble Genérico</option>
+                                        <option value="cabinet_name">Nombre Gabinete Genérico</option>
                                         <option value="line">Línea</option>
                                         <option value="commercial_measure">Medida Comercial</option>
                                         <option value="use_destination">Uso</option>

@@ -46,7 +46,7 @@ export async function POST(req: Request) {
                 private_label_flag: isTrue(record['Clientes marca propia']),
                 private_label_client_name: record['Clientes marca propia'] !== 'SI' && record['Clientes marca propia'] ? record['Clientes marca propia'] : null,
                 designation: record.Designacion || null,
-                furniture_name: record['Nombre mueble'] || null,
+                cabinet_name: record['Nombre mueble'] || null,
                 line: record.Linea || null,
                 commercial_measure: record.Medida || null,
                 accessory_text: accessoryText,
@@ -73,15 +73,15 @@ export async function POST(req: Request) {
 
             try {
                 await dbQuery(`
-                    INSERT INTO public.cabinet_products (code, sap_description, familia_code, ref_code, version_code, color_code, product_type, use_destination, assembled_flag, private_label_flag, private_label_client_name, designation, furniture_name, line, commercial_measure, accessory_text, door_color_text, canto_puertas, carb2, final_name_es, final_name_en, isometric_path, depth_cm, height_cm, width_cm, weight_kg, depth_in, height_in, width_in, weight_lb, icon_rh, icon_full_extension, icon_soft_close, icon_edge_2mm, sku_servicios_ref)
-                    VALUES (${esc(d.code)}, ${esc(d.sap_description)}, ${esc(d.familia_code)}, ${esc(d.ref_code)}, ${esc(d.version_code)}, ${esc(d.color_code)}, ${esc(d.product_type)}, ${esc(d.use_destination)}, ${d.assembled_flag ? 'true' : 'false'}, ${d.private_label_flag ? 'true' : 'false'}, ${esc(d.private_label_client_name)}, ${esc(d.designation)}, ${esc(d.furniture_name)}, ${esc(d.line)}, ${esc(d.commercial_measure)}, ${esc(d.accessory_text)}, ${esc(d.door_color_text)}, ${esc(d.canto_puertas)}, ${esc(d.carb2)}, ${esc(d.final_name_es)}, ${esc(d.final_name_en)}, ${esc(d.isometric_path)}, ${d.depth_cm ? d.depth_cm : 'NULL'}, ${d.height_cm ? d.height_cm : 'NULL'}, ${d.width_cm ? d.width_cm : 'NULL'}, ${d.weight_kg ? d.weight_kg : 'NULL'}, ${d.depth_in ? d.depth_in : 'NULL'}, ${d.height_in ? d.height_in : 'NULL'}, ${d.width_in ? d.width_in : 'NULL'}, ${d.weight_lb ? d.weight_lb : 'NULL'}, ${d.icon_rh ? 'true' : 'false'}, ${d.icon_full_extension ? 'true' : 'false'}, ${d.icon_soft_close ? 'true' : 'false'}, ${d.icon_edge_2mm ? 'true' : 'false'}, ${esc(d.sku_servicios_ref)})
+                    INSERT INTO public.cabinet_products (code, sap_description, familia_code, ref_code, version_code, color_code, product_type, use_destination, assembled_flag, private_label_flag, private_label_client_name, designation, cabinet_name, line, commercial_measure, accessory_text, door_color_text, canto_puertas, carb2, final_name_es, final_name_en, isometric_path, depth_cm, height_cm, width_cm, weight_kg, depth_in, height_in, width_in, weight_lb, icon_rh, icon_full_extension, icon_soft_close, icon_edge_2mm, sku_servicios_ref)
+                    VALUES (${esc(d.code)}, ${esc(d.sap_description)}, ${esc(d.familia_code)}, ${esc(d.ref_code)}, ${esc(d.version_code)}, ${esc(d.color_code)}, ${esc(d.product_type)}, ${esc(d.use_destination)}, ${d.assembled_flag ? 'true' : 'false'}, ${d.private_label_flag ? 'true' : 'false'}, ${esc(d.private_label_client_name)}, ${esc(d.designation)}, ${esc(d.cabinet_name)}, ${esc(d.line)}, ${esc(d.commercial_measure)}, ${esc(d.accessory_text)}, ${esc(d.door_color_text)}, ${esc(d.canto_puertas)}, ${esc(d.carb2)}, ${esc(d.final_name_es)}, ${esc(d.final_name_en)}, ${esc(d.isometric_path)}, ${d.depth_cm ? d.depth_cm : 'NULL'}, ${d.height_cm ? d.height_cm : 'NULL'}, ${d.width_cm ? d.width_cm : 'NULL'}, ${d.weight_kg ? d.weight_kg : 'NULL'}, ${d.depth_in ? d.depth_in : 'NULL'}, ${d.height_in ? d.height_in : 'NULL'}, ${d.width_in ? d.width_in : 'NULL'}, ${d.weight_lb ? d.weight_lb : 'NULL'}, ${d.icon_rh ? 'true' : 'false'}, ${d.icon_full_extension ? 'true' : 'false'}, ${d.icon_soft_close ? 'true' : 'false'}, ${d.icon_edge_2mm ? 'true' : 'false'}, ${esc(d.sku_servicios_ref)})
                     ON CONFLICT (code) DO UPDATE SET
                         sap_description=EXCLUDED.sap_description, familia_code=EXCLUDED.familia_code,
                         ref_code=EXCLUDED.ref_code, version_code=EXCLUDED.version_code,
                         color_code=EXCLUDED.color_code, rh_flag=EXCLUDED.rh_flag,
                         product_type=EXCLUDED.product_type, use_destination=EXCLUDED.use_destination,
                         assembled_flag=EXCLUDED.assembled_flag, designation=EXCLUDED.designation,
-                        furniture_name=EXCLUDED.furniture_name, line=EXCLUDED.line,
+                        cabinet_name=EXCLUDED.cabinet_name, line=EXCLUDED.line,
                         commercial_measure=EXCLUDED.commercial_measure, accessory_text=EXCLUDED.accessory_text,
                         final_name_es=EXCLUDED.final_name_es, final_name_en=EXCLUDED.final_name_en,
                         depth_cm=EXCLUDED.depth_cm, height_cm=EXCLUDED.height_cm, width_cm=EXCLUDED.width_cm,

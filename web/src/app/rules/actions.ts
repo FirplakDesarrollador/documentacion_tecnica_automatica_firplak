@@ -1,6 +1,6 @@
 'use server'
 
-import { dbQuery } from '@/lib/supabase'
+import { dbQuery, supabaseAdmin } from '@/lib/supabase'
 import { revalidatePath } from 'next/cache'
 
 function esc(v: any) {
@@ -11,7 +11,13 @@ function esc(v: any) {
 }
 
 export async function getRulesAction() {
-    return await dbQuery(`SELECT * FROM public.rules WHERE enabled = true ORDER BY priority ASC`) || []
+    const { data, error } = await supabaseAdmin
+        .from('rules')
+        .select('*')
+        .eq('enabled', true)
+        .order('priority', { ascending: true })
+    if (error) console.error("getRulesAction error:", error.message)
+    return data || []
 }
 
 export async function getColorByNameAction(code4Dig: string) {
@@ -65,15 +71,10 @@ export async function previewNamingRulesAction(productType: string, pendingRules
     // Fetch 5 random products of the given type with all fields needed for name evaluation
     const safeType = productType.replace(/'/g, "''")
     const products = await dbQuery(`
-        SELECT id, code, product_type, furniture_name, line, designation, use_destination,
-               commercial_measure, accessory_text, door_color_text, rh, canto_puertas, 
-               armado_con_lvm, carb2, assembled_flag,
-               color_code, zone_home, ref_code, final_name_es, width_cm, depth_cm, height_cm,
-               weight_kg, barcode_text, sap_description, private_label_flag, private_label_client_name,
-               icon_rh, icon_full_extension, icon_soft_close, icon_edge_2mm
+        SELECT *
         FROM public.cabinet_products
         WHERE product_type = '${safeType}'
-          AND furniture_name IS NOT NULL
+          AND cabinet_name IS NOT NULL
           AND status = 'ACTIVO'
         ORDER BY random()
         LIMIT 5
@@ -109,24 +110,29 @@ export async function previewNamingRulesAction(productType: string, pendingRules
             id: p.id,
             code: p.code,
             currentName: p.final_name_es || '',
+            sapDescription: p.sap_description || '',
             previewName: resultEs.finalNameEs,
             previewNameEn: resultEn.translatedName,
             isValidEn: resultEn.isValid,
             errorEn: resultEn.errorReason,
+            missingTerms: resultEn.missingTerms,
             productData: p,
         }
     }))
 }
 
 export async function getProductsCountByFamilyAction(productType: string) {
-    const safeType = productType.replace(/'/g, "''")
-    const res = await dbQuery(`
-        SELECT count(*)::int as count 
-        FROM public.cabinet_products 
-        WHERE product_type = '${safeType}'
-          AND furniture_name IS NOT NULL
-    `)
-    return res && res.length > 0 ? res[0].count : 0
+    const { count, error } = await supabaseAdmin
+        .from('cabinet_products')
+        .select('*', { count: 'exact', head: true })
+        .eq('product_type', productType)
+        .not('cabinet_name', 'is', null)
+
+    if (error) {
+        console.error("Count Error:", error.message)
+        return 0
+    }
+    return count || 0
 }
 
 export async function applyNamesToProductTypeBatchAction(productType: string, offset: number, limit: number) {
@@ -134,16 +140,10 @@ export async function applyNamesToProductTypeBatchAction(productType: string, of
 
     // Fetch batch of products
     const products = await dbQuery(`
-        SELECT id, code, product_type, furniture_name, line, designation, use_destination,
-               commercial_measure, accessory_text, door_color_text, rh, canto_puertas, carb2,
-               armado_con_lvm, assembled_flag, color_code, zone_home, ref_code, final_name_es,
-               width_cm, depth_cm, height_cm, weight_kg, barcode_text, sap_description,
-               private_label_flag, private_label_client_name,
-               status,
-               icon_rh, icon_full_extension, icon_soft_close, icon_edge_2mm
+        SELECT *
         FROM public.cabinet_products
         WHERE product_type = '${safeType}'
-          AND furniture_name IS NOT NULL
+          AND cabinet_name IS NOT NULL
         ORDER BY code ASC
         LIMIT ${limit} OFFSET ${offset}
     `) || []
@@ -205,13 +205,13 @@ export async function applyNamesToProductTypeBatchAction(productType: string, of
 // ─── EN Config Actions ────────────────────────────────────────────────────────
 
 export async function getEnConfigAction(targetEntity: string) {
-    const safe = targetEntity.replace(/'/g, "''")
-    return await dbQuery(`
-        SELECT variable_id, order_index, emit, behavior, drop_if_resolved, resolved_by, fallback_strategy, group_key, notes
-        FROM public.naming_config_en
-        WHERE target_entity = '${safe}'
-        ORDER BY order_index ASC
-    `) || []
+    const { data, error } = await supabaseAdmin
+        .from('naming_config_en')
+        .select('variable_id, order_index, emit, behavior, drop_if_resolved, resolved_by, fallback_strategy, group_key, notes')
+        .eq('target_entity', targetEntity)
+        .order('order_index', { ascending: true })
+    if (error) console.error("getEnConfigAction error:", error.message)
+    return data || []
 }
 
 export async function saveEnConfigAction(targetEntity: string, variable_id: string, patch: {
@@ -219,6 +219,7 @@ export async function saveEnConfigAction(targetEntity: string, variable_id: stri
     emit?: boolean
     behavior?: string
     fallback_strategy?: string
+    drop_if_resolved?: boolean
 }) {
     const safe = targetEntity.replace(/'/g, "''")
     const safeVar = variable_id.replace(/'/g, "''")
@@ -227,7 +228,133 @@ export async function saveEnConfigAction(targetEntity: string, variable_id: stri
     if (patch.emit !== undefined) sets.push(`emit = ${patch.emit}`)
     if (patch.behavior !== undefined) sets.push(`behavior = '${patch.behavior.replace(/'/g, "''")}'`)
     if (patch.fallback_strategy !== undefined) sets.push(`fallback_strategy = '${patch.fallback_strategy.replace(/'/g, "''")}'`)
+    if (patch.drop_if_resolved !== undefined) sets.push(`drop_if_resolved = ${patch.drop_if_resolved}`)
+    
     await dbQuery(`UPDATE public.naming_config_en SET ${sets.join(', ')} WHERE target_entity = '${safe}' AND variable_id = '${safeVar}'`)
     revalidatePath('/rules')
+}
+
+// ─── Consolidated Governance Actions ──────────────────────────────────────────
+
+export async function saveFullConfigAction(productType: string, esRules: any[], deletedEsIds: string[], enConfig: any[]) {
+    // 1. Delete removed ES rules
+    for (const id of deletedEsIds) {
+        if (id) await deleteRuleAction(id)
+    }
+    
+    // 2. Upsert ES rules
+    for (const rule of esRules) {
+        await upsertRuleAction(rule)
+    }
+    
+    // 3. Update EN config (all at once)
+    const safeType = productType.replace(/'/g, "''")
+    for (const cfg of enConfig) {
+        await saveEnConfigAction(safeType, cfg.variable_id, {
+            order_index: cfg.order_index,
+            emit: cfg.emit,
+            behavior: cfg.behavior,
+            fallback_strategy: cfg.fallback_strategy,
+            drop_if_resolved: cfg.drop_if_resolved
+        })
+    }
+    
+    revalidatePath('/rules')
+    return { success: true }
+}
+
+export async function saveGlossaryTermsAction(terms: { es: string, en: string }[]) {
+    if (terms.length === 0) return { success: true }
+    
+    for (const term of terms) {
+        const safeEs = term.es.replace(/'/g, "''")
+        const safeEn = term.en.replace(/'/g, "''")
+        
+        // Upsert in public.glossary
+        await dbQuery(`
+            INSERT INTO public.glossary (term_es, term_en, category)
+            VALUES ('${safeEs}', '${safeEn}', 'TECHNICAL')
+            ON CONFLICT (term_es) DO UPDATE SET term_en = '${safeEn}'
+        `)
+    }
+    
+    return { success: true }
+}
+
+export async function applyFullBulkNamingUpdateBatchAction(
+    productType: string, 
+    offset: number, 
+    limit: number, 
+    clientEsRules?: any[], 
+    clientEnConfig?: any[]
+) {
+    // Fetch batch directly via PostgREST Data API
+    const { data: products, error: fetchErr } = await supabaseAdmin
+        .from('cabinet_products')
+        .select('*')
+        .eq('product_type', productType)
+        .not('cabinet_name', 'is', null)
+        .order('code', { ascending: true })
+        .range(offset, offset + limit - 1)
+
+    if (fetchErr) throw new Error(fetchErr.message)
+    if (!products || products.length === 0) return []
+
+    // Use passed configs or load ALL rules and config for recalculation
+    const esRules = clientEsRules || await getRulesAction()
+    const enConfig = clientEnConfig || await getEnConfigAction(productType)
+
+    const { evaluateProductRules } = await import('@/lib/engine/ruleEvaluator')
+    const { translateProductToEnglish } = await import('@/lib/engine/translator')
+
+    const results: any[] = []
+    const updates: { id: string, name_es: string, name_en: string }[] = []
+
+    for (const p of products) {
+        try {
+            // Stage 1: Recalculate ES
+            const resEs = evaluateProductRules(p as any, esRules as any)
+            const nameEs = resEs.finalNameEs
+
+            // Stage 2: Recalculate EN
+            const resEn = await translateProductToEnglish(p as any, productType, resEs.activeVariableIds)
+            
+            if (!resEn.isValid) {
+                results.push({ 
+                    code: p.code, 
+                    name_es: nameEs,
+                    name_en: '',
+                    error: resEn.errorReason, 
+                    status: p.status 
+                })
+                continue
+            }
+
+            results.push({ 
+                code: p.code, 
+                name_es: nameEs, 
+                name_en: resEn.translatedName,
+                status: p.status 
+            })
+            
+            updates.push({ id: p.id, name_es: nameEs, name_en: resEn.translatedName })
+        } catch (err: any) {
+            results.push({ code: p.code, error: err.message, status: p.status, name_es: '', name_en: '' })
+        }
+    }
+
+    // Stage 3: Batch Update in DB via Atomic RPC (Fixes fetch failed & RLS restricts)
+    if (updates.length > 0) {
+        const { data: rpcRes, error: rpcErr } = await supabaseAdmin.rpc('bulk_direct_update_names', { 
+            payload: updates 
+        })
+        
+        if (rpcErr) {
+            console.error("RPC Error:", rpcErr)
+            throw new Error("Data API Update Error: " + rpcErr.message)
+        }
+    }
+
+    return results
 }
 

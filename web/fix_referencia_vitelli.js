@@ -10,8 +10,8 @@ WHERE ref_code = 'VITELLI';
 
 -- También actualizar el nombre del mueble si contiene el antiguo nombre en mayúsculas (opcional pero recomendado por consistencia)
 UPDATE public.cabinet_products
-SET furniture_name = REPLACE(furniture_name, 'VITELLI', 'VITELI')
-WHERE furniture_name LIKE '%VITELLI%';
+SET cabinet_name = REPLACE(cabinet_name, 'VITELLI', 'VITELI')
+WHERE cabinet_name LIKE '%VITELLI%';
 `;
 
 async function run() {

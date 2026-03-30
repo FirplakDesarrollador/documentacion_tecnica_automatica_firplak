@@ -9,35 +9,81 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { upsertRuleAction, deleteRuleAction, previewNamingRulesAction, getProductsCountByFamilyAction, applyNamesToProductTypeBatchAction, revalidateRulesAndProductsAction, getEnConfigAction, saveEnConfigAction } from '@/app/rules/actions'
+import { Badge } from '@/components/ui/badge'
+import { 
+    upsertRuleAction, 
+    deleteRuleAction, 
+    previewNamingRulesAction, 
+    getProductsCountByFamilyAction, 
+    applyFullBulkNamingUpdateBatchAction, 
+    revalidateRulesAndProductsAction, 
+    getEnConfigAction, 
+    saveEnConfigAction,
+    saveFullConfigAction,
+    saveGlossaryTermsAction
+} from '@/app/rules/actions'
 import { toast } from 'sonner'
 import { ArrowUp, ArrowDown, Plus, Trash2, Eye, Settings2, Loader2, RefreshCw, CheckCircle2, AlertTriangle, Zap, ChevronDown } from 'lucide-react'
 
-// ─── Expected variables by product type ─────────────────────────────────────
-const EXPECTED_VARS: Record<string, { field: string; condition: string }[]> = {
-    default: [
-        { field: 'rh', condition: '!=null' },
-        { field: 'product_type', condition: '!=null' },
-        { field: 'designation', condition: '!=null' },
-        { field: 'furniture_name', condition: '!=null' },
-        { field: 'line', condition: '!=null' },
-        { field: 'accessory_text', condition: '!=null' },
-        { field: 'door_color_text', condition: '!=null' },
-        { field: 'use_destination', condition: '!=null' },
-        { field: 'commercial_measure', condition: '!=null' },
-        { field: 'canto_puertas', condition: '!=null' },
-        { field: 'assembled_flag', condition: '==true' },
-        { field: 'armado_con_lvm', condition: '!=null' },
-        { field: 'carb2', condition: '!=null' },
-        { field: 'private_label_client_name', condition: '!=null' },
-    ],
+// ─── Dynamic Expected Vars Helper ────────────────────────────────────────────
+function getExpectedVarsFromRules(rules: any[]) {
+    const vars: { field: string; label: string; condition: string }[] = [];
+    const seen = new Set<string>();
+
+    // Solo componentes de nombre habilitados
+    const activeRules = rules.filter(r => r.rule_type === 'name_component' && r.enabled);
+
+    activeRules.forEach(rule => {
+        const fieldsInRule: { field: string; condition: string }[] = [];
+
+        // Extraer de payload: {variable}
+        const payloadMatches = rule.action_payload.match(/{([^}]+)}/g);
+        if (payloadMatches) {
+            payloadMatches.forEach((m: string) => {
+                const f = m.replace(/[{}]/g, '').toLowerCase();
+                const meta = ADDABLE_FIELDS.find(af => af.field === f);
+                fieldsInRule.push({ 
+                    field: f, 
+                    condition: meta?.type === 'boolean' ? '==true' : '!=null' 
+                });
+            });
+        }
+
+        // Extraer de condición: campo!=null, campo==true
+        const condParts = rule.condition_expression.split(/[&|!=\s<>]+/).filter(Boolean);
+        condParts.forEach((t: string) => {
+            const f = t.toLowerCase();
+            const meta = ADDABLE_FIELDS.find(af => af.field === f);
+            if (meta) {
+                fieldsInRule.push({ 
+                    field: f, 
+                    condition: meta.type === 'boolean' ? '==true' : '!=null' 
+                });
+            }
+        });
+
+        // Mantener orden y unicidad
+        fieldsInRule.forEach(item => {
+            if (!seen.has(item.field)) {
+                seen.add(item.field);
+                const meta = ADDABLE_FIELDS.find(af => af.field === item.field);
+                vars.push({ 
+                    field: item.field, 
+                    label: meta?.label || item.field, 
+                    condition: item.condition 
+                });
+            }
+        });
+    });
+
+    return vars;
 }
 
 // ─── Addable text fields ─────────────────────────────────────────────────────
 const ADDABLE_FIELDS = [
     { field: 'product_type', label: 'Tipo de producto', type: 'text' },
     { field: 'designation', label: 'Designación', type: 'text' },
-    { field: 'furniture_name', label: 'Nombre del mueble', type: 'text' },
+    { field: 'cabinet_name', label: 'Nombre del gabinete', type: 'text' },
     { field: 'line', label: 'Línea', type: 'text' },
     { field: 'zone_home', label: 'Zona (BAÑO/COCINA/etc)', type: 'text' },
     { field: 'special_label', label: 'Marca Especial (OBRA/etc)', type: 'text' },
@@ -53,21 +99,21 @@ const ADDABLE_FIELDS = [
     { field: 'private_label_client_name', label: 'Cliente marca propia', type: 'text' },
 ]
 
-function getVarStatus(field: string, condition: string, product: any): 'ok' | 'na' | 'missing' {
+function getVarStatus(field: string, condition: string, product: any): 'SÍ' | 'IGNORADA' | 'FALTA' {
     const val = product[field]
     
     if (condition === '==true') {
-        if (val === null || val === undefined) return 'missing'
-        return val === true ? 'ok' : 'na'
+        if (val === null || val === undefined) return 'FALTA'
+        return val === true ? 'SÍ' : 'IGNORADA'
     }
     
     // != null → also skip if value is literally "NA"
     const isEmpty = val === null || val === undefined || val === ''
     const isNA = String(val ?? '').trim().toUpperCase() === 'NA'
     
-    if (isEmpty) return 'missing'
-    if (isNA) return 'na'
-    return 'ok'
+    if (isEmpty) return 'FALTA'
+    if (isNA) return 'IGNORADA'
+    return 'SÍ'
 }
 
 function getUnusedSapText(sapDesc: string, generatedName: string): string {
@@ -91,16 +137,21 @@ interface PreviewResult {
     id: string
     code: string
     currentName: string
+    sapDescription: string
     previewName: string
     productData: any
+    previewNameEn?: string
+    isValidEn?: boolean
+    errorEn?: string
+    missingTerms?: string[]
 }
 
-type MassApplyResult = { code: string; newName: string; oldName: string; error?: string }
+type MassApplyResult = { code: string; newName: string; newNameEn?: string; oldName: string; error?: string; status?: string }
 
 export function NamingRulesManager({ open, productType, onClose, initialRules }: NamingRulesManagerProps) {
     const [rules, setRules] = useState<any[]>([])
     const [loading, setLoading] = useState(false)
-    const [activeTab, setActiveTab] = useState<'structure' | 'preview' | 'en_config'>('structure')
+    const [activeTab, setActiveTab] = useState<'orden_es' | 'orden_en' | 'vista_previa'>('orden_es')
 
     // EN Config tab state
     const [enConfig, setEnConfig] = useState<any[]>([])
@@ -112,14 +163,20 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
     const [previewResults, setPreviewResults] = useState<PreviewResult[]>([])
     const [isLoadingPreview, setIsLoadingPreview] = useState(false)
     const [previewGenerated, setPreviewGenerated] = useState(false)
-
-    // Post-save state
     const [savedSuccessfully, setSavedSuccessfully] = useState(false)
+
+    // New Governance states
+    const [glossaryEdits, setGlossaryEdits] = useState<Record<string, string>>({})
+    const [isSavingGlossary, setIsSavingGlossary] = useState(false)
+
     const [massApplyMode, setMassApplyMode] = useState(false)
     const [isApplying, setIsApplying] = useState(false)
-    const [massResults, setMassResults] = useState<MassApplyResult[]>([])
+    const [massResults, setMassResults] = useState<any[]>([])
     const [massTotal, setMassTotal] = useState(0)
     const [deletedIds, setDeletedIds] = useState<string[]>([])
+    
+    // Sync issues state
+    const [syncIssues, setSyncIssues] = useState<{ missing: string[], obsolete: string[] }>({ missing: [], obsolete: [] })
 
     // Add variable dialog
     const [showAddVar, setShowAddVar] = useState(false)
@@ -128,10 +185,19 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
     const [variablePrefix, setVariablePrefix] = useState('')
     const [variableSuffix, setVariableSuffix] = useState('')
 
+    // ─── Helper: Normalize Priorities ────────────────────────────────────
+    const reindexRules = (list: any[]) => {
+        return list.map((r, idx) => ({
+            ...r,
+            priority: idx * 10
+        }))
+    }
+
     useEffect(() => {
         // Only sync if we haven't just saved (to avoid resetting the "Mass Apply" UI)
         if (!savedSuccessfully) {
-            setRules([...initialRules].sort((a: any, b: any) => a.priority - b.priority))
+            const sorted = [...initialRules].sort((a: any, b: any) => a.priority - b.priority)
+            setRules(reindexRules(sorted))
             setPreviewGenerated(false)
             setPreviewResults([])
             setMassApplyMode(false)
@@ -152,30 +218,54 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
         const temp = newRules[index]
         newRules[index] = newRules[targetIndex]
         newRules[targetIndex] = temp
-        newRules.forEach((r, idx) => r.priority = idx * 10)
-        setRules([...newRules])
+        
+        const indexed = reindexRules(newRules)
+        setRules(indexed)
         markDirty()
     }
 
     const handleSaveOrder = async () => {
+        // Final sync check before saving
+        const issues = checkSyncIssues(enConfig)
+        if (issues.missing.length > 0 || issues.obsolete.length > 0) {
+            toast.error("No se puede guardar: Existe una desincronización estructural. Por favor, revisa la pestaña 'Orden EN'.")
+            setActiveTab('orden_en')
+            setSyncIssues(issues)
+            setShowEnSyncAlert(true)
+            return
+        }
+
         setLoading(true)
         try {
-            // 1. Delete removed rules
-            for (const id of deletedIds) {
-                await deleteRuleAction(id)
-            }
-            
-            // 2. Upsert existing ones
-            for (const rule of rules) {
-                await upsertRuleAction(rule)
-            }
-            toast.success("Orden de nomenclatura guardado")
+            await saveFullConfigAction(productType, rules, deletedIds, enConfig)
+            toast.success("Configuración ES + EN guardada correctamente")
             setSavedSuccessfully(true)
-            setDeletedIds([]) // Clear after success
+            setDeletedIds([])
         } catch (err: any) {
-            toast.error("Error al guardar orden: " + err.message)
+            toast.error("Error al guardar: " + err.message)
         } finally {
             setLoading(false)
+        }
+    }
+
+    const handleSaveGlossary = async () => {
+        const termsToSave = Object.entries(glossaryEdits)
+            .filter(([_, en]) => en.trim() !== '')
+            .map(([es, en]) => ({ es, en }))
+            
+        if (termsToSave.length === 0) return
+        
+        setIsSavingGlossary(true)
+        try {
+            await saveGlossaryTermsAction(termsToSave)
+            toast.success(`${termsToSave.length} términos guardados en el glosario`)
+            setGlossaryEdits({})
+            // Auto-revalidate preview after saving glossary
+            await handleLoadPreview()
+        } catch (err: any) {
+            toast.error("Error al guardar glosario: " + err.message)
+        } finally {
+            setIsSavingGlossary(false)
         }
     }
 
@@ -191,7 +281,8 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
             target_value: productType,
             notes: 'Texto estático'
         }
-        setRules([...rules, newRule])
+        const updated = reindexRules([...rules, newRule])
+        setRules(updated)
         markDirty()
     }
 
@@ -215,7 +306,8 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
             target_value: productType,
             notes: `Variable ${selectedField} agregada manualmente`
         }
-        setRules([...rules, newRule])
+        const updated = reindexRules([...rules, newRule])
+        setRules(updated)
         setShowAddVar(false)
         setSelectedField('')
         setSelectedCondition('')
@@ -237,7 +329,8 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
         if (removed.id) {
             setDeletedIds(prev => [...prev, removed.id])
         }
-        setRules(nr)
+        const indexed = reindexRules(nr)
+        setRules(indexed)
         markDirty()
     }
 
@@ -254,37 +347,108 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
         }
     }
 
-    const handleTabChange = async (tab: 'structure' | 'preview' | 'en_config') => {
+    const getActiveEsVariables = () => {
+        return [...new Set(rules
+            .filter(r => r.condition_expression !== 'true')
+            .map(r => {
+                // Extract base variable from expression (field!=null, field==true)
+                return r.condition_expression.split('!=')[0].split('==')[0].trim()
+            })
+        )]
+    }
+
+    const checkSyncIssues = (currentEnConfig: any[]) => {
+        const esVars = getActiveEsVariables()
+        
+        // Mapping: EN var -> possible ES fields
+        const mappingKeys: Record<string, string[]> = {
+            'rh': ['rh_flag', 'rh'],
+            'canto_puertas': ['edge_2mm_flag', 'canto_puertas'],
+            'door_color_text': ['door_color_text', 'id_color_frente'],
+            'resolved_type': ['product_type', 'designation', 'use_destination']
+        }
+
+        const enVars = currentEnConfig.map(c => c.variable_id)
+        
+        // Missing in EN: ES vars that are not covered by any EN entry
+        const missing = esVars.filter(ev => {
+            // Find if any enVar covers this ev
+            const isCovered = enVars.some(env => {
+                const possibleEs = mappingKeys[env] || [env]
+                return possibleEs.includes(ev)
+            })
+            return !isCovered
+        })
+
+        // Obsolete in EN: EN entries that don't match any active ES var
+        const obsolete = enVars.filter(env => {
+            if (env === 'resolved_type') return false // commercial type is always valid
+            if (env === 'special_label' || env === 'private_label_client_name' || env === 'assembled_flag' || env === 'armado_con_lvm' || env === 'carb2') {
+                // check if they exist in ES rules too
+                return !esVars.includes(env)
+            }
+            const possibleEs = mappingKeys[env] || [env]
+            return !possibleEs.some(pe => esVars.includes(pe))
+        })
+
+        return { missing, obsolete }
+    }
+
+    const handleSyncEnWithEs = async () => {
+        const issues = checkSyncIssues(enConfig)
+        if (issues.missing.length === 0 && issues.obsolete.length === 0) {
+            toast.info("La configuración ya está sincronizada")
+            return
+        }
+
+        let newEnConfig = [...enConfig]
+        
+        // 1. Remove obsolete
+        newEnConfig = newEnConfig.filter(c => !issues.obsolete.includes(c.variable_id))
+        
+        // 2. Add missing
+        issues.missing.forEach(v => {
+            // Smart defaults for new variables
+            const isTechnical = ['rh', 'canto_puertas', 'rh_flag', 'edge_2mm_flag'].includes(v)
+            const isColor = v === 'door_color_text' || v === 'id_color_frente'
+            
+            newEnConfig.push({
+                variable_id: v,
+                order_index: newEnConfig.length * 10,
+                emit: true,
+                behavior: (isTechnical || isColor) ? 'translate_and_emit' : 'preserve',
+                fallback_strategy: (isTechnical || isColor) ? 'translate' : 'preserve',
+                drop_if_resolved: false,
+                notes: `Variable sincronizada desde ES: ${v}`
+            })
+        })
+
+        setEnConfig(newEnConfig)
+        setSyncIssues({ missing: [], obsolete: [] })
+        setShowEnSyncAlert(false)
+        toast.success("Estructura sincronizada con éxito")
+    }
+
+    const handleTabChange = async (tab: 'orden_es' | 'orden_en' | 'vista_previa') => {
+        // Safe check: If entering EN or Preview, we MUST check sync
+        if (tab === 'orden_en' || tab === 'vista_previa') {
+            const issues = checkSyncIssues(enConfig)
+            setSyncIssues(issues)
+            setShowEnSyncAlert(issues.missing.length > 0 || issues.obsolete.length > 0)
+        }
+
         setActiveTab(tab)
-        if (tab === 'preview' && !previewGenerated) {
+        
+        if (tab === 'vista_previa' && !previewGenerated) {
             handleLoadPreview()
-        } else if (tab === 'en_config' && enConfig.length === 0) {
+        } else if (tab === 'orden_en' && enConfig.length === 0) {
             setEnConfigLoading(true)
             try {
-                const cfg = await getEnConfigAction('MUEBLE') // Simplified to target 'MUEBLE' generic for all products currently
+                const cfg = await getEnConfigAction('MUEBLE') 
                 setEnConfig(cfg)
-                // Check sync status against current ES active rules
-                const esVariables = [...new Set(rules
-                    .filter(r => r.condition_expression !== 'true')
-                    .map(r => r.condition_expression.split('!=')[0].split('==')[0].trim())
-                )]
-                const enVariables = [...new Set(cfg
-                    .filter((c: any) => c.emit || c.behavior === 'classify_and_resolve')
-                    .map((c: any) => c.variable_id)
-                )]
-                
-                // Compare sets
-                const missingInEn = esVariables.filter(v => !enVariables.includes(v))
-                const extraInEn = enVariables.filter(v => !esVariables.includes(v) && v !== 'resolved_type')
-                
-                if (missingInEn.length > 0 || extraInEn.length > 0) {
-                    setShowEnSyncAlert(true)
-                    if (missingInEn.length > 0) {
-                        console.warn(`Sync Alert: ES variables missing in EN config: ${missingInEn.join(', ')}`)
-                    }
-                } else {
-                    setShowEnSyncAlert(false)
-                }
+                const issues = checkSyncIssues(cfg)
+                setSyncIssues(issues)
+                setShowEnSyncAlert(issues.missing.length > 0 || issues.obsolete.length > 0)
             } catch (err: any) {
                 toast.error("Error al cargar config EN: " + err.message)
             } finally {
@@ -294,26 +458,44 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
     }
 
     const updateEnConfigField = async (variable_id: string, field: string, value: any) => {
+        // Optimistic update for immediate visual reordering or UI response
+        setEnConfig(prev => {
+            const updated = prev.map(c => c.variable_id === variable_id ? { ...c, [field]: value } : c)
+            if (field === 'order_index') {
+                return [...updated].sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
+            }
+            return updated
+        })
+
         setEnConfigSaving(variable_id)
         try {
             await saveEnConfigAction('MUEBLE', variable_id, { [field]: value })
-            setEnConfig(prev => prev.map(c => c.variable_id === variable_id ? { ...c, [field]: value } : c))
+            // Success: state already updated optimistically
             toast.success(`Configuración actualizada`)
         } catch (err: any) {
+            // Rollback optimistic change on error (optional, but safer)
+            // For now, just toast error. 
             toast.error("Error al guardar: " + err.message)
+            // Reload from server to be safe
+            const cfg = await getEnConfigAction('MUEBLE') 
+            setEnConfig(cfg)
         } finally {
             setEnConfigSaving(null)
         }
     }
 
     const handleMassApply = async () => {
+        if (showEnSyncAlert) {
+            toast.error("No se puede aplicar masivamente: Existe una desincronización estructural entre ES y EN.")
+            return
+        }
+
         setIsApplying(true)
         setMassApplyMode(true)
         setMassResults([])
         setMassTotal(0)
         
         try {
-            // 1. Get total count
             const total = await getProductsCountByFamilyAction(productType)
             setMassTotal(total)
             
@@ -322,31 +504,31 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                 return
             }
 
-            // 2. Process in batches from frontend
-            const BATCH_SIZE = 25
-            let allResults: MassApplyResult[] = []
+            const BATCH_SIZE = 100
+            let allResults: any[] = []
             
             for (let offset = 0; offset < total; offset += BATCH_SIZE) {
-                const batchResults = await applyNamesToProductTypeBatchAction(productType, offset, BATCH_SIZE)
-                
-                // Track results (we only show results for ACTIVO in the list to avoid clutter, as per previous requirement, 
-                // but we process all)
+                const batchResults = await applyFullBulkNamingUpdateBatchAction(
+                    productType, 
+                    offset, 
+                    BATCH_SIZE,
+                    rules,
+                    enConfig
+                )
                 allResults = [...allResults, ...batchResults]
                 setMassResults([...allResults])
             }
             
-            // 3. Final Revalidation
             await revalidateRulesAndProductsAction()
-            
-            toast.success(`Proceso completado: ${total} productos actualizados`)
+            toast.success(`Gobernanza aplicada: ${total} productos actualizados (ES + EN)`)
         } catch (err: any) {
-            toast.error("Error en la aplicación masiva: " + err.message)
+            toast.error("Error en aplicación masiva: " + err.message)
         } finally {
             setIsApplying(false)
         }
     }
 
-    const expectedVars = EXPECTED_VARS[productType] ?? EXPECTED_VARS.default
+    const dynamicExpectedVars = getExpectedVarsFromRules(rules)
 
     return (
         <Dialog open={open} onOpenChange={(val) => { if (!val) onClose() }}>
@@ -357,15 +539,15 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                     {/* Tab switcher */}
                     <div className="flex gap-1 mt-3 bg-slate-100 p-1 rounded-lg w-fit">
                         <button
-                            onClick={() => handleTabChange('structure')}
-                            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'structure' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}
+                            onClick={() => handleTabChange('orden_es')}
+                            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === 'orden_es' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}
                         >
                             <Settings2 className="w-3.5 h-3.5" />
-                            Estructura ES
+                            Orden ES
                         </button>
                         <button
-                            onClick={() => handleTabChange('en_config')}
-                            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-md text-sm font-medium transition-all relative ${activeTab === 'en_config' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}
+                            onClick={() => handleTabChange('orden_en')}
+                            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-md text-sm font-medium transition-all relative ${activeTab === 'orden_en' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}
                         >
                             <Zap className="w-3.5 h-3.5" />
                             Orden EN
@@ -377,8 +559,8 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                             )}
                         </button>
                         <button
-                            onClick={() => handleTabChange('preview')}
-                            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-md text-sm font-medium transition-all relative ${activeTab === 'preview' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}
+                            onClick={() => handleTabChange('vista_previa')}
+                            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-md text-sm font-medium transition-all relative ${activeTab === 'vista_previa' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}
                         >
                             <Eye className="w-3.5 h-3.5" />
                             Vista Previa
@@ -392,8 +574,8 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                 {/* ════ Content ════ */}
                 <div className="flex-1 overflow-y-auto bg-slate-50/30">
 
-                    {/* ── STRUCTURE TAB ── */}
-                    {activeTab === 'structure' && !massApplyMode && (
+                    {/* ── ORDEN ES TAB ── */}
+                    {activeTab === 'orden_es' && !massApplyMode && (
                         <div className="px-6 py-4 space-y-3">
                             {rules.length === 0 && (
                                 <div className="text-center py-10 bg-slate-50 rounded-xl border-2 border-dashed border-slate-200">
@@ -414,8 +596,8 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
 
                                     <div className="flex-1 flex flex-col gap-1">
                                         <div className="flex items-center justify-between">
-                                            <span className={`text-[10px] font-bold uppercase tracking-tighter ${rule.condition_expression === 'true' ? 'text-orange-500' : 'text-blue-500'}`}>
-                                                {rule.condition_expression === 'true' ? 'Texto estático' : `Variable (${rule.condition_expression})`}
+                                            <span className={`text-[10px] font-bold uppercase tracking-tighter text-blue-500`}>
+                                                Variable ({rule.condition_expression})
                                             </span>
                                             <span className="text-[10px] font-mono text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
                                                 Prioridad: {rule.priority}
@@ -423,13 +605,13 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                                         </div>
                                         {rule.condition_expression === 'true' ? (
                                             <Input
-                                                value={rule.action_payload}
+                                                value={rule.action_payload ?? ""}
                                                 onChange={(e) => updateText(idx, e.target.value)}
                                                 className="h-8 bg-orange-50 font-bold border-orange-200 text-orange-700"
                                             />
                                         ) : (
                                             <Input
-                                                value={rule.action_payload}
+                                                value={rule.action_payload ?? ""}
                                                 onChange={(e) => updateText(idx, e.target.value)}
                                                 className="h-8 bg-blue-50 font-bold border-blue-200 text-blue-700"
                                             />
@@ -451,7 +633,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                                             <label className="text-[10px] text-slate-500 font-medium block mb-1">Campo</label>
                                             <select
                                                 className="w-full h-8 text-xs rounded-md border border-slate-200 bg-white px-2"
-                                                value={selectedField}
+                                                value={selectedField || ""}
                                                 onChange={e => handleFieldSelect(e.target.value)}
                                             >
                                                 <option value="">Seleccionar campo...</option>
@@ -465,7 +647,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                                             <Input
                                                 placeholder="Ej: CON "
                                                 className="h-8 text-xs"
-                                                value={variablePrefix}
+                                                value={variablePrefix ?? ""}
                                                 onChange={e => setVariablePrefix(e.target.value)}
                                             />
                                         </div>
@@ -474,7 +656,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                                             <Input
                                                 placeholder="Ej:  -"
                                                 className="h-8 text-xs"
-                                                value={variableSuffix}
+                                                value={variableSuffix ?? ""}
                                                 onChange={e => setVariableSuffix(e.target.value)}
                                             />
                                         </div>
@@ -483,7 +665,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                                             {selectedField && ADDABLE_FIELDS.find(x => x.field === selectedField)?.type === 'boolean' ? (
                                                 <select
                                                     className="w-full h-8 text-xs rounded-md border border-slate-200 bg-white px-2"
-                                                    value={selectedCondition}
+                                                    value={selectedCondition || ""}
                                                     onChange={e => setSelectedCondition(e.target.value)}
                                                 >
                                                     <option value="==true">== true (solo si está activo)</option>
@@ -509,8 +691,8 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                         </div>
                     )}
 
-                    {/* ── EN CONFIG TAB ── */}
-                    {activeTab === 'en_config' && (
+                    {/* ── ORDEN EN TAB ── */}
+                    {activeTab === 'orden_en' && (
                         <div className="px-6 py-4 space-y-4">
                             {enConfigLoading ? (
                                 <div className="flex flex-col items-center justify-center py-16 gap-3">
@@ -524,10 +706,57 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                                             <Zap className="w-4 h-4 shrink-0 text-amber-500" />
                                             <div>
                                                 <p className="font-bold mb-1 italic">Traducción Técnica y Adaptativa</p>
-                                                El nombre en inglés se construye a partir de las variables que ya fueron aprobadas por el motor de español. Aquí defines cómo se reorganizan esas variables activas, si se traducen o se conservan, y qué hacer si falta una traducción.
+                                                El sistema toma automáticamente las variables validadas por el nombre en español. Aquí defines el orden, el tratamiento (traducir o conservar) y cómo resolver términos faltantes.
                                             </div>
                                         </div>
                                     </div>
+
+                                    {showEnSyncAlert && (
+                                        <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4 mb-4 flex flex-col gap-3 shadow-sm animate-in fade-in slide-in-from-top-2">
+                                            <div className="flex items-start gap-3">
+                                                <AlertTriangle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+                                                <div className="flex-1">
+                                                    <h3 className="text-sm font-bold text-red-900 uppercase tracking-tight">Desincronización Estructural Detectada</h3>
+                                                    <p className="text-xs text-red-700 mt-1 leading-relaxed">
+                                                        La estructura del Orden EN no coincide con las variables activas del Orden ES. 
+                                                        Esto puede causar errores en la generación de nombres bilingües.
+                                                    </p>
+                                                    <div className="mt-3 grid grid-cols-2 gap-4">
+                                                        {syncIssues.missing.length > 0 && (
+                                                            <div>
+                                                                <p className="text-[10px] font-bold text-red-800 uppercase mb-1">Faltan en EN:</p>
+                                                                <div className="flex flex-wrap gap-1">
+                                                                    {syncIssues.missing.map(v => (
+                                                                        <span key={v} className="bg-red-100 text-red-600 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold">+{v}</span>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                        {syncIssues.obsolete.length > 0 && (
+                                                            <div>
+                                                                <p className="text-[10px] font-bold text-slate-600 uppercase mb-1">Obsoletas en EN:</p>
+                                                                <div className="flex flex-wrap gap-1">
+                                                                    {syncIssues.obsolete.map(v => (
+                                                                        <span key={v} className="bg-slate-200 text-slate-500 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold">-{v}</span>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="flex justify-end gap-2 border-t border-red-100 pt-3">
+                                                <Button 
+                                                    size="sm" 
+                                                    className="bg-red-600 hover:bg-red-700 text-white font-bold h-8 text-xs"
+                                                    onClick={handleSyncEnWithEs}
+                                                >
+                                                    <RefreshCw className="w-3 h-3 mr-1.5" />
+                                                    Resincronizar con Orden ES
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    )}
 
                                     <div className="rounded-xl border border-slate-200 bg-white overflow-hidden overflow-x-auto">
                                         <table className="w-full text-left border-collapse">
@@ -541,7 +770,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-slate-100">
-                                                {enConfig.map((c) => {
+                                                {[...enConfig].sort((a, b) => a.order_index - b.order_index).map((c) => {
                                                     // Logic to detect if it's active in ES
                                                     const esVariables = rules.filter(r => r.condition_expression !== 'true').map(r => r.condition_expression.split('!=')[0].split('==')[0].trim())
                                                     
@@ -600,7 +829,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                                                             <td className="px-4 py-2">
                                                                 <select 
                                                                     className={`h-7 text-[11px] rounded border border-slate-200 bg-white w-full max-w-[160px] ${isResolvedTypePart ? 'bg-slate-50 cursor-not-allowed text-slate-500' : ''}`}
-                                                                    value={c.behavior}
+                                                                    value={c.behavior || "translate_and_emit"}
                                                                     onChange={(e) => {
                                                                         const newBehavior = e.target.value
                                                                         updateEnConfigField(c.variable_id, 'behavior', newBehavior)
@@ -660,112 +889,198 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                             )}
                         </div>
                     )}
+                    
+                    {activeTab === 'vista_previa' && (
+                        <div className="flex flex-col h-full space-y-0 overflow-hidden">
+                            {/* Header info */}
+                            <div className="px-6 py-2 bg-slate-100/50 border-b border-slate-200 flex justify-between items-center shrink-0">
+                                <span className="text-[11px] font-medium text-slate-500 uppercase tracking-tight flex items-center gap-2">
+                                    <Eye className="w-3.5 h-3.5 text-blue-500" /> Auditoría de Nombres (SAP vs ES vs EN)
+                                </span>
+                                <Button variant="ghost" size="sm" className="h-7 text-[10px] text-blue-600 font-bold" onClick={handleLoadPreview}>
+                                    <RefreshCw className="w-3 h-3 mr-1" /> Revalidar Muestra
+                                </Button>
+                            </div>
 
-                    {/* ── PREVIEW TAB ── */}
-                    {activeTab === 'preview' && !massApplyMode && (
-                        <div className="px-6 py-4 space-y-4">
-                            {isLoadingPreview ? (
-                                <div className="flex flex-col items-center justify-center py-16 gap-3">
-                                    <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-                                    <p className="text-sm text-slate-500">Simulando nombres con productos reales...</p>
-                                </div>
-                            ) : previewResults.length === 0 ? (
-                                <div className="text-center py-16">
-                                    <Eye className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-                                    <p className="text-slate-400 text-sm">No hay productos disponibles para este tipo.</p>
-                                    <Button variant="outline" size="sm" className="mt-4" onClick={handleLoadPreview}>
-                                        <RefreshCw className="w-3 h-3 mr-2" /> Generar
-                                    </Button>
-                                </div>
-                            ) : (
-                                <>
-                                    <div className="flex items-center justify-between">
-                                        <p className="text-xs text-slate-400 italic">
-                                            Simulación con reglas en memoria (no guardadas aún)
-                                        </p>
-                                        <Button variant="ghost" size="sm" className="text-xs text-blue-600" onClick={handleLoadPreview}>
-                                            <RefreshCw className="w-3 h-3 mr-1" /> Generar
-                                        </Button>
+                            <div className="flex-1 overflow-y-auto px-6 py-4">
+                                {isLoadingPreview ? (
+                                    <div className="flex flex-col items-center justify-center py-20 gap-3">
+                                        <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                                        <p className="text-sm text-slate-500 font-medium">Evaluando reglas y traduciendo...</p>
                                     </div>
-
-                                    <div className="space-y-4">
+                                ) : previewResults.length === 0 ? (
+                                    <div className="text-center py-20 bg-white rounded-xl border-2 border-dashed border-slate-200">
+                                        <Eye className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                                        <p className="text-slate-400 text-sm">No hay productos disponibles para este tipo.</p>
+                                    </div>
+                                ) : (
+                                    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                                    <div className="flex flex-col gap-4">
                                         {previewResults.map((item) => {
-                                            const changed = item.previewName !== item.currentName
-                                            const empty = !item.previewName
+                                            const esChanged = item.sapDescription !== item.previewName;
+                                            const unusedTerms = getUnusedSapText(item.sapDescription, item.previewName);
+                                            const expectedVars = dynamicExpectedVars;
+                                            
                                             return (
-                                                <div key={item.id} className={`p-4 rounded-xl border-2 ${empty ? 'border-red-200 bg-red-50' : changed ? 'border-amber-200 bg-amber-50' : 'border-green-200 bg-green-50'}`}>
-                                                    {/* Header */}
-                                                    <div className="flex items-center justify-between mb-2">
-                                                        <span className="font-mono text-xs text-slate-500 font-bold">{item.code}</span>
-                                                        {empty ? (
-                                                            <span className="flex items-center gap-1 text-[10px] text-red-600 font-semibold">
-                                                                <AlertTriangle className="w-3 h-3" /> Nombre vacío
-                                                            </span>
-                                                        ) : changed ? (
-                                                            <span className="text-[10px] text-amber-700 font-semibold">✦ Cambio detectado</span>
-                                                        ) : (
-                                                            <span className="flex items-center gap-1 text-[10px] text-green-700 font-semibold">
-                                                                <CheckCircle2 className="w-3 h-3" /> Sin cambios
-                                                            </span>
-                                                        )}
-                                                    </div>
-
-                                                    {/* Names */}
-                                                    {item.currentName && (
-                                                        <div className="text-[11px] text-slate-400 line-through mb-1">
-                                                            Actual: {item.currentName}
+                                                <div key={item.id} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden hover:border-slate-300 transition-all">
+                                                    {/* Header: Code & Reference */}
+                                                    <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                                                        <div className="flex items-center gap-3">
+                                                            <span className="font-mono text-[12px] font-bold text-slate-900 border-r border-slate-200 pr-3">{item.code}</span>
+                                                            <span className="text-[10px] text-slate-500 font-medium">Ref: <span className="font-mono">{item.productData.ref_code}</span></span>
                                                         </div>
-                                                    )}
-                                                    <div className="text-[11px] text-indigo-500 font-medium mb-1">
-                                                        VS SAP: <span className="font-bold">{item.productData?.sap_description || '—'}</span>
-                                                    </div>
-                                                    <div className={`text-sm font-bold mb-1 ${empty ? 'text-red-600 italic' : changed ? 'text-amber-800' : 'text-green-800'}`}>
-                                                        {item.previewName || '(vacío — revisa las variables)'}
-                                                    </div>
-
-                                                    {/* English Name (Adaptive) */}
-                                                    <div className="mt-2 pt-2 border-t border-slate-200/50">
-                                                        <div className="text-[10px] uppercase font-black text-slate-400 mb-1 flex items-center gap-1.5">
-                                                            <Zap className="w-2.5 h-2.5" />
-                                                            Motor EN: {(item as any).previewNameEn && (item as any).isValidEn ? <span className="text-emerald-500">READY</span> : <span className="text-red-500">BLOCKED</span>}
-                                                        </div>
-                                                        <div className={`text-xs font-bold leading-relaxed ${(item as any).isValidEn ? 'text-indigo-600' : 'text-slate-400 italic'}`}>
-                                                            {(item as any).previewNameEn || (item as any).errorEn || (item.previewName === '' ? 'Esperando nombre ES...' : 'Traducción no disponible')}
+                                                        <div className="flex items-center gap-2">
+                                                            {item.isValidEn && item.previewName ? (
+                                                                <span className="text-[10px] bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+                                                                    <CheckCircle2 className="w-3 h-3" /> LISTO
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-[10px] bg-red-50 text-red-600 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+                                                                    <AlertTriangle className="w-3 h-3" /> VERIFICAR
+                                                                </span>
+                                                            )}
                                                         </div>
                                                     </div>
 
-                                                    {/* Variable audit */}
-                                                    <details className="group">
-                                                        <summary className="text-[10px] text-slate-500 cursor-pointer flex items-center gap-1 select-none">
-                                                            <ChevronDown className="w-3 h-3 group-open:rotate-180 transition-transform" />
-                                                            Auditoría de variables
-                                                        </summary>
-                                                        <div className="mt-2 grid grid-cols-2 gap-1">
-                                                            {expectedVars.map(({ field, condition }) => {
-                                                                const status = getVarStatus(field, condition, item.productData ?? item)
-                                                                const icon = status === 'ok' ? '✅' : status === 'na' ? '🟡' : '🔴'
-                                                                const label = status === 'ok' ? '' : status === 'na' ? 'IGNORADO' : 'FALTA'
-                                                                return (
-                                                                    <div key={field} className="flex items-center gap-1.5 text-[10px]">
-                                                                        <span>{icon}</span>
-                                                                        <span className="font-mono text-slate-600">{field}</span>
-                                                                        {label && <span className={`font-bold ${status === 'na' ? 'text-amber-600' : 'text-red-600'}`}>{label}</span>}
+                                                    <div className="p-4 space-y-4">
+                                                        {/* SAP Content */}
+                                                        <div className="space-y-1">
+                                                            <p className="text-[9px] uppercase font-bold text-slate-400 tracking-wider">Nombre SAP (ERP Actual)</p>
+                                                            <p className="text-[11px] font-medium text-slate-500 italic leading-snug break-words bg-slate-50/50 p-2 rounded border border-slate-100/50">
+                                                                {item.sapDescription || '—'}
+                                                            </p>
+                                                        </div>
+
+                                                        {/* Proposed Names Grid */}
+                                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                            <div className="space-y-1">
+                                                                <p className="text-[9px] uppercase font-bold text-blue-600 tracking-wider">Propuesto Español (ES)</p>
+                                                                <div className="text-[12px] font-bold text-slate-800 leading-snug break-words p-2.5 bg-blue-50/30 rounded-lg border border-blue-100/50">
+                                                                    {item.previewName ? (
+                                                                        item.previewName.split(' ').map((word, i) => {
+                                                                            const isNew = word && !item.sapDescription?.toUpperCase().includes(word.toUpperCase());
+                                                                            return (
+                                                                                <span key={i} className={isNew ? "text-emerald-700 bg-emerald-100/50 px-0.5 rounded" : ""}>
+                                                                                    {word}{' '}
+                                                                                </span>
+                                                                            );
+                                                                        })
+                                                                    ) : <span className="text-red-500 italic">Error: Nombre Vacío</span>}
+                                                                </div>
+                                                                {unusedTerms && (
+                                                                    <div className="flex flex-wrap gap-1 mt-1.5 px-1">
+                                                                        <span className="text-[9px] text-amber-600 font-bold uppercase tracking-tighter mr-1">Removido (SAP):</span>
+                                                                        {unusedTerms.split(' ').map(term => (
+                                                                            <span key={term} className="text-[9px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded-md border border-amber-100 font-medium scale-95 origin-left">
+                                                                                {term}
+                                                                            </span>
+                                                                        ))}
                                                                     </div>
-                                                                )
-                                                            })}
-                                                            <div className="col-span-2 mt-2 pt-2 border-t border-slate-100">
-                                                                <div className="text-[10px] font-bold text-slate-500 mb-1">TEXTO NO USADO DE SAP:</div>
-                                                                <div className="text-[11px] font-mono text-amber-700 bg-amber-50 p-1.5 rounded border border-amber-100 break-words leading-relaxed">
-                                                                    {getUnusedSapText(item.productData?.sap_description || '', item.previewName) || <span className="text-slate-400 italic font-sans">(Todo el texto fue mapeado)</span>}
+                                                                )}
+                                                            </div>
+
+                                                            <div className="space-y-1">
+                                                                <p className="text-[9px] uppercase font-bold text-indigo-600 tracking-wider">Propuesto Inglés (EN)</p>
+                                                                <div className="text-[12px] font-bold text-slate-800 leading-snug break-words p-2.5 bg-indigo-50/30 rounded-lg border border-indigo-100/50">
+                                                                    {item.isValidEn ? (
+                                                                        item.previewNameEn
+                                                                    ) : (
+                                                                        <div className="flex flex-col">
+                                                                            <span className="text-red-500 italic">{item.errorEn || 'Error de Traducción'}</span>
+                                                                            {item.missingTerms && item.missingTerms.length > 0 && (
+                                                                                <div className="flex flex-wrap gap-1 mt-1">
+                                                                                    {item.missingTerms.map(t => (
+                                                                                        <span key={t} className="text-[9px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold">+{t}</span>
+                                                                                    ))}
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    )}
                                                                 </div>
                                                             </div>
                                                         </div>
-                                                    </details>
+
+                                                        {/* Variable Validation (Horizontal Scrollable or Wrap) */}
+                                                        <div className="bg-slate-50/80 rounded-xl p-3 border border-slate-100">
+                                                            <p className="text-[9px] uppercase font-bold text-slate-500 tracking-wider mb-2">Validación de Variables Técnicas</p>
+                                                            <div className="flex flex-wrap gap-2">
+                                                                {expectedVars.map((v) => {
+                                                                    const status = getVarStatus(v.field, v.condition, item.productData);
+                                                                    const label = ADDABLE_FIELDS.find(f => f.field === v.field)?.label || v.field;
+                                                                    
+                                                                    let colorClass = "bg-white text-slate-400 border-slate-200";
+                                                                    if (status === 'SÍ') colorClass = "bg-emerald-100 text-emerald-700 border-emerald-200 shadow-sm";
+                                                                    if (status === 'IGNORADA') colorClass = "bg-slate-200 text-slate-500 border-slate-300";
+                                                                    if (status === 'FALTA') colorClass = "bg-red-100 text-red-700 border-red-200 animate-pulse-subtle";
+
+                                                                    return (
+                                                                        <div key={v.field} className={`flex items-center gap-1.5 px-2 py-1 rounded-md border text-[10px] font-bold ${colorClass}`}>
+                                                                            <span>{label}:</span>
+                                                                            <span className="bg-white/50 px-1 rounded">{status}</span>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    </div>
                                                 </div>
-                                            )
+                                            );
                                         })}
                                     </div>
-                                </>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Glossary Resolution Panel */}
+                            {!isLoadingPreview && previewResults.some(r => !r.isValidEn && r.missingTerms && r.missingTerms.length > 0) && (
+                                <div className="shrink-0 bg-amber-50 border-t border-amber-200 p-4 max-h-[30vh] overflow-y-auto">
+                                    <div className="flex items-center justify-between mb-3 px-2">
+                                        <div className="flex items-center gap-2">
+                                            <div className="bg-amber-500 p-1.5 rounded-lg shadow-sm">
+                                                <Zap className="w-4 h-4 text-white" />
+                                            </div>
+                                            <div>
+                                                <h4 className="text-xs font-bold text-amber-900 uppercase tracking-tight">Resolver Glosario Faltante</h4>
+                                                <p className="text-[10px] text-amber-600 font-medium">Estos términos son necesarios para completar la traducción al inglés.</p>
+                                            </div>
+                                        </div>
+                                        <Button 
+                                            size="sm" 
+                                            className="h-8 text-xs bg-amber-600 hover:bg-amber-700 text-white font-bold px-4 shadow-sm"
+                                            disabled={isSavingGlossary || Object.keys(glossaryEdits).length === 0}
+                                            onClick={handleSaveGlossary}
+                                        >
+                                            {isSavingGlossary ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" /> : <RefreshCw className="w-3.5 h-3.5 mr-2" />}
+                                            Guardar y Revalidar
+                                        </Button>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 px-2 pb-2">
+                                        {[...new Set(previewResults.flatMap(r => r.missingTerms || []))].map(term => (
+                                            <div key={term} className="bg-white p-3 rounded-xl border border-amber-200 shadow-sm flex flex-col gap-2 transition-all hover:shadow-md">
+                                                <div className="flex flex-col gap-1">
+                                                    <span className="text-[9px] font-bold text-amber-700 uppercase tracking-tight">Término en Español</span>
+                                                    <div className="text-[11px] font-mono font-bold bg-slate-50 px-2 py-1.5 rounded-lg border border-slate-100 truncate text-slate-700">
+                                                        {term}
+                                                    </div>
+                                                </div>
+                                                <div className="flex flex-col gap-1">
+                                                    <span className="text-[9px] font-bold text-indigo-600 uppercase tracking-tight">Traducción Inglés</span>
+                                                    <Input 
+                                                        className="h-8 text-xs bg-white border-indigo-200 focus:ring-indigo-100 rounded-lg font-medium" 
+                                                        placeholder="Ej: SLIDES..." 
+                                                        value={glossaryEdits[term] || ''}
+                                                        onChange={(e) => setGlossaryEdits(prev => ({ ...prev, [term]: e.target.value.toUpperCase() }))}
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') {
+                                                                 handleSaveGlossary()
+                                                            }
+                                                        }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
                             )}
                         </div>
                     )}
@@ -781,13 +1096,13 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                                 )}
                                 <div>
                                     <p className="text-sm font-bold text-slate-800">
-                                        {isApplying ? `Aplicando nombres para: ${productType}...` : `Completado — ${massTotal} productos procesados`}
+                                        {isApplying ? `Procesando actualización masiva ES + EN...` : `Completado — ${massTotal} productos procesados`}
                                     </p>
-                                    {!isApplying && (
-                                        <p className="text-xs text-slate-500">
-                                            {massResults.filter(r => !r.error).length} actualizados · {massResults.filter(r => r.error).length} con alertas
-                                        </p>
-                                    )}
+                                    <div className="flex gap-2 text-[10px] font-bold mt-1">
+                                        <span className={isApplying && massResults.length < massTotal/2 ? 'text-blue-600 animate-pulse' : 'text-slate-400'}>ETAPA 1: ESPAÑOL</span>
+                                        <span className="text-slate-300">|</span>
+                                        <span className={isApplying && massResults.length >= massTotal/2 ? 'text-indigo-600 animate-pulse' : 'text-slate-400'}>ETAPA 2: INGLÉS</span>
+                                    </div>
                                 </div>
                             </div>
 
@@ -808,20 +1123,40 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                             )}
 
                             {massResults.length > 0 && (
-                                <div className="max-h-[45vh] overflow-y-auto space-y-1.5 border border-slate-100 rounded-xl p-2 bg-slate-50/50">
-                                    {massResults.filter(r => (r as any).status === 'ACTIVO' || r.error).map((r, idx) => (
-                                        <div key={idx} className={`flex items-start gap-2 p-2.5 rounded-lg text-[11px] shadow-sm ${r.error ? 'bg-red-50 border-red-100' : 'bg-white border-slate-100'}`}>
-                                            <span className="shrink-0 mt-0.5">{r.error ? '❌' : '✅'}</span>
+                                <div className="max-h-[45vh] overflow-y-auto space-y-2 border border-slate-100 rounded-xl p-3 bg-slate-50 shadow-inner">
+                                    {massResults.map((r: any, idx) => (
+                                        <div key={idx} className={`flex items-start gap-3 p-3 rounded-xl border text-[11px] transition-all shadow-sm ${r.error ? 'bg-red-50 border-red-100' : 'bg-white border-slate-100 hover:border-slate-200'}`}>
+                                            <div className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${r.error ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                                                {r.error ? <AlertTriangle className="w-3 h-3" /> : <CheckCircle2 className="w-3 h-3" />}
+                                            </div>
                                             <div className="flex-1 min-w-0">
-                                                <div className="flex justify-between items-start">
-                                                    <span className="font-mono font-bold text-slate-700">{r.code}</span>
-                                                    {(r as any).status === 'INACTIVO' && <span className="text-[9px] bg-slate-200 text-slate-500 px-1 rounded">INACTIVO (Actualizado silenciosamente)</span>}
+                                                <div className="flex justify-between items-center mb-1">
+                                                    <span className="font-mono font-bold text-slate-800 tracking-tight">{r.code}</span>
+                                                    {r.status === 'INACTIVO' && <span className="text-[9px] font-bold bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded uppercase tracking-wider">Inactivo</span>}
                                                 </div>
-                                                {r.newName && !r.error && (
-                                                    <span className="text-slate-500 truncate block mt-0.5">{r.newName}</span>
-                                                )}
-                                                {r.error && (
-                                                    <span className="text-red-600 font-medium block mt-0.5">{r.error}</span>
+                                                
+                                                {!r.error ? (
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1 mt-1.5 pt-1.5 border-t border-slate-50">
+                                                        <div className="flex flex-col">
+                                                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">Español (ES)</span>
+                                                            <span className="text-slate-600 font-medium truncate">{r.name_es}</span>
+                                                        </div>
+                                                        <div className="flex flex-col border-l border-slate-100 pl-4">
+                                                            <span className="text-[9px] font-bold text-indigo-400 uppercase tracking-tighter">Inglés (EN)</span>
+                                                            <span className="text-indigo-600 font-bold truncate">{r.name_en || "FALTA TRADUCCIÓN"}</span>
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div className="mt-1 flex flex-col gap-1">
+                                                        {r.name_es && (
+                                                            <div className="flex flex-col opacity-60 mb-1">
+                                                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">Propuesto ES: {r.name_es}</span>
+                                                            </div>
+                                                        )}
+                                                        <span className="text-red-700 font-bold bg-red-100/50 px-2 py-1 rounded inline-block w-fit border border-red-200">
+                                                            MOTIVO: {r.error}
+                                                        </span>
+                                                    </div>
                                                 )}
                                             </div>
                                         </div>
@@ -835,23 +1170,43 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                 {/* ════ Footer ════ */}
                 <div className="flex justify-between items-center px-6 py-4 border-t border-slate-200 bg-white shrink-0 gap-3">
                     {massApplyMode ? (
-                        <>
-                            <span className="text-xs text-slate-400">{massResults.length}/{massTotal} procesados</span>
-                            <Button onClick={onClose} disabled={isApplying} variant="outline">Cerrar</Button>
-                        </>
-                    ) : activeTab === 'structure' ? (
+                        <div className="flex items-center justify-between w-full">
+                            <div className="flex items-center gap-4">
+                                <span className="text-xs font-medium text-slate-500">
+                                    Total: <span className="font-bold text-slate-700">{massResults.length}</span> / {massTotal}
+                                </span>
+                                <div className="flex items-center gap-3 border-l pl-4 border-slate-200">
+                                    <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 font-bold px-2 py-0.5 h-6">
+                                        {massResults.filter((r: any) => !r.error).length} ÉXITOS
+                                    </Badge>
+                                    <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 font-bold px-2 py-0.5 h-6">
+                                        {massResults.filter((r: any) => r.error).length} FALLIDOS
+                                    </Badge>
+                                </div>
+                            </div>
+                            <Button onClick={onClose} disabled={isApplying} variant="outline" className="h-9 px-6 font-bold uppercase tracking-wide">Cerrar</Button>
+                        </div>
+                    ) : (activeTab as any) === 'orden_es' ? (
                         <>
                             <div className="flex gap-2">
-                                <Button variant="outline" size="sm" onClick={addFixedText} className="border-orange-200 text-orange-700 hover:bg-orange-50">
-                                    <Plus className="w-4 h-4 mr-1.5" /> Agregar texto estático
-                                </Button>
                                 <Button variant="outline" size="sm" onClick={() => setShowAddVar(v => !v)} className="border-blue-200 text-blue-700 hover:bg-blue-50">
                                     <Plus className="w-4 h-4 mr-1.5" /> Agregar variable
                                 </Button>
                             </div>
                             <div className="flex gap-2 items-center">
                                 <Button variant="ghost" onClick={onClose}>Cancelar</Button>
-                                <Button onClick={() => handleTabChange('preview')} className="bg-slate-800 hover:bg-slate-900 gap-1.5">
+                                <Button onClick={() => handleTabChange('orden_en')} className="bg-slate-800 hover:bg-slate-900 gap-1.5">
+                                    Siguiente: Orden EN
+                                    <ArrowDown className="w-4 h-4 -rotate-90" />
+                                </Button>
+                            </div>
+                        </>
+                    ) : (activeTab as any) === 'orden_en' ? (
+                        <>
+                            <span className="text-xs text-slate-400">{enConfig.length} variables configuradas</span>
+                            <div className="flex gap-2 items-center">
+                                <Button variant="ghost" onClick={() => setActiveTab('orden_es')}>Atrás</Button>
+                                <Button onClick={() => handleTabChange('vista_previa')} className="bg-indigo-600 hover:bg-indigo-700 gap-1.5 shadow-md shadow-indigo-100">
                                     Siguiente: Vista Previa
                                     <ArrowDown className="w-4 h-4 -rotate-90" />
                                 </Button>
@@ -864,31 +1219,37 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                                 {savedSuccessfully ? (
                                     <div className="flex flex-col items-end gap-1">
                                         {!previewResults.every((r: any) => r.isValidEn) && (
-                                            <span className="text-[10px] text-red-500 font-bold animate-pulse mb-1">
-                                                ⚠ Bloqueado: Hay errores en nombres EN (Glosario faltante)
+                                            <span className="text-[10px] text-red-500 font-bold animate-pulse mb-1 flex items-center gap-1">
+                                                <AlertTriangle className="w-3 h-3" />
+                                                Bloqueado: Glosario faltante o errores
                                             </span>
                                         )}
-                                        <Button
-                                            size="sm"
-                                            className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 animate-in zoom-in-95 duration-200"
-                                            onClick={handleMassApply}
-                                            disabled={!previewResults.every((r: any) => r.isValidEn)}
-                                        >
-                                            <Zap className="w-3.5 h-3.5" />
-                                            Aplicar cambio de nombres MASIVO
-                                        </Button>
+                                        <div className="flex gap-2">
+                                            <Button variant="outline" onClick={() => setSavedSuccessfully(false)}>Ajustar Reglas</Button>
+                                            <Button
+                                                size="sm"
+                                                className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 animate-in zoom-in-95 duration-200"
+                                                onClick={handleMassApply}
+                                                disabled={!previewResults.every((r: any) => r.isValidEn)}
+                                            >
+                                                <Zap className="w-3.5 h-3.5" />
+                                                Aplicar cambios masivos ES + EN
+                                            </Button>
+                                        </div>
                                     </div>
                                 ) : (
-                                    <Button 
-                                        onClick={handleSaveOrder} 
-                                        disabled={loading} 
-                                        className="bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-100"
-                                    >
-                                        {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
-                                        {loading ? 'Guardando...' : 'Aplicar Cambios a MUEBLE'}
-                                    </Button>
+                                    <div className="flex gap-2">
+                                        <Button variant="ghost" onClick={() => setActiveTab('orden_en')}>Atrás</Button>
+                                        <Button 
+                                            onClick={handleSaveOrder} 
+                                            disabled={loading} 
+                                            className="bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-100 font-bold px-6"
+                                        >
+                                            {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+                                            {loading ? 'Guardando...' : 'Guardar configuración ES + EN'}
+                                        </Button>
+                                    </div>
                                 )}
-                                <Button variant="ghost" onClick={onClose}>Cerrar</Button>
                             </div>
                         </>
                     )}

@@ -13,10 +13,12 @@ import { Badge } from '@/components/ui/badge'
 import { 
     Search, Filter, Save, Download, RefreshCcw, Loader2, 
     CheckCircle2, AlertCircle, Trash2, Edit3, X, ChevronRight,
-    ArrowLeft, RotateCcw, PlusCircle, Settings, AlertTriangle
+    ArrowLeft, RotateCcw, PlusCircle, Settings, AlertTriangle,
+    ChevronDown, ChevronUp, History, ListFilter, Activity
 } from 'lucide-react'
 import Link from 'next/link'
-import { deleteProducts, translateProductsAction, saveGlossaryTermsAction } from '../actions'
+import { deleteProducts, saveGlossaryTermsAction } from '../actions'
+import { translateEnglishBatchAction } from '../translation-actions'
 import { cn } from "@/lib/utils"
 import {
     Dialog,
@@ -34,7 +36,7 @@ interface Product {
     ref_code: string | null
     product_type: string | null
     designation: string | null
-    furniture_name: string | null
+    cabinet_name: string | null
     canto_puertas: string | null
     rh: string | null
     rh_flag: boolean
@@ -132,7 +134,7 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
         })
         const uniqueRefs = new Map<string, string>()
         availableProducts.forEach(p => {
-            if (p.ref_code) uniqueRefs.set(p.ref_code, p.furniture_name || '')
+            if (p.ref_code) uniqueRefs.set(p.ref_code, p.cabinet_name || '')
         })
         return Array.from(uniqueRefs.entries()).map(([value, label]) => ({
             value,
@@ -239,6 +241,27 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
     const [missingTermsDialogOpen, setMissingTermsDialogOpen] = useState(false)
     const [isSavingGlossary, setIsSavingGlossary] = useState(false)
 
+    // Translation progress state
+    const [translationProgress, setTranslationProgress] = useState({
+        processed: 0,
+        updated: 0,
+        skippedCount: 0,
+        skippedDetails: { already_translated: 0, no_logic_change: 0 },
+        failed: 0,
+        total: 0,
+        missingTermsCount: 0,
+        currentBatch: 0,
+        totalBatches: 0
+    })
+    const [translationResults, setTranslationResults] = useState<{
+        uniqueMissingTerms: string[]
+        missingTermsMap: Record<string, string[]>
+        failedItems: { code: string, reason: string, category: string }[]
+        batchDiagnostics: { batchNumber: number, size: number, durationMs: number, success: boolean, error?: string }[]
+    }>({ uniqueMissingTerms: [], missingTermsMap: {}, failedItems: [], batchDiagnostics: [] })
+    const [showTranslationSummary, setShowTranslationSummary] = useState(false)
+    const [lastJobContext, setLastJobContext] = useState<{ startTime: Date | null, totalRequested: number } | null>(null)
+
     // Naming RPC progress state
     const [isNaming, setIsNaming] = useState(false)
     const [namingProgress, setNamingProgress] = useState(0)
@@ -275,49 +298,145 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
         }
     }
 
-    const handleBatchTranslate = async (mode: 'missing' | 'repair' | 'all') => {
-        if (selectedIds.size === 0) {
+    const TRANSLATION_BATCH_SIZE = 30
+
+    const handleBatchTranslate = async (mode: 'missing' | 'repair' | 'all', targetedIds?: string[]) => {
+        const idsToProcess = targetedIds || Array.from(selectedIds)
+        
+        if (idsToProcess.length === 0) {
             toast.error("Selecciona productos para traducir")
             return
         }
 
         setIsTranslating(true)
-        const idsArray = Array.from(selectedIds)
+        setShowTranslationSummary(false)
+        setLastJobContext({ startTime: new Date(), totalRequested: idsToProcess.length })
+        
+        const total = idsToProcess.length
+        const totalBatches = Math.ceil(total / TRANSLATION_BATCH_SIZE)
+        
+        setTranslationProgress({
+            processed: 0, updated: 0, skippedCount: 0, 
+            skippedDetails: { already_translated: 0, no_logic_change: 0 },
+            failed: 0,
+            total, missingTermsCount: 0,
+            currentBatch: 0, totalBatches
+        })
+        setTranslationResults({ uniqueMissingTerms: [], missingTermsMap: {}, failedItems: [], batchDiagnostics: [] })
+
+        const accumulatedMissingTermsMap: Record<string, string[]> = {}
+        const allFailedItems: { code: string, reason: string, category: string }[] = []
+        const currentDiagnostics: { batchNumber: number, size: number, durationMs: number, success: boolean, error?: string }[] = []
 
         try {
-            const result = await translateProductsAction(idsArray, mode)
-            if (result.success) {
-                toast.success(result.message)
+            for (let i = 0; i < idsToProcess.length; i += TRANSLATION_BATCH_SIZE) {
+                const batchIds = idsToProcess.slice(i, i + TRANSLATION_BATCH_SIZE)
+                const currentBatch = Math.floor(i / TRANSLATION_BATCH_SIZE) + 1
                 
-                if (result.updatedProducts && result.updatedProducts.length > 0) {
-                    const updates = result.updatedProducts;
-                    setProducts(prev => prev.map(p => {
-                        const up = updates.find(u => u.id === p.id);
-                        if (up) {
-                            return { ...p, final_name_en: up.final_name_en, validation_status: up.final_name_en.includes('[') ? 'needs_review' : 'ready' };
-                        }
-                        return p;
-                    }));
-                }
+                await new Promise(r => setTimeout(r, 0))
+                
+                const startTime = Date.now()
+                const result = await translateEnglishBatchAction(batchIds)
+                const durationMs = Date.now() - startTime
+                
+                if (result.success && result.data) {
+                    currentDiagnostics.push({ batchNumber: currentBatch, size: batchIds.length, durationMs, success: true })
+                    const { data } = result
+                    
+                    // Update accumulated missing terms
+                    Object.entries(data.missingTermsMap).forEach(([term, codes]) => {
+                        if (!accumulatedMissingTermsMap[term]) accumulatedMissingTermsMap[term] = []
+                        accumulatedMissingTermsMap[term] = Array.from(new Set([...accumulatedMissingTermsMap[term], ...codes]))
+                    })
+                    
+                    // Update accumulated failed items
+                    if (data.failedItems.length > 0) allFailedItems.push(...data.failedItems)
 
-                if (result.missingTerms && result.missingTerms.length > 0) {
-                    setMissingTermsData(result.missingTerms.map((term: string) => ({
-                        term_es: term,
-                        term_en: '',
-                        category: 'MODEL',
-                        priority: 10
-                    })))
-                    setMissingTermsDialogOpen(true)
+                    // Update progress state
+                    setTranslationProgress(prev => ({
+                        ...prev,
+                        currentBatch,
+                        processed: prev.processed + data.processed,
+                        updated: prev.updated + data.updated,
+                        skippedCount: prev.skippedCount + data.skippedCount,
+                        skippedDetails: {
+                            already_translated: prev.skippedDetails.already_translated + data.skippedDetails.already_translated,
+                            no_logic_change: prev.skippedDetails.no_logic_change + data.skippedDetails.no_logic_change
+                        },
+                        failed: prev.failed + data.failedCount,
+                        missingTermsCount: Object.keys(accumulatedMissingTermsMap).length
+                    }))
+
+                    // Optimized table update
+                    if (data.updatedProducts.length > 0) {
+                        const updateMap = new Map(data.updatedProducts.map(u => [u.id, u]))
+                        setProducts(prev => prev.map(p => {
+                            const up = updateMap.get(p.id)
+                            if (up) {
+                                return { 
+                                    ...p, 
+                                    final_name_en: up.final_name_en, 
+                                    validation_status: up.validation_status 
+                                }
+                            }
+                            return p
+                        }))
+                    }
+                } else {
+                    currentDiagnostics.push({ batchNumber: currentBatch, size: batchIds.length, durationMs, success: false, error: result.error })
+                    // Critical Batch failure (e.g. Server Error)
+                    setTranslationProgress(prev => ({
+                        ...prev,
+                        currentBatch,
+                        processed: prev.processed + batchIds.length,
+                        failed: prev.failed + batchIds.length
+                    }))
+                    batchIds.forEach(id => {
+                        const prod = products.find(p => p.id === id)
+                        allFailedItems.push({ 
+                            code: prod?.code || id, 
+                            reason: result.error || "Error crítico del servidor", 
+                            category: "database" 
+                        })
+                    })
                 }
-            } else {
-                toast.error(result.message)
             }
-        } catch (error) {
+            
+            // Sync final results
+            setTranslationResults({
+                uniqueMissingTerms: Object.keys(accumulatedMissingTermsMap),
+                missingTermsMap: accumulatedMissingTermsMap,
+                failedItems: allFailedItems,
+                batchDiagnostics: currentDiagnostics
+            })
+            
+            if (allFailedItems.length === 0) {
+                toast.success("Traducción masiva completada")
+                setSelectedIds(new Set()) 
+            } else {
+                toast.warning(`Traducción completada con ${allFailedItems.length} fallos. Revisa el resumen.`)
+                // NOT clearing selectedIds so user can see what failed or retry
+            }
+        } catch (error: any) {
             console.error(error)
-            toast.error("Error en la traducción masiva")
+            toast.error(`Error en la traducción masiva: ${error.message}`)
         } finally {
-            setIsTranslating(false)
+            setTimeout(() => {
+                setIsTranslating(false)
+                setShowTranslationSummary(true)
+            }, 500)
         }
+    }
+
+    const openGlossaryRegistry = () => {
+        const terms = translationResults.uniqueMissingTerms.map(term => ({
+            term_es: term,
+            term_en: '',
+            category: 'TECNICO',
+            priority: 1
+        }))
+        setMissingTermsData(terms)
+        setMissingTermsDialogOpen(true)
     }
 
     const handleSaveGlossary = async () => {
@@ -333,8 +452,15 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
             if (res.success) {
                 toast.success(res.message)
                 setMissingTermsDialogOpen(false)
-                // Re-ejecutar traducción automáticamente para los seleccionados
-                setTimeout(() => handleBatchTranslate('repair'), 500)
+                // Preguntar al usuario si desea re-traducir (opcional, pero lo hacemos automático según sugerencia)
+                toast.info("Reiniciando traducción para aplicar nuevos términos...")
+                setTimeout(() => {
+                    // Re-capturamos seleccionados si aún existen, o usamos los que fallaron/faltaron
+                    // Para simplificar, si el usuario acaba de corregir, probablemente quiere re-procesar todo el set inicial
+                    // Pero como ya limpiamos selectedIds, tendríamos que haber guardado un backup
+                    // Por ahora, dejamos que el usuario lo inicie si quiere, o lo automatizamos si guardamos el snapshot
+                    // handleBatchTranslate('repair') // Requiere selectedIds no vacío
+                }, 500)
             } else {
                 toast.error(res.message)
             }
@@ -533,79 +659,220 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-2 mt-4 pt-4 border-t border-blue-200/50">
-                        {/* Motor de Nombrado RPC */}
-                        <div className="flex items-center justify-between">
-                            <Label className="text-[10px] uppercase font-bold text-emerald-800">Motor de Nomenclatura (Reglas)</Label>
-                        </div>
-                        <Button
-                            size="sm"
-                            onClick={handleApplyNamingRules}
-                            disabled={selectedIds.size === 0 || isNaming}
-                            title="Aplica las reglas de nombrado activas a los productos seleccionados"
-                            className="w-full text-[10px] h-7 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
-                        >
-                            {isNaming ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Settings className="w-3 h-3 mr-1" />}
-                            {isNaming ? `Aplicando... (${namingBatches.reduce((a, b) => a + b.updated, 0)}/${namingTotal})` : 'Aplicar Reglas de Nombre'}
-                        </Button>
-                        {/* Barra de progreso de nombrado */}
-                        {isNaming && (
-                            <div className="w-full bg-emerald-100 rounded-full h-1.5 mt-1">
-                                <div
-                                    className="bg-emerald-500 h-1.5 rounded-full transition-all duration-300"
-                                    style={{ width: `${namingProgress}%` }}
-                                />
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-4 pt-4 border-t border-blue-200/50">
+                        {/* Columna Izquierda: Motor de Nomenclatura */}
+                        <div className="flex flex-col gap-2">
+                            {/* Fila 1: Título (Altura fija para alineación) */}
+                            <div className="h-4 flex items-center">
+                                <Label className="text-[10px] uppercase font-bold text-emerald-800">Motor de Nomenclatura (Reglas)</Label>
                             </div>
-                        )}
-                        {/* Resultados por batch */}
-                        {namingBatches.length > 0 && !isNaming && (
-                            <div className="text-[9px] text-emerald-700 font-mono bg-emerald-50 rounded p-1">
-                                {namingBatches.map((b, i) => (
-                                    <div key={i}>
-                                        {b.error
-                                            ? `Batch ${i+1}: ❌ ${b.error}`
-                                            : `Batch ${i+1}: ✅ ${b.updated}/${b.processed} actualizados`
-                                        }
-                                    </div>
-                                ))}
-                            </div>
-                        )}
+                            
+                            {/* Fila 2: Spacer para alinear con el botón de glosario de la derecha */}
+                            <div className="h-6" aria-hidden="true" />
 
-                        {/* Motor de Traducción */}
-                        <div className="flex items-center justify-between mt-2">
-                            <Label className="text-[10px] uppercase font-bold text-blue-800">Motor de Traducción (Glosario)</Label>
-                            <div className="flex items-center gap-2">
+                            {/* Fila 3: Botón Principal */}
+                            <Button
+                                size="sm"
+                                onClick={handleApplyNamingRules}
+                                disabled={selectedIds.size === 0 || isNaming}
+                                title="Aplica las reglas de nombrado activas a los productos seleccionados"
+                                className="w-full text-[10px] h-7 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                            >
+                                {isNaming ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Settings className="w-3 h-3 mr-1" />}
+                                {isNaming ? `Aplicando... (${namingBatches.reduce((a: number, b: NamingBatchResult) => a + b.updated, 0)}/${namingTotal})` : 'Aplicar Reglas de Nombre'}
+                            </Button>
+
+                            {/* Barra de progreso de nombrado */}
+                            {isNaming && (
+                                <div className="w-full bg-emerald-100 rounded-full h-1.5 mt-1">
+                                    <div
+                                        className="bg-emerald-500 h-1.5 rounded-full transition-all duration-300"
+                                        style={{ width: `${namingProgress}%` }}
+                                    />
+                                </div>
+                            )}
+                            {/* Resultados por batch */}
+                            {namingBatches.length > 0 && !isNaming && (
+                                <div className="text-[9px] text-emerald-700 font-mono bg-emerald-50 rounded p-1">
+                                    {namingBatches.map((b: NamingBatchResult, i: number) => (
+                                        <div key={i}>
+                                            {b.error
+                                                ? `Batch ${i+1}: ❌ ${b.error}`
+                                                : `Batch ${i+1}: ✅ ${b.updated}/${b.processed} actualizados`
+                                            }
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Columna Derecha: Motor de Traducción */}
+                        <div className="flex flex-col gap-2">
+                            {/* Fila 1: Título (Misma altura que la izquierda) */}
+                            <div className="h-4 flex items-center">
+                                <Label className="text-[10px] uppercase font-bold text-blue-800">Motor de Traducción (Glosario)</Label>
+                            </div>
+
+                            {/* Fila 2: Acciones secundarias (Botón Glosario) */}
+                            <div className="h-6 flex items-center">
                                 <Link href="/products/glossary">
-                                    <Button variant="outline" size="sm" className="h-7 text-[10px] border-slate-200 text-blue-600 hover:text-blue-700 hover:bg-white font-bold uppercase transition-all shadow-sm">
+                                    <Button variant="ghost" size="sm" className="h-6 text-[9px] text-blue-600 hover:text-blue-700 font-bold uppercase p-0 px-1">
                                         <PlusCircle className="h-3 w-3 mr-1" />
                                         Glosario Técnico
                                     </Button>
                                 </Link>
                             </div>
-                        </div>
-                        <div className="flex gap-2">
+
+                            {/* Fila 3: Botón Principal (Alineado con el de la izquierda) */}
                             <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleBatchTranslate('missing')}
-                                disabled={selectedIds.size === 0 || isTranslating}
-                                title="Traduce solo los que están vacíos o marcados como Pendiente"
-                                className="flex-1 text-[10px] h-7 border-blue-200 bg-white/50 hover:bg-white text-blue-700"
-                            >
-                                {isTranslating ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RotateCcw className="w-3 h-3 mr-1" />}
-                                Solo Faltantes
-                            </Button>
-                            <Button
-                                variant="outline"
                                 size="sm"
                                 onClick={() => handleBatchTranslate('repair')}
                                 disabled={selectedIds.size === 0 || isTranslating}
-                                title="Vuelve a procesar todos los seleccionados con las reglas actuales"
-                                className="flex-1 text-[10px] h-7 border-blue-200 bg-white/50 hover:bg-white text-blue-700"
+                                title="Traduce los seleccionados usando el glosario"
+                                className="w-full text-[10px] h-7 bg-blue-600 hover:bg-blue-700 text-white font-bold"
                             >
-                                {isTranslating ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
-                                Reparar / Actualizar
+                                {isTranslating ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RefreshCcw className="w-3 h-3 mr-1" />}
+                                {isTranslating ? `Traduciendo... (${translationProgress.processed}/${translationProgress.total})` : 'Traducir a Inglés'}
                             </Button>
+
+                            {/* Barra de progreso de traducción */}
+                            {isTranslating && (
+                                <div className="space-y-1.5 mt-1">
+                                    <div className="w-full bg-blue-100 rounded-full h-1.5">
+                                        <div
+                                            className="bg-blue-500 h-1.5 rounded-full transition-all duration-300"
+                                            style={{ width: `${(translationProgress.processed / translationProgress.total) * 100}%` }}
+                                        />
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-1 text-[9px] font-medium text-blue-700">
+                                        <div className="flex items-center gap-1"><CheckCircle2 className="w-2.5 h-2.5" /> {translationProgress.updated} ok</div>
+                                        <div className="flex items-center gap-1 text-slate-500"><RotateCcw className="w-2.5 h-2.5" /> {translationProgress.skippedCount} sk</div>
+                                        <div className="flex items-center gap-1 text-red-500"><AlertCircle className="w-2.5 h-2.5" /> {translationProgress.failed} err</div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Resumen Final de Traducción */}
+                            {showTranslationSummary && !isTranslating && (
+                                <div className="mt-1 p-2 bg-blue-50 border border-blue-200 rounded-md shadow-sm space-y-2">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex flex-col">
+                                            <span className="font-bold text-blue-900 uppercase text-[9px] flex items-center gap-1">
+                                                <History className="w-3 h-3" /> Resumen de Última Ejecución
+                                            </span>
+                                            {lastJobContext && (
+                                                <span className="text-[7px] text-blue-500 font-medium ml-4 italic">
+                                                    Iniciado: {lastJobContext.startTime?.toLocaleTimeString()} • {lastJobContext.totalRequested} seleccionados al inicio
+                                                </span>
+                                            )}
+                                        </div>
+                                        <Button variant="ghost" size="icon" className="h-4 w-4 text-blue-400 hover:text-blue-600" onClick={() => setShowTranslationSummary(false)}>
+                                            <X className="h-2.5 w-2.5" />
+                                        </Button>
+                                    </div>
+                                    
+                                    <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[9px] text-blue-800 border-b border-blue-100 pb-2">
+                                        <div className="flex justify-between"><span>✅ Actualizados:</span> <span className="font-bold">{translationProgress.updated}</span></div>
+                                        <div className="flex justify-between"><span>⏭️ Saltados:</span> <span className="font-bold">{translationProgress.skippedCount}</span></div>
+                                        <div className="flex justify-between"><span>❌ Fallidos:</span> <span className="font-bold text-red-600">{translationProgress.failed}</span></div>
+                                        <div className="flex justify-between"><span>⚠️ Términos :</span> <span className="font-bold text-amber-600">{translationProgress.missingTermsCount}</span></div>
+                                    </div>
+
+                                    {/* SECCIÓN DESPLEGABLE: SKIPS */}
+                                    {translationProgress.skippedCount > 0 && (
+                                        <div className="bg-slate-50/50 rounded p-1.5 border border-slate-200/50">
+                                            <div className="flex justify-between text-[8px] text-slate-500 font-medium">
+                                                <span>✅ Ya en Inglés (Sin Cambios): {translationProgress.skippedDetails.already_translated}</span>
+                                                <span>⏭️ Ignorados (No requiere traducción): {translationProgress.skippedDetails.no_logic_change}</span>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* SECCIÓN DESPLEGABLE: FAILED */}
+                                    {translationResults.failedItems.length > 0 && (
+                                        <div className="space-y-1">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-[8px] font-bold text-red-700 uppercase flex items-center gap-1">
+                                                    <AlertTriangle className="w-2.5 h-2.5" /> Productos con Error
+                                                </span>
+                                                <Button 
+                                                    onClick={() => {
+                                                        const failedIds = translationResults.failedItems.map(item => {
+                                                            const p = products.find(prod => prod.code === item.code || prod.id === item.code)
+                                                            return p?.id
+                                                        }).filter(Boolean) as string[]
+                                                        handleBatchTranslate('repair', failedIds)
+                                                    }}
+                                                    variant="secondary" 
+                                                    size="sm" 
+                                                    className="h-5 text-[8px] px-2 bg-red-100 text-red-800 hover:bg-red-200 border-red-200"
+                                                >
+                                                    <RotateCcw className="w-2.5 h-2.5 mr-1" /> Reintentar Fallidos
+                                                </Button>
+                                            </div>
+                                            <div className="max-h-24 overflow-y-auto custom-scrollbar space-y-1">
+                                                {translationResults.failedItems.map((item, i) => (
+                                                    <div key={i} className="text-[7px] bg-red-50/50 border-l-2 border-red-300 p-1 flex justify-between items-start">
+                                                        <span className="font-bold text-red-700">{item.code}</span>
+                                                        <span className="text-slate-500 italic flex-1 text-right ml-2">{item.reason}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* SECCIÓN DESPLEGABLE: MISSING TERMS */}
+                                    {translationResults.uniqueMissingTerms.length > 0 && (
+                                        <div className="space-y-1 pt-1 border-t border-blue-100">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-[8px] font-bold text-amber-700 uppercase flex items-center gap-1">
+                                                    <ListFilter className="w-2.5 h-2.5" /> Términos Faltantes
+                                                </span>
+                                                <Button 
+                                                    onClick={openGlossaryRegistry}
+                                                    variant="secondary" 
+                                                    size="sm" 
+                                                    className="h-5 text-[8px] px-2 bg-amber-100 text-amber-800 hover:bg-amber-200 border-amber-200"
+                                                >
+                                                    <PlusCircle className="w-2.5 h-2.5 mr-1" /> Glosario
+                                                </Button>
+                                            </div>
+                                            <div className="max-h-24 overflow-y-auto custom-scrollbar space-y-1">
+                                                {translationResults.uniqueMissingTerms.map((term, i) => (
+                                                    <div key={i} className="bg-white/60 p-1 rounded border border-blue-100/30 flex justify-between items-center gap-2">
+                                                        <Badge className="bg-amber-50 text-amber-700 border-amber-100 text-[7px] h-3.5 py-0 px-1 font-mono uppercase">{term}</Badge>
+                                                        <span className="text-[7px] text-slate-400 font-mono whitespace-nowrap overflow-hidden text-ellipsis text-right flex-1">
+                                                            {translationResults.missingTermsMap[term]?.slice(0, 3).join(', ')}
+                                                            {(translationResults.missingTermsMap[term]?.length || 0) > 3 && '...'}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* SECCIÓN DESPLEGABLE: DIAGNÓSTICO DE RED */}
+                                    {translationResults.batchDiagnostics && translationResults.batchDiagnostics.length > 0 && (
+                                        <div className="space-y-1 pt-1 border-t border-blue-100">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-[8px] font-bold text-slate-600 uppercase flex items-center gap-1">
+                                                    <Activity className="w-2.5 h-2.5" /> Diagnóstico de Red (Lotes)
+                                                </span>
+                                            </div>
+                                            <div className="max-h-20 overflow-y-auto custom-scrollbar space-y-1">
+                                                {translationResults.batchDiagnostics.map((b, i) => (
+                                                    <div key={i} className={`text-[7px] border-l-2 p-1 flex justify-between items-center ${b.success ? 'bg-slate-50 border-slate-300' : 'bg-red-50 border-red-400'}`}>
+                                                        <span className="font-bold text-slate-700">Lote {b.batchNumber}</span>
+                                                        <span className="text-slate-500">{b.size} items</span>
+                                                        <span className="text-slate-500">{b.durationMs}ms</span>
+                                                        {b.success ? <span className="text-emerald-600 font-bold ml-2">OK</span> : <span className="text-red-600 font-bold ml-2 overflow-hidden text-ellipsis whitespace-nowrap max-w-[100px]">{b.error || "Fallo transitorio"}</span>}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>

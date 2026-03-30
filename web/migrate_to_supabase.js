@@ -98,7 +98,7 @@ async function migrate() {
             product_type: p.product_type,
             use_destination: p.use_destination,
             zone_text: p.zone_text,
-            furniture_name: p.furniture_name,
+            cabinet_name: p.cabinet_name,
             designation: p.designation,
             line: p.line,
             commercial_measure: p.commercial_measure,

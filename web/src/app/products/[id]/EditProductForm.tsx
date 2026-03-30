@@ -15,7 +15,7 @@ export function EditProductForm({ initialData }: { initialData: any }) {
         code: initialData.code || '',
         sap_description: initialData.sap_description || '',
         product_type: initialData.product_type || '',
-        furniture_name: initialData.furniture_name || '',
+        cabinet_name: initialData.cabinet_name || '',
         color_code: initialData.color_code || '',
         rh: initialData.rh || 'NA',
         assembled_flag: initialData.assembled_flag || false,
@@ -35,7 +35,7 @@ export function EditProductForm({ initialData }: { initialData: any }) {
         setFormData(prev => ({
             ...prev,
             product_type: suggestions.product_type || prev.product_type,
-            furniture_name: suggestions.furniture_name || prev.furniture_name,
+            cabinet_name: suggestions.cabinet_name || prev.cabinet_name,
             color_code: suggestions.color_code || prev.color_code,
             line: suggestions.line || prev.line,
             designation: suggestions.designation || prev.designation,
@@ -86,10 +86,10 @@ export function EditProductForm({ initialData }: { initialData: any }) {
                                     />
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label htmlFor="furniture_name">Nombre de Mueble</Label>
+                                    <Label htmlFor="cabinet_name">Nombre de Gabinete</Label>
                                     <Input
-                                        id="furniture_name" name="furniture_name"
-                                        value={formData.furniture_name} onChange={handleChange}
+                                        id="cabinet_name" name="cabinet_name"
+                                        value={formData.cabinet_name} onChange={handleChange}
                                     />
                                 </div>
                             </div>

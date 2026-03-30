@@ -12,7 +12,7 @@ export interface ParsedCodeResult {
     assembled_flag: boolean
     sku_base: string | null
     accessory_text: string | null
-    furniture_name: string | null
+    cabinet_name: string | null
     line: string | null
     designation: string | null
     isometric_path: string | null
@@ -45,7 +45,7 @@ export async function parseProductCode(
         assembled_flag: false,
         sku_base: null,
         accessory_text: null,
-        furniture_name: null,
+        cabinet_name: null,
         line: null,
         designation: null,
         isometric_path: null,
@@ -208,7 +208,7 @@ export async function parseProductCode(
         if (result.ref_code && result.commercial_measure) {
             try {
                 const dimRows = await dbQuery(`
-                    SELECT width_cm, depth_cm, height_cm, weight_kg, furniture_name, line, designation, isometric_path, isometric_asset_id 
+                    SELECT width_cm, depth_cm, height_cm, weight_kg, cabinet_name, line, designation, isometric_path, isometric_asset_id 
                     FROM public.cabinet_products 
                     WHERE ref_code = '${result.ref_code}' AND commercial_measure = '${result.commercial_measure}'
                     AND width_cm IS NOT NULL
@@ -221,7 +221,7 @@ export async function parseProductCode(
                     if (dims.depth_cm !== null) result.depth_cm = parseFloat(dims.depth_cm);
                     if (dims.height_cm !== null) result.height_cm = parseFloat(dims.height_cm);
                     if (dims.weight_kg !== null) result.weight_kg = parseFloat(dims.weight_kg);
-                    if (dims.furniture_name) result.furniture_name = dims.furniture_name;
+                    if (dims.cabinet_name) result.cabinet_name = dims.cabinet_name;
                     if (dims.line) result.line = dims.line;
                     if (dims.designation && !result.designation) result.designation = dims.designation;
                     

@@ -18,7 +18,7 @@ model Product {
   product_type              String?
   use_destination           String?
   zone_home                 String?
-  furniture_name            String?
+  cabinet_name              String?
   designation               String?
   line                      String?
   commercial_measure        String?

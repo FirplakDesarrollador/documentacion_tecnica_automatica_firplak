@@ -33,7 +33,7 @@ export default async function GeneratePage({
         products = await dbQuery(
             `SELECT p.id, p.code, p.final_name_es, p.final_name_en, p.product_type, p.validation_status, p.familia_code,
                     p.isometric_asset_id, p.barcode_text, p.commercial_measure, p.weight_kg, p.width_cm, p.depth_cm, p.height_cm,
-                    p.sap_description, p.furniture_name, p.color_code, p.ref_code,
+                    p.sap_description, p.cabinet_name, p.color_code, p.ref_code,
                     c.name_color_sap as color_name
              FROM public.cabinet_products p
              LEFT JOIN public.colors c ON p.color_code = c.code_4dig
@@ -66,12 +66,12 @@ export default async function GeneratePage({
         const mFilter = m.length > 0 ? `AND commercial_measure IN (${m.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})` : ''
         
         const refRecords = await dbQuery(
-            `SELECT DISTINCT ref_code, furniture_name 
+            `SELECT DISTINCT ref_code, cabinet_name 
              FROM public.cabinet_products 
              WHERE ref_code IS NOT NULL AND familia_code IN (${fFilter}) ${mFilter}`
         ) || []
         references = refRecords
-            .map((rec: any) => ({ value: rec.ref_code as string, label: `${rec.ref_code} - ${rec.furniture_name || ''}` }))
+            .map((rec: any) => ({ value: rec.ref_code as string, label: `${rec.ref_code} - ${rec.cabinet_name || ''}` }))
             .sort((a: any, b: any) => a.value.localeCompare(b.value))
     }
 

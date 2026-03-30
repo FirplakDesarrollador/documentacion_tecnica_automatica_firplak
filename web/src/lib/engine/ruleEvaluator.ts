@@ -28,24 +28,25 @@ function evaluateCondition(expression: string, product: Product): boolean {
         
         return parts.every(expr => {
             if (expr.includes('!=null')) {
-                const field = expr.split('!=null')[0] as keyof Product
+                const field = expr.split('!=null')[0].toLowerCase() as keyof Product
                 const val = product[field]
                 // 'NA' means "No Aplica" — treat as falsy (omit from name)
                 return val !== null && val !== undefined && val !== '' && String(val).trim().toUpperCase() !== 'NA'
             }
 
             if (expr.includes('==true')) {
-                const field = expr.split('==true')[0] as keyof Product
+                const field = expr.split('==true')[0].toLowerCase() as keyof Product
                 return product[field] === true
             }
 
             if (expr.includes('==false')) {
-                const field = expr.split('==false')[0] as keyof Product
+                const field = expr.split('==false')[0].toLowerCase() as keyof Product
                 return product[field] === false
             }
 
             if (expr.includes('==')) {
-                const [field, valRaw] = expr.split('==') as [keyof Product, string]
+                const [fieldRaw, valRaw] = expr.split('==') 
+                const field = fieldRaw.toLowerCase() as keyof Product
                 const val = valRaw.replace(/['"]/g, '') 
                 return String(product[field]) === val
             }
@@ -60,7 +61,7 @@ function evaluateCondition(expression: string, product: Product): boolean {
 
 function hydratePayload(payload: string, product: Product): string {
     return payload.replace(/{([^}]+)}/g, (_, field) => {
-        const value = product[field as keyof Product]
+        const value = product[field.toLowerCase() as keyof Product]
         return value ? String(value) : ''
     })
 }
@@ -148,7 +149,7 @@ export function evaluateProductRules(product: Product, rules: Rule[]): RuleEngin
                     traceRecord.actionTaken = 'appended_name_component'
                     traceRecord.payload = textToAppend.trim()
 
-                    // Extract variable IDs from action_payload (e.g., {furniture_name})
+                    // Extract variable IDs from action_payload (e.g., {cabinet_name})
                     const matches = rule.action_payload.match(/{([^}]+)}/g)
                     if (matches) {
                         matches.forEach(m => {

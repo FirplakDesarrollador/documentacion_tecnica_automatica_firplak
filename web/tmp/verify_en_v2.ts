@@ -28,22 +28,22 @@ async function runTests() {
                 product_type: 'MUEBLE',
                 designation: 'PISO',
                 use_destination: 'LAVAMANOS',
-                furniture_name: 'BASICO',
+                cabinet_name: 'BASICO',
                 line: 'ESSENTIAL',
                 commercial_measure: '63X48',
                 accessory_text: 'CON MANIJAS CANTO 2 MM', 
                 canto_puertas: 'CANTO 2 MM',
             },
-            activeVars: ['product_type', 'designation', 'use_destination', 'furniture_name', 'line', 'commercial_measure', 'accessory_text', 'canto_puertas']
+            activeVars: ['product_type', 'designation', 'use_destination', 'cabinet_name', 'line', 'commercial_measure', 'accessory_text', 'canto_puertas']
         },
         {
             name: "Scenario B (Cierre Lento): Múltiples bloques válidos",
             payload: {
                 product_type: 'MUEBLE',
-                furniture_name: 'GODAI',
+                cabinet_name: 'GODAI',
                 accessory_text: 'BISAGRAS CIERRE LENTO RIELES CIERRE LENTO',
             },
-            activeVars: ['product_type', 'furniture_name', 'accessory_text']
+            activeVars: ['product_type', 'cabinet_name', 'accessory_text']
         },
         {
             name: "Scenario C (Vanity): Absorción de Tipo (LAVAMANOS)",
@@ -61,21 +61,21 @@ async function runTests() {
                 product_type: 'MUEBLE',
                 rh: 'RH',
                 commercial_measure: '100X50',
-                furniture_name: 'AK-47 SERIES', // Test code integrity
+                cabinet_name: 'AK-47 SERIES', // Test code integrity
                 line: 'ESSENTIAL V2.1', // Test line name integrity
             },
-            activeVars: ['product_type', 'rh', 'commercial_measure', 'furniture_name', 'line']
+            activeVars: ['product_type', 'rh', 'commercial_measure', 'cabinet_name', 'line']
         },
         {
             name: "Scenario E (Color/Assembled): Flags y Atributos",
             payload: {
                 product_type: 'MUEBLE',
                 designation: 'ELEVADO',
-                furniture_name: 'BASIC',
+                cabinet_name: 'BASIC',
                 door_color_text: 'NEGRO HUMO',
                 assembled_flag: true
             },
-            activeVars: ['product_type', 'designation', 'furniture_name', 'door_color_text', 'assembled_flag']
+            activeVars: ['product_type', 'designation', 'cabinet_name', 'door_color_text', 'assembled_flag']
         }
     ]
 

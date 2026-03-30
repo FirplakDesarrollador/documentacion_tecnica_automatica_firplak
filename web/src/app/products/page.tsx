@@ -74,12 +74,12 @@ export default async function ProductsPage({
         const mFilter = m.length > 0 ? `AND commercial_measure IN (${m.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})` : ''
         
         const refRecords = await dbQuery(`
-            SELECT ref_code, MAX(furniture_name) as furniture_name 
+            SELECT ref_code, MAX(cabinet_name) as cabinet_name 
             FROM public.cabinet_products 
             WHERE status = 'ACTIVO' AND ref_code IS NOT NULL AND familia_code IN (${fFilter}) ${mFilter}
             GROUP BY ref_code
         `) || []
-        references = refRecords.map((rec: any) => ({ value: rec.ref_code as string, label: `${rec.ref_code} - ${rec.furniture_name || ''}` })).sort((a: any, b: any) => a.value.localeCompare(b.value))
+        references = refRecords.map((rec: any) => ({ value: rec.ref_code as string, label: `${rec.ref_code} - ${rec.cabinet_name || ''}` })).sort((a: any, b: any) => a.value.localeCompare(b.value))
     }
 
     let measures: string[] = []

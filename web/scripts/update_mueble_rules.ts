@@ -22,7 +22,7 @@ async function main() {
     
     const rules = [
         { rule_type: 'name_component', target_entity: 'MUEBLE', condition_expression: 'product_type != null', action_type: 'append_text', action_payload: '{product_type}', priority: 10 },
-        { rule_type: 'name_component', target_entity: 'MUEBLE', condition_expression: 'furniture_name != null', action_type: 'append_text', action_payload: '{furniture_name}', priority: 20 },
+        { rule_type: 'name_component', target_entity: 'MUEBLE', condition_expression: 'cabinet_name != null', action_type: 'append_text', action_payload: '{cabinet_name}', priority: 20 },
         { rule_type: 'name_component', target_entity: 'MUEBLE', condition_expression: 'designation != null', action_type: 'append_text', action_payload: '{designation}', priority: 30 },
         { rule_type: 'name_component', target_entity: 'MUEBLE', condition_expression: 'use_destination != null', action_type: 'append_text', action_payload: 'PARA {use_destination}', priority: 40 },
         { rule_type: 'name_component', target_entity: 'MUEBLE', condition_expression: 'commercial_measure != null', action_type: 'append_text', action_payload: '{commercial_measure}', priority: 50 },

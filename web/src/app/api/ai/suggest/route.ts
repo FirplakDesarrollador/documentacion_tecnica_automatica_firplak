@@ -23,7 +23,7 @@ export async function POST(req: Request) {
     Your job is to parse unstructured SAP material descriptions and extract structured product attributes.
     Analyze the following SAP description and return a JSON object with the exact following fields natively formatted:
     - "product_type": string (e.g., "MUEBLE", "LAVAMANOS", "BAÑERA", "ESPEJO")
-    - "furniture_name": string (The human readable name of the model, e.g., "BONN", "MALAGA". Exclude dimensions or colors).
+    - "cabinet_name": string (The human readable name of the model, e.g., "BONN", "MALAGA". Exclude dimensions or colors).
     - "color_name": string (The color of the product, e.g., "BLANCO", "WENGUE", "ROBLE", "GRIS").
     - "rh_flag": boolean (True if it mentions RH, Resistente a Humedad, etc.)
     - "assembled_flag": boolean (True if it explicitly mentions ARMADO or ENSAMBLADO. False if DESARMADO or missing)
