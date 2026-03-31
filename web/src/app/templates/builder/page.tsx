@@ -15,14 +15,16 @@ export default async function TemplateBuilderPage({
         redirect('/templates')
     }
 
-    const rows = await dbQuery(`SELECT * FROM public.templates WHERE id='${resolvedParams.id}' LIMIT 1`)
+    const rowsResult = await dbQuery(`SELECT * FROM public.templates WHERE id='${resolvedParams.id}' LIMIT 1`)
+    const rows = Array.isArray(rowsResult) ? rowsResult : (rowsResult?.rows || [])
     const template = rows?.[0]
 
     if (!template) {
         redirect('/templates')
     }
 
-    const assets = await dbQuery(`SELECT * FROM public.assets ORDER BY name ASC`) || []
+    const assetsResult = await dbQuery(`SELECT * FROM public.assets ORDER BY name ASC`)
+    const assets = (Array.isArray(assetsResult) ? assetsResult : (assetsResult?.rows || [])) || []
 
     return (
         <div className="flex flex-col gap-6 h-[calc(100vh-80px)]">

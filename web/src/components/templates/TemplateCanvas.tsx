@@ -52,7 +52,7 @@ function OverflowText({ text, textAlign = 'left', isPreviewMode, type, previewDa
             let s = String(val);
             if (!textTransform || textTransform === 'none') return s;
 
-            const acronyms: string[] = ['RTI', 'RTA'];
+            const acronyms: string[] = ['RTI', 'RTA', 'RFE', 'SFE', 'RH', 'LED', 'R', 'S'];
             const refs: string[] = [];
             if (previewData) {
                 if (previewData.line) refs.push(String(previewData.line).toUpperCase());
@@ -60,7 +60,7 @@ function OverflowText({ text, textAlign = 'left', isPreviewMode, type, previewDa
             }
 
             const words = s.split(' ');
-            const transformed = words.map((word, index) => {
+            const transformed = words?.map((word, index) => {
                 // Remove punctuation for comparison
                 const cleanWord = word.replace(/[(),/\\.-]/g, '').toUpperCase();
                 const isAcronym = acronyms.includes(cleanWord);
@@ -183,7 +183,9 @@ function OverflowText({ text, textAlign = 'left', isPreviewMode, type, previewDa
 function RichTextEditor({ content, onChange, onInsertVariable }: { content: string, onChange: (val: string) => void, onInsertVariable: (v: string) => void }) {
     const editorRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
+    const lineHeightRef = useRef<HTMLInputElement>(null);
     const [isInputFocused, setIsInputFocused] = useState(false);
+    const [currentWeight, setCurrentWeight] = useState('normal');
 
     // Initial load only if empty
     useEffect(() => {
@@ -195,18 +197,42 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
     // Update input value when selection changes
     useEffect(() => {
         const handleSelectionChange = () => {
-            if (!isInputFocused && inputRef.current) {
+            if (editorRef.current && window.getSelection()?.rangeCount && editorRef.current.contains(window.getSelection()?.anchorNode || null)) {
                 const selection = window.getSelection();
-                if (selection && selection.rangeCount > 0 && editorRef.current?.contains(selection.anchorNode)) {
-                    let node = selection.anchorNode;
-                    if (node?.nodeType === 3) node = node.parentNode;
-                    const element = node as HTMLElement;
-                    
-                    // Important: find the nearest ancestor with a font-size style or just compute from selection
-                    const currentPx = parseFloat(window.getComputedStyle(element).fontSize);
+                if (!selection || selection.rangeCount === 0) return;
+                let node = selection.anchorNode;
+                if (node?.nodeType === 3) node = node.parentNode;
+                const element = node as HTMLElement;
+                const style = window.getComputedStyle(element);
+
+                // Update Font Size Input
+                if (!isInputFocused && inputRef.current) {
+                    const currentPx = parseFloat(style.fontSize);
                     const currentPt = Math.round(currentPx * 0.75 * 2) / 2;
                     inputRef.current.value = currentPt.toString();
                 }
+
+                // Update Line Height Input
+                if (lineHeightRef.current && document.activeElement !== lineHeightRef.current) {
+                    const lh = style.lineHeight;
+                    if (lh === 'normal') {
+                        lineHeightRef.current.value = '1.2';
+                    } else if (lh.includes('px')) {
+                        const px = parseFloat(lh);
+                        const fs = parseFloat(style.fontSize);
+                        const ratio = Math.round((px / fs) * 10) / 10;
+                        lineHeightRef.current.value = ratio.toString();
+                    } else {
+                        const val = parseFloat(lh);
+                        lineHeightRef.current.value = (Math.round(val * 10) / 10).toString();
+                    }
+                }
+
+                // Update Weight State
+                const weight = style.fontWeight;
+                if (weight === '400' || weight === 'normal') setCurrentWeight('normal');
+                else if (weight === '500') setCurrentWeight('500');
+                else if (parseInt(weight) >= 600 || weight === 'bold') setCurrentWeight('bold');
             }
         };
 
@@ -245,6 +271,52 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                 
                 <div className="h-4 w-px bg-slate-300 mx-1" />
 
+                {/* Font Weight Selector */}
+                <select 
+                    className="h-6 text-[10px] rounded border bg-white px-1 outline-none font-medium"
+                    value={currentWeight}
+                    onChange={(e) => {
+                        const weight = e.target.value;
+                        const selection = window.getSelection();
+                        if (!selection || selection.rangeCount === 0) return;
+                        let node = selection.anchorNode;
+                        if (node?.nodeType === 3) node = node.parentNode;
+                        const element = node as HTMLElement;
+                        const currentFontSize = window.getComputedStyle(element).fontSize;
+
+                        editorRef.current?.focus();
+                        const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
+                        existingElements.forEach(el => el.setAttribute('data-pre-existing', 'true'));
+                        document.execCommand('styleWithCSS', false, "true");
+                        document.execCommand('fontSize', false, "7"); // Temporary marker
+                        
+                        if (editorRef.current) {
+                            const allFontOrSpan = editorRef.current.querySelectorAll('font, span');
+                            allFontOrSpan.forEach(el => {
+                                const htmlEl = el as HTMLElement;
+                                if (
+                                    !htmlEl.hasAttribute('data-pre-existing') || 
+                                    htmlEl.getAttribute('size') === '7' || 
+                                    htmlEl.style.fontSize === 'xxx-large' ||
+                                    htmlEl.style.fontSize === '7'
+                                ) {
+                                    htmlEl.style.fontWeight = weight;
+                                    htmlEl.style.fontSize = currentFontSize; // FIX: Keep current size
+                                    htmlEl.removeAttribute('size');
+                                }
+                            });
+                            existingElements.forEach(el => el.removeAttribute('data-pre-existing'));
+                            onChange(editorRef.current.innerHTML);
+                        }
+                    }}
+                >
+                    <option value="normal">Normal</option>
+                    <option value="500">SemiB</option>
+                    <option value="bold">Bold</option>
+                </select>
+
+                <div className="h-4 w-px bg-slate-300 mx-1" />
+
                 <div className="flex items-center bg-white border rounded">
                     <Button 
                         variant="ghost" 
@@ -276,18 +348,15 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                                     const allFontOrSpan = editorRef.current.querySelectorAll('font, span');
                                     allFontOrSpan.forEach(el => {
                                         const htmlEl = el as HTMLElement;
-                                        if (el.tagName === 'FONT' && el.getAttribute('size') === '7') {
-                                            htmlEl.style.fontSize = `${newSize}pt`;
-                                            el.removeAttribute('size');
-                                        } 
-                                        else if (
-                                            htmlEl.style.fontSize === 'xxx-large' || 
-                                            htmlEl.style.fontSize === '48px' || 
-                                            htmlEl.style.fontSize === '36pt' ||
-                                            htmlEl.style.fontSize === '7' ||
-                                            htmlEl.getAttribute('size') === '7'
+                                        // Target only NEW elements or elements that were just modified by the command (size 7)
+                                        if (
+                                            !htmlEl.hasAttribute('data-pre-existing') || 
+                                            htmlEl.getAttribute('size') === '7' || 
+                                            htmlEl.style.fontSize === 'xxx-large' ||
+                                            htmlEl.style.fontSize === '7'
                                         ) {
                                             htmlEl.style.fontSize = `${newSize}pt`;
+                                            htmlEl.removeAttribute('size');
                                         }
                                     });
                                     existingElements.forEach(el => el.removeAttribute('data-pre-existing'));
@@ -318,6 +387,8 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                                 const newSize = parseFloat((e.target as HTMLInputElement).value);
                                 if (!isNaN(newSize)) {
                                     editorRef.current?.focus();
+                                    const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
+                                    existingElements.forEach(el => el.setAttribute('data-pre-existing', 'true'));
                                     document.execCommand('styleWithCSS', false, "true");
                                     document.execCommand('fontSize', false, "7");
                                     if (editorRef.current) {
@@ -325,13 +396,16 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                                         allFontOrSpan.forEach(el => {
                                             const htmlEl = el as HTMLElement;
                                             if (
-                                                (el.tagName === 'FONT' && el.getAttribute('size') === '7') ||
-                                                htmlEl.style.fontSize === 'xxx-large' || htmlEl.style.fontSize === '48px' || htmlEl.style.fontSize === '36pt'
+                                                !htmlEl.hasAttribute('data-pre-existing') || 
+                                                htmlEl.getAttribute('size') === '7' || 
+                                                htmlEl.style.fontSize === 'xxx-large' ||
+                                                htmlEl.style.fontSize === '7'
                                             ) {
                                                 htmlEl.style.fontSize = `${newSize}pt`;
-                                                if (el.tagName === 'FONT') el.removeAttribute('size');
+                                                htmlEl.removeAttribute('size');
                                             }
                                         });
+                                        existingElements.forEach(el => el.removeAttribute('data-pre-existing'));
                                         onChange(editorRef.current.innerHTML);
                                     }
                                 }
@@ -366,11 +440,13 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                                     allFontOrSpan.forEach(el => {
                                         const htmlEl = el as HTMLElement;
                                         if (
-                                            (el.tagName === 'FONT' && el.getAttribute('size') === '7') ||
-                                            htmlEl.style.fontSize === 'xxx-large' || htmlEl.style.fontSize === '48px' || htmlEl.style.fontSize === '36pt'
+                                            !htmlEl.hasAttribute('data-pre-existing') || 
+                                            htmlEl.getAttribute('size') === '7' || 
+                                            htmlEl.style.fontSize === 'xxx-large' ||
+                                            htmlEl.style.fontSize === '7'
                                         ) {
                                             htmlEl.style.fontSize = `${newSize}pt`;
-                                            if (el.tagName === 'FONT') el.removeAttribute('size');
+                                            htmlEl.removeAttribute('size');
                                         }
                                     });
                                     existingElements.forEach(el => el.removeAttribute('data-pre-existing'));
@@ -391,14 +467,167 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                     </Button>
                 </div>
 
+                <div className="h-4 w-px bg-slate-300 mx-1" />
+
+                {/* Line Height Control */}
+                <div className="flex items-center bg-white border rounded">
+                    <Button 
+                        variant="ghost" 
+                        size="icon-sm" 
+                        className="h-6 w-6 rounded-none border-r"
+                        onMouseDown={(e) => {
+                            e.preventDefault();
+                            const adjust = (val: number) => {
+                                const selection = window.getSelection();
+                                if (!selection || selection.rangeCount === 0) return;
+                                let node = selection.anchorNode;
+                                if (node?.nodeType === 3) node = node.parentNode;
+                                const element = node as HTMLElement;
+                                const style = window.getComputedStyle(element);
+                                const currentFontSize = style.fontSize;
+                                
+                                let currentLh = 1.2;
+                                const lh = style.lineHeight;
+                                if (lh === 'normal') currentLh = 1.2;
+                                else if (lh.includes('px')) {
+                                    const px = parseFloat(lh);
+                                    const fs = parseFloat(style.fontSize);
+                                    currentLh = px / fs;
+                                } else {
+                                    currentLh = parseFloat(lh);
+                                }
+                                
+                                const newLh = Math.max(0.5, Math.min(3.0, currentLh + val));
+                                if (lineHeightRef.current) lineHeightRef.current.value = (Math.round(newLh * 10) / 10).toString();
+                                
+                                editorRef.current?.focus();
+                                const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
+                                existingElements.forEach(el => el.setAttribute('data-pre-existing', 'true'));
+                                document.execCommand('styleWithCSS', false, "true");
+                                document.execCommand('fontSize', false, "7"); // Marker
+                                if (editorRef.current) {
+                                    editorRef.current.querySelectorAll('font, span').forEach(el => {
+                                        const htmlEl = el as HTMLElement;
+                                        if (!htmlEl.hasAttribute('data-pre-existing') || htmlEl.getAttribute('size') === '7' || htmlEl.style.fontSize === 'xxx-large') {
+                                            htmlEl.style.lineHeight = newLh.toString();
+                                            htmlEl.style.fontSize = currentFontSize; // FIX: Preserve original font size
+                                            htmlEl.style.display = 'inline-block';
+                                            htmlEl.removeAttribute('size');
+                                        }
+                                    });
+                                    existingElements.forEach(el => el.removeAttribute('data-pre-existing'));
+                                    onChange(editorRef.current.innerHTML);
+                                }
+                            };
+
+                            adjust(-0.1);
+                            const interval = setInterval(() => adjust(-0.1), 150);
+                            const stop = () => {
+                                clearInterval(interval);
+                                window.removeEventListener('mouseup', stop);
+                            };
+                            window.addEventListener('mouseup', stop);
+                        }}
+                    >
+                        -
+                    </Button>
+                    <input 
+                        ref={lineHeightRef}
+                        type="text" 
+                        className="h-6 w-8 text-[10px] text-center outline-none bg-transparent"
+                        placeholder="1.2"
+                        onFocus={() => setIsInputFocused(true)}
+                        onBlur={() => setIsInputFocused(false)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                                const val = (e.target as HTMLInputElement).value;
+                                editorRef.current?.focus();
+                                document.execCommand('styleWithCSS', false, "true");
+                                document.execCommand('fontSize', false, "7"); // Marker
+                                if (editorRef.current) {
+                                    editorRef.current.querySelectorAll('font[size="7"], span[style*="font-size: xxx-large"]').forEach(el => {
+                                        (el as HTMLElement).style.lineHeight = val;
+                                        (el as HTMLElement).style.display = 'inline-block';
+                                        el.removeAttribute('size');
+                                    });
+                                    onChange(editorRef.current.innerHTML);
+                                }
+                                (e.target as HTMLInputElement).blur();
+                            }
+                        }}
+                    />
+                    <Button 
+                        variant="ghost" 
+                        size="icon-sm" 
+                        className="h-6 w-6 rounded-none border-l"
+                        onMouseDown={(e) => {
+                            e.preventDefault();
+                            const adjust = (val: number) => {
+                                const selection = window.getSelection();
+                                if (!selection || selection.rangeCount === 0) return;
+                                let node = selection.anchorNode;
+                                if (node?.nodeType === 3) node = node.parentNode;
+                                const element = node as HTMLElement;
+                                const style = window.getComputedStyle(element);
+                                const currentFontSize = style.fontSize;
+                                
+                                let currentLh = 1.2;
+                                const lh = style.lineHeight;
+                                if (lh === 'normal') currentLh = 1.2;
+                                else if (lh.includes('px')) {
+                                    const px = parseFloat(lh);
+                                    const fs = parseFloat(style.fontSize);
+                                    currentLh = px / fs;
+                                } else {
+                                    currentLh = parseFloat(lh);
+                                }
+                                
+                                const newLh = Math.max(0.5, Math.min(3.0, currentLh + val));
+                                if (lineHeightRef.current) lineHeightRef.current.value = (Math.round(newLh * 10) / 10).toString();
+                                
+                                editorRef.current?.focus();
+                                const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
+                                existingElements.forEach(el => el.setAttribute('data-pre-existing', 'true'));
+                                document.execCommand('styleWithCSS', false, "true");
+                                document.execCommand('fontSize', false, "7"); 
+                                if (editorRef.current) {
+                                    editorRef.current.querySelectorAll('font, span').forEach(el => {
+                                        const htmlEl = el as HTMLElement;
+                                        if (!htmlEl.hasAttribute('data-pre-existing') || htmlEl.getAttribute('size') === '7' || htmlEl.style.fontSize === 'xxx-large') {
+                                            htmlEl.style.lineHeight = newLh.toString();
+                                            htmlEl.style.fontSize = currentFontSize; // FIX: Preserve original font size
+                                            htmlEl.style.display = 'inline-block';
+                                            htmlEl.removeAttribute('size');
+                                        }
+                                    });
+                                    existingElements.forEach(el => el.removeAttribute('data-pre-existing'));
+                                    onChange(editorRef.current.innerHTML);
+                                }
+                            };
+
+                            adjust(0.1);
+                            const interval = setInterval(() => adjust(0.1), 150);
+                            const stop = () => {
+                                clearInterval(interval);
+                                window.removeEventListener('mouseup', stop);
+                            };
+                            window.addEventListener('mouseup', stop);
+                        }}
+                    >
+                        +
+                    </Button>
+                </div>
+
+
                 <select
                     className="h-6 text-[10px] rounded border bg-slate-100 hover:bg-slate-200 cursor-pointer px-1 outline-none ml-auto"
+                    defaultValue=""
                     onChange={(e) => {
                         onInsertVariable(e.target.value);
                         e.target.value = "";
                     }}
                 >
-                    <option value="" disabled selected>+ Variable</option>
+                    <option value="" disabled>+ Variable</option>
                     <optgroup label="Producto">
                         <option value="sku_base">Código SKU</option>
                         <option value="final_name_es">Nombre (ES)</option>
@@ -875,7 +1104,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
         const mouseX = e.clientX - rect.left
         const mouseY = e.clientY - rect.top
 
-        const offsets = newSelectedIds.map(selectedId => {
+        const offsets = newSelectedIds?.map(selectedId => {
             const el = elements.find(el => el.id === selectedId)
             return el ? { id: selectedId, offsetX: mouseX - el.x, offsetY: mouseY - el.y } : null
         }).filter(Boolean) as any[]
@@ -1064,7 +1293,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                         className="bg-white shadow-xl relative ring-1 ring-slate-200 shrink-0 origin-center select-none overflow-hidden"
                     >
                         {/* Render elements */}
-                        {elements.map((el) => {
+                        {elements?.map((el) => {
                             const isSelected = selectedIds.includes(el.id);
                             return (
                                 <div
@@ -1240,7 +1469,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
 
                             {activeEl.type === 'text' && (
                                 <div>
-                                    <Label className="text-xs text-slate-700 font-semibold mb-1 block">Contenido del Texto Libre</Label>
+                                    <Label className="text-xs text-slate-700 font-semibold mb-1 block">Contenido del texto libre</Label>
                                     <RichTextEditor 
                                         content={activeEl.content || ''}
                                         onChange={(val) => updateSelectedElements({ content: val })}
@@ -1289,7 +1518,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                                         'Icono Extensión Total',
                                                         'Icono Canto 2 mm'
                                                     ].includes(a.name))
-                                                    .map(a => (
+                                                    ?.map(a => (
                                                         <option key={a.id} value={a.id}>{a.name}</option>
                                                     ))
                                                 }
@@ -1343,39 +1572,21 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                 <div className="space-y-4 border-t pt-4 border-slate-200">
                                     <Label className="font-semibold text-xs text-muted-foreground uppercase flex items-center">Tipografía (Fuente de Letra)</Label>
 
+
                                     <div className="grid grid-cols-1 gap-3">
                                         <div>
-                                            <Label className="text-[11px] mb-1 block">Interlineado (Ej: 0.9)</Label>
-                                            <Input type="number" step="0.1" className="bg-white h-8" value={activeEl.lineHeight || 1.2} onChange={(e) => updateSelectedElements({ lineHeight: parseFloat(e.target.value) || 1.2 })} />
-                                        </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <div>
                                             <Label className="text-[11px] mb-1 block">Alineación Horizontal</Label>
-                                            <div className="flex gap-1">
-                                                <Button size="icon" variant={activeEl.textAlign === 'left' ? 'default' : 'outline'} className="h-8 w-8 bg-white" onClick={() => updateSelectedElements({ textAlign: 'left' })}>
+                                            <div className="flex gap-1 justify-between bg-white p-1 rounded-md border">
+                                                <Button size="icon" variant={activeEl.textAlign === 'left' ? 'default' : 'outline'} className="h-8 w-full border-none shadow-none" onClick={() => updateSelectedElements({ textAlign: 'left' })}>
                                                     <AlignLeft className="h-4 w-4" />
                                                 </Button>
-                                                <Button size="icon" variant={activeEl.textAlign === 'center' ? 'default' : 'outline'} className="h-8 w-8 bg-white" onClick={() => updateSelectedElements({ textAlign: 'center' })}>
+                                                <Button size="icon" variant={activeEl.textAlign === 'center' ? 'default' : 'outline'} className="h-8 w-full border-none shadow-none" onClick={() => updateSelectedElements({ textAlign: 'center' })}>
                                                     <AlignCenter className="h-4 w-4" />
                                                 </Button>
-                                                <Button size="icon" variant={activeEl.textAlign === 'right' ? 'default' : 'outline'} className="h-8 w-8 bg-white" onClick={() => updateSelectedElements({ textAlign: 'right' })}>
+                                                <Button size="icon" variant={activeEl.textAlign === 'right' ? 'default' : 'outline'} className="h-8 w-full border-none shadow-none" onClick={() => updateSelectedElements({ textAlign: 'right' })}>
                                                     <AlignRight className="h-4 w-4" />
                                                 </Button>
                                             </div>
-                                        </div>
-                                        <div>
-                                            <Label className="text-[11px] mb-1 block">Peso de Fuente</Label>
-                                            <select
-                                                className="flex h-8 w-full rounded-md border border-input bg-white px-2 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                                                value={activeEl.fontWeight}
-                                                onChange={(e) => updateSelectedElements({ fontWeight: e.target.value })}
-                                            >
-                                                <option value="normal">Normal (Regular)</option>
-                                                <option value="500">Semi-Bold (Medium)</option>
-                                                <option value="bold">Negrilla (Bold)</option>
-                                            </select>
                                         </div>
                                     </div>
 

@@ -4,7 +4,7 @@
 > **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estratégico y operativo necesario para navegar y construir eficientemente en este proyecto.
 
 ## 📌 Visión General
-Versión 1.0.9: Evolución del motor de traducción adaptativo. Se migró el campo 'furniture_name' a 'cabinet_name' para mayor precisión técnica. Implementación de 'Smart Context Removal' para eliminar redundancias genéricas (ej. CABINET vs VANITY). Mejora en la visibilidad de resultados parciales permitiendo ver traducciones no validadas.
+Mejora de tipografía interna en plantillas: control de interlineado y peso por selección con sistema de blindaje contra bugs de tamaño de fuente. Refactorización de UI del editor para ser más preciso y consistente.
 
 ## 🏗️ Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
