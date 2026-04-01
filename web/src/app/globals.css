@@ -143,3 +143,24 @@
     box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.05), 0 4px 6px -4px rgb(0 0 0 / 0.025);
   }
 }
+
+/* ── Editor helpers: keep underline visible only inside the contenteditable editor ── */
+.technical-variable {
+  /* Default: subtle dotted underline for editing visibility */
+  text-decoration: underline dotted #cbd5e1;
+}
+
+/* In the read-only preview canvas (#label-canvas) and inside exported content, strip editor decorations */
+#label-canvas .technical-variable,
+[data-export-canvas] .technical-variable {
+  text-decoration: none !important;
+  outline: none !important;
+  border: none !important;
+  background: none !important;
+}
+
+/* Images in the preview canvas should never show a border/outline */
+#label-canvas img {
+  outline: none !important;
+  border: none !important;
+}

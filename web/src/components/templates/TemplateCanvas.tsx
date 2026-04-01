@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { PlusCircle, Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Bold, Italic, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, Undo2, Redo2, Copy, Trash2, Settings, BookOpen } from 'lucide-react'
+import { PlusCircle, Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Bold, Italic, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, AlignVerticalJustifyEnd, AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Undo2, Redo2, Copy, Trash2, Settings, BookOpen } from 'lucide-react'
 import { toast } from 'sonner'
 import { updateTemplate, getPreviewProduct } from '@/app/templates/actions'
 import { useRouter } from 'next/navigation'
@@ -29,6 +29,7 @@ export interface TemplateElement {
     fontWeight?: string // e.g., 'normal', 'medium', 'bold'
     fontStyle?: string // 'normal' | 'italic'
     textAlign?: 'left' | 'center' | 'right'
+    verticalAlign?: 'top' | 'middle' | 'bottom'
     fontFamily?: string
     borderStyle?: 'solid' | 'dashed' | 'dotted' // used for lines/boxes
     borderWidth?: number
@@ -41,7 +42,7 @@ export interface TemplateElement {
 const PIXELS_PER_MM = 4
 const MAX_HISTORY = 10
 
-function OverflowText({ text, textAlign = 'left', isPreviewMode, type, previewData, dataField, lineHeight, letterSpacing, textTransform }: { text: string, textAlign?: 'left' | 'center' | 'right' | undefined, isPreviewMode: boolean, type: string, previewData?: any, dataField?: string, lineHeight?: number, letterSpacing?: number, textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize' | 'sentence' }) {
+function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPreviewMode, type, previewData, dataField, lineHeight, letterSpacing, textTransform }: { text: string, textAlign?: 'left' | 'center' | 'right' | undefined, verticalAlign?: 'top' | 'middle' | 'bottom' | undefined, isPreviewMode: boolean, type: string, previewData?: any, dataField?: string, lineHeight?: number, letterSpacing?: number, textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize' | 'sentence' }) {
     const textRef = useRef<HTMLDivElement>(null)
     const [isOverflowing, setIsOverflowing] = useState(false)
 
@@ -158,11 +159,10 @@ function OverflowText({ text, textAlign = 'left', isPreviewMode, type, previewDa
         }
         return displayText
     }
-
     return (
         <div
             ref={textRef}
-            className={`w-full h-full overflow-hidden pointer-events-none flex flex-col justify-center ${isOverflowing ? 'ring-2 ring-red-500 bg-red-100/50' : ''}`}
+            className={`w-full h-full overflow-hidden pointer-events-none flex flex-col ${verticalAlign === 'top' ? 'justify-start' : verticalAlign === 'bottom' ? 'justify-end' : 'justify-center'} ${isOverflowing ? 'ring-2 ring-red-500 bg-red-100/50' : ''}`}
         >
             {isOverflowing && <span className="absolute -top-5 left-0 bg-red-500 text-white text-[9px] px-1 rounded shadow-sm z-50 pointer-events-none">Desbordamiento</span>}
             <div style={{ 
@@ -180,8 +180,9 @@ function OverflowText({ text, textAlign = 'left', isPreviewMode, type, previewDa
     )
 }
 
-function RichTextEditor({ content, onChange, onInsertVariable }: { content: string, onChange: (val: string) => void, onInsertVariable: (v: string) => void }) {
+function RichTextEditor({ content, onChange }: { content: string, onChange: (val: string) => void }) {
     const editorRef = useRef<HTMLDivElement>(null);
+    const lastRangeRef = useRef<Range | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     const lineHeightRef = useRef<HTMLInputElement>(null);
     const [isInputFocused, setIsInputFocused] = useState(false);
@@ -253,6 +254,59 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
         }
     };
 
+    const saveSelection = () => {
+        const selection = window.getSelection();
+        if (selection && selection.rangeCount > 0 && editorRef.current?.contains(selection.anchorNode)) {
+            lastRangeRef.current = selection.getRangeAt(0);
+        }
+    };
+
+    const insertVariable = (variable: string) => {
+        if (editorRef.current) {
+            const selection = window.getSelection();
+            if (!selection) return;
+
+            if (lastRangeRef.current) {
+                selection.removeAllRanges();
+                selection.addRange(lastRangeRef.current);
+            } else {
+                editorRef.current.focus();
+                const range = document.createRange();
+                range.selectNodeContents(editorRef.current);
+                range.collapse(false);
+                selection.removeAllRanges();
+                selection.addRange(range);
+            }
+
+            const range = selection.getRangeAt(0);
+            range.deleteContents();
+
+            // Create variable span
+            const span = document.createElement('span');
+            span.className = 'technical-variable';
+            span.setAttribute('data-variable', variable);
+            span.textContent = `{${variable}}`;
+            span.style.cssText = 'color:inherit; font-weight:inherit; font-size:inherit; font-family:inherit; text-decoration: underline dotted #cbd5e1; cursor:text; user-select:all; display:inline !important; white-space:nowrap; vertical-align:baseline; margin:0 1px;';
+
+            // Insert with zero-width spaces to fix cursor issues
+            const before = document.createTextNode('\u200B');
+            const after = document.createTextNode('\u200B');
+
+            range.insertNode(after);
+            range.insertNode(span);
+            range.insertNode(before);
+
+            // Move cursor to the position after the second ZWS
+            range.setStartAfter(after);
+            range.setEndAfter(after);
+            selection.removeAllRanges();
+            selection.addRange(range);
+
+            onChange(editorRef.current.innerHTML);
+            lastRangeRef.current = range;
+        }
+    };
+
     return (
         <div className="flex flex-col border border-input rounded-md overflow-hidden bg-white focus-within:ring-1 focus-within:ring-ring">
             <div className="flex flex-wrap bg-slate-50 border-b p-1 gap-1 items-center">
@@ -286,7 +340,7 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
 
                         editorRef.current?.focus();
                         const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
-                        existingElements.forEach(el => el.setAttribute('data-pre-existing', 'true'));
+                        existingElements.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
                         document.execCommand('styleWithCSS', false, "true");
                         document.execCommand('fontSize', false, "7"); // Temporary marker
                         
@@ -305,7 +359,7 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                                     htmlEl.removeAttribute('size');
                                 }
                             });
-                            existingElements.forEach(el => el.removeAttribute('data-pre-existing'));
+                            existingElements.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
                             onChange(editorRef.current.innerHTML);
                         }
                     }}
@@ -325,22 +379,28 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                         onMouseDown={(e) => {
                             e.preventDefault();
                             const adjust = (val: number) => {
-                                // Get current size from selection
-                                const selection = window.getSelection();
-                                if (!selection || selection.rangeCount === 0) return;
-                                let node = selection.anchorNode;
-                                if (node?.nodeType === 3) node = node.parentNode;
-                                const element = node as HTMLElement;
-                                const currentPx = parseFloat(window.getComputedStyle(element).fontSize);
-                                const currentPt = Math.round(currentPx * 0.75 * 2) / 2; // Round to 0.5
+                                // Use input value as base if possible, otherwise selection
+                                let currentPt = 10.5;
+                                if (inputRef.current && inputRef.current.value) {
+                                    currentPt = parseFloat(inputRef.current.value);
+                                } else {
+                                    const selection = window.getSelection();
+                                    if (!selection || selection.rangeCount === 0) return;
+                                    let node = selection.anchorNode;
+                                    if (node?.nodeType === 3) node = node.parentNode;
+                                    const element = node as HTMLElement;
+                                    const currentPx = parseFloat(window.getComputedStyle(element).fontSize);
+                                    currentPt = Math.round(currentPx * 0.75 * 2) / 2;
+                                }
                                 
                                 const newSize = Math.max(6, Math.min(100, currentPt + val));
                                 if (inputRef.current) inputRef.current.value = newSize.toString();
                                 
                                 // Apply using the robust method
                                 editorRef.current?.focus();
+                                document.execCommand('formatBlock', false, 'div');
                                 const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
-                                existingElements.forEach(el => el.setAttribute('data-pre-existing', 'true'));
+                                existingElements.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
                                 document.execCommand('styleWithCSS', false, "true");
                                 document.execCommand('fontSize', false, "7");
                                 
@@ -359,7 +419,7 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                                             htmlEl.removeAttribute('size');
                                         }
                                     });
-                                    existingElements.forEach(el => el.removeAttribute('data-pre-existing'));
+                                    existingElements.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
                                     onChange(editorRef.current.innerHTML);
                                 }
                             };
@@ -381,19 +441,19 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                         className="h-6 w-10 text-[10px] text-center outline-none bg-transparent"
                         placeholder="Size"
                         onFocus={() => setIsInputFocused(true)}
-                        onBlur={() => setIsInputFocused(false)}
-                        onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                                const newSize = parseFloat((e.target as HTMLInputElement).value);
+                        onBlur={(e) => {
+                            setIsInputFocused(false);
+                            const val = (e.target as HTMLInputElement).value;
+                            if (val) {
+                                const newSize = parseFloat(val);
                                 if (!isNaN(newSize)) {
                                     editorRef.current?.focus();
                                     const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
-                                    existingElements.forEach(el => el.setAttribute('data-pre-existing', 'true'));
+                                    existingElements.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
                                     document.execCommand('styleWithCSS', false, "true");
                                     document.execCommand('fontSize', false, "7");
                                     if (editorRef.current) {
-                                        const allFontOrSpan = editorRef.current.querySelectorAll('font, span');
-                                        allFontOrSpan.forEach(el => {
+                                        editorRef.current.querySelectorAll('font, span').forEach(el => {
                                             const htmlEl = el as HTMLElement;
                                             if (
                                                 !htmlEl.hasAttribute('data-pre-existing') || 
@@ -405,10 +465,14 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                                                 htmlEl.removeAttribute('size');
                                             }
                                         });
-                                        existingElements.forEach(el => el.removeAttribute('data-pre-existing'));
+                                        existingElements.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
                                         onChange(editorRef.current.innerHTML);
                                     }
                                 }
+                            }
+                        }}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
                                 (e.target as HTMLInputElement).blur();
                             }
                         }}
@@ -420,18 +484,27 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                         onMouseDown={(e) => {
                             e.preventDefault();
                             const adjust = (val: number) => {
-                                const selection = window.getSelection();
-                                if (!selection || selection.rangeCount === 0) return;
-                                let node = selection.anchorNode;
-                                if (node?.nodeType === 3) node = node.parentNode;
-                                const currentPx = parseFloat(window.getComputedStyle(node as HTMLElement).fontSize);
-                                const currentPt = Math.round(currentPx * 0.75 * 2) / 2;
+                                // Use input value as base if possible, otherwise selection
+                                let currentPt = 10.5;
+                                if (inputRef.current && inputRef.current.value) {
+                                    currentPt = parseFloat(inputRef.current.value);
+                                } else {
+                                    const selection = window.getSelection();
+                                    if (!selection || selection.rangeCount === 0) return;
+                                    let node = selection.anchorNode;
+                                    if (node?.nodeType === 3) node = node.parentNode;
+                                    const element = node as HTMLElement;
+                                    const currentPx = parseFloat(window.getComputedStyle(element).fontSize);
+                                    currentPt = Math.round(currentPx * 0.75 * 2) / 2;
+                                }
+                                
                                 const newSize = Math.max(6, Math.min(100, currentPt + val));
                                 if (inputRef.current) inputRef.current.value = newSize.toString();
                                 
+                                // Apply using the robust method
                                 editorRef.current?.focus();
                                 const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
-                                existingElements.forEach(el => el.setAttribute('data-pre-existing', 'true'));
+                                existingElements.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
                                 document.execCommand('styleWithCSS', false, "true");
                                 document.execCommand('fontSize', false, "7");
                                 
@@ -449,7 +522,7 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                                             htmlEl.removeAttribute('size');
                                         }
                                     });
-                                    existingElements.forEach(el => el.removeAttribute('data-pre-existing'));
+                                    existingElements.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
                                     onChange(editorRef.current.innerHTML);
                                 }
                             };
@@ -480,6 +553,10 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                             const adjust = (val: number) => {
                                 const selection = window.getSelection();
                                 if (!selection || selection.rangeCount === 0) return;
+                                
+                                // Ensure the current line is a block (fixes first lines issue)
+                                document.execCommand('formatBlock', false, 'div');
+                                
                                 let node = selection.anchorNode;
                                 if (node?.nodeType === 3) node = node.parentNode;
                                 const element = node as HTMLElement;
@@ -502,20 +579,36 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                                 
                                 editorRef.current?.focus();
                                 const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
-                                existingElements.forEach(el => el.setAttribute('data-pre-existing', 'true'));
+                                existingElements.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
                                 document.execCommand('styleWithCSS', false, "true");
                                 document.execCommand('fontSize', false, "7"); // Marker
                                 if (editorRef.current) {
                                     editorRef.current.querySelectorAll('font, span').forEach(el => {
                                         const htmlEl = el as HTMLElement;
-                                        if (!htmlEl.hasAttribute('data-pre-existing') || htmlEl.getAttribute('size') === '7' || htmlEl.style.fontSize === 'xxx-large') {
-                                            htmlEl.style.lineHeight = newLh.toString();
+                                        if (
+                                            !htmlEl.hasAttribute('data-pre-existing') || 
+                                            htmlEl.getAttribute('size') === '7' || 
+                                            htmlEl.style.fontSize === 'xxx-large' ||
+                                            htmlEl.style.fontSize === '7'
+                                        ) {
+                                            const lhStr = newLh.toString();
+                                            htmlEl.style.lineHeight = lhStr;
                                             htmlEl.style.fontSize = currentFontSize; // FIX: Preserve original font size
-                                            htmlEl.style.display = 'inline-block';
                                             htmlEl.removeAttribute('size');
+
+                                            // Apply to parent block for effective shrinking
+                                            let p = htmlEl.parentElement;
+                                            while (p && p !== editorRef.current) {
+                                                const d = window.getComputedStyle(p).display;
+                                                if (d === 'block' || p.tagName === 'DIV' || p.tagName === 'P') {
+                                                    p.style.lineHeight = lhStr;
+                                                    break;
+                                                }
+                                                p = p.parentElement;
+                                            }
                                         }
                                     });
-                                    existingElements.forEach(el => el.removeAttribute('data-pre-existing'));
+                                    existingElements.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
                                     onChange(editorRef.current.innerHTML);
                                 }
                             };
@@ -537,21 +630,49 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                         className="h-6 w-8 text-[10px] text-center outline-none bg-transparent"
                         placeholder="1.2"
                         onFocus={() => setIsInputFocused(true)}
-                        onBlur={() => setIsInputFocused(false)}
-                        onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                                const val = (e.target as HTMLInputElement).value;
+                        onBlur={(e) => {
+                            setIsInputFocused(false);
+                            const val = (e.target as HTMLInputElement).value;
+                            if (val) {
                                 editorRef.current?.focus();
+                                // Ensure the current line is a block (fixes first lines issue)
+                                document.execCommand('formatBlock', false, 'div');
+                                
+                                const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
+                                existingElements.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
                                 document.execCommand('styleWithCSS', false, "true");
                                 document.execCommand('fontSize', false, "7"); // Marker
                                 if (editorRef.current) {
-                                    editorRef.current.querySelectorAll('font[size="7"], span[style*="font-size: xxx-large"]').forEach(el => {
-                                        (el as HTMLElement).style.lineHeight = val;
-                                        (el as HTMLElement).style.display = 'inline-block';
-                                        el.removeAttribute('size');
+                                    editorRef.current.querySelectorAll('font, span').forEach(el => {
+                                        const htmlEl = el as HTMLElement;
+                                        if (
+                                            !htmlEl.hasAttribute('data-pre-existing') || 
+                                            htmlEl.getAttribute('size') === '7' || 
+                                            htmlEl.style.fontSize === 'xxx-large' ||
+                                            htmlEl.style.fontSize === '7'
+                                        ) {
+                                            htmlEl.style.lineHeight = val;
+                                            htmlEl.removeAttribute('size');
+
+                                            // Apply to parent block
+                                            let p = htmlEl.parentElement;
+                                            while (p && p !== editorRef.current) {
+                                                const d = window.getComputedStyle(p).display;
+                                                if (d === 'block' || p.tagName === 'DIV' || p.tagName === 'P') {
+                                                    p.style.lineHeight = val;
+                                                    break;
+                                                }
+                                                p = p.parentElement;
+                                            }
+                                        }
                                     });
+                                    existingElements.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
                                     onChange(editorRef.current.innerHTML);
                                 }
+                            }
+                        }}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
                                 (e.target as HTMLInputElement).blur();
                             }
                         }}
@@ -565,6 +686,10 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                             const adjust = (val: number) => {
                                 const selection = window.getSelection();
                                 if (!selection || selection.rangeCount === 0) return;
+                                
+                                // Ensure the current line is a block (fixes first lines issue)
+                                document.execCommand('formatBlock', false, 'div');
+                                
                                 let node = selection.anchorNode;
                                 if (node?.nodeType === 3) node = node.parentNode;
                                 const element = node as HTMLElement;
@@ -587,20 +712,31 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                                 
                                 editorRef.current?.focus();
                                 const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
-                                existingElements.forEach(el => el.setAttribute('data-pre-existing', 'true'));
+                                existingElements.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
                                 document.execCommand('styleWithCSS', false, "true");
                                 document.execCommand('fontSize', false, "7"); 
                                 if (editorRef.current) {
                                     editorRef.current.querySelectorAll('font, span').forEach(el => {
                                         const htmlEl = el as HTMLElement;
-                                        if (!htmlEl.hasAttribute('data-pre-existing') || htmlEl.getAttribute('size') === '7' || htmlEl.style.fontSize === 'xxx-large') {
-                                            htmlEl.style.lineHeight = newLh.toString();
+                                        if (!htmlEl.hasAttribute('data-pre-existing') || htmlEl.getAttribute('size') === '7' || htmlEl.style.fontSize === 'xxx-large' || htmlEl.style.fontSize === '7') {
+                                            const lhStr = newLh.toString();
+                                            htmlEl.style.lineHeight = lhStr;
                                             htmlEl.style.fontSize = currentFontSize; // FIX: Preserve original font size
-                                            htmlEl.style.display = 'inline-block';
                                             htmlEl.removeAttribute('size');
+
+                                            // Apply to parent block
+                                            let p = htmlEl.parentElement;
+                                            while (p && p !== editorRef.current) {
+                                                const d = window.getComputedStyle(p).display;
+                                                if (d === 'block' || p.tagName === 'DIV' || p.tagName === 'P') {
+                                                    p.style.lineHeight = lhStr;
+                                                    break;
+                                                }
+                                                p = p.parentElement;
+                                            }
                                         }
                                     });
-                                    existingElements.forEach(el => el.removeAttribute('data-pre-existing'));
+                                    existingElements.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
                                     onChange(editorRef.current.innerHTML);
                                 }
                             };
@@ -622,8 +758,11 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                 <select
                     className="h-6 text-[10px] rounded border bg-slate-100 hover:bg-slate-200 cursor-pointer px-1 outline-none ml-auto"
                     defaultValue=""
+                    onFocus={saveSelection}
+                    onMouseEnter={saveSelection}
+                    onMouseDown={saveSelection}
                     onChange={(e) => {
-                        onInsertVariable(e.target.value);
+                        insertVariable(e.target.value);
                         e.target.value = "";
                     }}
                 >
@@ -643,10 +782,15 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                     <optgroup label="Medidas">
                         <option value="width_cm">Ancho (cm)</option>
                         <option value="height_cm">Alto (cm)</option>
-                        <option value="depth_cm">Profundidad (cm)</option>
+                        <option value="depth_cm">Fondo (cm)</option>
+                        <option value="width_in">Ancho (in)</option>
+                        <option value="height_in">Alto (in)</option>
+                        <option value="depth_in">Fondo (in)</option>
                     </optgroup>
                     <optgroup label="Otros">
                         <option value="commercial_measure">Medida Comercial</option>
+                        <option value="weight_kg">Peso (kg)</option>
+                        <option value="weight_lb">Peso (lb)</option>
                         <option value="line">Línea</option>
                     </optgroup>
                     <optgroup label="Iconos Condicionales">
@@ -662,8 +806,10 @@ function RichTextEditor({ content, onChange, onInsertVariable }: { content: stri
                 ref={editorRef}
                 contentEditable
                 onInput={handleInput}
-                onFocus={() => {}}
-                onBlur={() => {}}
+                onMouseUp={saveSelection}
+                onKeyUp={saveSelection}
+                onFocus={saveSelection}
+                onBlur={saveSelection}
                 className="min-h-[80px] p-2 text-sm outline-none"
                 style={{ direction: 'ltr', whiteSpace: 'pre-wrap' }}
             />
@@ -1004,6 +1150,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
             fontWeight: 'normal',
             fontStyle: 'normal',
             textAlign: 'left',
+            verticalAlign: 'middle',
             fontFamily: 'Montserrat',
             borderStyle: type === 'dashed_line' ? 'dashed' : 'solid',
             borderWidth: type === 'dashed_line' ? 2 : 0,
@@ -1072,6 +1219,57 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
             return e
         })
         commitHistory(newElements)
+    }
+
+    // Distribute Tools
+    const distributeElements = (axis: 'horizontal' | 'vertical') => {
+        if (selectedIds.length < 3) return
+        const selectedEls = elements.filter(el => selectedIds.includes(el.id))
+
+        if (axis === 'horizontal') {
+            const sorted = [...selectedEls].sort((a, b) => a.x - b.x)
+            const firstEl = sorted[0]
+            const lastEl = sorted[sorted.length - 1]
+            const totalSpan = (lastEl.x + lastEl.width) - firstEl.x
+            const totalElemWidth = sorted.reduce((sum, el) => sum + el.width, 0)
+            const gap = (totalSpan - totalElemWidth) / (sorted.length - 1)
+
+            let currentX = firstEl.x + firstEl.width + gap
+            const positions: Record<string, number> = {}
+            for (let i = 1; i < sorted.length - 1; i++) {
+                positions[sorted[i].id] = Math.round(currentX)
+                currentX += sorted[i].width + gap
+            }
+
+            const newElements = elements.map(el => {
+                if (!selectedIds.includes(el.id)) return el
+                if (positions[el.id] !== undefined) return { ...el, x: positions[el.id] }
+                return el
+            })
+            commitHistory(newElements)
+
+        } else {
+            const sorted = [...selectedEls].sort((a, b) => a.y - b.y)
+            const firstEl = sorted[0]
+            const lastEl = sorted[sorted.length - 1]
+            const totalSpan = (lastEl.y + lastEl.height) - firstEl.y
+            const totalElemHeight = sorted.reduce((sum, el) => sum + el.height, 0)
+            const gap = (totalSpan - totalElemHeight) / (sorted.length - 1)
+
+            let currentY = firstEl.y + firstEl.height + gap
+            const positions: Record<string, number> = {}
+            for (let i = 1; i < sorted.length - 1; i++) {
+                positions[sorted[i].id] = Math.round(currentY)
+                currentY += sorted[i].height + gap
+            }
+
+            const newElements = elements.map(el => {
+                if (!selectedIds.includes(el.id)) return el
+                if (positions[el.id] !== undefined) return { ...el, y: positions[el.id] }
+                return el
+            })
+            commitHistory(newElements)
+        }
     }
 
     // Drag, Drop and Resize Implementation
@@ -1246,13 +1444,25 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
 
                         {/* Alignment Tools (Visible when multiple elements are selected) */}
                         {selectedIds.length > 1 && (
-                            <div className="flex ml-2 border-l pl-2 gap-1 bg-slate-50 rounded-md p-1">
+                            <div className="flex flex-wrap items-center ml-2 border-l pl-2 gap-1 bg-slate-50 rounded-md p-1">
                                 <Button title="Alinear a la Izquierda" variant="ghost" size="icon-sm" onClick={() => alignElements('left')}><AlignHorizontalJustifyStart className="h-4 w-4 text-blue-600" /></Button>
-                                <Button title="Alinear al Centro Horizontal" variant="ghost" size="icon-sm" onClick={() => alignElements('center')}><AlignHorizontalSpaceAround className="h-4 w-4 text-blue-600" /></Button>
-                                <Button title="Alinear a la Derecha" variant="ghost" size="icon-sm" onClick={() => alignElements('right')}><AlignHorizontalJustifyStart className="h-4 w-4 text-blue-600 rotate-180" /></Button>
+                                <Button title="Alinear al Centro Horizontal" variant="ghost" size="icon-sm" onClick={() => alignElements('center')}><AlignHorizontalJustifyCenter className="h-4 w-4 text-blue-600" /></Button>
+                                <Button title="Alinear a la Derecha" variant="ghost" size="icon-sm" onClick={() => alignElements('right')}><AlignRight className="h-4 w-4 text-blue-600" /></Button>
                                 <Button title="Alinear Arriba" variant="ghost" size="icon-sm" onClick={() => alignElements('top')}><AlignVerticalJustifyStart className="h-4 w-4 text-blue-600" /></Button>
-                                <Button title="Alinear al Centro Vertical" variant="ghost" size="icon-sm" onClick={() => alignElements('middle')}><AlignVerticalSpaceAround className="h-4 w-4 text-blue-600" /></Button>
-                                <Button title="Alinear Abajo" variant="ghost" size="icon-sm" onClick={() => alignElements('bottom')}><AlignVerticalJustifyStart className="h-4 w-4 text-blue-600 rotate-180" /></Button>
+                                <Button title="Alinear al Centro Vertical" variant="ghost" size="icon-sm" onClick={() => alignElements('middle')}><AlignVerticalJustifyCenter className="h-4 w-4 text-blue-600" /></Button>
+                                <Button title="Alinear Abajo" variant="ghost" size="icon-sm" onClick={() => alignElements('bottom')}><AlignVerticalJustifyEnd className="h-4 w-4 text-blue-600" /></Button>
+                                {/* Distribute (requires 3+ elements) */}
+                                {selectedIds.length >= 3 && (
+                                    <>
+                                        <div className="w-px bg-slate-300 mx-0.5 self-stretch" />
+                                        <Button title="Distribuir uniformemente (Horizontal)" variant="ghost" size="icon-sm" onClick={() => distributeElements('horizontal')}>
+                                            <AlignHorizontalDistributeCenter className="h-4 w-4 text-indigo-500" />
+                                        </Button>
+                                        <Button title="Distribuir uniformemente (Vertical)" variant="ghost" size="icon-sm" onClick={() => distributeElements('vertical')}>
+                                            <AlignVerticalDistributeCenter className="h-4 w-4 text-indigo-500" />
+                                        </Button>
+                                    </>
+                                )}
                             </div>
                         )}
 
@@ -1473,10 +1683,6 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                     <RichTextEditor 
                                         content={activeEl.content || ''}
                                         onChange={(val) => updateSelectedElements({ content: val })}
-                                        onInsertVariable={(v) => {
-                                            const current = activeEl.content || ''
-                                            updateSelectedElements({ content: current + `{${v}}` })
-                                        }}
                                     />
                                     <span className="text-[10px] text-gray-500 mt-1 block">Puedes seleccionar una palabra y usar los botones para ponerla en <b>Negrita</b>, <i>Cursiva</i>, etc.</span>
                                 </div>
@@ -1576,15 +1782,65 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                     <div className="grid grid-cols-1 gap-3">
                                         <div>
                                             <Label className="text-[11px] mb-1 block">Alineación Horizontal</Label>
-                                            <div className="flex gap-1 justify-between bg-white p-1 rounded-md border">
-                                                <Button size="icon" variant={activeEl.textAlign === 'left' ? 'default' : 'outline'} className="h-8 w-full border-none shadow-none" onClick={() => updateSelectedElements({ textAlign: 'left' })}>
+                                            <div className="flex gap-1 bg-slate-100 p-1 rounded-md border border-slate-200">
+                                                <Button 
+                                                    title="Izquierda"
+                                                    size="icon" 
+                                                    variant={activeEl.textAlign === 'left' ? 'default' : 'ghost'} 
+                                                    className={cn("h-7 flex-1 shadow-none transition-all", activeEl.textAlign === 'left' ? "bg-white text-indigo-600 shadow-sm hover:bg-white" : "text-slate-500 hover:bg-slate-200")} 
+                                                    onClick={() => updateSelectedElements({ textAlign: 'left' })}
+                                                >
                                                     <AlignLeft className="h-4 w-4" />
                                                 </Button>
-                                                <Button size="icon" variant={activeEl.textAlign === 'center' ? 'default' : 'outline'} className="h-8 w-full border-none shadow-none" onClick={() => updateSelectedElements({ textAlign: 'center' })}>
+                                                <Button 
+                                                    title="Centro"
+                                                    size="icon" 
+                                                    variant={activeEl.textAlign === 'center' ? 'default' : 'ghost'} 
+                                                    className={cn("h-7 flex-1 shadow-none transition-all", activeEl.textAlign === 'center' ? "bg-white text-indigo-600 shadow-sm hover:bg-white" : "text-slate-500 hover:bg-slate-200")} 
+                                                    onClick={() => updateSelectedElements({ textAlign: 'center' })}
+                                                >
                                                     <AlignCenter className="h-4 w-4" />
                                                 </Button>
-                                                <Button size="icon" variant={activeEl.textAlign === 'right' ? 'default' : 'outline'} className="h-8 w-full border-none shadow-none" onClick={() => updateSelectedElements({ textAlign: 'right' })}>
+                                                <Button 
+                                                    title="Derecha"
+                                                    size="icon" 
+                                                    variant={activeEl.textAlign === 'right' ? 'default' : 'ghost'} 
+                                                    className={cn("h-7 flex-1 shadow-none transition-all", activeEl.textAlign === 'right' ? "bg-white text-indigo-600 shadow-sm hover:bg-white" : "text-slate-500 hover:bg-slate-200")} 
+                                                    onClick={() => updateSelectedElements({ textAlign: 'right' })}
+                                                >
                                                     <AlignRight className="h-4 w-4" />
+                                                </Button>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <Label className="text-[11px] mb-1 block">Alineación Vertical</Label>
+                                            <div className="flex gap-1 bg-slate-100 p-1 rounded-md border border-slate-200">
+                                                <Button 
+                                                    title="Arriba"
+                                                    size="icon" 
+                                                    variant={activeEl.verticalAlign === 'top' ? 'default' : 'ghost'} 
+                                                    className={cn("h-7 flex-1 shadow-none transition-all", activeEl.verticalAlign === 'top' ? "bg-white text-indigo-600 shadow-sm hover:bg-white" : "text-slate-500 hover:bg-slate-200")} 
+                                                    onClick={() => updateSelectedElements({ verticalAlign: 'top' })}
+                                                >
+                                                    <AlignVerticalJustifyStart className="h-4 w-4" />
+                                                </Button>
+                                                <Button 
+                                                    title="Centro"
+                                                    size="icon" 
+                                                    variant={activeEl.verticalAlign === 'middle' ? 'default' : 'ghost'} 
+                                                    className={cn("h-7 flex-1 shadow-none transition-all", activeEl.verticalAlign === 'middle' ? "bg-white text-indigo-600 shadow-sm hover:bg-white" : "text-slate-500 hover:bg-slate-200")} 
+                                                    onClick={() => updateSelectedElements({ verticalAlign: 'middle' })}
+                                                >
+                                                    <AlignVerticalJustifyCenter className="h-4 w-4" />
+                                                </Button>
+                                                <Button 
+                                                    title="Abajo"
+                                                    size="icon" 
+                                                    variant={activeEl.verticalAlign === 'bottom' ? 'default' : 'ghost'} 
+                                                    className={cn("h-7 flex-1 shadow-none transition-all", activeEl.verticalAlign === 'bottom' ? "bg-white text-indigo-600 shadow-sm hover:bg-white" : "text-slate-500 hover:bg-slate-200")} 
+                                                    onClick={() => updateSelectedElements({ verticalAlign: 'bottom' })}
+                                                >
+                                                    <AlignVerticalJustifyEnd className="h-4 w-4" />
                                                 </Button>
                                             </div>
                                         </div>

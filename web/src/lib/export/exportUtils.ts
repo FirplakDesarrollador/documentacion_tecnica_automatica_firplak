@@ -121,6 +121,9 @@ export function generateExportHtml(
             background: white;
         }
         .el { position: absolute; box-sizing: border-box; }
+        /* Strip all editor-only decorations for clean export */
+        .technical-variable { text-decoration: none !important; outline: none !important; border: none !important; background: none !important; }
+        img { outline: none !important; border: none !important; }
     </style>
 </head>
 <body>

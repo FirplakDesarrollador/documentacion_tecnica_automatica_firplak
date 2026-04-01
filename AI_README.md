@@ -4,7 +4,7 @@
 > **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estratégico y operativo necesario para navegar y construir eficientemente en este proyecto.
 
 ## 📌 Visión General
-Mejora de tipografía interna en plantillas: control de interlineado y peso por selección con sistema de blindaje contra bugs de tamaño de fuente. Refactorización de UI del editor para ser más preciso y consistente.
+Se logran mejorar aspectos del modulo de edición de plantillas que permitieron diagramar y adicionar las medidas y pesos del mueble dentro de la etiqueta, así mismo con las mejoras se logra una mejor diagramación y previsualización de la etiqueta.
 
 ## 🏗️ Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:

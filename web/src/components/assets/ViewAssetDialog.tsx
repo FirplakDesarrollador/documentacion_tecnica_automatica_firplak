@@ -24,11 +24,14 @@ export function ViewAssetDialog({ assetName, assetUrl, children }: Props) {
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger render={children ? (children as React.ReactElement) : (
-                <Button variant="ghost" size="icon" className="h-8 w-8 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50">
-                    <Eye className="h-4 w-4" />
-                </Button>
-            )} />
+            <DialogTrigger 
+                nativeButton={children ? false : undefined}
+                render={children ? (children as React.ReactElement) : (
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50">
+                        <Eye className="h-4 w-4" />
+                    </Button>
+                )} 
+            />
             <DialogContent className="sm:max-w-3xl p-0 overflow-hidden bg-slate-900 border-slate-800">
                 <DialogHeader className="p-4 bg-white/10 backdrop-blur-md absolute top-0 left-0 right-0 z-10 flex flex-row items-center justify-between space-y-0">
                     <DialogTitle className="text-white font-medium truncate pr-8">

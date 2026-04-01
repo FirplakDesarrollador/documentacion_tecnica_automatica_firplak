@@ -121,9 +121,9 @@ export async function deleteAssetAction(assetId: string) {
         'Icono Extensión Total',
         'Icono CARB2',
         'Logo CHILEMAT',
-        "Logo D-ACQUA",
-    "Logo PROMART",
-    "Logo FERMETAL"
+        'Logo D-ACQUA',
+        'Logo PROMART',
+        'Logo FERMETAL'
     )`) || []
     
     if (defaults.some((d: any) => d.id === assetId)) {
