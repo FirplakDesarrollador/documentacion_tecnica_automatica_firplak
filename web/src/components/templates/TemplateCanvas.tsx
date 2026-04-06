@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { PlusCircle, Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Bold, Italic, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, AlignVerticalJustifyEnd, AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Undo2, Redo2, Copy, Trash2, Settings, BookOpen, Shuffle } from 'lucide-react'
+import { PlusCircle, Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Bold, Italic, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, AlignVerticalJustifyEnd, AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Undo2, Redo2, Copy, Trash2, Settings, BookOpen, Shuffle, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
 import { updateTemplate, getPreviewProduct, getRandomPreviewProduct } from '@/app/templates/actions'
 import { resolveAssetsAction } from '@/app/generate/actions'
@@ -42,6 +42,8 @@ export interface TemplateElement {
     caption?: string                                      // Free text displayed below the icon (supports \n for line breaks)
     captionFontSize?: number                             // pt, default 6.5
     captionTextAlign?: 'left' | 'center' | 'right'      // default 'center'
+    iconSizeMM?: number                                  // fixed size in mm (e.g. 15, 20)
+    captionGapMM?: number                                // space between icon and caption in mm
 }
 
 const PIXELS_PER_MM = 4
@@ -185,11 +187,108 @@ function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPr
     )
 }
 
+function DynamicImageElement({ 
+    el, 
+    isPreviewMode, 
+    previewData 
+}: { 
+    el: TemplateElement, 
+    isPreviewMode: boolean, 
+    previewData: any 
+}) {
+    const containerRef = useRef<HTMLDivElement>(null)
+    const [innerOverflow, setInnerOverflow] = useState(false)
+    
+    useEffect(() => {
+        if (!isPreviewMode || !containerRef.current) return
+        const check = () => {
+            const c = containerRef.current
+            if (!c) return
+            const overflowing = (c.scrollHeight > c.clientHeight + 4) || (c.scrollWidth > c.clientWidth + 4)
+            setInnerOverflow(overflowing)
+        }
+        check()
+        const obs = new ResizeObserver(check)
+        obs.observe(containerRef.current)
+        return () => obs.disconnect()
+    }, [el.caption, el.iconSizeMM, el.width, el.height, el.captionGapMM, isPreviewMode])
+
+    if (!isPreviewMode) {
+        return (
+            <div className="w-full h-full flex flex-col items-center justify-center gap-0.5 border-2 border-dashed border-indigo-300 bg-indigo-50/40 rounded overflow-hidden pointer-events-none">
+                <ImageIcon className="h-4 w-4 text-indigo-400 shrink-0" />
+                <span className="text-[8px] text-indigo-600 font-bold text-center px-1 leading-tight tracking-tight">
+                    {el.dataField || 'icono'}
+                </span>
+            </div>
+        )
+    }
+
+    const iconUrl = previewData?.[`${el.dataField}_url`]
+    if (!iconUrl) {
+        return <div className="w-full h-full border border-dashed border-slate-200 rounded opacity-30 pointer-events-none" />
+    }
+
+    let rawCaption = el.caption || ''
+    if (previewData) {
+        rawCaption = rawCaption.replace(/\{([^}]+)\}/g, (match, key) => {
+            const contextKey = `${el.dataField}_${key}`;
+            if (previewData[contextKey] !== undefined) return String(previewData[contextKey]).replace(/\n/g, '<br>');
+            if (previewData[key] !== undefined) return String(previewData[key]).replace(/\n/g, '<br>');
+            return match;
+        });
+    }
+    const captionHtml = rawCaption.includes('<') ? rawCaption : rawCaption.replace(/\n/g, '<br>')
+    const sizePx = (el.iconSizeMM || 15) * PIXELS_PER_MM
+    const gapPx = (el.captionGapMM ?? 2) * PIXELS_PER_MM
+    const vAlign = el.verticalAlign === 'top' ? 'justify-start' : el.verticalAlign === 'middle' ? 'justify-center' : 'justify-end'
+
+    return (
+        <div 
+            ref={containerRef}
+            className={cn(
+                "w-full h-full flex flex-col items-center overflow-hidden pointer-events-none p-1 relative",
+                vAlign,
+                innerOverflow && "ring-2 ring-red-500 bg-red-100/50"
+            )}
+        >
+            {innerOverflow && (
+                <span className="absolute -top-5 left-0 bg-red-500 text-white text-[9px] px-1 rounded shadow-sm z-50">
+                    Desbordamiento
+                </span>
+            )}
+            <div 
+                className="flex items-center justify-center min-h-0 w-full"
+                style={{ marginBottom: rawCaption.trim() ? `${gapPx}px` : '0px' }}
+            >
+                <img
+                    src={iconUrl}
+                    alt={el.dataField}
+                    style={{ 
+                        width: sizePx, 
+                        height: sizePx, 
+                        minWidth: sizePx, 
+                        minHeight: sizePx 
+                    }}
+                    className="object-contain shrink-0"
+                />
+            </div>
+            {rawCaption.trim() && (
+                <div
+                    style={{ width: '100%', fontSize: `${el.captionFontSize || 6.5}pt`, textAlign: el.captionTextAlign || 'center' }}
+                    dangerouslySetInnerHTML={{ __html: captionHtml }}
+                />
+            )}
+        </div>
+    )
+}
+
 function RichTextEditor({ content, onChange }: { content: string, onChange: (val: string) => void }) {
     const editorRef = useRef<HTMLDivElement>(null);
     const lastRangeRef = useRef<Range | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     const lineHeightRef = useRef<HTMLInputElement>(null);
+    const letterSpacingRef = useRef<HTMLInputElement>(null);
     const [isInputFocused, setIsInputFocused] = useState(false);
     const [currentWeight, setCurrentWeight] = useState('normal');
 
@@ -219,19 +318,43 @@ function RichTextEditor({ content, onChange }: { content: string, onChange: (val
                 }
 
                 // Update Line Height Input
-                if (lineHeightRef.current && document.activeElement !== lineHeightRef.current) {
+                if (lineHeightRef.current && !isInputFocused) {
+                    const style = window.getComputedStyle(element);
                     const lh = style.lineHeight;
-                    if (lh === 'normal') {
-                        lineHeightRef.current.value = '1.2';
-                    } else if (lh.includes('px')) {
-                        const px = parseFloat(lh);
-                        const fs = parseFloat(style.fontSize);
-                        const ratio = Math.round((px / fs) * 10) / 10;
-                        lineHeightRef.current.value = ratio.toString();
-                    } else {
-                        const val = parseFloat(lh);
-                        lineHeightRef.current.value = (Math.round(val * 10) / 10).toString();
+                    let val = 1.2;
+                    if (lh === 'normal') val = 1.2;
+                    else if (lh.includes('px')) val = Math.round((parseFloat(lh) / parseFloat(style.fontSize)) * 100) / 100;
+                    else val = parseFloat(lh);
+
+                    // SEARCH FOR data-lh (high precision)
+                    let el: HTMLElement | null = element;
+                    while (el && el !== editorRef.current) {
+                        const saved = el.getAttribute('data-lh');
+                        if (saved) { val = parseFloat(saved); break; }
+                        el = el.parentElement;
                     }
+                    lineHeightRef.current.value = (!isNaN(val) ? val.toFixed(2) : '1.20');
+                }
+
+                // Update Letter Spacing Input
+                if (letterSpacingRef.current && !isInputFocused) {
+                    const style = window.getComputedStyle(element);
+                    const ls = style.letterSpacing;
+                    let ratio = 0;
+                    if (ls !== 'normal' && ls !== '0px') {
+                        const px = parseFloat(ls);
+                        const fs = parseFloat(style.fontSize);
+                        ratio = (!isNaN(px) && !isNaN(fs) && fs > 0) ? Math.round((px / fs) * 100) / 100 : 0;
+                    }
+
+                    // SEARCH FOR data-ls (high precision)
+                    let el: HTMLElement | null = element;
+                    while (el && el !== editorRef.current) {
+                        const saved = el.getAttribute('data-ls');
+                        if (saved) { ratio = parseFloat(saved); break; }
+                        el = el.parentElement;
+                    }
+                    letterSpacingRef.current.value = (!isNaN(ratio) ? ratio.toFixed(2) : '0.00');
                 }
 
                 // Update Weight State
@@ -257,6 +380,110 @@ function RichTextEditor({ content, onChange }: { content: string, onChange: (val
         if (editorRef.current) {
             onChange(editorRef.current.innerHTML);
         }
+    };
+
+    const getSelectionLh = () => {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0 || !editorRef.current) return 1.2;
+        let node = selection.anchorNode;
+        if (node?.nodeType === 3) node = node.parentNode;
+        
+        // Search for data-lh in hierarchy (higher precision source)
+        let el = node as HTMLElement;
+        while (el && el !== editorRef.current) {
+            const dLh = el.getAttribute('data-lh');
+            if (dLh) return parseFloat(dLh);
+            el = el.parentElement as HTMLElement;
+        }
+
+        const style = window.getComputedStyle(node as HTMLElement);
+        const lh = style.lineHeight;
+        if (lh === 'normal') return 1.2;
+        if (lh.includes('px')) return parseFloat(lh) / parseFloat(style.fontSize);
+        return parseFloat(lh) || 1.2;
+    };
+
+    const getSelectionLs = () => {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0 || !editorRef.current) return 0;
+        let node = selection.anchorNode;
+        if (node?.nodeType === 3) node = node.parentNode;
+        let block = node as HTMLElement;
+        
+        while (block && block !== editorRef.current) {
+            const saved = block.getAttribute('data-ls');
+            if (saved !== null) return parseFloat(saved);
+            const d = window.getComputedStyle(block).display;
+            if (d === 'block' || block.tagName === 'DIV' || block.tagName === 'P') break;
+            block = block.parentElement as HTMLElement;
+        }
+
+        if (!block) return 0;
+        const style = window.getComputedStyle(block);
+        const ls = style.letterSpacing;
+        if (ls === 'normal' || ls === '0px') return 0;
+        const px = parseFloat(ls);
+        const fs = parseFloat(style.fontSize);
+        return (!isNaN(px) && !isNaN(fs) && fs > 0) ? Math.round((px / fs) * 100) / 100 : 0;
+    };
+
+    const applyLetterSpacing = (lsEm: number) => {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0 || !editorRef.current) return;
+        
+        const range = selection.getRangeAt(0);
+        
+        // Find all blocks in selection
+        const allBlocks = Array.from(editorRef.current.querySelectorAll('div, p'))
+            .filter(node => selection.containsNode(node, true));
+
+        if (allBlocks.length > 0) {
+            allBlocks.forEach(b => {
+                const el = b as HTMLElement;
+                if (lsEm === 0) {
+                    el.style.letterSpacing = '';
+                    el.removeAttribute('data-ls');
+                } else {
+                    el.style.letterSpacing = `${lsEm}em`;
+                    el.setAttribute('data-ls', lsEm.toString());
+                }
+            });
+        } else {
+            // Apply to nearest block (fallback)
+            let node = selection.anchorNode;
+            if (node?.nodeType === 3) node = node.parentNode;
+            let block = node as HTMLElement;
+            
+            let targetBlock: HTMLElement | null = null;
+            while (block && block !== editorRef.current) {
+                const d = window.getComputedStyle(block).display;
+                if (d === 'block' || block.tagName === 'DIV' || block.tagName === 'P') {
+                    targetBlock = block;
+                    break;
+                }
+                block = block.parentElement as HTMLElement;
+            }
+
+            if (!targetBlock && editorRef.current) {
+                document.execCommand('formatBlock', false, 'div');
+                const newSel = window.getSelection();
+                let n = newSel?.anchorNode;
+                if (n?.nodeType === 3) n = n.parentNode;
+                targetBlock = n as HTMLElement;
+            }
+
+            if (targetBlock) {
+                if (lsEm === 0) {
+                    targetBlock.style.letterSpacing = '';
+                    targetBlock.removeAttribute('data-ls');
+                } else {
+                    targetBlock.style.letterSpacing = `${lsEm}em`;
+                    targetBlock.setAttribute('data-ls', lsEm.toString());
+                }
+            }
+        }
+        
+        if (editorRef.current) onChange(editorRef.current.innerHTML);
     };
 
     const saveSelection = () => {
@@ -422,6 +649,8 @@ function RichTextEditor({ content, onChange }: { content: string, onChange: (val
                                         ) {
                                             htmlEl.style.fontSize = `${newSize}pt`;
                                             htmlEl.removeAttribute('size');
+                                            // Extreme safety fallback
+                                            if (parseInt(htmlEl.style.fontSize) > 60) htmlEl.style.fontSize = '12pt';
                                         }
                                     });
                                     existingElements.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
@@ -555,38 +784,21 @@ function RichTextEditor({ content, onChange }: { content: string, onChange: (val
                         className="h-6 w-6 rounded-none border-r"
                         onMouseDown={(e) => {
                             e.preventDefault();
+                            let startVal = getSelectionLh();
                             const adjust = (val: number) => {
-                                const selection = window.getSelection();
-                                if (!selection || selection.rangeCount === 0) return;
-                                
-                                // Ensure the current line is a block (fixes first lines issue)
-                                document.execCommand('formatBlock', false, 'div');
-                                
-                                let node = selection.anchorNode;
-                                if (node?.nodeType === 3) node = node.parentNode;
-                                const element = node as HTMLElement;
-                                const style = window.getComputedStyle(element);
-                                const currentFontSize = style.fontSize;
-                                
-                                let currentLh = 1.2;
-                                const lh = style.lineHeight;
-                                if (lh === 'normal') currentLh = 1.2;
-                                else if (lh.includes('px')) {
-                                    const px = parseFloat(lh);
-                                    const fs = parseFloat(style.fontSize);
-                                    currentLh = px / fs;
-                                } else {
-                                    currentLh = parseFloat(lh);
-                                }
-                                
-                                const newLh = Math.max(0.5, Math.min(3.0, currentLh + val));
-                                if (lineHeightRef.current) lineHeightRef.current.value = (Math.round(newLh * 10) / 10).toString();
+                                startVal = Math.round(Math.max(0.4, Math.min(3.0, startVal + val)) * 100) / 100;
+                                if (lineHeightRef.current) lineHeightRef.current.value = startVal.toFixed(2);
                                 
                                 editorRef.current?.focus();
+                                const selection = window.getSelection();
+                                let node = selection?.anchorNode;
+                                if (node?.nodeType === 3) node = node.parentNode;
+                                const currentFontSize = window.getComputedStyle(node as HTMLElement || editorRef.current!).fontSize;
+
                                 const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
                                 existingElements.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
                                 document.execCommand('styleWithCSS', false, "true");
-                                document.execCommand('fontSize', false, "7"); // Marker
+                                document.execCommand('fontSize', false, "7"); 
                                 if (editorRef.current) {
                                     editorRef.current.querySelectorAll('font, span').forEach(el => {
                                         const htmlEl = el as HTMLElement;
@@ -596,17 +808,21 @@ function RichTextEditor({ content, onChange }: { content: string, onChange: (val
                                             htmlEl.style.fontSize === 'xxx-large' ||
                                             htmlEl.style.fontSize === '7'
                                         ) {
-                                            const lhStr = newLh.toString();
+                                            const lhStr = startVal.toString();
                                             htmlEl.style.lineHeight = lhStr;
-                                            htmlEl.style.fontSize = currentFontSize; // FIX: Preserve original font size
+                                            htmlEl.setAttribute('data-lh', lhStr);
+                                            htmlEl.style.fontSize = currentFontSize;
                                             htmlEl.removeAttribute('size');
+                                            
+                                            // Extreme safety fallback for 36pt spikes
+                                            if (parseInt(htmlEl.style.fontSize) > 60) htmlEl.style.fontSize = '10pt';
 
-                                            // Apply to parent block for effective shrinking
                                             let p = htmlEl.parentElement;
                                             while (p && p !== editorRef.current) {
                                                 const d = window.getComputedStyle(p).display;
                                                 if (d === 'block' || p.tagName === 'DIV' || p.tagName === 'P') {
                                                     p.style.lineHeight = lhStr;
+                                                    p.setAttribute('data-lh', lhStr);
                                                     break;
                                                 }
                                                 p = p.parentElement;
@@ -618,8 +834,8 @@ function RichTextEditor({ content, onChange }: { content: string, onChange: (val
                                 }
                             };
 
-                            adjust(-0.1);
-                            const interval = setInterval(() => adjust(-0.1), 150);
+                            adjust(-0.05);
+                            const interval = setInterval(() => adjust(-0.05), 150);
                             const stop = () => {
                                 clearInterval(interval);
                                 window.removeEventListener('mouseup', stop);
@@ -688,34 +904,17 @@ function RichTextEditor({ content, onChange }: { content: string, onChange: (val
                         className="h-6 w-6 rounded-none border-l"
                         onMouseDown={(e) => {
                             e.preventDefault();
+                            let startVal = getSelectionLh();
                             const adjust = (val: number) => {
-                                const selection = window.getSelection();
-                                if (!selection || selection.rangeCount === 0) return;
-                                
-                                // Ensure the current line is a block (fixes first lines issue)
-                                document.execCommand('formatBlock', false, 'div');
-                                
-                                let node = selection.anchorNode;
-                                if (node?.nodeType === 3) node = node.parentNode;
-                                const element = node as HTMLElement;
-                                const style = window.getComputedStyle(element);
-                                const currentFontSize = style.fontSize;
-                                
-                                let currentLh = 1.2;
-                                const lh = style.lineHeight;
-                                if (lh === 'normal') currentLh = 1.2;
-                                else if (lh.includes('px')) {
-                                    const px = parseFloat(lh);
-                                    const fs = parseFloat(style.fontSize);
-                                    currentLh = px / fs;
-                                } else {
-                                    currentLh = parseFloat(lh);
-                                }
-                                
-                                const newLh = Math.max(0.5, Math.min(3.0, currentLh + val));
-                                if (lineHeightRef.current) lineHeightRef.current.value = (Math.round(newLh * 10) / 10).toString();
+                                startVal = Math.round(Math.max(0.4, Math.min(3.0, startVal + val)) * 100) / 100;
+                                if (lineHeightRef.current) lineHeightRef.current.value = startVal.toFixed(2);
                                 
                                 editorRef.current?.focus();
+                                const selection = window.getSelection();
+                                let node = selection?.anchorNode;
+                                if (node?.nodeType === 3) node = node.parentNode;
+                                const currentFontSize = window.getComputedStyle(node as HTMLElement || editorRef.current!).fontSize;
+
                                 const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
                                 existingElements.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
                                 document.execCommand('styleWithCSS', false, "true");
@@ -724,8 +923,9 @@ function RichTextEditor({ content, onChange }: { content: string, onChange: (val
                                     editorRef.current.querySelectorAll('font, span').forEach(el => {
                                         const htmlEl = el as HTMLElement;
                                         if (!htmlEl.hasAttribute('data-pre-existing') || htmlEl.getAttribute('size') === '7' || htmlEl.style.fontSize === 'xxx-large' || htmlEl.style.fontSize === '7') {
-                                            const lhStr = newLh.toString();
+                                            const lhStr = startVal.toString();
                                             htmlEl.style.lineHeight = lhStr;
+                                            htmlEl.setAttribute('data-lh', lhStr);
                                             htmlEl.style.fontSize = currentFontSize; // FIX: Preserve original font size
                                             htmlEl.removeAttribute('size');
 
@@ -735,6 +935,7 @@ function RichTextEditor({ content, onChange }: { content: string, onChange: (val
                                                 const d = window.getComputedStyle(p).display;
                                                 if (d === 'block' || p.tagName === 'DIV' || p.tagName === 'P') {
                                                     p.style.lineHeight = lhStr;
+                                                    p.setAttribute('data-lh', lhStr);
                                                     break;
                                                 }
                                                 p = p.parentElement;
@@ -746,8 +947,8 @@ function RichTextEditor({ content, onChange }: { content: string, onChange: (val
                                 }
                             };
 
-                            adjust(0.1);
-                            const interval = setInterval(() => adjust(0.1), 150);
+                            adjust(0.05);
+                            const interval = setInterval(() => adjust(0.05), 150);
                             const stop = () => {
                                 clearInterval(interval);
                                 window.removeEventListener('mouseup', stop);
@@ -757,6 +958,71 @@ function RichTextEditor({ content, onChange }: { content: string, onChange: (val
                     >
                         +
                     </Button>
+                </div>
+
+                <div className="h-4 w-px bg-slate-300 mx-1" />
+
+                {/* Alignment buttons */}
+                <Button variant="ghost" size="icon-sm" className="h-6 w-6" onMouseDown={(e) => execCommand('justifyLeft', e)} title="Alinear izquierda">
+                    <AlignLeft className="h-3 w-3" />
+                </Button>
+                <Button variant="ghost" size="icon-sm" className="h-6 w-6" onMouseDown={(e) => execCommand('justifyCenter', e)} title="Centrar">
+                    <AlignCenter className="h-3 w-3" />
+                </Button>
+                <Button variant="ghost" size="icon-sm" className="h-6 w-6" onMouseDown={(e) => execCommand('justifyRight', e)} title="Alinear derecha">
+                    <AlignRight className="h-3 w-3" />
+                </Button>
+
+                <div className="h-4 w-px bg-slate-300 mx-1" />
+
+                {/* Letter Spacing (Kerning) stepper */}
+                <span className="text-[9px] text-slate-400 font-medium select-none">LS</span>
+                <div className="flex items-center bg-white border rounded">
+                    <Button variant="ghost" size="icon-sm" className="h-6 w-6 rounded-none border-r"
+                        onMouseDown={(e) => {
+                            e.preventDefault();
+                            editorRef.current?.focus();
+                            let startVal = getSelectionLs();
+                            const adjust = (v: number) => {
+                                startVal = Math.round((startVal + v) * 100) / 100;
+                                if (letterSpacingRef.current) letterSpacingRef.current.value = startVal.toString();
+                                applyLetterSpacing(startVal);
+                            };
+                            adjust(-0.01);
+                            const iv = setInterval(() => adjust(-0.01), 100);
+                            const stop = () => { clearInterval(iv); window.removeEventListener('mouseup', stop); };
+                            window.addEventListener('mouseup', stop);
+                        }}
+                    >-</Button>
+                    <input
+                        ref={letterSpacingRef}
+                        type="text"
+                        className="h-6 w-10 text-[10px] text-center outline-none bg-transparent"
+                        placeholder="0em"
+                        onFocus={() => setIsInputFocused(true)}
+                        onBlur={(e) => {
+                            setIsInputFocused(false);
+                            const v = parseFloat(e.target.value);
+                            if (!isNaN(v)) applyLetterSpacing(v);
+                        }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                    />
+                    <Button variant="ghost" size="icon-sm" className="h-6 w-6 rounded-none border-l"
+                        onMouseDown={(e) => {
+                            e.preventDefault();
+                            editorRef.current?.focus();
+                            let startVal = getSelectionLs();
+                            const adjust = (v: number) => {
+                                startVal = Math.round((startVal + v) * 100) / 100;
+                                if (letterSpacingRef.current) letterSpacingRef.current.value = startVal.toString();
+                                applyLetterSpacing(startVal);
+                            };
+                            adjust(0.01);
+                            const iv = setInterval(() => adjust(0.01), 100);
+                            const stop = () => { clearInterval(iv); window.removeEventListener('mouseup', stop); };
+                            window.addEventListener('mouseup', stop);
+                        }}
+                    >+</Button>
                 </div>
 
 
@@ -872,22 +1138,40 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
                     inputRef.current.value = currentPt.toString();
                 }
                 if (lineHeightRef.current && document.activeElement !== lineHeightRef.current) {
+                    const style = window.getComputedStyle(element);
                     const lh = style.lineHeight;
-                    if (lh === 'normal') lineHeightRef.current.value = '1.2';
-                    else if (lh.includes('px')) lineHeightRef.current.value = (Math.round((parseFloat(lh) / parseFloat(style.fontSize)) * 10) / 10).toString();
-                    else lineHeightRef.current.value = (Math.round(parseFloat(lh) * 10) / 10).toString();
+                    let val = 1.2;
+                    if (lh === 'normal') val = 1.2;
+                    else if (lh.includes('px')) val = Math.round((parseFloat(lh) / parseFloat(style.fontSize)) * 100) / 100;
+                    else val = parseFloat(lh);
+
+                    // SEARCH FOR data-lh (high precision)
+                    let el: HTMLElement | null = element;
+                    while (el && el !== editorRef.current) {
+                        const saved = el.getAttribute('data-lh');
+                        if (saved) { val = parseFloat(saved); break; }
+                        el = el.parentElement;
+                    }
+                    lineHeightRef.current.value = (!isNaN(val) ? val.toFixed(2) : '1.20');
                 }
                 if (letterSpacingRef.current && document.activeElement !== letterSpacingRef.current) {
+                    const style = window.getComputedStyle(element);
                     const ls = style.letterSpacing;
-                    if (ls === 'normal' || ls === '0px') {
-                        letterSpacingRef.current.value = '0';
-                    } else {
+                    let ratio = 0;
+                    if (ls !== 'normal' && ls !== '0px') {
                         const px = parseFloat(ls);
                         const fs = parseFloat(style.fontSize);
-                        letterSpacingRef.current.value = (!isNaN(px) && !isNaN(fs) && fs > 0)
-                            ? (Math.round((px / fs) * 100) / 100).toString()
-                            : '0';
+                        ratio = (!isNaN(px) && !isNaN(fs) && fs > 0) ? Math.round((px / fs) * 100) / 100 : 0;
                     }
+
+                    // SEARCH FOR data-ls (high precision)
+                    let el: HTMLElement | null = element;
+                    while (el && el !== editorRef.current) {
+                        const saved = el.getAttribute('data-ls');
+                        if (saved) { ratio = parseFloat(saved); break; }
+                        el = el.parentElement;
+                    }
+                    letterSpacingRef.current.value = (!isNaN(ratio) ? ratio.toFixed(2) : '0.00');
                 }
                 const weight = style.fontWeight;
                 if (weight === '400' || weight === 'normal') setCurrentWeight('normal');
@@ -930,8 +1214,6 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
     };
 
     const applyLineHeight = (newLh: number) => {
-        // Capture current font size BEFORE the execCommand marker changes anything
-        // This is the fix: without this, 'fontSize 7' leaves xxx-large (36pt) on the element
         let savedFontSize = '6.5pt';
         const selForSize = window.getSelection();
         if (selForSize && selForSize.rangeCount > 0) {
@@ -945,19 +1227,28 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
         const existing = editorRef.current?.querySelectorAll('font, span') || [];
         existing.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
         document.execCommand('styleWithCSS', false, 'true');
-        document.execCommand('fontSize', false, '7'); // marker — creates xxx-large temporarily
+        document.execCommand('fontSize', false, '7'); 
         if (editorRef.current) {
             editorRef.current.querySelectorAll('font, span').forEach(el => {
                 const h = el as HTMLElement;
                 if (!h.hasAttribute('data-pre-existing') || h.getAttribute('size') === '7' || h.style.fontSize === 'xxx-large') {
-                    const lhStr = (Math.round(newLh * 10) / 10).toString();
+                    const lhStr = (Math.round(newLh * 100) / 100).toString();
                     h.style.lineHeight = lhStr;
-                    h.style.fontSize = savedFontSize; // FIX: restore original size
+                    h.setAttribute('data-lh', lhStr);
+                    // Force the font size back and REMOVE the size attribute completely
+                    h.style.fontSize = savedFontSize; 
                     h.removeAttribute('size');
+                    // Safety: if the font size is still dangerously large, force a default
+                    if (parseInt(h.style.fontSize) > 40) h.style.fontSize = '8pt';
+                    
                     let p = h.parentElement;
                     while (p && p !== editorRef.current) {
                         const d = window.getComputedStyle(p).display;
-                        if (d === 'block' || p.tagName === 'DIV' || p.tagName === 'P') { p.style.lineHeight = lhStr; break; }
+                        if (d === 'block' || p.tagName === 'DIV' || p.tagName === 'P') { 
+                            p.style.lineHeight = lhStr; 
+                            p.setAttribute('data-lh', lhStr);
+                            break; 
+                        }
                         p = p.parentElement;
                     }
                 }
@@ -967,11 +1258,21 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
         }
     };
 
+
     const getSelectionLh = () => {
         const selection = window.getSelection();
-        if (!selection || selection.rangeCount === 0) return 1.2;
+        if (!selection || selection.rangeCount === 0 || !editorRef.current) return 1.2;
         let node = selection.anchorNode;
         if (node?.nodeType === 3) node = node.parentNode;
+
+        // HIGHER PRECISION: Check for data-lh in ancestors
+        let el = node as HTMLElement;
+        while (el && el !== editorRef.current) {
+            const saved = el.getAttribute('data-lh');
+            if (saved) return parseFloat(saved);
+            el = el.parentElement as HTMLElement;
+        }
+
         const style = window.getComputedStyle(node as HTMLElement);
         const lh = style.lineHeight;
         if (lh === 'normal') return 1.2;
@@ -1010,40 +1311,58 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
      */
     const applyLetterSpacing = (lsEm: number) => {
         const selection = window.getSelection();
-        if (!selection || selection.rangeCount === 0) return;
+        if (!selection || selection.rangeCount === 0 || !editorRef.current) return;
         
-        let node = selection.anchorNode;
-        if (node?.nodeType === 3) node = node.parentNode;
-        let block = node as HTMLElement;
+        const range = selection.getRangeAt(0);
         
-        // Find or create block
-        let targetBlock: HTMLElement | null = null;
-        while (block && block !== editorRef.current) {
-            const d = window.getComputedStyle(block).display;
-            if (d === 'block' || block.tagName === 'DIV' || block.tagName === 'P') {
-                targetBlock = block;
-                break;
+        // Find all block elements (DIV, P) within the editor that intersect with the selection
+        const blocks = Array.from(editorRef.current.querySelectorAll('div, p'))
+            .filter(block => selection.containsNode(block, true));
+            
+        if (blocks.length > 0) {
+            // Apply to all selected blocks
+            blocks.forEach(block => {
+                const b = block as HTMLElement;
+                if (lsEm === 0) {
+                    b.style.letterSpacing = '';
+                    b.removeAttribute('data-ls');
+                } else {
+                    b.style.letterSpacing = `${lsEm}em`;
+                    b.setAttribute('data-ls', lsEm.toString());
+                }
+            });
+        } else {
+            // Fallback: apply to nearest block if selection is collapsed or no blocks contain it
+            let node = selection.anchorNode;
+            if (node?.nodeType === 3) node = node.parentNode;
+            let block = node as HTMLElement;
+            
+            let targetBlock: HTMLElement | null = null;
+            while (block && block !== editorRef.current) {
+                const d = window.getComputedStyle(block).display;
+                if (d === 'block' || block.tagName === 'DIV' || block.tagName === 'P') {
+                    targetBlock = block;
+                    break;
+                }
+                block = block.parentElement as HTMLElement;
             }
-            block = block.parentElement as HTMLElement;
-        }
 
-        if (!targetBlock && editorRef.current) {
-            // No block found? Create one using the selection range contents
-            document.execCommand('formatBlock', false, 'div');
-            // Re-find it
-            const newSel = window.getSelection();
-            let n = newSel?.anchorNode;
-            if (n?.nodeType === 3) n = n.parentNode;
-            targetBlock = n as HTMLElement;
-        }
+            if (!targetBlock && editorRef.current) {
+                document.execCommand('formatBlock', false, 'div');
+                const newSel = window.getSelection();
+                let n = newSel?.anchorNode;
+                if (n?.nodeType === 3) n = n.parentNode;
+                targetBlock = n as HTMLElement;
+            }
 
-        if (targetBlock) {
-            if (lsEm === 0) {
-                targetBlock.style.letterSpacing = '';
-                targetBlock.removeAttribute('data-ls');
-            } else {
-                targetBlock.style.letterSpacing = `${lsEm}em`;
-                targetBlock.setAttribute('data-ls', lsEm.toString());
+            if (targetBlock) {
+                if (lsEm === 0) {
+                    targetBlock.style.letterSpacing = '';
+                    targetBlock.removeAttribute('data-ls');
+                } else {
+                    targetBlock.style.letterSpacing = `${lsEm}em`;
+                    targetBlock.setAttribute('data-ls', lsEm.toString());
+                }
             }
         }
         
@@ -1143,9 +1462,15 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
                     <Button variant="ghost" size="icon-sm" className="h-6 w-6 rounded-none border-r"
                         onMouseDown={(e) => {
                             e.preventDefault();
-                            const adjust = (v: number) => { document.execCommand('formatBlock', false, 'div'); const lh = Math.max(0.5, Math.min(3.0, getSelectionLh() + v)); if (lineHeightRef.current) lineHeightRef.current.value = (Math.round(lh * 10) / 10).toString(); applyLineHeight(lh); };
-                            adjust(-0.1);
-                            const iv = setInterval(() => adjust(-0.1), 150);
+                            let startVal = getSelectionLh(); 
+                            const adjust = (v: number) => { 
+                                document.execCommand('formatBlock', false, 'div'); 
+                                startVal = Math.round(Math.max(0.4, Math.min(3.0, startVal + v)) * 100) / 100; 
+                                if (lineHeightRef.current) lineHeightRef.current.value = startVal.toFixed(2); 
+                                applyLineHeight(startVal); 
+                            };
+                            adjust(-0.05);
+                            const iv = setInterval(() => adjust(-0.05), 150);
                             const stop = () => { clearInterval(iv); window.removeEventListener('mouseup', stop); };
                             window.addEventListener('mouseup', stop);
                         }}
@@ -1158,9 +1483,15 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
                     <Button variant="ghost" size="icon-sm" className="h-6 w-6 rounded-none border-l"
                         onMouseDown={(e) => {
                             e.preventDefault();
-                            const adjust = (v: number) => { document.execCommand('formatBlock', false, 'div'); const lh = Math.max(0.5, Math.min(3.0, getSelectionLh() + v)); if (lineHeightRef.current) lineHeightRef.current.value = (Math.round(lh * 10) / 10).toString(); applyLineHeight(lh); };
-                            adjust(0.1);
-                            const iv = setInterval(() => adjust(0.1), 150);
+                            let startVal = getSelectionLh(); 
+                            const adjust = (v: number) => { 
+                                document.execCommand('formatBlock', false, 'div'); 
+                                startVal = Math.round(Math.max(0.4, Math.min(3.0, startVal + v)) * 100) / 100; 
+                                if (lineHeightRef.current) lineHeightRef.current.value = startVal.toFixed(2); 
+                                applyLineHeight(startVal); 
+                            };
+                            adjust(0.05);
+                            const iv = setInterval(() => adjust(0.05), 150);
                             const stop = () => { clearInterval(iv); window.removeEventListener('mouseup', stop); };
                             window.addEventListener('mouseup', stop);
                         }}
@@ -1283,6 +1614,18 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
     const [isLoadingRandom, setIsLoadingRandom] = useState(false)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [previewData, setPreviewData] = useState<any>(null)
+    const assetMap = React.useMemo(() => {
+        const map: Record<string, string> = {}
+        assets.forEach(a => {
+            if (a.name) map[a.name] = a.file_path
+        })
+        return map
+    }, [assets])
+
+    const enrichedData = React.useMemo(() => {
+        if (!previewData) return null
+        return enrichProductDataWithIcons(previewData, assetMap)
+    }, [previewData, assetMap])
 
     const canvasRef = useRef<HTMLDivElement>(null)
 
@@ -1577,6 +1920,17 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
             } else {
                 toast('No se encontraron más productos')
             }
+        } finally {
+            setIsLoadingRandom(false)
+        }
+    }
+
+    const handleBasePreview = async () => {
+        setIsLoadingRandom(true)
+        try {
+            const data = await getPreviewProduct()
+            const assetMap = await resolveAssetsAction([])
+            setPreviewData(enrichProductDataWithIcons(data, assetMap))
         } finally {
             setIsLoadingRandom(false)
         }
@@ -1941,21 +2295,6 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
 
                     </div>
                     <div className="flex gap-2 items-center">
-                        {isPreviewMode && (
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={handleRandomPreview}
-                                disabled={isLoadingRandom}
-                                title="Cargar un producto aleatorio en el preview"
-                                className="text-slate-500 hover:text-indigo-600 hover:bg-indigo-50"
-                            >
-                                {isLoadingRandom
-                                    ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                    : <Shuffle className="mr-2 h-4 w-4" />}
-                                Aleatorio
-                            </Button>
-                        )}
                         <Button variant={isPreviewMode ? 'default' : 'secondary'} className={isPreviewMode ? 'bg-indigo-600 hover:bg-indigo-700' : ''} onClick={handleTogglePreview}>
                             {isPreviewMode ? <EyeOff className="mr-2 h-4 w-4" /> : <Eye className="mr-2 h-4 w-4" />}
                             {isPreviewMode ? 'Salir de Preview' : 'Live Preview'}
@@ -1966,6 +2305,47 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                         </Button>
                     </div>
                 </div>
+
+                {/* Secondary Preview Toolbar — Dedicated space for navigation controls */}
+                {isPreviewMode && (
+                    <div className="flex gap-2 items-center bg-indigo-50/50 p-2 px-4 rounded-xl border border-indigo-100/50 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300">
+                        <div className="flex items-center gap-2 pr-3 border-r border-indigo-100 mr-1">
+                            <Eye className="h-3.5 w-3.5 text-indigo-500" />
+                            <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">Navegación de Preview</span>
+                        </div>
+                        
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={handleBasePreview}
+                            disabled={isLoadingRandom}
+                            title="Volver al producto con el nombre más largo (Caso de Estrés)"
+                            className="h-8 text-xs font-medium text-indigo-600 hover:text-indigo-700 hover:bg-indigo-100/50 transition-colors"
+                        >
+                            <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                            Caso Base (Nombre Largo)
+                        </Button>
+
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={handleRandomPreview}
+                            disabled={isLoadingRandom}
+                            title="Cargar un producto aleatorio en el preview"
+                            className="h-8 text-xs font-medium text-indigo-600 hover:text-indigo-700 hover:bg-indigo-100/50 transition-colors"
+                        >
+                            {isLoadingRandom
+                                ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                : <Shuffle className="mr-1.5 h-3.5 w-3.5" />}
+                            Producto Aleatorio
+                        </Button>
+
+                        <div className="flex-1" />
+                        <span className="text-[10px] text-indigo-300 italic hidden md:block">
+                            Visualizando: {previewData?.final_name_es || 'Cargando...'}
+                        </span>
+                    </div>
+                )}
 
                 {/* The Canvas Area */}
                 <div className="flex-1 overflow-auto bg-slate-100 p-8 rounded-xl border flex items-center justify-center relative shadow-inner min-h-[500px]">
@@ -2049,47 +2429,13 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                     )}
 
                                     {/* Dynamic Image type — conditional icon with optional caption */}
-                                    {el.type === 'dynamic_image' && (() => {
-                                        if (!isPreviewMode) {
-                                            // Edit mode: always show a recognizable placeholder
-                                            return (
-                                                <div className="w-full h-full flex flex-col items-center justify-center gap-0.5 border-2 border-dashed border-indigo-300 bg-indigo-50/40 rounded overflow-hidden pointer-events-none">
-                                                    <ImageIcon className="h-4 w-4 text-indigo-400 shrink-0" />
-                                                    <span className="text-[8px] text-indigo-600 font-bold text-center px-1 leading-tight tracking-tight">
-                                                        {el.dataField || 'icono'}
-                                                    </span>
-                                                </div>
-                                            )
-                                        }
-                                        // Preview mode: check if icon applies for this product
-                                        const iconUrl = previewData?.[`${el.dataField}_url`]
-                                        if (!iconUrl) {
-                                            // Icon doesn't apply — render empty translucent placeholder (no [VACIO])
-                                            return (
-                                                <div className="w-full h-full border border-dashed border-slate-200 rounded opacity-30 pointer-events-none" />
-                                            )
-                                        }
-                                        const rawCaption = el.caption || ''
-                                        const captionIsHtml = rawCaption.includes('<')
-                                        const captionHtml = captionIsHtml
-                                            ? rawCaption
-                                            : rawCaption.replace(/\n/g, '<br>')
-                                        return (
-                                            <div className="w-full h-full flex flex-col items-center justify-end overflow-hidden pointer-events-none p-px">
-                                                <img
-                                                    src={iconUrl}
-                                                    className="flex-1 max-w-full object-contain min-h-0"
-                                                    alt={el.dataField}
-                                                />
-                                                {rawCaption.trim() && (
-                                                    <div
-                                                        style={{ width: '100%' }}
-                                                        dangerouslySetInnerHTML={{ __html: captionHtml }}
-                                                    />
-                                                )}
-                                            </div>
-                                        )
-                                    })()}
+                                {el.type === 'dynamic_image' && (
+                                    <DynamicImageElement 
+                                        el={el} 
+                                        isPreviewMode={isPreviewMode} 
+                                        previewData={enrichedData} 
+                                    />
+                                )}
 
                                     {/* Barcode type */}
                                     {el.type === 'barcode' && (
@@ -2210,19 +2556,17 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                         <option value="Logo Firplak general">Logo Firplak general</option>
                                         <option value="Isométrico">Isométrico (Dinámico)</option>
                                         <option value="Icono RH Fijo">Icono RH Fijo</option>
-                                        <option value="Icono Canto 2mm">Icono Canto 2mm</option>
+                                        <option value="Icono Canto">Icono Canto</option>
                                         <option value="Icono Cierre Lento">Icono Cierre Lento</option>
                                         <option value="Icono Extensión Total">Icono Extensión Total</option>
-                                        <option value="Icono Canto 2 mm">Icono Canto 2 mm</option>
 
                                         {assets.filter(a => ![
                                             'Logo Firplak general',
                                             'Isométrico',
                                             'Icono RH Fijo',
-                                            'Icono Canto 2mm',
+                                            'Icono Canto',
                                             'Icono Cierre Lento',
-                                            'Icono Extensión Total',
-                                            'Icono Canto 2 mm'
+                                            'Icono Extensión Total'
                                         ].includes(a.name)).length > 0 && (
                                             <optgroup label="Assets (Base de Datos)">
                                                 {assets
@@ -2230,10 +2574,9 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                                         'Logo Firplak general',
                                                         'Isométrico',
                                                         'Icono RH Fijo',
-                                                        'Icono Canto 2mm',
+                                                        'Icono Canto',
                                                         'Icono Cierre Lento',
-                                                        'Icono Extensión Total',
-                                                        'Icono Canto 2 mm'
+                                                        'Icono Extensión Total'
                                                     ].includes(a.name))
                                                     ?.map(a => (
                                                         <option key={a.id} value={a.id}>{a.name}</option>
@@ -2253,9 +2596,19 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                         <select
                                             className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                                             value={activeEl.dataField || 'icon_rh'}
-                                            onChange={(e) => updateSelectedElements({ dataField: e.target.value })}
+                                            onChange={(e) => {
+                                                const val = e.target.value;
+                                                const updates: Partial<TemplateElement> = { dataField: val };
+                                                if (val === 'icon_canto') {
+                                                    updates.caption = '<div>{caption_es}<br>{caption_en}</div>';
+                                                } else if (val === 'icon_rh') {
+                                                    updates.caption = '<div>RH<br>Resistente a la humedad</div>';
+                                                }
+                                                updateSelectedElements(updates);
+                                            }}
                                         >
                                             <option value="icon_rh">Icono RH — Resistente a la Humedad</option>
+                                            <option value="icon_canto">Icono Canto — Borde de puertas</option>
                                             {/* Additional icons will be added here in future phases */}
                                         </select>
                                         <p className="text-[10px] text-slate-400 mt-1">
@@ -2271,6 +2624,116 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                         />
                                         <p className="text-[10px] text-slate-400 mt-1">
                                             Selecciona texto para aplicar formato local: peso, tamaño, interlineado, alineación.
+                                        </p>
+                                    </div>
+
+                                    <div className="border-t pt-3 mt-1">
+                                        <Label className="text-[11px] text-slate-700 font-bold mb-2 flex items-center gap-1">
+                                            <ImageIcon className="h-3 w-3" /> Tamaño Fijo del Icono (Estandarización)
+                                        </Label>
+                                        
+                                        <div className="grid grid-cols-3 gap-2 mb-3">
+                                            {[10, 15, 20].map(mm => (
+                                                <Button
+                                                    key={mm}
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className={cn(
+                                                        "h-7 text-[10px] px-1 border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 transition-all",
+                                                        ((activeEl.iconSizeMM || 15) === mm) && "bg-indigo-50 border-indigo-500 text-indigo-700 font-bold"
+                                                    )}
+                                                    onClick={() => updateSelectedElements({ 
+                                                        iconSizeMM: mm
+                                                    })}
+                                                >
+                                                    {mm} mm
+                                                </Button>
+                                            ))}
+                                        </div>
+
+                                        <div className="mb-3">
+                                            <Label className="text-[10px] text-slate-500 mb-1 block">Tamaño Variable (Precisión 1mm)</Label>
+                                            <div className="flex gap-2 items-center">
+                                                <Input 
+                                                    type="number" 
+                                                    step="1"
+                                                    min="1"
+                                                    max="50"
+                                                    className="h-8 text-sm" 
+                                                    value={activeEl.iconSizeMM || 15} 
+                                                    onChange={(e) => updateSelectedElements({ iconSizeMM: parseInt(e.target.value) || 15 })} 
+                                                />
+                                                <span className="text-[10px] text-slate-400 font-medium">mm</span>
+                                            </div>
+                                        </div>
+
+                                        <div className="mb-3">
+                                            <Label className="text-[10px] text-slate-500 mb-1 block">Separación con el Texto (Gap mm)</Label>
+                                            <div className="flex gap-2 items-center">
+                                                <Input 
+                                                    type="number" 
+                                                    step="0.5"
+                                                    min="0"
+                                                    max="20"
+                                                    className="h-8 text-sm" 
+                                                    value={activeEl.captionGapMM ?? 2} 
+                                                    onChange={(e) => updateSelectedElements({ captionGapMM: parseFloat(e.target.value) || 0 })} 
+                                                />
+                                                <span className="text-[10px] text-slate-400 font-medium">mm</span>
+                                            </div>
+                                        </div>
+
+                                        <div className="mb-4">
+                                            <Label className="text-[11px] mb-1 block">Alineación Vertical del Bloque</Label>
+                                            <div className="flex gap-1 bg-slate-100 p-1 rounded-md border border-slate-200">
+                                                <Button 
+                                                    title="Arriba"
+                                                    size="icon" 
+                                                    variant={activeEl.verticalAlign === 'top' ? 'default' : 'ghost'} 
+                                                    className={cn("h-7 flex-1 shadow-none transition-all", activeEl.verticalAlign === 'top' ? "bg-white text-indigo-600 shadow-sm hover:bg-white" : "text-slate-500 hover:bg-slate-200")} 
+                                                    onClick={() => updateSelectedElements({ verticalAlign: 'top' })}
+                                                >
+                                                    <AlignVerticalJustifyStart className="h-4 w-4" />
+                                                </Button>
+                                                <Button 
+                                                    title="Centro"
+                                                    size="icon" 
+                                                    variant={activeEl.verticalAlign === 'middle' ? 'default' : 'ghost'} 
+                                                    className={cn("h-7 flex-1 shadow-none transition-all", activeEl.verticalAlign === 'middle' ? "bg-white text-indigo-600 shadow-sm hover:bg-white" : "text-slate-500 hover:bg-slate-200")} 
+                                                    onClick={() => updateSelectedElements({ verticalAlign: 'middle' })}
+                                                >
+                                                    <AlignVerticalJustifyCenter className="h-4 w-4" />
+                                                </Button>
+                                                <Button 
+                                                    title="Abajo"
+                                                    size="icon" 
+                                                    variant={activeEl.verticalAlign === 'bottom' ? 'default' : 'ghost'} 
+                                                    className={cn("h-7 flex-1 shadow-none transition-all", activeEl.verticalAlign === 'bottom' ? "bg-white text-indigo-600 shadow-sm hover:bg-white" : "text-slate-500 hover:bg-slate-200")} 
+                                                    onClick={() => updateSelectedElements({ verticalAlign: 'bottom' })}
+                                                >
+                                                    <AlignVerticalJustifyEnd className="h-4 w-4" />
+                                                </Button>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex gap-2">
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="h-7 flex-1 text-[9px] text-slate-500 hover:text-indigo-600 border border-dashed border-slate-200"
+                                                onClick={() => {
+                                                    const max = Math.max(activeEl.width, activeEl.height)
+                                                    updateSelectedElements({ width: max, height: max })
+                                                }}
+                                            >
+                                                <div className="flex items-center gap-1.5">
+                                                    <div className="w-2.5 h-2.5 border-2 border-current rounded-sm" />
+                                                    Hacer Cuadrado el Recuadro
+                                                </div>
+                                            </Button>
+                                        </div>
+                                        <p className="text-[9.5px] text-slate-400 mt-2 italic">
+                                            El icono mantendrá este tamaño fijo. Si el conjunto no cabe en el recuadro, verás una alerta de desbordamiento.
                                         </p>
                                     </div>
                                 </div>

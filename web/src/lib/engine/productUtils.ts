@@ -61,9 +61,32 @@ export function enrichProductDataWithIcons(product: any, assetMap: Record<string
         ? (assetMap['Icono RH Fijo'] || assetMap['sys_icon_rh'] || null)
         : null;
 
-    // Future icons follow the same pattern:
-    // enriched.icon_soft_close_url = hasSoftClose ? assetMap['Icono Cierre Lento'] : null
-    // enriched.icon_edge_2mm_url   = hasEdge2mm   ? assetMap['Icono Canto 2mm']    : null
+    // --- Canto (Edge) Icon ---
+    // Source column: product.canto_puertas
+    const cantoValue = (product.canto_puertas || '').toString().toUpperCase().trim();
+    let isCanto = false;
+    let captionEs = '';
+    let captionEn = '';
+
+    if (cantoValue === 'CANTO 0.45 MM') {
+        isCanto = true;
+        captionEs = 'Canto 0.45 mm';
+        captionEn = 'Edge of 0.45 mm';
+    } else if (cantoValue === 'CANTO 1.5 MM') {
+        isCanto = true;
+        captionEs = 'Canto 1.5 mm';
+        captionEn = 'Edge of 1.5 mm';
+    } else if (cantoValue === 'CANTO 2 MM') {
+        isCanto = true;
+        captionEs = 'Canto 2 mm';
+        captionEn = 'Edge of 2 mm';
+    }
+
+    enriched.icon_canto_url = isCanto
+        ? (assetMap['Icono Canto'] || assetMap['sys_icon_canto'] || null)
+        : null;
+    enriched.icon_canto_caption_es = isCanto ? captionEs : '';
+    enriched.icon_canto_caption_en = isCanto ? captionEn : '';
 
     return enriched;
 }

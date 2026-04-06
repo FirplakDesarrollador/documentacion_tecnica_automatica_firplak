@@ -116,7 +116,7 @@ export async function deleteAssetAction(assetId: string) {
         'Logo Empresa Pordefecto',
         'Isométrico (Placeholder)',
         'Icono RH Fijo',
-        'Icono Canto 2mm',
+        'Icono Canto',
         'Icono Cierre Lento',
         'Icono Extensión Total',
         'Icono CARB2',

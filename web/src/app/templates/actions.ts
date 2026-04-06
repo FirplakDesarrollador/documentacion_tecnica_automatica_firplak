@@ -54,6 +54,7 @@ export async function getPreviewProduct() {
             FROM public.cabinet_products p
             LEFT JOIN public.colors c ON p.color_code = c.code_4dig
             WHERE p.final_name_es IS NOT NULL
+              AND p.status != 'INACTIVO'
             ORDER BY p.updated_at DESC
             LIMIT 50
         `)
@@ -104,6 +105,7 @@ export async function getRandomPreviewProduct(excludeCode?: string) {
             FROM public.cabinet_products p
             LEFT JOIN public.colors c ON p.color_code = c.code_4dig
             WHERE p.final_name_es IS NOT NULL
+              AND p.status != 'INACTIVO'
             ${excludeClause}
             ORDER BY RANDOM()
             LIMIT 1
@@ -116,6 +118,7 @@ export async function getRandomPreviewProduct(excludeCode?: string) {
                 FROM public.cabinet_products p
                 LEFT JOIN public.colors c ON p.color_code = c.code_4dig
                 WHERE p.final_name_es IS NOT NULL
+                  AND p.status != 'INACTIVO'
                 ORDER BY RANDOM()
                 LIMIT 1
             `)

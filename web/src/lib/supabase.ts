@@ -12,9 +12,9 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 // Singleton para server-side (evita múltiples instancias en HMR)
 const globalForSupabase = globalThis as unknown as { _supabaseServer: ReturnType<typeof createClient> }
 
-const supabaseServer = globalForSupabase._supabaseServer || createClient(
+export const supabaseServer = globalForSupabase._supabaseServer || createClient(
     supabaseUrl,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY || supabaseAnonKey,
+    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY || supabaseAnonKey,
     { auth: { persistSession: false, autoRefreshToken: false } }
 )
 if (process.env.NODE_ENV !== 'production') globalForSupabase._supabaseServer = supabaseServer

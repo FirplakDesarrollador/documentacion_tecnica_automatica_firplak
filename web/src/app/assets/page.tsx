@@ -24,7 +24,7 @@ export default async function AssetsPage() {
         'Logo Empresa Pordefecto',
         'Isométrico (Placeholder)',
         'Icono RH Fijo',
-        'Icono Canto 2mm',
+        'Icono Canto',
         'Icono Cierre Lento',
         'Icono Extensión Total',
         { name: 'Icono CARB2', type: 'image' },
