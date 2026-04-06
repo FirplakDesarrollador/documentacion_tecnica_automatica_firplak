@@ -43,6 +43,13 @@ export async function resolveTemplateAssets(elements: any[], product: any, asset
 
             return { ...el, resolvedSrc: ensureAbsolute(finalSrc) }
         }
+
+        // dynamic_image: resolve icon URL from enriched product data (e.g. icon_rh_url)
+        if (el.type === 'dynamic_image') {
+            const iconUrl = el.dataField ? (product[`${el.dataField}_url`] || null) : null
+            return { ...el, resolvedSrc: iconUrl ? ensureAbsolute(iconUrl) : null }
+        }
+
         return el
     })
 }
@@ -96,8 +103,27 @@ export function generateExportHtml(
         if (el.type === 'image') {
             const src = el.resolvedSrc || ''
             if (!src) return `<div class="el" style="${style};border:1px dashed #ccc;color:#ccc;font-size:10px;">[Imagen no disponible]</div>`
-            // Asegurar que la URL sea absoluta si viene de storage local (esto depende de la config de Supabase)
             return `<div class="el" style="${style}"><img src="${src}" style="width:100%;height:100%;object-fit:contain;" /></div>`
+        }
+
+        // dynamic_image: conditional icon with optional caption
+        // If icon doesn't apply for this product (resolvedSrc is null), render nothing (no gap)
+        if (el.type === 'dynamic_image') {
+            const src = el.resolvedSrc || null
+            if (!src) return '' // Icon doesn't apply — render empty string (no element in PDF)
+            const rawCaption = el.caption || ''
+            // Support both HTML captions (from CaptionEditor) and plain text with \n (legacy)
+            const captionHtml = rawCaption.includes('<')
+                ? rawCaption
+                : rawCaption.replace(/\n/g, '<br/>')
+            // All typography (size, weight, line-height, alignment) is embedded in the HTML
+            const captionBlock = captionHtml.trim()
+                ? `<div style="width:100%;">${captionHtml}</div>`
+                : ''
+            return `<div class="el" style="${style};flex-direction:column;align-items:center;justify-content:flex-end;padding:1px;">` +
+                `<img src="${src}" style="flex:1;max-width:100%;object-fit:contain;" />` +
+                `${captionBlock}` +
+                `</div>`
         }
 
         // Para texto y dynamic_text

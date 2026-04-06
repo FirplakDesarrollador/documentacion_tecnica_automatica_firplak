@@ -4,7 +4,7 @@
 > **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estratégico y operativo necesario para navegar y construir eficientemente en este proyecto.
 
 ## 📌 Visión General
-Se logran mejorar aspectos del modulo de edición de plantillas que permitieron diagramar y adicionar las medidas y pesos del mueble dentro de la etiqueta, así mismo con las mejoras se logra una mejor diagramación y previsualización de la etiqueta.
+Se implementa el sistema de Iconos Dinámicos y Condicionales (ej. RH, Canto 2mm) con lógica de enriquecimiento automático en `productUtils.ts`. Se mejoró el **CaptionEditor** permitiendo formato HTML avanzado (Tamaño, Peso, Alineación) en las etiquetas de los iconos y optimizando el renderizado selectivo de imágenes en la exportación (PDF/JPG) para evitar elementos vacíos cuando el atributo no aplica al producto.
 
 ## 🏗️ Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:

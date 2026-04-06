@@ -5,16 +5,17 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { PlusCircle, Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Bold, Italic, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, AlignVerticalJustifyEnd, AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Undo2, Redo2, Copy, Trash2, Settings, BookOpen } from 'lucide-react'
+import { PlusCircle, Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Bold, Italic, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, AlignVerticalJustifyEnd, AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Undo2, Redo2, Copy, Trash2, Settings, BookOpen, Shuffle } from 'lucide-react'
 import { toast } from 'sonner'
-import { updateTemplate, getPreviewProduct } from '@/app/templates/actions'
+import { updateTemplate, getPreviewProduct, getRandomPreviewProduct } from '@/app/templates/actions'
+import { resolveAssetsAction } from '@/app/generate/actions'
 import { useRouter } from 'next/navigation'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
-import { enrichProductData } from '@/lib/engine/productUtils'
+import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 
-export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'box' | 'dashed_line'
+export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'box' | 'dashed_line' | 'dynamic_image'
 
 export interface TemplateElement {
     id: string
@@ -37,6 +38,10 @@ export interface TemplateElement {
     lineHeight?: number
     letterSpacing?: number
     textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize' | 'sentence'
+    // dynamic_image specific fields
+    caption?: string                                      // Free text displayed below the icon (supports \n for line breaks)
+    captionFontSize?: number                             // pt, default 6.5
+    captionTextAlign?: 'left' | 'center' | 'right'      // default 'center'
 }
 
 const PIXELS_PER_MM = 4
@@ -793,13 +798,7 @@ function RichTextEditor({ content, onChange }: { content: string, onChange: (val
                         <option value="weight_lb">Peso (lb)</option>
                         <option value="line">Línea</option>
                     </optgroup>
-                    <optgroup label="Iconos Condicionales">
-                        <option value="icon_rh">Icono RH</option>
-                        <option value="icon_edge_2mm">Icono Canto 2mm</option>
-                        <option value="icon_soft_close">Icono Cierre Lento</option>
-                        <option value="icon_full_extension">Icono Extensión Total</option>
-                        <option value="icon_carb2">Icono CARB2</option>
-                    </optgroup>
+                    {/* NOTE: Icon variables removed from text — use 'Icono Variable' element type instead */}
                 </select>
             </div>
             <div
@@ -811,6 +810,433 @@ function RichTextEditor({ content, onChange }: { content: string, onChange: (val
                 onFocus={saveSelection}
                 onBlur={saveSelection}
                 className="min-h-[80px] p-2 text-sm outline-none"
+                style={{ direction: 'ltr', whiteSpace: 'pre-wrap' }}
+            />
+        </div>
+    )
+}
+
+/**
+ * CaptionEditor — mini rich-text editor scoped to dynamic_image captions.
+ * Same toolbar as RichTextEditor (Bold, Italic, Weight, Size, Line Height)
+ * but without the variable insertion selector.
+ * Backward-compatible: if caption is plain text with \n it converts to <br> on mount.
+ */
+function CaptionEditor({ content, onChange }: { content: string, onChange: (val: string) => void }) {
+    const editorRef = useRef<HTMLDivElement>(null);
+    const lastRangeRef = useRef<Range | null>(null);
+    const inputRef = useRef<HTMLInputElement>(null);
+    const lineHeightRef = useRef<HTMLInputElement>(null);
+    const letterSpacingRef = useRef<HTMLInputElement>(null);
+    const [isInputFocused, setIsInputFocused] = useState(false);
+    const [currentWeight, setCurrentWeight] = useState('normal');
+    const initialized = useRef(false);
+
+    // On mount: load content, converting plain text (\n) to HTML (<br>) for backward compat
+    useEffect(() => {
+        if (editorRef.current && !initialized.current) {
+            initialized.current = true;
+            const html = content.includes('<')
+                ? content                        // Already HTML — load as-is
+                : content.replace(/\n/g, '<br>') // Plain text — convert newlines
+            editorRef.current.innerHTML = html;
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // When content changes from outside (e.g. switching selected element)
+    useEffect(() => {
+        if (editorRef.current) {
+            const html = content.includes('<') ? content : content.replace(/\n/g, '<br>')
+            if (editorRef.current.innerHTML !== html) {
+                editorRef.current.innerHTML = html;
+                initialized.current = true;
+            }
+        }
+    }, [content]);
+
+    // Sync toolbar state with selection
+    useEffect(() => {
+        const handleSelectionChange = () => {
+            if (editorRef.current && window.getSelection()?.rangeCount && editorRef.current.contains(window.getSelection()?.anchorNode || null)) {
+                const selection = window.getSelection();
+                if (!selection || selection.rangeCount === 0) return;
+                let node = selection.anchorNode;
+                if (node?.nodeType === 3) node = node.parentNode;
+                const element = node as HTMLElement;
+                const style = window.getComputedStyle(element);
+
+                if (!isInputFocused && inputRef.current) {
+                    const currentPx = parseFloat(style.fontSize);
+                    const currentPt = Math.round(currentPx * 0.75 * 2) / 2;
+                    inputRef.current.value = currentPt.toString();
+                }
+                if (lineHeightRef.current && document.activeElement !== lineHeightRef.current) {
+                    const lh = style.lineHeight;
+                    if (lh === 'normal') lineHeightRef.current.value = '1.2';
+                    else if (lh.includes('px')) lineHeightRef.current.value = (Math.round((parseFloat(lh) / parseFloat(style.fontSize)) * 10) / 10).toString();
+                    else lineHeightRef.current.value = (Math.round(parseFloat(lh) * 10) / 10).toString();
+                }
+                if (letterSpacingRef.current && document.activeElement !== letterSpacingRef.current) {
+                    const ls = style.letterSpacing;
+                    if (ls === 'normal' || ls === '0px') {
+                        letterSpacingRef.current.value = '0';
+                    } else {
+                        const px = parseFloat(ls);
+                        const fs = parseFloat(style.fontSize);
+                        letterSpacingRef.current.value = (!isNaN(px) && !isNaN(fs) && fs > 0)
+                            ? (Math.round((px / fs) * 100) / 100).toString()
+                            : '0';
+                    }
+                }
+                const weight = style.fontWeight;
+                if (weight === '400' || weight === 'normal') setCurrentWeight('normal');
+                else if (weight === '500') setCurrentWeight('500');
+                else if (parseInt(weight) >= 600 || weight === 'bold') setCurrentWeight('bold');
+            }
+        };
+        document.addEventListener('selectionchange', handleSelectionChange);
+        return () => document.removeEventListener('selectionchange', handleSelectionChange);
+    }, [isInputFocused]);
+
+    const execCommand = (command: string, e: React.MouseEvent) => {
+        e.preventDefault();
+        document.execCommand(command, false, undefined);
+        editorRef.current?.focus();
+        if (editorRef.current) onChange(editorRef.current.innerHTML);
+    };
+
+    const handleInput = () => {
+        if (editorRef.current) onChange(editorRef.current.innerHTML);
+    };
+
+    const applySize = (newSize: number) => {
+        editorRef.current?.focus();
+        const existing = editorRef.current?.querySelectorAll('font, span') || [];
+        existing.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
+        document.execCommand('styleWithCSS', false, 'true');
+        document.execCommand('fontSize', false, '7');
+        if (editorRef.current) {
+            editorRef.current.querySelectorAll('font, span').forEach(el => {
+                const h = el as HTMLElement;
+                if (!h.hasAttribute('data-pre-existing') || h.getAttribute('size') === '7' || h.style.fontSize === 'xxx-large') {
+                    h.style.fontSize = `${newSize}pt`;
+                    h.removeAttribute('size');
+                }
+            });
+            existing.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
+            onChange(editorRef.current.innerHTML);
+        }
+    };
+
+    const applyLineHeight = (newLh: number) => {
+        // Capture current font size BEFORE the execCommand marker changes anything
+        // This is the fix: without this, 'fontSize 7' leaves xxx-large (36pt) on the element
+        let savedFontSize = '6.5pt';
+        const selForSize = window.getSelection();
+        if (selForSize && selForSize.rangeCount > 0) {
+            let n = selForSize.anchorNode;
+            if (n?.nodeType === 3) n = n.parentNode;
+            savedFontSize = window.getComputedStyle(n as HTMLElement).fontSize;
+        }
+
+        editorRef.current?.focus();
+        document.execCommand('formatBlock', false, 'div');
+        const existing = editorRef.current?.querySelectorAll('font, span') || [];
+        existing.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
+        document.execCommand('styleWithCSS', false, 'true');
+        document.execCommand('fontSize', false, '7'); // marker — creates xxx-large temporarily
+        if (editorRef.current) {
+            editorRef.current.querySelectorAll('font, span').forEach(el => {
+                const h = el as HTMLElement;
+                if (!h.hasAttribute('data-pre-existing') || h.getAttribute('size') === '7' || h.style.fontSize === 'xxx-large') {
+                    const lhStr = (Math.round(newLh * 10) / 10).toString();
+                    h.style.lineHeight = lhStr;
+                    h.style.fontSize = savedFontSize; // FIX: restore original size
+                    h.removeAttribute('size');
+                    let p = h.parentElement;
+                    while (p && p !== editorRef.current) {
+                        const d = window.getComputedStyle(p).display;
+                        if (d === 'block' || p.tagName === 'DIV' || p.tagName === 'P') { p.style.lineHeight = lhStr; break; }
+                        p = p.parentElement;
+                    }
+                }
+            });
+            existing.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
+            onChange(editorRef.current.innerHTML);
+        }
+    };
+
+    const getSelectionLh = () => {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return 1.2;
+        let node = selection.anchorNode;
+        if (node?.nodeType === 3) node = node.parentNode;
+        const style = window.getComputedStyle(node as HTMLElement);
+        const lh = style.lineHeight;
+        if (lh === 'normal') return 1.2;
+        if (lh.includes('px')) return parseFloat(lh) / parseFloat(style.fontSize);
+        return parseFloat(lh) || 1.2;
+    };
+
+    const getSelectionLs = () => {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return 0;
+        let node = selection.anchorNode;
+        if (node?.nodeType === 3) node = node.parentNode;
+        let block = node as HTMLElement;
+        
+        // 1. Try to read our custom attribute first (maximum precision)
+        while (block && block !== editorRef.current) {
+            const saved = block.getAttribute('data-ls');
+            if (saved !== null) return parseFloat(saved);
+            const d = window.getComputedStyle(block).display;
+            if (d === 'block' || block.tagName === 'DIV' || block.tagName === 'P') break;
+            block = block.parentElement as HTMLElement;
+        }
+
+        // 2. Fallback to computed style
+        if (!block) return 0;
+        const style = window.getComputedStyle(block);
+        const ls = style.letterSpacing;
+        if (ls === 'normal' || ls === '0px') return 0;
+        const px = parseFloat(ls);
+        const fs = parseFloat(style.fontSize);
+        return (!isNaN(px) && !isNaN(fs) && fs > 0) ? Math.round((px / fs) * 100) / 100 : 0;
+    };
+
+    /**
+     * Apply letter-spacing (in em) to the nearest block ancestor.
+     */
+    const applyLetterSpacing = (lsEm: number) => {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return;
+        
+        let node = selection.anchorNode;
+        if (node?.nodeType === 3) node = node.parentNode;
+        let block = node as HTMLElement;
+        
+        // Find or create block
+        let targetBlock: HTMLElement | null = null;
+        while (block && block !== editorRef.current) {
+            const d = window.getComputedStyle(block).display;
+            if (d === 'block' || block.tagName === 'DIV' || block.tagName === 'P') {
+                targetBlock = block;
+                break;
+            }
+            block = block.parentElement as HTMLElement;
+        }
+
+        if (!targetBlock && editorRef.current) {
+            // No block found? Create one using the selection range contents
+            document.execCommand('formatBlock', false, 'div');
+            // Re-find it
+            const newSel = window.getSelection();
+            let n = newSel?.anchorNode;
+            if (n?.nodeType === 3) n = n.parentNode;
+            targetBlock = n as HTMLElement;
+        }
+
+        if (targetBlock) {
+            if (lsEm === 0) {
+                targetBlock.style.letterSpacing = '';
+                targetBlock.removeAttribute('data-ls');
+            } else {
+                targetBlock.style.letterSpacing = `${lsEm}em`;
+                targetBlock.setAttribute('data-ls', lsEm.toString());
+            }
+        }
+        
+        if (editorRef.current) onChange(editorRef.current.innerHTML);
+    };
+
+    const getSelectionSize = () => {
+        if (inputRef.current && inputRef.current.value) return parseFloat(inputRef.current.value);
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return 6.5;
+        let node = selection.anchorNode;
+        if (node?.nodeType === 3) node = node.parentNode;
+        return Math.round(parseFloat(window.getComputedStyle(node as HTMLElement).fontSize) * 0.75 * 2) / 2;
+    };
+
+    return (
+        <div className="flex flex-col border border-input rounded-md overflow-hidden bg-white focus-within:ring-1 focus-within:ring-ring">
+            {/* Toolbar */}
+            <div className="flex flex-wrap bg-slate-50 border-b p-1 gap-1 items-center">
+                <Button variant="ghost" size="icon-sm" className="h-6 w-6" onMouseDown={(e) => execCommand('bold', e)} title="Negrita"><b>B</b></Button>
+                <Button variant="ghost" size="icon-sm" className="h-6 w-6" onMouseDown={(e) => execCommand('italic', e)} title="Cursiva"><i>I</i></Button>
+                <Button variant="ghost" size="icon-sm" className="h-6 w-6" onMouseDown={(e) => execCommand('removeFormat', e)} title="Borrar Formato"><Trash2 className="h-3 w-3 text-slate-400" /></Button>
+
+                <div className="h-4 w-px bg-slate-300 mx-1" />
+
+                {/* Font Weight */}
+                <select
+                    className="h-6 text-[10px] rounded border bg-white px-1 outline-none font-medium"
+                    value={currentWeight}
+                    onChange={(e) => {
+                        const weight = e.target.value;
+                        const selection = window.getSelection();
+                        if (!selection || selection.rangeCount === 0) return;
+                        let node = selection.anchorNode;
+                        if (node?.nodeType === 3) node = node.parentNode;
+                        const currentFontSize = window.getComputedStyle(node as HTMLElement).fontSize;
+                        editorRef.current?.focus();
+                        const existing = editorRef.current?.querySelectorAll('font, span') || [];
+                        existing.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
+                        document.execCommand('styleWithCSS', false, 'true');
+                        document.execCommand('fontSize', false, '7');
+                        if (editorRef.current) {
+                            editorRef.current.querySelectorAll('font, span').forEach(el => {
+                                const h = el as HTMLElement;
+                                if (!h.hasAttribute('data-pre-existing') || h.getAttribute('size') === '7' || h.style.fontSize === 'xxx-large') {
+                                    h.style.fontWeight = weight;
+                                    h.style.fontSize = currentFontSize;
+                                    h.removeAttribute('size');
+                                }
+                            });
+                            existing.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
+                            setCurrentWeight(weight);
+                            onChange(editorRef.current.innerHTML);
+                        }
+                    }}
+                >
+                    <option value="normal">Normal</option>
+                    <option value="500">SemiB</option>
+                    <option value="bold">Bold</option>
+                </select>
+
+                <div className="h-4 w-px bg-slate-300 mx-1" />
+
+                {/* Font Size stepper */}
+                <div className="flex items-center bg-white border rounded">
+                    <Button variant="ghost" size="icon-sm" className="h-6 w-6 rounded-none border-r"
+                        onMouseDown={(e) => {
+                            e.preventDefault();
+                            const adjust = (v: number) => { const s = Math.max(5, Math.min(72, getSelectionSize() + v)); if (inputRef.current) inputRef.current.value = s.toString(); applySize(s); };
+                            adjust(-0.5);
+                            const iv = setInterval(() => adjust(-0.5), 150);
+                            const stop = () => { clearInterval(iv); window.removeEventListener('mouseup', stop); };
+                            window.addEventListener('mouseup', stop);
+                        }}
+                    >-</Button>
+                    <input ref={inputRef} type="text" className="h-6 w-10 text-[10px] text-center outline-none bg-transparent" placeholder="pt"
+                        onFocus={() => setIsInputFocused(true)}
+                        onBlur={(e) => { setIsInputFocused(false); const v = parseFloat(e.target.value); if (!isNaN(v)) applySize(v); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                    />
+                    <Button variant="ghost" size="icon-sm" className="h-6 w-6 rounded-none border-l"
+                        onMouseDown={(e) => {
+                            e.preventDefault();
+                            const adjust = (v: number) => { const s = Math.max(5, Math.min(72, getSelectionSize() + v)); if (inputRef.current) inputRef.current.value = s.toString(); applySize(s); };
+                            adjust(0.5);
+                            const iv = setInterval(() => adjust(0.5), 150);
+                            const stop = () => { clearInterval(iv); window.removeEventListener('mouseup', stop); };
+                            window.addEventListener('mouseup', stop);
+                        }}
+                    >+</Button>
+                </div>
+
+                <div className="h-4 w-px bg-slate-300 mx-1" />
+
+                {/* Line Height stepper */}
+                <div className="flex items-center bg-white border rounded">
+                    <Button variant="ghost" size="icon-sm" className="h-6 w-6 rounded-none border-r"
+                        onMouseDown={(e) => {
+                            e.preventDefault();
+                            const adjust = (v: number) => { document.execCommand('formatBlock', false, 'div'); const lh = Math.max(0.5, Math.min(3.0, getSelectionLh() + v)); if (lineHeightRef.current) lineHeightRef.current.value = (Math.round(lh * 10) / 10).toString(); applyLineHeight(lh); };
+                            adjust(-0.1);
+                            const iv = setInterval(() => adjust(-0.1), 150);
+                            const stop = () => { clearInterval(iv); window.removeEventListener('mouseup', stop); };
+                            window.addEventListener('mouseup', stop);
+                        }}
+                    >-</Button>
+                    <input ref={lineHeightRef} type="text" className="h-6 w-8 text-[10px] text-center outline-none bg-transparent" placeholder="1.2"
+                        onFocus={() => setIsInputFocused(true)}
+                        onBlur={(e) => { setIsInputFocused(false); const v = parseFloat(e.target.value); if (!isNaN(v)) applyLineHeight(v); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                    />
+                    <Button variant="ghost" size="icon-sm" className="h-6 w-6 rounded-none border-l"
+                        onMouseDown={(e) => {
+                            e.preventDefault();
+                            const adjust = (v: number) => { document.execCommand('formatBlock', false, 'div'); const lh = Math.max(0.5, Math.min(3.0, getSelectionLh() + v)); if (lineHeightRef.current) lineHeightRef.current.value = (Math.round(lh * 10) / 10).toString(); applyLineHeight(lh); };
+                            adjust(0.1);
+                            const iv = setInterval(() => adjust(0.1), 150);
+                            const stop = () => { clearInterval(iv); window.removeEventListener('mouseup', stop); };
+                            window.addEventListener('mouseup', stop);
+                        }}
+                    >+</Button>
+                </div>
+
+                <div className="h-4 w-px bg-slate-300 mx-1" />
+
+                {/* Alignment — fully local, inside the HTML */}
+                <Button variant="ghost" size="icon-sm" className="h-6 w-6" onMouseDown={(e) => execCommand('justifyLeft', e)} title="Alinear izquierda"><AlignLeft className="h-3 w-3" /></Button>
+                <Button variant="ghost" size="icon-sm" className="h-6 w-6" onMouseDown={(e) => execCommand('justifyCenter', e)} title="Centrar"><AlignCenter className="h-3 w-3" /></Button>
+                <Button variant="ghost" size="icon-sm" className="h-6 w-6" onMouseDown={(e) => execCommand('justifyRight', e)} title="Alinear derecha"><AlignRight className="h-3 w-3" /></Button>
+
+                <div className="h-4 w-px bg-slate-300 mx-1" />
+
+                {/* Letter Spacing (Kerning) stepper — applied at block level, no font-size side effects */}
+                <span className="text-[9px] text-slate-400 font-medium select-none">LS</span>
+                <div className="flex items-center bg-white border rounded">
+                    <Button variant="ghost" size="icon-sm" className="h-6 w-6 rounded-none border-r"
+                        onMouseDown={(e) => {
+                            e.preventDefault();
+                            editorRef.current?.focus();
+                            
+                            let startVal = getSelectionLs();
+                            const adjust = (v: number) => {
+                                startVal = Math.round((startVal + v) * 100) / 100;
+                                if (letterSpacingRef.current) letterSpacingRef.current.value = startVal.toString();
+                                applyLetterSpacing(startVal);
+                            };
+                            
+                            adjust(-0.01);
+                            const iv = setInterval(() => adjust(-0.01), 100);
+                            const stop = () => { clearInterval(iv); window.removeEventListener('mouseup', stop); };
+                            window.addEventListener('mouseup', stop);
+                        }}
+                    >-</Button>
+                    <input
+                        ref={letterSpacingRef}
+                        type="text"
+                        className="h-6 w-10 text-[10px] text-center outline-none bg-transparent"
+                        placeholder="0em"
+                        onFocus={() => setIsInputFocused(true)}
+                        onBlur={(e) => {
+                            setIsInputFocused(false);
+                            const v = parseFloat(e.target.value);
+                            if (!isNaN(v)) applyLetterSpacing(v);
+                        }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                    />
+                    <Button variant="ghost" size="icon-sm" className="h-6 w-6 rounded-none border-l"
+                        onMouseDown={(e) => {
+                            e.preventDefault();
+                            editorRef.current?.focus();
+                            
+                            let startVal = getSelectionLs();
+                            const adjust = (v: number) => {
+                                startVal = Math.round((startVal + v) * 100) / 100;
+                                if (letterSpacingRef.current) letterSpacingRef.current.value = startVal.toString();
+                                applyLetterSpacing(startVal);
+                            };
+                            
+                            adjust(0.01);
+                            const iv = setInterval(() => adjust(0.01), 100);
+                            const stop = () => { clearInterval(iv); window.removeEventListener('mouseup', stop); };
+                            window.addEventListener('mouseup', stop);
+                        }}
+                    >+</Button>
+                </div>
+            </div>
+
+            {/* Editable area */}
+            <div
+                ref={editorRef}
+                contentEditable
+                onInput={handleInput}
+                className="min-h-[60px] p-2 text-[8pt] outline-none leading-snug"
                 style={{ direction: 'ltr', whiteSpace: 'pre-wrap' }}
             />
         </div>
@@ -854,6 +1280,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
     const [resizingElementId, setResizingElementId] = useState<string | null>(null)
 
     const [isPreviewMode, setIsPreviewMode] = useState(false)
+    const [isLoadingRandom, setIsLoadingRandom] = useState(false)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [previewData, setPreviewData] = useState<any>(null)
 
@@ -1130,10 +1557,29 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
         if (!isPreviewMode) {
             if (!previewData) {
                 const data = await getPreviewProduct()
-                setPreviewData(enrichProductData(data))
+                // Resolve system asset URLs (icons, logos) and enrich product data with icon fields
+                const assetMap = await resolveAssetsAction([])
+                setPreviewData(enrichProductDataWithIcons(data, assetMap))
             }
         }
         setIsPreviewMode(!isPreviewMode)
+    }
+
+    const handleRandomPreview = async () => {
+        setIsLoadingRandom(true)
+        try {
+            // Pass current product code so the server excludes it (avoids same product twice)
+            const data = await getRandomPreviewProduct(previewData?.code)
+            if (data) {
+                const assetMap = await resolveAssetsAction([])
+                setPreviewData(enrichProductDataWithIcons(data, assetMap))
+                if (!isPreviewMode) setIsPreviewMode(true)
+            } else {
+                toast('No se encontraron más productos')
+            }
+        } finally {
+            setIsLoadingRandom(false)
+        }
     }
 
     const addElement = (type: TemplateElementType) => {
@@ -1161,6 +1607,15 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
             newEl.content = 'Logo Firplak general'
             newEl.width = 150
             newEl.height = 50
+        }
+
+        if (type === 'dynamic_image') {
+            newEl.dataField = 'icon_rh'
+            newEl.caption = 'Resistente a la humedad\nMoisture resistance'
+            newEl.width = 44    // ~11 mm
+            newEl.height = 52   // ~13 mm — enough for icon + two-line caption
+            newEl.captionFontSize = 6.5
+            newEl.captionTextAlign = 'center'
         }
 
         commitHistory([...elements, newEl])
@@ -1426,6 +1881,9 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                         <Button variant="outline" size="sm" onClick={() => addElement('image')}>
                             <ImageIcon className="h-4 w-4 mr-2" /> Imagen/Logo
                         </Button>
+                        <Button variant="outline" size="sm" onClick={() => addElement('dynamic_image')} title="Icono condicional que aparece o desaparece según el producto">
+                            <ImageIcon className="h-4 w-4 mr-2 text-indigo-500" /> Icono Variable
+                        </Button>
                         <Button variant="outline" size="sm" onClick={() => addElement('barcode')}>
                             ||| Barcode
                         </Button>
@@ -1483,6 +1941,21 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
 
                     </div>
                     <div className="flex gap-2 items-center">
+                        {isPreviewMode && (
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={handleRandomPreview}
+                                disabled={isLoadingRandom}
+                                title="Cargar un producto aleatorio en el preview"
+                                className="text-slate-500 hover:text-indigo-600 hover:bg-indigo-50"
+                            >
+                                {isLoadingRandom
+                                    ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    : <Shuffle className="mr-2 h-4 w-4" />}
+                                Aleatorio
+                            </Button>
+                        )}
                         <Button variant={isPreviewMode ? 'default' : 'secondary'} className={isPreviewMode ? 'bg-indigo-600 hover:bg-indigo-700' : ''} onClick={handleTogglePreview}>
                             {isPreviewMode ? <EyeOff className="mr-2 h-4 w-4" /> : <Eye className="mr-2 h-4 w-4" />}
                             {isPreviewMode ? 'Salir de Preview' : 'Live Preview'}
@@ -1574,6 +2047,49 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                             )}
                                         </div>
                                     )}
+
+                                    {/* Dynamic Image type — conditional icon with optional caption */}
+                                    {el.type === 'dynamic_image' && (() => {
+                                        if (!isPreviewMode) {
+                                            // Edit mode: always show a recognizable placeholder
+                                            return (
+                                                <div className="w-full h-full flex flex-col items-center justify-center gap-0.5 border-2 border-dashed border-indigo-300 bg-indigo-50/40 rounded overflow-hidden pointer-events-none">
+                                                    <ImageIcon className="h-4 w-4 text-indigo-400 shrink-0" />
+                                                    <span className="text-[8px] text-indigo-600 font-bold text-center px-1 leading-tight tracking-tight">
+                                                        {el.dataField || 'icono'}
+                                                    </span>
+                                                </div>
+                                            )
+                                        }
+                                        // Preview mode: check if icon applies for this product
+                                        const iconUrl = previewData?.[`${el.dataField}_url`]
+                                        if (!iconUrl) {
+                                            // Icon doesn't apply — render empty translucent placeholder (no [VACIO])
+                                            return (
+                                                <div className="w-full h-full border border-dashed border-slate-200 rounded opacity-30 pointer-events-none" />
+                                            )
+                                        }
+                                        const rawCaption = el.caption || ''
+                                        const captionIsHtml = rawCaption.includes('<')
+                                        const captionHtml = captionIsHtml
+                                            ? rawCaption
+                                            : rawCaption.replace(/\n/g, '<br>')
+                                        return (
+                                            <div className="w-full h-full flex flex-col items-center justify-end overflow-hidden pointer-events-none p-px">
+                                                <img
+                                                    src={iconUrl}
+                                                    className="flex-1 max-w-full object-contain min-h-0"
+                                                    alt={el.dataField}
+                                                />
+                                                {rawCaption.trim() && (
+                                                    <div
+                                                        style={{ width: '100%' }}
+                                                        dangerouslySetInnerHTML={{ __html: captionHtml }}
+                                                    />
+                                                )}
+                                            </div>
+                                        )
+                                    })()}
 
                                     {/* Barcode type */}
                                     {el.type === 'barcode' && (
@@ -1667,12 +2183,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                         <option value="depth_in">Fondo (in)</option>
                                         <option value="height_in">Alto (in)</option>
                                         <option value="weight_lb">Peso (lb)</option>
-                                        <optgroup label="Iconos Dinámicos">
-                                            <option value="icon_rh">Icono RH</option>
-                                            <option value="icon_edge_2mm">Icono Canto</option>
-                                            <option value="icon_soft_close">Icono Cierre</option>
-                                            <option value="icon_full_extension">Icono Extensión</option>
-                                        </optgroup>
+                                        {/* NOTE: Icon data fields removed — use 'Icono Variable' element type instead */}
                                     </select>
                                 </div>
                             )}
@@ -1731,6 +2242,37 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                             </optgroup>
                                         )}
                                     </select>
+                                </div>
+                            )}
+
+                            {/* dynamic_image properties */}
+                            {activeEl.type === 'dynamic_image' && (
+                                <div className="space-y-3">
+                                    <div>
+                                        <Label className="text-xs text-slate-700 font-semibold mb-1 block">Icono Condicional</Label>
+                                        <select
+                                            className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                            value={activeEl.dataField || 'icon_rh'}
+                                            onChange={(e) => updateSelectedElements({ dataField: e.target.value })}
+                                        >
+                                            <option value="icon_rh">Icono RH — Resistente a la Humedad</option>
+                                            {/* Additional icons will be added here in future phases */}
+                                        </select>
+                                        <p className="text-[10px] text-slate-400 mt-1">
+                                            El icono aparece o desaparece automáticamente según el producto. La imagen se toma del sistema de Recursos.
+                                        </p>
+                                    </div>
+
+                                    <div>
+                                        <Label className="text-xs text-slate-700 font-semibold mb-1 block">Caption (texto debajo del icono)</Label>
+                                        <CaptionEditor
+                                            content={activeEl.caption || ''}
+                                            onChange={(val) => updateSelectedElements({ caption: val })}
+                                        />
+                                        <p className="text-[10px] text-slate-400 mt-1">
+                                            Selecciona texto para aplicar formato local: peso, tamaño, interlineado, alineación.
+                                        </p>
+                                    </div>
                                 </div>
                             )}
 

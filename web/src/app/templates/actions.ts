@@ -89,6 +89,48 @@ export async function getPreviewProduct() {
     }
 }
 
+/**
+ * Returns a random active product, optionally excluding the product currently in preview
+ * to avoid showing the same one twice in a row.
+ */
+export async function getRandomPreviewProduct(excludeCode?: string) {
+    try {
+        const excludeClause = excludeCode
+            ? `AND p.code != '${excludeCode.replace(/'/g, "''")}'`
+            : ''
+
+        const products = await dbQuery(`
+            SELECT p.*, c.name_color_sap
+            FROM public.cabinet_products p
+            LEFT JOIN public.colors c ON p.color_code = c.code_4dig
+            WHERE p.final_name_es IS NOT NULL
+            ${excludeClause}
+            ORDER BY RANDOM()
+            LIMIT 1
+        `)
+
+        if (!products || products.length === 0) {
+            // Fallback: retry without the exclusion (edge case: only 1 product in DB)
+            const fallback = await dbQuery(`
+                SELECT p.*, c.name_color_sap
+                FROM public.cabinet_products p
+                LEFT JOIN public.colors c ON p.color_code = c.code_4dig
+                WHERE p.final_name_es IS NOT NULL
+                ORDER BY RANDOM()
+                LIMIT 1
+            `)
+            if (!fallback || fallback.length === 0) return null
+            const p = fallback[0]
+            return { ...p, color: p.name_color_sap || p.color_code || 'Sin Color' }
+        }
+
+        const p = products[0]
+        return { ...p, color: p.name_color_sap || p.color_code || 'Sin Color' }
+    } catch (e) {
+        return null
+    }
+}
+
 export async function deleteTemplate(id: string) {
     try {
         await dbQuery(`DELETE FROM public.templates WHERE id='${id}'`)

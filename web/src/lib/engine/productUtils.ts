@@ -40,3 +40,30 @@ export function enrichProductData(product: any) {
         zone_home_en: zoneEn
     };
 }
+
+/**
+ * Extends product enrichment with conditional icon resolution.
+ * Derives whether each dynamic icon applies to this product and resolves its URL.
+ * Business logic lives here, not inside the template.
+ *
+ * @param product  - Raw product data (or already base-enriched)
+ * @param assetMap - Map of asset name/key → absolute file_path URL (from resolveAssetsAction)
+ */
+export function enrichProductDataWithIcons(product: any, assetMap: Record<string, string>) {
+    const enriched = enrichProductData(product);
+
+    // --- RH Icon ---
+    // Source column: product.rh
+    // Condition: show when rh === 'RH'; hide when 'NA' or empty
+    const rhValue = (product.rh || '').toString().toUpperCase().trim();
+    const isRH = rhValue === 'RH';
+    enriched.icon_rh_url = isRH
+        ? (assetMap['Icono RH Fijo'] || assetMap['sys_icon_rh'] || null)
+        : null;
+
+    // Future icons follow the same pattern:
+    // enriched.icon_soft_close_url = hasSoftClose ? assetMap['Icono Cierre Lento'] : null
+    // enriched.icon_edge_2mm_url   = hasEdge2mm   ? assetMap['Icono Canto 2mm']    : null
+
+    return enriched;
+}
