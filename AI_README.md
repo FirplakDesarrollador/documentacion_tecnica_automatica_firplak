@@ -4,7 +4,7 @@
 > **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estratégico y operativo necesario para navegar y construir eficientemente en este proyecto.
 
 ## 📌 Visión General
-Se ha consolidado de forma definitiva la arquitectura universal de Iconos Condicionales (RH, Canto, Bisagras, Riel) bajo un modelo Data-Driven con interpolación léxica (`{caption_es}`, `{caption_en}`). La base de datos fue refactorizada estructuralmente agregando y saneando columnas matriciales (ej. `bisagras` alimentada de `cabinet_name`). El procesamiento destructurado vive exclusivamente en `productUtils.ts` (`rail_mode`, preloads nulos), delegando variables limpias al renderizador `DynamicImageElement`. Esto elimina hardcodings en las plantillas, ocultando inteligentemente (sin bugs visuales) los recursos donde el atributo no aplica.
+Se ha consolidado el sistema `icon_group` (Contenedor Dinámico Condicional) basado en una arquitectura Padre-Hijo para agrupar variables gráficas (RH, Canto, Bisagras, Riel). El sistema delega la lógica y la interpolación léxica a la base de datos (`productUtils.ts`), encapsula los layouts usando Flexbox nativo en el Canvas y adapta el motor de exportación `exportUtils.ts` (Puppeteer). Esto garantiza un renderizado "Zero-Holes" y consistencia total al usar coalescencia nula, absorbiendo vacíos de elementos que no aplican e impidiendo huecos artificiales en la impresión al respetar explícitamente gaps visuales (gap mínima de 0).
 
 ## 🏗️ Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:

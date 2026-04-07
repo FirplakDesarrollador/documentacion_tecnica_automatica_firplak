@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { PlusCircle, Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Bold, Italic, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, AlignVerticalJustifyEnd, AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Undo2, Redo2, Copy, Trash2, Settings, BookOpen, Shuffle, RotateCcw } from 'lucide-react'
+import { PlusCircle, Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Bold, Italic, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, AlignVerticalJustifyEnd, AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Undo2, Redo2, Copy, Trash2, Settings, BookOpen, Shuffle, RotateCcw, LayoutGrid, Combine } from 'lucide-react'
 import { toast } from 'sonner'
 import { updateTemplate, getPreviewProduct, getRandomPreviewProduct } from '@/app/templates/actions'
 import { resolveAssetsAction } from '@/app/generate/actions'
@@ -15,7 +15,7 @@ import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 
-export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'box' | 'dashed_line' | 'dynamic_image'
+export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'box' | 'dashed_line' | 'dynamic_image' | 'icon_group'
 
 export interface TemplateElement {
     id: string
@@ -44,6 +44,12 @@ export interface TemplateElement {
     captionTextAlign?: 'left' | 'center' | 'right'      // default 'center'
     iconSizeMM?: number                                  // fixed size in mm (e.g. 15, 20)
     captionGapMM?: number                                // space between icon and caption in mm
+    
+    // icon_group specific fields
+    groupId?: string
+    groupGapMM?: number
+    groupAlign?: 'flex-start' | 'center' | 'flex-end' | 'space-between'
+    groupWrap?: boolean
 }
 
 const PIXELS_PER_MM = 4
@@ -226,6 +232,7 @@ function DynamicImageElement({
 
     const iconUrl = previewData?.[`${el.dataField}_url`]
     if (!iconUrl) {
+        if (el.groupId) return null; // Natural collapse inside flex groups
         return <div className="w-full h-full border border-dashed border-slate-200 rounded opacity-30 pointer-events-none" />
     }
 
@@ -1777,6 +1784,61 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
         })
     }, [selectedIds, commitHistory])
 
+    const groupElements = useCallback(() => {
+        const selectedEls = elements.filter(el => selectedIds.includes(el.id) && (el.type === 'image' || el.type === 'dynamic_image'));
+        if (selectedEls.length < 2) {
+            toast('Selecciona al menos 2 iconos/imágenes válidas para agrupar');
+            return;
+        }
+
+        const minX = Math.min(...selectedEls.map(e => e.x));
+        const minY = Math.min(...selectedEls.map(e => e.y));
+        const maxX = Math.max(...selectedEls.map(e => e.x + e.width));
+        const maxY = Math.max(...selectedEls.map(e => e.y + e.height));
+
+        const newId = crypto.randomUUID();
+        const newGroup: TemplateElement = {
+            id: newId,
+            type: 'icon_group',
+            x: minX,
+            y: minY,
+            width: maxX - minX,
+            height: maxY - minY,
+            groupGapMM: 2,
+            groupAlign: 'flex-start',
+            groupWrap: false
+        };
+
+        const newElements = elements.map(el => {
+            if (selectedIds.includes(el.id) && (el.type === 'image' || el.type === 'dynamic_image')) {
+                return { ...el, groupId: newId };
+            }
+            return el;
+        });
+
+        commitHistory([...newElements, newGroup]);
+        setSelectedIds([newId]);
+        toast('Elementos agrupados como fila condicional');
+    }, [elements, selectedIds, commitHistory]);
+
+    const ungroupElements = useCallback(() => {
+        if (selectedIds.length !== 1) return;
+        const groupEl = elements.find(el => el.id === selectedIds[0] && el.type === 'icon_group');
+        if (!groupEl) return;
+
+        const newElements = elements.filter(el => el.id !== groupEl.id).map(el => {
+            if (el.groupId === groupEl.id) {
+                const { groupId, ...rest } = el;
+                return rest;
+            }
+            return el;
+        });
+
+        commitHistory(newElements);
+        setSelectedIds([]);
+        toast('Grupo separado correctamente');
+    }, [elements, selectedIds, commitHistory]);
+
     // Keyboard shortcuts
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -2288,6 +2350,12 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
 
                         {selectedIds.length > 0 && (
                             <div className="flex ml-2 border-l pl-2 gap-1">
+                                {selectedIds.length > 1 && elements.filter(e => selectedIds.includes(e.id)).every(e => e.type === 'image' || e.type === 'dynamic_image') && (
+                                    <Button title="Agrupar Iconos (Group)" variant="ghost" size="icon-sm" onClick={groupElements}><LayoutGrid className="h-4 w-4 text-orange-600" /></Button>
+                                )}
+                                {selectedIds.length === 1 && elements.find(e => e.id === selectedIds[0])?.type === 'icon_group' && (
+                                    <Button title="Desagrupar (Ungroup)" variant="ghost" size="icon-sm" onClick={ungroupElements}><Combine className="h-4 w-4 text-orange-600" /></Button>
+                                )}
                                 <Button title="Duplicar (Ctrl+C & Ctrl+V)" variant="ghost" size="icon-sm" onClick={duplicateSelectedElements}><Copy className="h-4 w-4 text-green-600" /></Button>
                                 <Button title="Eliminar (Supr)" variant="ghost" size="icon-sm" onClick={removeSelectedElements}><Trash2 className="h-4 w-4 text-red-600" /></Button>
                             </div>
@@ -2356,14 +2424,76 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                         className="bg-white shadow-xl relative ring-1 ring-slate-200 shrink-0 origin-center select-none overflow-hidden"
                     >
                         {/* Render elements */}
-                        {elements?.map((el) => {
+                        {elements?.filter(e => !e.groupId).map((el) => {
                             const isSelected = selectedIds.includes(el.id);
+
+                            const renderElementInner = (childEl: TemplateElement) => (
+                                <>
+                                    {/* Dashed/Solid Line type */}
+                                    {childEl.type === 'dashed_line' && (
+                                        <div
+                                            className="w-full h-full border-gray-800"
+                                            style={{ borderBottomStyle: childEl.borderStyle || 'solid', borderBottomWidth: childEl.borderWidth || 2 }}
+                                        />
+                                    )}
+
+                                    {/* Image type */}
+                                    {childEl.type === 'image' && (
+                                        <div className="w-full h-full border-2 border-dashed border-gray-300 flex items-center justify-center bg-gray-50/50 overflow-hidden">
+                                            {isPreviewMode ? (
+                                                (() => {
+                                                    const systemAsset = assets.find(a => a.name === childEl.content);
+                                                    if (systemAsset && systemAsset.file_path) return <img src={systemAsset.file_path} className="max-w-full max-h-full object-contain pointer-events-none" />
+                                                    if (childEl.content === 'logo_empresa' || childEl.content === 'Logo Firplak general') {
+                                                        const logoAsset = assets.find(a => (a.name === 'Logo Firplak general') || (a.type === 'logo' && a.name.toLowerCase().includes('logo')));
+                                                        if (logoAsset && logoAsset.file_path) return <img src={logoAsset.file_path} className="max-w-full max-h-full object-contain pointer-events-none" />
+                                                        return <span className="text-gray-400 text-[10px] text-center">[Logo No Encontrado]</span>
+                                                    }
+                                                    if (childEl.content === 'Isométrico' || childEl.content === 'isometrico_placeholder' || childEl.content === 'Isométrico (Placeholder)') {
+                                                        if (previewData?.isometric_path) return <img src={previewData.isometric_path} className="max-w-full max-h-full object-contain pointer-events-none" />
+                                                        return <span className="text-red-500 text-[10px] font-bold text-center border border-red-200 bg-red-50 p-1 rounded">[FALTA ISOMÉTRICO]</span>
+                                                    }
+                                                    const asset = assets.find(a => a.id === childEl.content || a.name === childEl.content);
+                                                    if (asset && asset.file_path) return <img src={asset.file_path} className="max-w-full max-h-full object-contain pointer-events-none" />
+                                                    return <span className="text-gray-400 text-xs font-semibold pointer-events-none p-1 text-center bg-white/70 rounded">[{childEl.content}]</span>
+                                                })()
+                                            ) : <span className="text-gray-400 text-xs font-semibold pointer-events-none p-1 text-center bg-white/70 rounded">[{childEl.content}]</span>}
+                                        </div>
+                                    )}
+
+                                    {/* Dynamic Image type */}
+                                    {childEl.type === 'dynamic_image' && (
+                                        <DynamicImageElement 
+                                            el={childEl} 
+                                            isPreviewMode={isPreviewMode} 
+                                            previewData={enrichedData} 
+                                        />
+                                    )}
+
+                                    {/* Barcode type */}
+                                    {childEl.type === 'barcode' && (
+                                        <div className="w-full h-full bg-slate-800 pointer-events-none text-white text-xs flex items-center justify-center opacity-70 overflow-hidden">
+                                            ||| BARCODE {isPreviewMode && previewData && previewData[childEl.dataField || ''] ? `(${previewData[childEl.dataField || '']})` : ''} |||
+                                        </div>
+                                    )}
+
+                                    {/* Text types */}
+                                    {(childEl.type === 'dynamic_text' || childEl.type === 'text') && (
+                                        <OverflowText
+                                            {...childEl}
+                                            text={childEl.type === 'dynamic_text' ? `{${childEl.dataField}}` : (childEl.content || '')}
+                                            isPreviewMode={isPreviewMode}
+                                            previewData={previewData}
+                                        />
+                                    )}
+                                </>
+                            );
+
                             return (
                                 <div
                                     key={el.id}
                                     onMouseDown={(e) => handleMouseDownOnElement(e, el.id)}
-                                    className={`absolute flex items-center justify-center cursor-move ${isSelected ? 'ring-1 ring-blue-500 z-10' : 'hover:ring-1 hover:ring-blue-300 border border-transparent hover:border-dashed hover:border-gray-400'
-                                        }`}
+                                    className={`absolute flex items-center justify-center cursor-move shadow-sm ${isSelected ? 'ring-1 ring-blue-500 z-10' : 'hover:ring-1 hover:ring-blue-300 border border-transparent hover:border-dashed hover:border-gray-400'}`}
                                     style={{
                                         left: el.x,
                                         top: el.y,
@@ -2373,85 +2503,48 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                         fontWeight: el.fontWeight as 'normal' | 'bold' | '500',
                                         fontStyle: el.fontStyle,
                                         fontFamily: el.fontFamily === 'Montserrat' ? 'var(--font-montserrat), sans-serif' : 'inherit',
+                                        background: el.type === 'icon_group' ? (isPreviewMode ? 'transparent' : 'rgba(238, 242, 255, 0.4)') : undefined,
+                                        border: el.type === 'icon_group' && !isPreviewMode ? '1px dashed #818cf8' : undefined
                                     }}
                                 >
                                     {renderResizeHandles(el)}
+                                    {el.type === 'icon_group' && !isPreviewMode && elements.filter(c => c.groupId === el.id).length === 0 && (
+                                        <span className="text-indigo-400 text-[10px] absolute -top-4 pointer-events-none bg-white px-1 leading-none rounded">Grupo Vacío</span>
+                                    )}
 
-                                    {/* Dashed/Solid Line type */}
-                                    {el.type === 'dashed_line' && (
-                                        <div
-                                            className="w-full h-full border-gray-800"
+                                    {el.type === 'icon_group' ? (
+                                        <div 
+                                            className="w-full h-full flex overflow-hidden pointer-events-none p-1"
                                             style={{
-                                                borderBottomStyle: el.borderStyle || 'solid',
-                                                borderBottomWidth: el.borderWidth || 2
+                                                gap: `${el.groupGapMM ?? 2}mm`,
+                                                justifyContent: el.groupAlign || 'flex-start',
+                                                flexWrap: el.groupWrap ? 'wrap' : 'nowrap',
+                                                alignItems: 'center'
                                             }}
-                                        />
-                                    )}
+                                        >
+                                            {elements.filter(child => child.groupId === el.id).map(child => {
+                                                const isChildSelected = selectedIds.includes(child.id);
+                                                // Pre-calculate URL to force dropping non-rendered content in flex container correctly
+                                                const iconUrl = child.type === 'dynamic_image' && isPreviewMode ? enrichedData?.[`${child.dataField}_url`] : true;
+                                                if (!iconUrl) return null; // Complete flexbox collapse when no URL is verified
 
-                                    {/* Image type */}
-                                    {el.type === 'image' && (
-                                        <div className="w-full h-full border-2 border-dashed border-gray-300 flex items-center justify-center bg-gray-50/50 overflow-hidden">
-                                            {isPreviewMode ? (
-                                                (() => {
-                                                    // 1. Try to find by name in assets (System Defaults)
-                                                    const systemAsset = assets.find(a => a.name === el.content);
-                                                    if (systemAsset && systemAsset.file_path) {
-                                                        return <img src={systemAsset.file_path} className="max-w-full max-h-full object-contain pointer-events-none" />
-                                                    }
-
-                                                    // 2. Special case for legacy 'logo_empresa' or 'Logo Firplak general' if not found by name
-                                                    if (el.content === 'logo_empresa' || el.content === 'Logo Firplak general') {
-                                                        const logoAsset = assets.find(a => (a.name === 'Logo Firplak general') || (a.type === 'logo' && a.name.toLowerCase().includes('logo')));
-                                                        if (logoAsset && logoAsset.file_path) return <img src={logoAsset.file_path} className="max-w-full max-h-full object-contain pointer-events-none" />
-                                                        return <span className="text-gray-400 text-[10px] text-center">[Logo Empresa No Encontrado]</span>
-                                                    }
-
-                                                    // 3. Special case for Isometric (Always dynamic from product)
-                                                    if (el.content === 'Isométrico' || el.content === 'isometrico_placeholder' || el.content === 'Isométrico (Placeholder)') {
-                                                        if (previewData?.isometric_path) {
-                                                            return <img src={previewData.isometric_path} className="max-w-full max-h-full object-contain pointer-events-none" />
-                                                        }
-                                                        return <span className="text-red-500 text-[10px] font-bold text-center border border-red-200 bg-red-50 p-1 rounded">[FALTA ISOMÉTRICO]</span>
-                                                    }
-
-                                                    // 4. Try to find by direct ID or Name in assets (Fallback)
-                                                    const asset = assets.find(a => a.id === el.content || a.name === el.content);
-                                                    if (asset && asset.file_path) {
-                                                        return <img src={asset.file_path} className="max-w-full max-h-full object-contain pointer-events-none" />
-                                                    }
-
-                                                    return <span className="text-gray-400 text-xs font-semibold pointer-events-none p-1 text-center bg-white/70 rounded">[{el.content}]</span>
-                                                })()
-                                            ) : (
-                                                <span className="text-gray-400 text-xs font-semibold pointer-events-none p-1 text-center bg-white/70 rounded">[{el.content}]</span>
-                                            )}
+                                                return (
+                                                    <div 
+                                                        key={child.id}
+                                                        onMouseDown={(e) => handleMouseDownOnElement(e, child.id)}
+                                                        className={`relative flex items-center justify-center pointer-events-auto cursor-pointer shrink-0 ${isChildSelected ? 'ring-2 ring-indigo-500 z-10' : 'hover:ring-1 hover:ring-indigo-300'}`}
+                                                        style={{
+                                                            width: child.width,
+                                                            height: child.height 
+                                                        }}
+                                                    >
+                                                        {renderElementInner(child)}
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
-                                    )}
-
-                                    {/* Dynamic Image type — conditional icon with optional caption */}
-                                {el.type === 'dynamic_image' && (
-                                    <DynamicImageElement 
-                                        el={el} 
-                                        isPreviewMode={isPreviewMode} 
-                                        previewData={enrichedData} 
-                                    />
-                                )}
-
-                                    {/* Barcode type */}
-                                    {el.type === 'barcode' && (
-                                        <div className="w-full h-full bg-slate-800 pointer-events-none text-white text-xs flex items-center justify-center opacity-70 overflow-hidden">
-                                            ||| BARCODE {isPreviewMode && previewData && previewData[el.dataField || ''] ? `(${previewData[el.dataField || '']})` : ''} |||
-                                        </div>
-                                    )}
-
-                                    {/* Text types */}
-                                    {(el.type === 'dynamic_text' || el.type === 'text') && (
-                                        <OverflowText
-                                            {...el}
-                                            text={el.type === 'dynamic_text' ? `{${el.dataField}}` : (el.content || '')}
-                                            isPreviewMode={isPreviewMode}
-                                            previewData={previewData}
-                                        />
+                                    ) : (
+                                        renderElementInner(el)
                                     )}
                                 </div>
                             )
@@ -2496,6 +2589,44 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                     <Label htmlFor="required-toggle" className="text-xs font-bold text-slate-700 cursor-pointer">
                                         Campo Obligatorio (Bloquea Exportación si está vacío)
                                     </Label>
+                                </div>
+                            )}
+
+                            {activeEl.type === 'icon_group' && (
+                                <div className="flex flex-col gap-4 border border-indigo-100 bg-indigo-50/30 p-3 rounded-lg shadow-sm">
+                                    <div>
+                                        <Label className="text-xs text-slate-700 font-semibold mb-1 block">Espaciado entre Iconos (mm)</Label>
+                                        <Input 
+                                            type="number" 
+                                            step="0.5"
+                                            min="0"
+                                            value={activeEl.groupGapMM ?? 2} 
+                                            onChange={(e) => {
+                                                const val = parseFloat(e.target.value);
+                                                updateSelectedElements({ groupGapMM: isNaN(val) ? 0 : Math.max(0, val) });
+                                            }} 
+                                            className="h-8 shadow-sm text-sm" 
+                                        />
+                                    </div>
+                                    <div>
+                                        <Label className="text-xs text-slate-700 font-semibold mb-1 block">Alineación Interna</Label>
+                                        <select 
+                                            value={activeEl.groupAlign || 'flex-start'} 
+                                            onChange={(e) => updateSelectedElements({ groupAlign: e.target.value as any })}
+                                            className="w-full text-sm h-8 rounded border-slate-200 outline-none"
+                                        >
+                                            <option value="flex-start">Izquierda</option>
+                                            <option value="center">Centro</option>
+                                            <option value="flex-end">Derecha</option>
+                                            <option value="space-between">Nivelado a extremos</option>
+                                        </select>
+                                    </div>
+                                    <div className="pt-2 border-t border-indigo-100">
+                                        <Button variant="outline" size="sm" className="w-full text-xs text-red-600 border-red-200 hover:bg-red-50" onClick={ungroupElements}>
+                                            <Combine className="w-4 h-4 mr-2" />
+                                            Desagrupar
+                                        </Button>
+                                    </div>
                                 </div>
                             )}
 

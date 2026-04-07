@@ -69,10 +69,11 @@ export function generateExportHtml(
         .map(f => `@import url('https://fonts.googleapis.com/css2?family=${f.replace(/\s+/g, '+')}:wght@400;500;600;700&display=swap');`)
         .join('\n')
 
-    const htmlElements = elements.map((el: any) => {
-        const style = [
-            `left:${el.x}px`,
-            `top:${el.y}px`,
+    const rootElements = elements.filter(el => !el.groupId);
+
+    const generateHtmlForElement = (el: any, isChild = false): string => {
+        // Base styling for all elements
+        const styleArray = [
             `width:${el.width}px`,
             `height:${el.height}px`,
             `font-size:${el.fontSize || 14}px`,
@@ -87,49 +88,63 @@ export function generateExportHtml(
             `align-items:center`,
             `justify-content:${el.textAlign === 'right' ? 'flex-end' : el.textAlign === 'center' ? 'center' : 'flex-start'}`,
             `overflow:hidden`
-        ].join(';')
+        ];
+
+        // Positioning logic based on hierarchy
+        if (!isChild) {
+            styleArray.push(`position:absolute`);
+            styleArray.push(`left:${el.x}px`);
+            styleArray.push(`top:${el.y}px`);
+        } else {
+            styleArray.push(`position:relative`);
+            styleArray.push(`flex-shrink:0`);
+        }
+
+        const style = styleArray.join(';');
+        const elClass = isChild ? "el-child" : "el";
+
+        if (el.type === 'icon_group') {
+            const children = elements.filter(c => c.groupId === el.id);
+            const childrenHtml = children.map(c => generateHtmlForElement(c, true)).join('');
+            return `<div class="${elClass}" style="${style}; gap:${el.groupGapMM ?? 2}mm; justify-content:${el.groupAlign || 'flex-start'}; flex-wrap:${el.groupWrap ? 'wrap' : 'nowrap'};">${childrenHtml}</div>`;
+        }
 
         if (el.type === 'barcode') {
-            return `<div class="el" style="${style};background:#000;color:#fff;font-family:monospace;font-size:10px;">|||| ${product.code} ||||</div>`
+            return `<div class="${elClass}" style="${style};background:#000;color:#fff;font-family:monospace;font-size:10px;">|||| ${product.code} ||||</div>`
         }
 
         if (el.type === 'dashed_line') {
             const borderStyle = el.borderStyle || 'solid'
             const borderWidth = el.borderWidth || 2
             const borderColor = el.color || '#334155'
-            return `<div class="el" style="${style};border-bottom:${borderWidth}px ${borderStyle} ${borderColor};height:0;"></div>`
+            return `<div class="${elClass}" style="${style};border-bottom:${borderWidth}px ${borderStyle} ${borderColor};height:0;"></div>`
         }
 
         if (el.type === 'image') {
             const src = el.resolvedSrc || ''
-            if (!src) return `<div class="el" style="${style};border:1px dashed #ccc;color:#ccc;font-size:10px;">[Imagen no disponible]</div>`
-            return `<div class="el" style="${style}"><img src="${src}" style="width:100%;height:100%;object-fit:contain;" /></div>`
+            if (!src) return `<div class="${elClass}" style="${style};border:1px dashed #ccc;color:#ccc;font-size:10px;">[Imagen no disponible]</div>`
+            return `<div class="${elClass}" style="${style}"><img src="${src}" style="width:100%;height:100%;object-fit:contain;" /></div>`
         }
 
         // dynamic_image: conditional icon with optional caption
-        // If icon doesn't apply for this product (resolvedSrc is null), render nothing (no gap)
         if (el.type === 'dynamic_image') {
             const src = el.resolvedSrc || null
-            if (!src) return '' // Icon doesn't apply — render empty string (no element in PDF)
+            if (!src) return '' // Icon doesn't apply — render empty string (critical for flex collapse in icon_groups)
             const rawCaption = el.caption || ''
-            // Support both HTML captions (from CaptionEditor) and plain text with \n (legacy)
-            const captionHtml = rawCaption.includes('<')
-                ? rawCaption
-                : rawCaption.replace(/\n/g, '<br/>')
-            // All typography (size, weight, line-height, alignment) is embedded in the HTML
-            const captionBlock = captionHtml.trim()
-                ? `<div style="width:100%;">${captionHtml}</div>`
-                : ''
-            return `<div class="el" style="${style};flex-direction:column;align-items:center;justify-content:flex-end;padding:1px;">` +
+            const captionHtml = rawCaption.includes('<') ? rawCaption : rawCaption.replace(/\n/g, '<br/>')
+            const captionBlock = captionHtml.trim() ? `<div style="width:100%;">${captionHtml}</div>` : ''
+            return `<div class="${elClass}" style="${style};flex-direction:column;align-items:center;justify-content:flex-end;padding:1px;">` +
                 `<img src="${src}" style="flex:1;max-width:100%;object-fit:contain;" />` +
                 `${captionBlock}` +
                 `</div>`
         }
 
-        // Para texto y dynamic_text
+        // For text and dynamic_text
         let content = el.content || ''
-        return `<div class="el" style="${style}"><div style="width:100%;">${content}</div></div>`
-    }).join('')
+        return `<div class="${elClass}" style="${style}"><div style="width:100%;">${content}</div></div>`
+    }
+
+    const htmlElements = rootElements.map(el => generateHtmlForElement(el, false)).join('')
 
     return `
 <!DOCTYPE html>
