@@ -2599,7 +2599,11 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                             onChange={(e) => {
                                                 const val = e.target.value;
                                                 const updates: Partial<TemplateElement> = { dataField: val };
-                                                if (val === 'icon_canto') {
+                                                if (val === 'icon_riel') {
+                                                    updates.caption = '<div>{caption_es}<br>{caption_en}</div>';
+                                                } else if (val === 'icon_bisagras') {
+                                                    updates.caption = '<div>{caption_es}<br>{caption_en}</div>';
+                                                } else if (val === 'icon_canto') {
                                                     updates.caption = '<div>{caption_es}<br>{caption_en}</div>';
                                                 } else if (val === 'icon_rh') {
                                                     updates.caption = '<div>RH<br>Resistente a la humedad</div>';
@@ -2609,6 +2613,8 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                         >
                                             <option value="icon_rh">Icono RH — Resistente a la Humedad</option>
                                             <option value="icon_canto">Icono Canto — Borde de puertas</option>
+                                            <option value="icon_bisagras">Icono Bisagras — Cierre Lento</option>
+                                            <option value="icon_riel">Icono Riel — Extensión / Oculto</option>
                                             {/* Additional icons will be added here in future phases */}
                                         </select>
                                         <p className="text-[10px] text-slate-400 mt-1">

@@ -88,5 +88,61 @@ export function enrichProductDataWithIcons(product: any, assetMap: Record<string
     enriched.icon_canto_caption_es = isCanto ? captionEs : '';
     enriched.icon_canto_caption_en = isCanto ? captionEn : '';
 
+    // --- Bisagras (Hinges) Icon ---
+    // Source column: product.bisagras
+    const bisagrasValue = (product.bisagras || '').toString().toUpperCase().trim();
+    let isBisagras = false;
+    let bisagrasEs = '';
+    let bisagrasEn = '';
+
+    if (bisagrasValue === 'BISAGRAS CIERRE LENTO') {
+        isBisagras = true;
+        bisagrasEs = 'Bisagras cierre lento';
+        bisagrasEn = 'Slow closing hinges';
+    } else if (bisagrasValue === 'BISAGRAS') {
+        isBisagras = true;
+        bisagrasEs = 'Bisagras';
+        bisagrasEn = 'Hinges';
+    }
+
+    enriched.icon_bisagras_url = isBisagras
+        ? (assetMap['Icono Cierre Lento'] || assetMap['sys_icon_cierre_lento'] || null)
+        : null;
+    enriched.icon_bisagras_caption_es = isBisagras ? bisagrasEs : '';
+    enriched.icon_bisagras_caption_en = isBisagras ? bisagrasEn : '';
+
+    // --- Riel (Slides) Icon ---
+    // Source column: product.accessory_text
+    const accText = (product.accessory_text || '').toString().toUpperCase().trim();
+    let isRiel = false;
+    let rielEs = '';
+    let rielEn = '';
+
+    if (accText === 'R OCULTO + RFE CIERRE LENTO') {
+        isRiel = true;
+        rielEs = 'Riel oculto + riel full extension cierre lento';
+        rielEn = 'Concealed + full extension soft close slide';
+    } else if (accText === 'R OCULTO CIERRE LENTO') {
+        isRiel = true;
+        rielEs = 'Riel oculto cierre lento';
+        rielEn = 'Concealed soft close slide';
+    } else if (accText.includes('RFE CIERRE LENTO')) {
+        isRiel = true;
+        rielEs = 'Riel full extension cierre lento';
+        rielEn = 'Full extension soft close slide';
+    } else if (accText.includes('RFE') && !accText.includes('CIERRE LENTO')) {
+        isRiel = true;
+        rielEs = 'Riel full extension';
+        rielEn = 'Full extension slide';
+    }
+
+    // You could also expose rail_mode explicitly if requested, but this directly sets the rendering values needed.
+    enriched.rail_mode = isRiel ? accText : 'NA';
+    enriched.icon_riel_url = isRiel
+        ? (assetMap['Icono Extensión Total'] || assetMap['sys_icon_extension_total'] || null)
+        : null;
+    enriched.icon_riel_caption_es = isRiel ? rielEs : '';
+    enriched.icon_riel_caption_en = isRiel ? rielEn : '';
+
     return enriched;
 }

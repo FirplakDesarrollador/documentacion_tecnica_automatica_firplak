@@ -4,7 +4,7 @@
 > **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estratégico y operativo necesario para navegar y construir eficientemente en este proyecto.
 
 ## 📌 Visión General
-Se ha consolidado el sistema de Iconos Condicionales (ej. RH, Canto) implementando una arquitectura de interpolación léxica (`{caption_es}`, `{caption_en}`). La base de datos y referencias de código se sanearon, dejando el recurso estandarizado `Icono Canto`. El procesamiento descriptivo de texto vive en `productUtils.ts`, garantizando templates agnósticos y exportaciones condicionales que se ocultan limpiamente si el atributo no aplica. Los editores de texto también fueron estabilizados eliminando bugs visuales críticos (residuos de 36pt).
+Se ha consolidado de forma definitiva la arquitectura universal de Iconos Condicionales (RH, Canto, Bisagras, Riel) bajo un modelo Data-Driven con interpolación léxica (`{caption_es}`, `{caption_en}`). La base de datos fue refactorizada estructuralmente agregando y saneando columnas matriciales (ej. `bisagras` alimentada de `cabinet_name`). El procesamiento destructurado vive exclusivamente en `productUtils.ts` (`rail_mode`, preloads nulos), delegando variables limpias al renderizador `DynamicImageElement`. Esto elimina hardcodings en las plantillas, ocultando inteligentemente (sin bugs visuales) los recursos donde el atributo no aplica.
 
 ## 🏗️ Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
@@ -21,6 +21,7 @@ Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
 ## 🗝️ Información de Dominio (Firplak)
 - **Glosario**: La traducción a inglés ya no depende de un modelo de IA puro, sino de un glosario estructurado y reglas de formación de nombres en `web/src/lib/engine/ruleTranslator.ts`.
 - **Exportación**: Soporta PDF y JPG. La lógica de validación es obligatoria antes de exportar.
+- **Versionado (Ciclo de 10)**: Se usa una lógica personalizada (v1.x.9 ➡️ v1.y.0) gestionada por `execution/version_bump.py`. No usar `npm version` estándar.
 
 ## 🤖 Instrucciones para Agentes
 - **No inventes herramientas**: Revisa siempre `execution/` por scripts existentes antes de crear nuevos.
