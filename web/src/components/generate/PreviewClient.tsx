@@ -1,17 +1,19 @@
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
-import { Download, Loader2, LayoutTemplate } from 'lucide-react'
+import { useState, useMemo, useEffect, useRef } from 'react'
+import { Download, Loader2, LayoutTemplate, AlertTriangle, XCircle, Info } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import { TemplatePicker, type TemplateOption } from '@/components/generate/TemplatePicker'
 import { ValidationWarnings, getMissingFields, getTemplateRequiredFields } from '@/components/generate/ValidationWarnings'
 import { resolveAssetsAction } from '@/app/generate/actions'
-import { generateExportHtml, resolveTemplateAssets } from '@/lib/export/exportUtils'
-import { enrichProductData } from '@/lib/engine/productUtils'
+import { hydrateTemplateElements } from '@/lib/export/exportUtils'
+import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
+import { PIXELS_PER_MM } from '@/lib/constants'
+import DocumentRenderSurface from '@/components/export/DocumentRenderSurface'
 
-const MM_TO_PX = 3.7795
+
 
 interface PreviewClientProps {
     product: Record<string, any>
@@ -25,13 +27,27 @@ interface PreviewClientProps {
 }
 
 export function PreviewClient({ product: rawProduct, templates, initialTemplateId, engineResult }: PreviewClientProps) {
-    const product = useMemo(() => enrichProductData(rawProduct), [rawProduct])
     const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
         initialTemplateId ?? templates[0]?.id ?? null
     )
     const [isExporting, setIsExporting] = useState(false)
     const [exportFormat, setExportFormat] = useState<'pdf' | 'jpg'>('pdf')
     const [assetMap, setAssetMap] = useState<Record<string, string>>({})
+    const [hydratedElements, setHydratedElements] = useState<any[]>([])
+    const [preflightReport, setPreflightReport] = useState<{
+        missingVariables: string[],
+        missingAssets: string[],
+        criticalErrors: string[]
+    }>({ missingVariables: [], missingAssets: [], criticalErrors: [] })
+    
+    // Enriquecer producto base (incluyendo el nombre final del motor de reglas)
+    const product = useMemo(() => {
+        const base = { ...rawProduct }
+        return {
+            ...base,
+            final_name_es: engineResult.finalNameEs || base.final_name_es
+        } as any
+    }, [rawProduct, engineResult])
 
     const selectedTemplate = useMemo(
         () => templates.find(t => t.id === selectedTemplateId) ?? null,
@@ -46,74 +62,124 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
             return []
         }
     }, [selectedTemplate])
+    
+    // Scale-to-fit logic (Fase 2)
+    const containerRef = useRef<HTMLDivElement>(null)
+    const [scale, setScale] = useState(1)
 
     useEffect(() => {
-        const resolveAssets = async () => {
+        if (!containerRef.current || !selectedTemplate) return
+        
+        const updateScale = () => {
+            const containerWidth = containerRef.current?.clientWidth || 0
+            const canvasWidth = selectedTemplate.width_mm * PIXELS_PER_MM
+            
+            if (canvasWidth > 0 && containerWidth > 0) {
+                // Dejar un pequeño margen de 32px (p-4 en cada lado es p-8 = 32px aprox)
+                const newScale = Math.min((containerWidth - 32) / canvasWidth, 1)
+                setScale(newScale)
+            }
+        }
+
+        updateScale()
+        const observer = new ResizeObserver(updateScale)
+        observer.observe(containerRef.current)
+        window.addEventListener('resize', updateScale)
+        
+        return () => {
+            observer.disconnect()
+            window.removeEventListener('resize', updateScale)
+        }
+    }, [selectedTemplate])
+
+    // Cargar assets y luego hidratar elementos
+    useEffect(() => {
+        const process = async () => {
+            if (elements.length === 0) {
+                setHydratedElements([])
+                return
+            }
+
+            // 1. Identificar UUIDs de assets
             const assetIds = elements
-                .filter((el: any) => el.type === 'image' && el.content && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(el.content))
+                .filter((el: any) => 
+                    (el.type === 'image' || el.type === 'dynamic_image') && 
+                    el.content && 
+                    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(el.content)
+                )
                 .map((el: any) => el.content)
             
             const mapping = await resolveAssetsAction(assetIds)
             setAssetMap(mapping)
+
+            // 2. Hidratar usando la función maestra (R6)
+            const hydrated = await hydrateTemplateElements(elements, product, mapping)
+            setHydratedElements(hydrated)
         }
-        if (elements.length > 0) resolveAssets()
-    }, [elements])
+        process()
+    }, [elements, product])
 
-    const hydrate = (text: string) => {
-        if (!text) return ''
-        return text.replace(/{([^}]+)}/g, (_: string, field: string) => {
-            if (field === 'final_name_es') return engineResult.finalNameEs || product['final_name_es'] || ''
-            if (field === 'color') return product.color_name || product.color_code || ''
-            
-            if (field === 'icon_edge_2mm' || field === 'canto_puertas') {
-                const val = product.canto_puertas || ''
-                if (val && val !== 'NA') {
-                    const src = assetMap['sys_icon_edge_2mm'] ? (assetMap['sys_icon_edge_2mm'].startsWith('http') ? assetMap['sys_icon_edge_2mm'] : `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/${assetMap['sys_icon_edge_2mm']}`) : null
-                    const imgHtml = src ? `<img src="${src}" style="height: 1.2em; width: auto; vertical-align: middle; display: inline-block; margin: 0 0.1em;" />` : ''
-                    return `${imgHtml} ${val}`
+    // Preflight check (Fase 3)
+    useEffect(() => {
+        if (hydratedElements.length === 0) return
+
+        const missingVars: string[] = []
+        const missingAss: string[] = []
+        const critical: string[] = []
+
+        hydratedElements.forEach((el: any) => {
+            // Check for unresolved variables in text
+            if (el.type === 'text' || el.type === 'dynamic_text') {
+                const matches = el.content?.match(/{[^{}]+}/g)
+                if (matches) {
+                    matches.forEach((m: string) => missingVars.push(m))
                 }
-                return ''
-            }
-            if (field === 'icon_carb2') {
-                if (product.carb2 === 'CARB2') {
-                    const src = assetMap['sys_icon_carb2'] ? (assetMap['sys_icon_carb2'].startsWith('http') ? assetMap['sys_icon_carb2'] : `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/${assetMap['sys_icon_carb2']}`) : null
-                    if (src) return `<img src="${src}" style="height: 1.2em; width: auto; vertical-align: middle; display: inline-block; margin: 0 0.1em;" />`
-                }
-                return ''
             }
 
-            if (['icon_rh', 'icon_soft_close', 'icon_full_extension'].includes(field)) {
-                const isTrue = product[field] === true || product[field] === 'true'
-                if (isTrue) {
-                    const sysAssetKey = `sys_${field}`
-                    if (assetMap[sysAssetKey]) {
-                        const baseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-                        const src = assetMap[sysAssetKey].startsWith('http') ? assetMap[sysAssetKey] : `${baseUrl}/storage/v1/object/public/${assetMap[sysAssetKey]}`
-                        return `<img src="${src}" style="height: 1.2em; width: auto; vertical-align: middle; display: inline-block; margin: 0 0.1em;" />`
+            // Check for missing assets/images
+            if (el.type === 'image' || el.type === 'dynamic_image') {
+                const dynamicIconKeys = ['icon_rh', 'icon_canto', 'icon_bisagras', 'icon_riel', 'icon_group', 'icon_logo']
+                const iconKey = dynamicIconKeys.find(key => el.name?.includes(key) || el.dataField?.includes(key))
+                
+                if (!el.resolvedSrc || el.resolvedSrc.includes('placeholder')) {
+                    if (iconKey) {
+                        // Solo reportar si el producto TIENE un valor para este icono pero falló la resolución
+                        const hasProductValue = product?.[iconKey as keyof typeof product]
+                        if (hasProductValue) {
+                            missingAss.push(`${el.name || iconKey} (Falla de resolución)`)
+                        }
+                    } else {
+                        // Assets estáticos normales
+                        const label = el.name || el.dataField || 'Imagen'
+                        missingAss.push(label)
                     }
                 }
-                return ''
             }
-
-            const val = product[field]
-            return (val === null || val === undefined) ? '' : String(val)
         })
-    }
 
-    const hydratedElements = useMemo(() => elements.map((el: any) => {
-        let content = el.content || ''
-        if (el.dataField) {
-            if (el.dataField === 'final_name_es') {
-                content = engineResult.finalNameEs || product['final_name_es'] || 'N/A'
-            } else {
-                const val = product[el.dataField]
-                content = (val === null || val === undefined) ? '' : String(val)
+        // Format check
+        const allowed = (selectedTemplate?.export_formats ? (selectedTemplate.export_formats as string).split(',').map(f => f.trim().toLowerCase()) : ['pdf', 'jpg'])
+        if (!allowed.includes(exportFormat)) {
+            critical.push(`Formato ${exportFormat.toUpperCase()} no permitido para esta plantilla`)
+        }
+
+        setPreflightReport({
+            missingVariables: Array.from(new Set(missingVars)),
+            missingAssets: Array.from(new Set(missingAss)),
+            criticalErrors: critical
+        })
+    }, [hydratedElements, exportFormat, selectedTemplate])
+    
+    // R10: Sincronizar formato de exportación cuando cambia la plantilla
+    useEffect(() => {
+        if (selectedTemplate) {
+            const allowed = (selectedTemplate.export_formats ? (selectedTemplate.export_formats as string).split(',').map(f => f.trim().toLowerCase()) : ['pdf', 'jpg'])
+            // Si el formato actual no está permitido por la nueva plantilla, cambiar al primero disponible
+            if (!allowed.includes(exportFormat)) {
+                setExportFormat(allowed.length > 0 ? (allowed[0] as any) : 'pdf')
             }
         }
-        // También hidratar variables dentro del contenido estático
-        content = hydrate(content)
-        return { ...el, content }
-    }), [elements, product, engineResult])
+    }, [selectedTemplate, exportFormat])
 
     const requiredFields = useMemo(
         () => selectedTemplate ? getTemplateRequiredFields(selectedTemplate.elements_json) : [],
@@ -129,82 +195,33 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
         ? [{ productCode: product.code, productName: product.final_name_es || '', missingFields }]
         : []
 
-    const canvasW = selectedTemplate ? Math.round(selectedTemplate.width_mm * MM_TO_PX) : 756
-    const canvasH = selectedTemplate ? Math.round(selectedTemplate.height_mm * MM_TO_PX) : 378
+    const canvasW = selectedTemplate ? Math.round(selectedTemplate.width_mm * PIXELS_PER_MM) : 0
+    const canvasH = selectedTemplate ? Math.round(selectedTemplate.height_mm * PIXELS_PER_MM) : 0
 
     const handleExport = async () => {
         if (!selectedTemplate) return
         setIsExporting(true)
 
         try {
-            let elements: any[] = []
-            try {
-                elements = JSON.parse(selectedTemplate.elements_json || '[]')
-            } catch { elements = [] }
+            // R4: Validación de formato permitida por la plantilla
+            const allowed = (selectedTemplate.export_formats ? (selectedTemplate.export_formats as string).split(',').map((f: string) => f.trim().toLowerCase()) : ['pdf', 'jpg'])
+            if (!allowed.includes(exportFormat)) {
+                toast.error(`El formato ${exportFormat.toUpperCase()} no está permitido para esta plantilla`)
+                return
+            }
 
-            // 1. Resolver assets
-            const assetIds = elements
-                .filter(el => el.type === 'image' && el.content && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(el.content))
-                .map(el => el.content)
-            
-            const assetMap = await resolveAssetsAction(assetIds)
-            const enrichedProduct = enrichProductData(product)
-            const hydrated = await resolveTemplateAssets(elements, enrichedProduct, assetMap)
+            // Usar la misma lógica de hidratación que el preview (R6)
+            const hydrated = await hydrateTemplateElements(elements, product, assetMap)
+            const enrichedProduct = enrichProductDataWithIcons(product, assetMap)
 
-            // 2. Reemplazar variables
-            hydrated.forEach((el: any) => {
-                if (el.type === 'text' || el.type === 'dynamic_text') {
-                    const rawContent = el.type === 'dynamic_text' ? `{${el.dataField}}` : (el.content || '')
-                    el.content = rawContent.replace(/{([^}]+)}/g, (_: string, field: string) => {
-                        if (field === 'color') return enrichedProduct.color_name || enrichedProduct.color_code || ''
-                        
-                        if (field === 'icon_edge_2mm' || field === 'canto_puertas') {
-                            const val = enrichedProduct.canto_puertas || ''
-                            if (val && val !== 'NA') {
-                                const src = assetMap['sys_icon_edge_2mm'] ? (assetMap['sys_icon_edge_2mm'].startsWith('http') ? assetMap['sys_icon_edge_2mm'] : `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/${assetMap['sys_icon_edge_2mm']}`) : null
-                                const imgHtml = src ? `<img src="${src}" style="height: 1.2em; width: auto; vertical-align: middle; display: inline-block; margin: 0 0.1em;" />` : ''
-                                return `${imgHtml} ${val}`
-                            }
-                            return ''
-                        }
-
-                        if (field === 'icon_carb2') {
-                            if (enrichedProduct.carb2 === 'CARB2') {
-                                const src = assetMap['sys_icon_carb2'] ? (assetMap['sys_icon_carb2'].startsWith('http') ? assetMap['sys_icon_carb2'] : `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/${assetMap['sys_icon_carb2']}`) : null
-                                if (src) return `<img src="${src}" style="height: 1.2em; width: auto; vertical-align: middle; display: inline-block; margin: 0 0.1em;" />`
-                            }
-                            return ''
-                        }
-
-                        if (['icon_rh', 'icon_soft_close', 'icon_full_extension'].includes(field)) {
-                            const isTrue = enrichedProduct[field] === true || enrichedProduct[field] === 'true'
-                            if (isTrue) {
-                                const sysAssetKey = `sys_${field}`
-                                if (assetMap[sysAssetKey]) {
-                                    const baseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-                                    const src = assetMap[sysAssetKey].startsWith('http') ? assetMap[sysAssetKey] : `${baseUrl}/storage/v1/object/public/${assetMap[sysAssetKey]}`
-                                    return `<img src="${src}" style="height: 1.2em; width: auto; vertical-align: middle; display: inline-block; margin: 0 0.1em;" />`
-                                }
-                            }
-                            return ''
-                        }
-
-                        const val = enrichedProduct[field]
-                        return (val === null || val === undefined) ? '' : String(val)
-                    })
-                }
-            })
-
-            const widthPx = Math.round((selectedTemplate.width_mm || 200) * MM_TO_PX)
-            const heightPx = Math.round((selectedTemplate.height_mm || 100) * MM_TO_PX)
-
-            const html = generateExportHtml(hydrated, enrichedProduct, widthPx, heightPx)
+            const widthPx = Math.round((selectedTemplate.width_mm || 200) * PIXELS_PER_MM)
+            const heightPx = Math.round((selectedTemplate.height_mm || 100) * PIXELS_PER_MM)
 
             const response = await fetch('/api/export', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
-                    html, 
+                    elements: hydrated, 
                     format: exportFormat, 
                     width: widthPx, 
                     height: heightPx 
@@ -253,100 +270,22 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
 
                 {/* Canvas */}
                 {selectedTemplate ? (
-                    <div className="bg-slate-100 border border-slate-200 rounded-xl flex items-center justify-center p-6 min-h-[420px] overflow-auto">
+                    <div 
+                        ref={containerRef}
+                        className="bg-slate-100 border border-slate-200 rounded-xl flex items-start justify-center p-4 min-h-[420px] overflow-hidden"
+                    >
                         <div
                             id="label-canvas"
                             className="bg-white shadow-xl relative border border-slate-200 shrink-0"
                             style={{
                                 width: canvasW,
                                 height: canvasH,
-                                transform: canvasW > 700 ? `scale(${Math.min(680 / canvasW, 1)})` : 'scale(1)',
+                                transform: `scale(${scale})`,
                                 transformOrigin: 'center top',
+                                transition: 'transform 0.2s ease-out'
                             }}
                         >
-                            {hydratedElements.map((el: any) => (
-                                <div
-                                    key={el.id}
-                                    className="absolute overflow-hidden"
-                                    style={{
-                                        left: el.x,
-                                        top: el.y,
-                                        width: el.width,
-                                        height: el.height,
-                                        fontSize: el.fontSize,
-                                        fontWeight: el.fontWeight as any,
-                                        textAlign: el.textAlign as any,
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: el.textAlign === 'right' ? 'flex-end' : el.textAlign === 'center' ? 'center' : 'flex-start',
-                                        boxSizing: 'border-box',
-                                        color: el.color || '#000',
-                                        backgroundColor: el.backgroundColor || 'transparent',
-                                        fontFamily: el.fontFamily || 'inherit',
-                                    }}
-                                >
-                                    {el.type === 'barcode' && (
-                                        <div className="w-full h-full bg-slate-800 text-white text-xs flex items-center justify-center font-mono">
-                                            |||| {product.code} ||||
-                                        </div>
-                                    )}
-                                    {el.type === 'dashed_line' && (
-                                        <div
-                                            className="w-full h-full"
-                                            style={{
-                                                borderBottomStyle: el.borderStyle || 'solid',
-                                                borderBottomWidth: el.borderWidth || 2,
-                                                borderColor: el.color || '#334155',
-                                                height: 0,
-                                                alignSelf: 'center'
-                                            }}
-                                        />
-                                    )}
-                                    {el.type === 'image' && (
-                                        (() => {
-                                            let src = el.content || ''
-                                            if (assetMap[src]) src = assetMap[src]
-                                            else if (src === 'logo_empresa' && assetMap['logo_empresa']) src = assetMap['logo_empresa']
-                                            else if (src === 'isometrico_placeholder' || src === 'Isométrico' || src === 'Isométrico (Placeholder)') {
-                                                src = product.isometric_path || ''
-                                            }
-                                            else if (el.dataField === 'isometric_path') src = product.isometric_path || ''
-
-                                            if (src && (src.startsWith('http') || src.startsWith('/storage'))) {
-                                                const baseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-                                                const absoluteSrc = src.startsWith('http') ? src : `${baseUrl}/storage/v1/object/public/${src}`
-                                                return <img src={absoluteSrc} alt="asset" className="max-w-full max-h-full object-contain" />
-                                            }
-
-                                            return <span className="text-slate-400 text-xs text-center px-2">[{el.content || 'Imagen'}]</span>
-                                        })()
-                                    )}
-                                    {(el.type === 'dynamic_text' || el.type === 'text') && (
-                                        <div 
-                                            className="w-full break-words"
-                                        >
-                                            {el.content ? (
-                                                <div dangerouslySetInnerHTML={{ __html: el.content }} />
-                                            ) : (
-                                                <span className="text-red-500 font-bold text-[10px] bg-red-50 px-1 rounded border border-red-200">[VACIO]</span>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                            ))}
-
-                            {/* Overlay si no hay elementos */}
-                            {hydratedElements.length === 0 && (
-                                <div className="absolute inset-0 flex items-center justify-center text-slate-400 text-sm">
-                                    <div className="text-center">
-                                        <LayoutTemplate className="w-8 h-8 mx-auto mb-2 opacity-40" />
-                                        <p>La plantilla no tiene elementos configurados</p>
-                                        <a href={`/templates/builder?id=${selectedTemplate.id}`} className="text-indigo-500 underline text-xs mt-1 block">
-                                            Editar plantilla →
-                                        </a>
-                                    </div>
-                                </div>
-                            )}
+                            <DocumentRenderSurface elements={hydratedElements} width={canvasW} height={canvasH} />
                         </div>
                     </div>
                 ) : (
@@ -364,7 +303,54 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
 
             {/* Sidebar */}
             <div className="flex flex-col gap-4">
-                {/* Advertencias */}
+                {/* Preflight Report (Fase 3) */}
+                {(preflightReport.missingVariables.length > 0 || preflightReport.missingAssets.length > 0 || preflightReport.criticalErrors.length > 0) && (
+                    <div className="bg-white border-2 border-amber-200 rounded-xl overflow-hidden shadow-sm animate-in fade-in slide-in-from-top-2 duration-300">
+                        <div className="bg-amber-50 px-4 py-3 border-b border-amber-200 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <AlertTriangle className="w-5 h-5 text-amber-500" />
+                                <span className="font-bold text-amber-900 text-xs uppercase tracking-wider">Revision Pre-vuelo</span>
+                            </div>
+                            <Badge variant="outline" className="bg-amber-100 text-amber-700 border-amber-200 text-[10px]">
+                                {preflightReport.missingVariables.length + preflightReport.missingAssets.length + preflightReport.criticalErrors.length} Avisos
+                            </Badge>
+                        </div>
+                        <div className="p-4 flex flex-col gap-3">
+                            {preflightReport.criticalErrors.map((err, i) => (
+                                <div key={i} className="flex gap-2 text-red-600 text-xs font-bold bg-red-50 p-2 rounded-lg border border-red-100 italic">
+                                    <XCircle className="w-4 h-4 shrink-0" />
+                                    <span>CRÍTICO: {err}</span>
+                                </div>
+                            ))}
+                            {preflightReport.missingVariables.length > 0 && (
+                                <div className="flex flex-col gap-1">
+                                    <span className="text-[10px] uppercase font-bold text-slate-400">Variables no resueltas</span>
+                                    <div className="flex flex-wrap gap-1">
+                                        {preflightReport.missingVariables.map(v => (
+                                            <span key={v} className="bg-amber-100 text-amber-700 text-[10px] px-2 py-0.5 rounded font-mono border border-amber-200">{v}</span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {preflightReport.missingAssets.length > 0 && (
+                                <div className="flex flex-col gap-1">
+                                    <span className="text-[10px] uppercase font-bold text-slate-400">Recursos faltantes</span>
+                                    <div className="flex flex-wrap gap-1">
+                                        {preflightReport.missingAssets.map(a => (
+                                            <span key={a} className="bg-slate-100 text-slate-600 text-[10px] px-2 py-0.5 rounded border border-slate-200 font-medium italic">{a}</span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            <div className="mt-1 flex items-start gap-1.5 text-[10px] text-amber-600 bg-amber-50/50 p-2 rounded-lg border border-amber-100/50">
+                                <Info className="w-3 h-3 mt-0.5 shrink-0" />
+                                <span>Recomendamos completar estos datos en Supabase antes de exportar para evitar errores en el documento final.</span>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Advertencias estándar */}
                 {warnings.length > 0 ? (
                     <ValidationWarnings warnings={warnings} />
                 ) : selectedTemplate && (
@@ -410,13 +396,35 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                                 ))}
                             </div>
 
-                            <Button
-                                className={`w-full ${missingFields.length > 0 ? 'bg-slate-400 hover:bg-slate-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'} text-white`}
+                            <Button 
+                                className={`w-full h-12 text-sm font-bold transition-all duration-300 ${
+                                    (preflightReport.criticalErrors.length > 0 || missingFields.length > 0)
+                                        ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300' 
+                                        : (preflightReport.missingVariables.length > 0 || preflightReport.missingAssets.length > 0)
+                                            ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-lg shadow-amber-200'
+                                            : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-200'
+                                }`}
                                 onClick={handleExport}
-                                disabled={isExporting || missingFields.length > 0}
+                                disabled={isExporting || preflightReport.criticalErrors.length > 0 || missingFields.length > 0}
                             >
-                                {isExporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
-                                {missingFields.length > 0 ? 'Faltan datos requeridos (ej. Isométrico)' : `Descargar ${exportFormat.toUpperCase()}`}
+                                {isExporting ? (
+                                    <>
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        <span>Generando {exportFormat.toUpperCase()}...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Download className="mr-2 h-4 w-4" />
+                                        <span>
+                                            {(preflightReport.criticalErrors.length > 0 || missingFields.length > 0)
+                                                ? 'Exportación Bloqueada'
+                                                : (preflightReport.missingVariables.length > 0 || preflightReport.missingAssets.length > 0)
+                                                    ? `Exportar con Avisos (${exportFormat.toUpperCase()})`
+                                                    : `Descargar ${exportFormat.toUpperCase()}`
+                                            }
+                                        </span>
+                                    </>
+                                )}
                             </Button>
                         </div>
                     )}

@@ -4,7 +4,7 @@
 > **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estratégico y operativo necesario para navegar y construir eficientemente en este proyecto.
 
 ## 📌 Visión General
-Se ha consolidado el sistema `icon_group` (Contenedor Dinámico Condicional) basado en una arquitectura Padre-Hijo para agrupar variables gráficas (RH, Canto, Bisagras, Riel). El sistema delega la lógica y la interpolación léxica a la base de datos (`productUtils.ts`), encapsula los layouts usando Flexbox nativo en el Canvas y adapta el motor de exportación `exportUtils.ts` (Puppeteer). Esto garantiza un renderizado "Zero-Holes" y consistencia total al usar coalescencia nula, absorbiendo vacíos de elementos que no aplican e impidiendo huecos artificiales en la impresión al respetar explícitamente gaps visuales (gap mínima de 0).
+Implementación de la infraestructura de Gobernanza de Seguridad de Terminal y Motor de Versionado Personalizado ('Ciclo de 10'). Se crearon las directivas de seguridad global, la habilidad `project-security-vault` para automatizar excepciones de terminal y el flujo de auditoría proactiva, garantizando una operación más rápida y autónoma del Agente de IA sin comprometer la seguridad del repositorio.
 
 ## 🏗️ Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
@@ -14,13 +14,16 @@ Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
 
 ## 🛠️ Tecnologías Clave
 - **Frontend/Backend**: Next.js 15+ (App Router), React 19.
+- **Renderizado de Exportación**: Puppeteer (Backend) con inyección de HTML sincronizado.
 - **Base de Datos**: Prisma ORM con SQLite (local) y Supabase (Cloud).
 - **Automatización**: Python 3.x para herramientas de soporte.
 - **AI Sync**: El flujo `/release` sincroniza este contexto automáticamente con GitHub.
 
 ## 🗝️ Información de Dominio (Firplak)
-- **Glosario**: La traducción a inglés ya no depende de un modelo de IA puro, sino de un glosario estructurado y reglas de formación de nombres en `web/src/lib/engine/ruleTranslator.ts`.
-- **Exportación**: Soporta PDF y JPG. La lógica de validación es obligatoria antes de exportar.
+- **Glosario**: La traducción a inglés utiliza el motor determinista v3.23. Se optimizó para ignorar nombres propios (estrategia `preserve`) evitando alertas de traducción pendientes para referentes como "POLOCK".
+- **Nomenclatura**: Es reactiva con debounce de 800ms. Las reglas de ingeniería redondean a 1 decimal en pulgadas.
+- **Isométricos**: Sincronizados automáticamente por el par (Familia-Referencia). Se validan mediante lógica dual (`isometric_asset_id` o `isometric_path`).
+- **Plantillas**: Tienen gobernanza de formatos (`export_formats` = `PDF, JPG`).
 - **Versionado (Ciclo de 10)**: Se usa una lógica personalizada (v1.x.9 ➡️ v1.y.0) gestionada por `execution/version_bump.py`. No usar `npm version` estándar.
 
 ## 🤖 Instrucciones para Agentes

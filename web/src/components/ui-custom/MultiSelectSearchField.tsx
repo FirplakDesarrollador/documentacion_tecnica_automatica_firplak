@@ -42,6 +42,11 @@ export function MultiSelectSearchField({
   className
 }: MultiSelectSearchFieldProps) {
   const [open, setOpen] = React.useState(false)
+  const [isMounted, setIsMounted] = React.useState(false)
+
+  React.useEffect(() => {
+    setIsMounted(true)
+  }, [])
 
   const toggleOption = (value: string) => {
     if (value === "") {
@@ -64,6 +69,23 @@ export function MultiSelectSearchField({
     const singleOption = options.find((o) => values.includes(o.value))
     return singleOption ? singleOption.label : placeholder
   }, [values, options, placeholder])
+
+  if (!isMounted) {
+    return (
+      <div 
+        className={cn(
+          buttonVariants({ variant: "outline" }), 
+          "w-full max-w-full justify-between font-normal bg-white border-slate-200 text-slate-700 shadow-sm transition-all overflow-hidden flex items-center px-3", 
+          className
+        )}
+      >
+        <span className="truncate min-w-0 flex-1 text-left opacity-50">
+          {placeholder}
+        </span>
+        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-20 text-slate-400" />
+      </div>
+    )
+  }
 
   return (
     <Popover open={open} onOpenChange={setOpen}>

@@ -33,13 +33,28 @@ export function enrichProductData(product: any) {
     const sigla = isAssembled ? 'RTI' : 'RTA';
     const actionEn = isAssembled ? 'install' : 'assemble';
 
+    // Conversiones a sistema imperial (pulgadas y libras)
+    const cm_to_in = 2.54;
+    const kg_to_lb = 2.20462;
+
+    const width_in = product.width_cm ? (product.width_cm / cm_to_in).toFixed(1) : '';
+    const depth_in = product.depth_cm ? (product.depth_cm / cm_to_in).toFixed(1) : '';
+    const height_in = product.height_cm ? (product.height_cm / cm_to_in).toFixed(1) : '';
+    const weight_lb = product.weight_kg ? (product.weight_kg * kg_to_lb).toFixed(1) : '';
+
     return {
         ...product,
+        sku_base: product.sku_base || '', 
+        width_in,
+        depth_in,
+        height_in,
+        weight_lb,
         technical_description_es: `Mueble para ${zoneEs} / listo para ${actionEs} (${sigla})`,
         technical_description_en: `${zoneEn} Cabinet / Ready-to-${actionEn} (${sigla})`,
         zone_home_en: zoneEn
     };
 }
+
 
 /**
  * Extends product enrichment with conditional icon resolution.
@@ -64,19 +79,21 @@ export function enrichProductDataWithIcons(product: any, assetMap: Record<string
     // --- Canto (Edge) Icon ---
     // Source column: product.canto_puertas
     const cantoValue = (product.canto_puertas || '').toString().toUpperCase().trim();
+    // Limpiar valor para comparación flexible (quitar espacios internos)
+    const normalizedCanto = cantoValue.replace(/\s+/g, '');
     let isCanto = false;
     let captionEs = '';
     let captionEn = '';
 
-    if (cantoValue === 'CANTO 0.45 MM') {
+    if (normalizedCanto === 'CANTO0.45MM') {
         isCanto = true;
         captionEs = 'Canto 0.45 mm';
         captionEn = 'Edge of 0.45 mm';
-    } else if (cantoValue === 'CANTO 1.5 MM') {
+    } else if (normalizedCanto === 'CANTO1.5MM') {
         isCanto = true;
         captionEs = 'Canto 1.5 mm';
         captionEn = 'Edge of 1.5 mm';
-    } else if (cantoValue === 'CANTO 2 MM') {
+    } else if (normalizedCanto === 'CANTO2MM') {
         isCanto = true;
         captionEs = 'Canto 2 mm';
         captionEn = 'Edge of 2 mm';

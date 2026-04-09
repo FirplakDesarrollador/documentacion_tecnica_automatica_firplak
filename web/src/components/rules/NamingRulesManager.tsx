@@ -126,6 +126,34 @@ function getUnusedSapText(sapDesc: string, generatedName: string): string {
     return unused.join(' ').toUpperCase()
 }
 
+// ─── Sub-component for controlled order index ──────────────────────────────
+function OrderIndexInput({ initialValue, onSave, disabled }: { initialValue: number, onSave: (val: number) => void, disabled?: boolean }) {
+    const [val, setVal] = useState(initialValue.toString());
+    
+    // Sync with external changes (e.g., if reordered elsewhere or reset)
+    useEffect(() => {
+        setVal(initialValue.toString());
+    }, [initialValue]);
+
+    return (
+        <Input 
+            type="number" 
+            value={val} 
+            onChange={(e) => setVal(e.target.value)}
+            onBlur={() => {
+                const num = parseInt(val);
+                if (!isNaN(num) && num !== initialValue) {
+                    onSave(num);
+                } else {
+                    setVal(initialValue.toString());
+                }
+            }}
+            disabled={disabled}
+            className="h-7 w-12 text-center text-[11px] px-1 font-mono"
+        />
+    );
+}
+
 interface NamingRulesManagerProps {
     open: boolean
     productType: string
@@ -792,11 +820,10 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                                                             title={!isActiveInEs ? 'Esta variable no participa en el nombre en español actual (No pasó el filtro del motor ES)' : ''}
                                                         >
                                                             <td className="px-4 py-2">
-                                                                <Input 
-                                                                    type="number" 
-                                                                    defaultValue={c.order_index} 
-                                                                    onBlur={(e) => updateEnConfigField(c.variable_id, 'order_index', parseInt(e.target.value))}
-                                                                    className="h-7 w-12 text-center text-[11px] px-1 font-mono"
+                                                                <OrderIndexInput 
+                                                                    initialValue={c.order_index} 
+                                                                    onSave={(val) => updateEnConfigField(c.variable_id, 'order_index', val)}
+                                                                    disabled={enConfigSaving === c.variable_id}
                                                                 />
                                                             </td>
                                                             <td className="px-4 py-2">

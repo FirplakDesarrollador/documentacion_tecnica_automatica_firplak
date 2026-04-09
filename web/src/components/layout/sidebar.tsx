@@ -35,6 +35,11 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
         { name: 'Configuración', href: '/settings', icon: Settings },
     ]
 
+    // Si estamos en la ruta de exportación headless, NO renderizar Sidebar ni estilos contenedores
+    if (pathname?.startsWith('/export-render')) {
+        return <>{children}</>
+    }
+
     return (
         <div className="grid h-screen w-full md:grid-cols-[240px_1fr] lg:grid-cols-[260px_1fr] bg-slate-50 font-sans">
             {/* Desktop Sidebar (Dark B2B Theme) */}

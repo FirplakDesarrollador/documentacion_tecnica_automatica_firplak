@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
+import { PIXELS_PER_MM } from '@/lib/constants'
 
 export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'box' | 'dashed_line' | 'dynamic_image' | 'icon_group'
 
@@ -52,66 +53,30 @@ export interface TemplateElement {
     groupWrap?: boolean
 }
 
-const PIXELS_PER_MM = 4
+
 const MAX_HISTORY = 10
 
-function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPreviewMode, type, previewData, dataField, lineHeight, letterSpacing, textTransform }: { text: string, textAlign?: 'left' | 'center' | 'right' | undefined, verticalAlign?: 'top' | 'middle' | 'bottom' | undefined, isPreviewMode: boolean, type: string, previewData?: any, dataField?: string, lineHeight?: number, letterSpacing?: number, textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize' | 'sentence' }) {
+function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPreviewMode, type, previewData, dataField, fontSize, lineHeight, letterSpacing, textTransform, width, height }: { text: string, textAlign?: 'left' | 'center' | 'right' | undefined, verticalAlign?: 'top' | 'middle' | 'bottom' | undefined, isPreviewMode: boolean, type: string, previewData?: any, dataField?: string, fontSize?: number, lineHeight?: number, letterSpacing?: number, textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize', width?: number, height?: number }) {
     const textRef = useRef<HTMLDivElement>(null)
     const [isOverflowing, setIsOverflowing] = useState(false)
+    const [adjustedFontSize, setAdjustedFontSize] = useState<number>(fontSize || 12)
 
     // Regex replacement for rich text variables
     const displayText = React.useMemo(() => {
-        const applyTransform = (val: any) => {
-            if (!val || val === null || val === undefined || val === '') return '[VACIO]';
-            let s = String(val);
-            if (!textTransform || textTransform === 'none') return s;
-
-            const acronyms: string[] = ['RTI', 'RTA', 'RFE', 'SFE', 'RH', 'LED', 'R', 'S'];
-            const refs: string[] = [];
-            if (previewData) {
-                if (previewData.line) refs.push(String(previewData.line).toUpperCase());
-                if (previewData.cabinet_name) refs.push(String(previewData.cabinet_name).toUpperCase());
-            }
-
-            const words = s.split(' ');
-            const transformed = words?.map((word, index) => {
-                // Remove punctuation for comparison
-                const cleanWord = word.replace(/[(),/\\.-]/g, '').toUpperCase();
-                const isAcronym = acronyms.includes(cleanWord);
-                const isRef = refs.includes(cleanWord);
-                
-                if (textTransform === 'uppercase') return word.toUpperCase();
-                if (textTransform === 'lowercase') return word.toLowerCase();
-
-                // Rule 1: Acronyms always in ALL CAPS
-                if (isAcronym) return word.toUpperCase();
-
-                // Rule 2: For Sentence Case (sentence)
-                if (textTransform === 'sentence') {
-                    // Capitalize first word or recognized model references
-                    if (index === 0 || isRef) {
-                        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-                    }
-                    return word.toLowerCase();
-                }
-
-                // Rule 3: For Title Case (capitalize)
-                if (textTransform === 'capitalize') {
-                    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-                }
-
-                return word;
-            });
-
-            return transformed.join(' ');
-        }
-
         if (!isPreviewMode || !previewData) return text
+
+        const getVal = (varName: string) => {
+            if (varName === 'color' || varName === 'color_name' || varName === 'name_color_sap') {
+                return previewData.color_name || '[VACÍO]';
+            }
+            if (varName === 'color_code') return previewData.color_code || '[VACÍO]';
+            const val = previewData[varName];
+            return val === null || val === undefined || val === '' ? '[VACÍO]' : String(val);
+        }
 
         if (type === 'dynamic_text') {
             const varName = text.replace(/[{}]/g, '');
-            const val = previewData[varName];
-            return applyTransform(val);
+            return getVal(varName);
         }
 
         let interpolated = text
@@ -119,13 +84,17 @@ function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPr
         if (matches) {
             matches.forEach(match => {
                 const varName = match.slice(1, -1)
-                const val = previewData[varName];
-                const replacement = applyTransform(val);
+                const replacement = getVal(varName);
                 interpolated = interpolated.replace(match, replacement)
             })
         }
         return interpolated
-    }, [text, isPreviewMode, previewData, type, textTransform])
+    }, [text, isPreviewMode, previewData, type])
+
+    // Initialize/Reset font scaling when content or boundaries change
+    useEffect(() => {
+        setAdjustedFontSize(fontSize || 12)
+    }, [fontSize, displayText, width, height])
 
     useEffect(() => {
         if (!textRef.current || !isPreviewMode) {
@@ -136,23 +105,22 @@ function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPr
         const checkOverflow = () => {
             if (!textRef.current) return;
             const el = textRef.current
-            // We give an 8px tolerance to account for slight line-height calculations across browsers
-            const overflowing = (el.scrollHeight > el.clientHeight + 8) || (el.scrollWidth > el.clientWidth + 8)
-            setIsOverflowing(overflowing)
+            // Tolerar 4px de redondeo/line-height
+            const hasOverflow = (el.scrollHeight > el.clientHeight + 4) || (el.scrollWidth > el.clientWidth + 4)
+            
+            // Si hay desbordamiento y podemos bajar más la fuente, lo hacemos
+            if (hasOverflow && adjustedFontSize > 5) {
+                setAdjustedFontSize(prev => Math.max(5, prev - 0.5))
+            } else {
+                // Si ya no podemos bajar más o ya no desborda, actualizamos el estado visual de error
+                setIsOverflowing(hasOverflow)
+            }
         }
 
-        checkOverflow()
-
-        const resizeObserver = new ResizeObserver(() => {
-            checkOverflow()
-        })
-        
-        resizeObserver.observe(textRef.current)
-
-        return () => {
-            resizeObserver.disconnect()
-        }
-    }, [displayText, isPreviewMode])
+        // Delay mínimo para permitir que el DOM se asiente antes de medir
+        const timer = setTimeout(checkOverflow, 30)
+        return () => clearTimeout(timer)
+    }, [displayText, isPreviewMode, adjustedFontSize, width, height])
 
     const renderTextContent = () => {
         // Parse for visual bolding of SKU code if it's the exact match
@@ -184,6 +152,7 @@ function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPr
                 wordBreak: 'break-word', 
                 whiteSpace: 'pre-wrap', 
                 padding: '0 2px', 
+                fontSize: isPreviewMode ? `${adjustedFontSize}pt` : undefined,
                 lineHeight: lineHeight || 1.2,
                 letterSpacing: letterSpacing ? `${letterSpacing}em` : undefined
             }}>
@@ -204,20 +173,30 @@ function DynamicImageElement({
 }) {
     const containerRef = useRef<HTMLDivElement>(null)
     const [innerOverflow, setInnerOverflow] = useState(false)
+    const [adjustedCaptionFontSize, setAdjustedCaptionFontSize] = useState(el.captionFontSize || 6.5)
     
+    useEffect(() => {
+        setAdjustedCaptionFontSize(el.captionFontSize || 6.5)
+    }, [el.caption, el.captionFontSize, el.width, el.height])
+
     useEffect(() => {
         if (!isPreviewMode || !containerRef.current) return
         const check = () => {
             const c = containerRef.current
             if (!c) return
+            // Tolerancia de 4px para medir el desbordamiento
             const overflowing = (c.scrollHeight > c.clientHeight + 4) || (c.scrollWidth > c.clientWidth + 4)
-            setInnerOverflow(overflowing)
+            
+            if (overflowing && adjustedCaptionFontSize > 4) {
+                setAdjustedCaptionFontSize(prev => Math.max(4, prev - 0.5))
+            } else {
+                setInnerOverflow(overflowing)
+            }
         }
-        check()
-        const obs = new ResizeObserver(check)
-        obs.observe(containerRef.current)
-        return () => obs.disconnect()
-    }, [el.caption, el.iconSizeMM, el.width, el.height, el.captionGapMM, isPreviewMode])
+        
+        const timer = setTimeout(() => requestAnimationFrame(check), 50)
+        return () => clearTimeout(timer)
+    }, [el.caption, el.iconSizeMM, el.width, el.height, el.captionGapMM, isPreviewMode, adjustedCaptionFontSize])
 
     if (!isPreviewMode) {
         return (
@@ -239,6 +218,11 @@ function DynamicImageElement({
     let rawCaption = el.caption || ''
     if (previewData) {
         rawCaption = rawCaption.replace(/\{([^}]+)\}/g, (match, key) => {
+            if (key === 'color' || key === 'color_name' || key === 'name_color_sap') {
+                return String(previewData.color_name || '[VACÍO]').replace(/\n/g, '<br>');
+            }
+            if (key === 'color_code') return String(previewData.color_code || '[VACÍO]').replace(/\n/g, '<br>');
+            
             const contextKey = `${el.dataField}_${key}`;
             if (previewData[contextKey] !== undefined) return String(previewData[contextKey]).replace(/\n/g, '<br>');
             if (previewData[key] !== undefined) return String(previewData[key]).replace(/\n/g, '<br>');
@@ -282,7 +266,13 @@ function DynamicImageElement({
             </div>
             {rawCaption.trim() && (
                 <div
-                    style={{ width: '100%', fontSize: `${el.captionFontSize || 6.5}pt`, textAlign: el.captionTextAlign || 'center' }}
+                    style={{ 
+                        width: '100%', 
+                        fontSize: `${adjustedCaptionFontSize}pt`, 
+                        textAlign: el.captionTextAlign || 'center',
+                        wordBreak: 'break-word',
+                        whiteSpace: 'pre-wrap'
+                    }}
                     dangerouslySetInnerHTML={{ __html: captionHtml }}
                 />
             )}
@@ -525,7 +515,7 @@ function RichTextEditor({ content, onChange }: { content: string, onChange: (val
             span.className = 'technical-variable';
             span.setAttribute('data-variable', variable);
             span.textContent = `{${variable}}`;
-            span.style.cssText = 'color:inherit; font-weight:inherit; font-size:inherit; font-family:inherit; text-decoration: underline dotted #cbd5e1; cursor:text; user-select:all; display:inline !important; white-space:nowrap; vertical-align:baseline; margin:0 1px;';
+            span.style.cssText = 'color:inherit; font-weight:inherit; font-size:inherit; font-family:inherit; user-select:all; display:inline !important; white-space:pre-wrap; vertical-align:baseline; margin:0 1px;';
 
             // Insert with zero-width spaces to fix cursor issues
             const before = document.createTextNode('\u200B');
@@ -1051,8 +1041,8 @@ function RichTextEditor({ content, onChange }: { content: string, onChange: (val
                         <option value="final_name_en">Nombre (EN)</option>
                         <option value="technical_description_es">Descripción Técnica (ES)</option>
                         <option value="technical_description_en">Descripción Técnica (EN)</option>
-                        <option value="color_code">Código Color</option>
-                        <option value="color">Color</option>
+                        <option value="color_code">Código color</option>
+                        <option value="name_color_sap">Nombre color</option>
                         <option value="use_destination">Uso (Designación)</option>
                         <option value="zone_home">Zona Firplak</option>
                         <option value="carb2">Certificación CARB2</option>
@@ -2503,8 +2493,10 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                         fontWeight: el.fontWeight as 'normal' | 'bold' | '500',
                                         fontStyle: el.fontStyle,
                                         fontFamily: el.fontFamily === 'Montserrat' ? 'var(--font-montserrat), sans-serif' : 'inherit',
-                                        background: el.type === 'icon_group' ? (isPreviewMode ? 'transparent' : 'rgba(238, 242, 255, 0.4)') : undefined,
-                                        border: el.type === 'icon_group' && !isPreviewMode ? '1px dashed #818cf8' : undefined
+                                        color: (el as any).color,
+                                        backgroundColor: el.type === 'icon_group' ? (isPreviewMode ? 'transparent' : 'rgba(238, 242, 255, 0.4)') : (el as any).backgroundColor,
+                                        border: el.type === 'icon_group' && !isPreviewMode ? '1px dashed #818cf8' : undefined,
+                                        textTransform: ((el as any).textTransform as any) || 'none'
                                     }}
                                 >
                                     {renderResizeHandles(el)}
@@ -3013,7 +3005,6 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                                 <option value="uppercase">MAYÚSCULAS</option>
                                                 <option value="lowercase">minúsculas</option>
                                                 <option value="capitalize">Tipo Título</option>
-                                                <option value="sentence">Tipo Oración</option>
                                             </select>
                                         </div>
                                     </div>

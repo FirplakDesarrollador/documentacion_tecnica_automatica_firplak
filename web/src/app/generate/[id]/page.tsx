@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { ArrowLeft } from 'lucide-react'
 import { PreviewClient } from '@/components/generate/PreviewClient'
 
+export const dynamic = 'force-dynamic'
+
 export default async function GeneratePreviewPage({
     params,
     searchParams: searchParamsPromise,
@@ -16,8 +18,13 @@ export default async function GeneratePreviewPage({
     const searchParams = await searchParamsPromise
     const templateIdParam = typeof searchParams?.template_id === 'string' ? searchParams.template_id : null
 
-    // Cargar el producto
-    const pRows = await dbQuery(`SELECT * FROM public.cabinet_products WHERE id='${id}' LIMIT 1`)
+    // Cargar el producto con su nombre de color resuelto
+    const pRows = await dbQuery(
+        `SELECT p.*, c.name_color_sap as color_name 
+         FROM public.cabinet_products p
+         LEFT JOIN public.colors c ON p.color_code = c.code_4dig
+         WHERE p.id='${id}' LIMIT 1`
+    )
     const product = pRows?.[0]
 
     if (!product) {
@@ -26,9 +33,10 @@ export default async function GeneratePreviewPage({
 
     // Cargar plantillas activas
     const templates = await dbQuery(
-        `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json
-         FROM public.templates WHERE active = true ORDER BY updated_at DESC`
+        `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json, export_formats
+         FROM public.plantillas_doc_tec WHERE active = true ORDER BY updated_at DESC`
     ) || []
+
 
     // Evaluar reglas del motor para obtener el nombre derivado e iconos
     const rules = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true`) || []

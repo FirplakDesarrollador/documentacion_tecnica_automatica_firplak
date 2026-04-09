@@ -15,7 +15,7 @@ export default async function Home() {
     SELECT
       (SELECT COUNT(*) FROM public.cabinet_products) as total_products,
       (SELECT COUNT(*) FROM public.cabinet_products WHERE validation_status = 'incomplete') as incomplete_products,
-      (SELECT COUNT(*) FROM public.templates WHERE active = true) as active_templates
+      (SELECT COUNT(*) FROM public.plantillas_doc_tec WHERE active = true) as active_templates
   `)
   const kpi = kpiRows?.[0] || {}
   const totalProducts = parseInt(kpi.total_products || '0')

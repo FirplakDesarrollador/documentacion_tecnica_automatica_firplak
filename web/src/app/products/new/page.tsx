@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { createProductAction, getUniquePropertiesAction, parseProductCodeAction, translateAction, checkProductExistsAction } from '../actions'
+import { createProductAction, getUniquePropertiesAction, parseProductCodeAction, translateAction, checkProductExistsAction, getDiagnosticInfoAction } from '../actions'
 import { Checkbox } from '@/components/ui/checkbox'
 import { getColorByNameAction, getRulesAction } from '@/app/rules/actions'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
@@ -20,7 +20,7 @@ import { getClientsAction } from '../actions'
 export default function NewProductPage() {
     const router = useRouter()
     const [dupeAlertModal, setDupeAlertModal] = useState<string | null>(null)
-    const [customValues, setCustomValues] = useState({ line: '', designation: '', product_type: '', use_destination: '' })
+    const [customValues, setCustomValues] = useState({ line: '', designation: '', product_type: '', use_destination: '', zone_home: '', bisagras: '', carb2: '' })
     const [clients, setClients] = useState<{id: string, name: string}[]>([])
     const [isPrivateLabel, setIsPrivateLabel] = useState(false)
     const [privateLabelData, setPrivateLabelData] = useState({
@@ -28,6 +28,7 @@ export default function NewProductPage() {
         client_name: '',
         logo_id: ''
     })
+    const [hasBarcode, setHasBarcode] = useState(false)
     
     const [formData, setFormData] = useState({
         code: '',
@@ -55,10 +56,18 @@ export default function NewProductPage() {
         ref_code: '',
         version_code: '',
         zone_home: '',
-        isometric_path: ''
+        isometric_path: '',
+        isometric_asset_id: '',
+        bisagras: 'NA',
+        carb2: 'NA',
+        special_label: 'NA',
+        status: 'ACTIVO',
+        barcode_text: '',
+        armado_con_lvm: '',
+        door_color_text: 'NA'
     })
 
-    const [datalistOptions, setDatalistOptions] = useState({ lines: [] as string[], designations: [] as string[], productTypes: [] as string[], useDestinations: [] as string[], cabinetNames: [] as string[], commercialMeasures: [] as string[], accessoryTexts: [] as string[], colors: [] as {code: string, name: string}[] })
+    const [datalistOptions, setDatalistOptions] = useState({ lines: [] as string[], designations: [] as string[], productTypes: [] as string[], useDestinations: [] as string[], cabinetNames: [] as string[], commercialMeasures: [] as string[], accessoryTexts: [] as string[], colors: [] as {code: string, name: string}[], bisagras: [] as string[], carb2: [] as string[], specialLabels: [] as string[], zoneHomes: [] as string[] })
 
     const [isAnalyzed, setIsAnalyzed] = useState(false)
     const [isNewFamily, setIsNewFamily] = useState(false)
@@ -72,8 +81,35 @@ export default function NewProductPage() {
 
     // Cargar reglas y opciones una vez
     useEffect(() => {
-        getRulesAction().then(r => setRules(r))
-        getUniquePropertiesAction().then(res => setDatalistOptions(res as any))
+        console.log("LOG: Iniciando carga de reglas en NewProductPage...");
+        
+        getRulesAction().then(r => {
+            console.log("LOG: Resultado getRulesAction:", r);
+            if (Array.isArray(r)) {
+                console.log(`LOG: Se cargaron ${r.length} reglas.`);
+                setRules(r);
+            } else {
+                console.error("LOG: getRulesAction NO devolvió un array:", r);
+            }
+        }).catch(err => {
+            console.error("LOG: Error fatal en getRulesAction:", err);
+            toast.error("Fallo al conectar con el servidor de reglas.");
+        });
+
+        getUniquePropertiesAction().then(res => {
+            console.log("LOG: Opciones cargadas correctamente.");
+            setDatalistOptions(res as any);
+        });
+
+        getDiagnosticInfoAction().then(diag => {
+            console.log("LOG: Diagnóstico del Servidor:", diag);
+            if (diag.error) {
+                toast.error("Error de Diagnóstico: " + diag.error);
+            } else if (diag.rulesCount === 0) {
+                toast.warning("El servidor reporta 0 reglas habilitadas.");
+            }
+        });
+
         getClientsAction().then(c => setClients(c))
     }, [])
 
@@ -121,7 +157,24 @@ export default function NewProductPage() {
                 assembled_flag: parsed.assembled_flag ?? prev.assembled_flag ?? false,
                 rh: parsed.rh || prev.rh || 'NA',
                 canto_puertas: parsed.canto_puertas || prev.canto_puertas || '',
+                cabinet_name: parsed.cabinet_name || prev.cabinet_name || '',
+                line: parsed.line || prev.line || '',
+                designation: parsed.designation || prev.designation || '',
+                commercial_measure: parsed.commercial_measure || prev.commercial_measure || '',
+                width_cm: parsed.width_cm ? String(parsed.width_cm) : prev.width_cm || '',
+                depth_cm: parsed.depth_cm ? String(parsed.depth_cm) : prev.depth_cm || '',
+                height_cm: parsed.height_cm ? String(parsed.height_cm) : prev.height_cm || '',
+                weight_kg: parsed.weight_kg ? String(parsed.weight_kg) : prev.weight_kg || '',
+                accessory_text: parsed.accessory_text || prev.accessory_text || '',
+                bisagras: parsed.bisagras || prev.bisagras || 'NA',
+                carb2: parsed.carb2 || prev.carb2 || 'NA',
+                special_label: parsed.special_label || prev.special_label || 'NA',
+                barcode_text: parsed.barcode_text || prev.barcode_text || '',
+                status: parsed.status || prev.status || 'ACTIVO',
+                armado_con_lvm: parsed.armado_con_lvm || prev.armado_con_lvm || ''
             }))
+
+            if (parsed.barcode_text) setHasBarcode(true)
 
             if (!isAnalyzed) setIsAnalyzed(true)
 
@@ -196,6 +249,20 @@ export default function NewProductPage() {
         }
     }, [formData.color_code, datalistOptions.colors])
 
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            if (formData.cabinet_name && rules.length > 0) {
+                handleGenerateNames();
+            }
+        }, 800);
+        return () => clearTimeout(timer);
+    }, [
+        formData.cabinet_name, formData.color_code, formData.line, 
+        formData.designation, formData.commercial_measure, formData.accessory_text,
+        formData.rh, formData.assembled_flag, formData.canto_puertas,
+        formData.carb2, formData.bisagras, formData.special_label, formData.door_color_text
+    ]);
+
     const handleGenerateNames = async () => {
         if (rules.length > 0) {
             const evalResult = evaluateProductRules(formData as any as Product, rules)
@@ -234,6 +301,15 @@ export default function NewProductPage() {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
+        
+        // Validación de Isométrico Obligatorio
+        if (!formData.isometric_path || formData.isometric_path === '') {
+            toast.error("El isométrico es obligatorio", {
+                description: "Debes subir un archivo SVG o que el sistema lo vincule automáticamente antes de guardar."
+            })
+            return
+        }
+
         try {
             await createProductAction({ 
                 ...formData, 
@@ -244,7 +320,9 @@ export default function NewProductPage() {
                 private_label_logo_id: privateLabelData.logo_id
             })
             toast.success("Producto guardado correctamente")
+            router.push('/products')
         } catch (err: any) {
+            if (err.message.includes('NEXT_REDIRECT')) return; // Dejar que Next.js maneje la redirección
             toast.error("Error al guardar: " + err.message)
         }
     }
@@ -471,6 +549,33 @@ export default function NewProductPage() {
                                         </div>
                                     </div>
 
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="grid gap-2">
+                                            <Label className="text-xs font-bold text-slate-500 uppercase">Bisagras</Label>
+                                            {renderCreatableSelect('bisagras', datalistOptions.bisagras || [], 'BISAGRAS')}
+                                        </div>
+                                        <div className="grid gap-2">
+                                            <Label className="text-xs font-bold text-slate-500 uppercase">CARB2</Label>
+                                            {renderCreatableSelect('carb2', datalistOptions.carb2 || [], 'CARB2')}
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="grid gap-2">
+                                            <Label className="text-xs font-bold text-slate-500 uppercase">Zona</Label>
+                                            {renderCreatableSelect('zone_home', datalistOptions.zoneHomes || [], 'ZONA')}
+                                        </div>
+                                        <div className="grid gap-2">
+                                            <Label className="text-xs font-bold text-slate-500 uppercase">Etiqueta Especial</Label>
+                                            <Input 
+                                                name="special_label" 
+                                                value={formData.special_label} 
+                                                onChange={handleChange} 
+                                                placeholder="Ej: FRENTES 18MM"
+                                            />
+                                        </div>
+                                    </div>
+
                                     {formData.ref_code && (
                                         <div className="pt-2">
                                             {formData.isometric_path ? (
@@ -489,7 +594,11 @@ export default function NewProductPage() {
                                                     </div>
                                                     <div className="shrink-0 flex items-center">
                                                         <UploadAssetButton onUploadComplete={(asset) => {
-                                                            setFormData(p => ({ ...p, isometric_path: asset.file_path || 'exists' }))
+                                                            setFormData(p => ({ 
+                                                                ...p, 
+                                                                isometric_path: asset.file_path || 'exists',
+                                                                isometric_asset_id: asset.id
+                                                            }))
                                                         }} />
                                                     </div>
                                                 </div>
@@ -546,7 +655,7 @@ export default function NewProductPage() {
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="grid gap-2">
-                                            <Label className="text-xs font-bold text-slate-500 uppercase">Peso (kg)</Label>
+                                            <Label className="text-xs font-bold text-slate-500 uppercase">Peso Bruto (kg)</Label>
                                             <Input type="number" step="0.1" name="weight_kg" value={formData.weight_kg} onChange={handleChange} className="border-orange-200 bg-orange-50/20" />
                                         </div>
                                         <div className="grid gap-2">
@@ -555,11 +664,44 @@ export default function NewProductPage() {
                                         </div>
                                     </div>
 
-                                    <div className="flex flex-wrap gap-6 mt-6 p-5 bg-slate-50 border border-slate-100 rounded-xl">
+                                    <div className="flex flex-wrap gap-8 mt-6 p-5 bg-slate-50 border border-slate-100 rounded-xl">
                                         <div className="flex items-center space-x-2">
                                             <Checkbox id="assembled_flag" checked={formData.assembled_flag} onCheckedChange={(c) => setFormData(p => ({ ...p, assembled_flag: !!c }))} />
                                             <Label htmlFor="assembled_flag" className="font-semibold text-slate-700">Es Armado</Label>
                                         </div>
+
+                                        {formData.assembled_flag && (
+                                            <div className="flex items-center gap-3 animate-in slide-in-from-left-2 duration-200">
+                                                <Label htmlFor="armado_con_lvm" className="text-xs font-bold text-slate-500 uppercase shrink-0">Armado con LVM</Label>
+                                                <Input 
+                                                    id="armado_con_lvm"
+                                                    name="armado_con_lvm"
+                                                    value={formData.armado_con_lvm}
+                                                    onChange={handleChange}
+                                                    placeholder="Ej: LVM SIKUANI"
+                                                    className="w-48 h-8 text-xs border-blue-200 focus:ring-blue-500"
+                                                />
+                                            </div>
+                                        )}
+
+                                        <div className="flex items-center space-x-2 border-l border-slate-200 pl-8">
+                                            <Checkbox id="has_barcode" checked={hasBarcode} onCheckedChange={(c) => setHasBarcode(!!c)} />
+                                            <Label htmlFor="has_barcode" className="font-semibold text-slate-700">¿Lleva código de barra?</Label>
+                                        </div>
+
+                                        {hasBarcode && (
+                                            <div className="flex items-center gap-3 animate-in slide-in-from-left-2 duration-200">
+                                                <Label htmlFor="barcode_text" className="text-xs font-bold text-slate-500 uppercase shrink-0">Código de Barra</Label>
+                                                <Input 
+                                                    id="barcode_text"
+                                                    name="barcode_text"
+                                                    value={formData.barcode_text}
+                                                    onChange={handleChange}
+                                                    placeholder="Ingresa código..."
+                                                    className="w-48 h-8 text-xs border-indigo-200 focus:ring-indigo-500"
+                                                />
+                                            </div>
+                                        )}
                                     </div>
                                 </CardContent>
                             </Card>

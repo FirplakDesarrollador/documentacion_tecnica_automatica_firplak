@@ -9,6 +9,15 @@ import Link from 'next/link'
 import { AiAssistantPanel } from '@/components/ai/AiAssistantPanel'
 import { updateProductAction } from '../actions'
 import { Checkbox } from '@/components/ui/checkbox'
+import { toast } from 'sonner'
+import { useEffect, useCallback } from 'react'
+import { getRulesAction } from '@/app/rules/actions'
+import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
+import { translateProductToEnglish } from '@/lib/engine/translator'
+import { Rule, Product } from '@prisma/client'
+import { Separator } from '@/components/ui/separator'
+import { Badge } from '@/components/ui/badge'
+import { AlertCircle, CheckCircle2, Languages, Sparkles } from 'lucide-react'
 
 export function EditProductForm({ initialData }: { initialData: any }) {
     const [formData, setFormData] = useState({
@@ -25,7 +34,64 @@ export function EditProductForm({ initialData }: { initialData: any }) {
         commercial_measure: initialData.commercial_measure || '',
         accessory_text: initialData.accessory_text || '',
         designation: initialData.designation || '',
+        width_cm: String(initialData.width_cm || ''),
+        depth_cm: String(initialData.depth_cm || ''),
+        height_cm: String(initialData.height_cm || ''),
+        weight_kg: String(initialData.weight_kg || ''),
+        final_name_es: initialData.final_name_es || '',
+        final_name_en: initialData.final_name_en || '',
+        door_color_text: initialData.door_color_text || 'NA',
+        private_label_flag: initialData.private_label_flag || false,
+        private_label_client_name: initialData.private_label_client_name || 'NA',
+        private_label_client_id: initialData.private_label_client_id || '',
+        isometric_path: initialData.isometric_path || '',
+        isometric_asset_id: initialData.isometric_asset_id || '',
     })
+
+    const [rules, setRules] = useState<Rule[]>([])
+    const [isGenerating, setIsGenerating] = useState(false)
+
+    useEffect(() => {
+        getRulesAction().then(setRules)
+    }, [])
+
+    const handleGenerateNames = useCallback(async (currentData: any) => {
+        if (rules.length === 0) return
+        
+        setIsGenerating(true)
+        try {
+            const evalResult = evaluateProductRules(currentData as any as Product, rules)
+            const namingEs = evalResult.finalNameEs
+            
+            const transResult = await translateProductToEnglish(currentData as any as Product, namingEs)
+            const namingEn = transResult.translatedName
+
+            setFormData(prev => ({
+                ...prev,
+                final_name_es: namingEs,
+                final_name_en: namingEn
+            }))
+        } catch (error) {
+            console.error("Error auto-generating names:", error)
+        } finally {
+            setIsGenerating(false)
+        }
+    }, [rules])
+
+    // Auto-generación reactiva
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            if (formData.cabinet_name && rules.length > 0) {
+                handleGenerateNames(formData);
+            }
+        }, 800)
+        return () => clearTimeout(timer)
+    }, [
+        formData.cabinet_name, formData.color_code, formData.line, 
+        formData.designation, formData.commercial_measure, formData.accessory_text,
+        formData.rh, formData.assembled_flag, formData.canto_puertas,
+        formData.door_color_text, rules
+    ])
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))
@@ -49,7 +115,13 @@ export function EditProductForm({ initialData }: { initialData: any }) {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
-        await updateProductAction(initialData.id, formData)
+        try {
+            await updateProductAction(initialData.id, formData)
+            toast.success("Producto actualizado correctamente")
+        } catch (err: any) {
+            if (err.message.includes('NEXT_REDIRECT')) return;
+            toast.error("Error al actualizar: " + err.message)
+        }
     }
 
     return (
@@ -172,6 +244,37 @@ export function EditProductForm({ initialData }: { initialData: any }) {
                                         onCheckedChange={(c) => setFormData(p => ({ ...p, assembled_flag: !!c }))}
                                     />
                                     <Label htmlFor="assembled_flag">Es Armado</Label>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="private_label_flag"
+                                        checked={formData.private_label_flag}
+                                        onCheckedChange={(c) => setFormData(p => ({ ...p, private_label_flag: !!c }))}
+                                    />
+                                    <Label htmlFor="private_label_flag">Marca Propia</Label>
+                                </div>
+                            </div>
+
+                            {/* Nombres Generados Automáticamente */}
+                            <div className="mt-6 space-y-4 p-5 bg-blue-50/50 border border-blue-100 rounded-xl">
+                                <h3 className="text-sm font-bold text-blue-900 flex items-center gap-2">
+                                    <Sparkles className="w-4 h-4"/>
+                                    Nomenclatura Sugerida
+                                </h3>
+                                <div className="grid gap-4">
+                                    <div className="grid gap-2">
+                                        <Label className="text-xs text-slate-500">Nombre Final (ES)</Label>
+                                        <div className="p-3 bg-white border rounded font-mono text-sm min-h-[40px]">
+                                            {isGenerating ? 'Generando...' : (formData.final_name_es || '—')}
+                                        </div>
+                                    </div>
+                                    <div className="grid gap-2">
+                                        <Label className="text-xs text-slate-500">Nombre Final (EN)</Label>
+                                        <div className="p-3 bg-white border rounded font-mono text-sm min-h-[40px] flex items-center gap-2">
+                                            <Languages className="w-3 h-3 text-slate-400"/>
+                                            {isGenerating ? 'Traduciendo...' : (formData.final_name_en || '—')}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 

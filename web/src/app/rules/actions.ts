@@ -11,13 +11,13 @@ function esc(v: any) {
 }
 
 export async function getRulesAction() {
-    const { data, error } = await supabaseAdmin
-        .from('rules')
-        .select('*')
-        .eq('enabled', true)
-        .order('priority', { ascending: true })
-    if (error) console.error("getRulesAction error:", error.message)
-    return data || []
+    try {
+        const data = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true ORDER BY priority ASC`)
+        return data || []
+    } catch (error: any) {
+        console.error("getRulesAction error:", error.message)
+        return []
+    }
 }
 
 export async function getColorByNameAction(code4Dig: string) {
@@ -205,13 +205,19 @@ export async function applyNamesToProductTypeBatchAction(productType: string, of
 // ─── EN Config Actions ────────────────────────────────────────────────────────
 
 export async function getEnConfigAction(targetEntity: string) {
-    const { data, error } = await supabaseAdmin
-        .from('naming_config_en')
-        .select('variable_id, order_index, emit, behavior, drop_if_resolved, resolved_by, fallback_strategy, group_key, notes')
-        .eq('target_entity', targetEntity)
-        .order('order_index', { ascending: true })
-    if (error) console.error("getEnConfigAction error:", error.message)
-    return data || []
+    try {
+        const safe = targetEntity.replace(/'/g, "''")
+        const data = await dbQuery(`
+            SELECT variable_id, order_index, emit, behavior, drop_if_resolved, resolved_by, fallback_strategy, group_key, notes
+            FROM public.naming_config_en
+            WHERE target_entity = '${safe}'
+            ORDER BY order_index ASC
+        `)
+        return data || []
+    } catch (error: any) {
+        console.error("getEnConfigAction error:", error.message)
+        return []
+    }
 }
 
 export async function saveEnConfigAction(targetEntity: string, variable_id: string, patch: {
@@ -288,16 +294,17 @@ export async function applyFullBulkNamingUpdateBatchAction(
     clientEsRules?: any[], 
     clientEnConfig?: any[]
 ) {
-    // Fetch batch directly via PostgREST Data API
-    const { data: products, error: fetchErr } = await supabaseAdmin
-        .from('cabinet_products')
-        .select('*')
-        .eq('product_type', productType)
-        .not('cabinet_name', 'is', null)
-        .order('code', { ascending: true })
-        .range(offset, offset + limit - 1)
+    // Fetch batch using dbQuery for RLS bypass (Management API)
+    const sql = `
+        SELECT *
+        FROM public.cabinet_products
+        WHERE product_type = '${productType.replace(/'/g, "''")}'
+          AND cabinet_name IS NOT NULL
+        ORDER BY code ASC
+        LIMIT ${limit} OFFSET ${offset}
+    `
+    const products = await dbQuery(sql) as any[]
 
-    if (fetchErr) throw new Error(fetchErr.message)
     if (!products || products.length === 0) return []
 
     // Use passed configs or load ALL rules and config for recalculation
@@ -343,9 +350,11 @@ export async function applyFullBulkNamingUpdateBatchAction(
         }
     }
 
-    // Stage 3: Batch Update in DB via Atomic RPC (Fixes fetch failed & RLS restricts)
+    // Stage 3: Batch Update in DB via Atomic RPC (Management API check)
     if (updates.length > 0) {
-        const { data: rpcRes, error: rpcErr } = await supabaseAdmin.rpc('bulk_direct_update_names', { 
+        // We use supabaseAdmin (Service Role ideally, or Anon if missing) for RPC
+        // If RPC fails due to RLS, we may need a different approach, but RPC ignore RLS usually
+        const { error: rpcErr } = await (supabaseAdmin.rpc as any)('bulk_direct_update_names', { 
             payload: updates 
         })
         

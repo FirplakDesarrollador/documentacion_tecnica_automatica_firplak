@@ -1,3 +1,5 @@
+'use server'
+
 import { supabaseServer } from '@/lib/supabase'
 
 export async function resolveAssetsAction(assetIds: string[]) {
@@ -61,5 +63,7 @@ export async function resolveAssetsAction(assetIds: string[]) {
         })
     }
     
+    console.log("==> MAP FETCHED:", map)
+    console.log("==> ASSET MAP GENERATED (SERVER):", map)
     return map
 }

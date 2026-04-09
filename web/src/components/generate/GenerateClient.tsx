@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import { Search, Download, AlertTriangle, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -21,7 +21,6 @@ interface GenerateClientProps {
     templates: TemplateOption[]
     families: { value: string, label: string }[]
     references: { value: string, label: string }[]
-    measures: string[]
     initialTemplateId: string | null
     hasFilter: boolean
 }
@@ -31,11 +30,32 @@ export function GenerateClient({
     templates,
     families,
     references,
-    measures,
     initialTemplateId,
     hasFilter,
 }: GenerateClientProps) {
     const [selectedIds, setSelectedIds] = useState<string[]>([])
+    const [isLoaded, setIsLoaded] = useState(false)
+
+    // Cargar selección inicial desde localStorage
+    useEffect(() => {
+        const saved = localStorage.getItem('generate-selected-ids')
+        if (saved) {
+            try {
+                setSelectedIds(JSON.parse(saved))
+            } catch (e) {
+                console.error("Error loading selected ids", e)
+            }
+        }
+        setIsLoaded(true)
+    }, [])
+
+    // Persistir selección cuando cambie
+    useEffect(() => {
+        if (isLoaded) {
+            localStorage.setItem('generate-selected-ids', JSON.stringify(selectedIds))
+        }
+    }, [selectedIds, isLoaded])
+
     const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
         initialTemplateId ?? (templates[0]?.id ?? null)
     )
@@ -91,7 +111,6 @@ export function GenerateClient({
                     <GenerateFilters
                         families={families}
                         references={references}
-                        measures={measures}
                     />
                 </div>
                 <div className="flex items-center gap-3 w-full lg:w-auto">
@@ -127,7 +146,7 @@ export function GenerateClient({
                         </div>
                         <h3 className="text-base font-semibold text-slate-800">Selecciona productos a generar</h3>
                         <p className="text-sm text-slate-500 mt-1 max-w-xs">
-                            Usa los filtros de <b>Familia</b>, <b>Referencia</b> o <b>Medida</b> para cargar productos y poder seleccionarlos.
+                            Usa los filtros de <b>Familia</b> y <b>Referencia</b> para cargar productos y poder seleccionarlos.
                         </p>
                     </div>
                 ) : (
@@ -184,7 +203,7 @@ export function GenerateClient({
                                 className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
                             >
                                 <Download className="w-4 h-4 mr-2" />
-                                Exportar {selectedIds.length} PDF{selectedIds.length > 1 ? 's' : ''}
+                                Exportar ({selectedIds.length})
                             </Button>
                         </div>
                     </div>
@@ -193,18 +212,20 @@ export function GenerateClient({
 
             {/* Dialog de exportación masiva */}
             <Dialog open={showBulkExport} onOpenChange={setShowBulkExport}>
-                <DialogContent className="max-w-xl rounded-2xl">
-                    <DialogHeader>
+                <DialogContent className="max-w-xl rounded-2xl max-h-[90vh] flex flex-col overflow-hidden">
+                    <DialogHeader className="shrink-0">
                         <DialogTitle className="flex items-center gap-2 text-lg">
                             <Download className="w-5 h-5 text-indigo-500" />
                             Exportación masiva
                         </DialogTitle>
                     </DialogHeader>
-                    <BulkExportPanel
-                        selectedProducts={selectedProducts}
-                        template={selectedTemplate}
-                        onClose={() => setShowBulkExport(false)}
-                    />
+                    <div className="overflow-y-auto flex-1 min-h-0">
+                        <BulkExportPanel
+                            selectedProducts={selectedProducts}
+                            template={selectedTemplate}
+                            onClose={() => setShowBulkExport(false)}
+                        />
+                    </div>
                 </DialogContent>
             </Dialog>
         </div>

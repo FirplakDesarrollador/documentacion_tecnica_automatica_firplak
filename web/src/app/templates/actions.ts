@@ -12,7 +12,7 @@ export async function createTemplate(data: {
         const orientation = data.width_mm >= data.height_mm ? 'horizontal' : 'vertical'
 
         const rows = await dbQuery(`
-            INSERT INTO public.templates (name, width_mm, height_mm, orientation, document_type, elements_json, active)
+            INSERT INTO public.plantillas_doc_tec (name, width_mm, height_mm, orientation, document_type, elements_json, active)
             VALUES ('${data.name.replace(/'/g, "''")}', ${data.width_mm}, ${data.height_mm}, '${orientation}', 'label', '[]', true)
             RETURNING id
         `)
@@ -33,7 +33,7 @@ export async function updateTemplate(id: string, data: {
         const nameClause = data.name ? `, name='${data.name.replace(/'/g, "''")}' ` : ''
         const formatsClause = data.export_formats ? `, export_formats='${data.export_formats.replace(/'/g, "''")}' ` : ''
         await dbQuery(`
-            UPDATE public.templates SET
+            UPDATE public.plantillas_doc_tec SET
                 elements_json='${data.elements_json.replace(/'/g, "''")}' ${nameClause} ${formatsClause},
                 updated_at=now()
             WHERE id='${id}'
@@ -50,7 +50,7 @@ export async function updateTemplate(id: string, data: {
 export async function getPreviewProduct() {
     try {
         const products = await dbQuery(`
-            SELECT p.*, c.name_color_sap
+            SELECT p.*, c.name_color_sap as color_name
             FROM public.cabinet_products p
             LEFT JOIN public.colors c ON p.color_code = c.code_4dig
             WHERE p.final_name_es IS NOT NULL
@@ -77,7 +77,10 @@ export async function getPreviewProduct() {
 
         return {
             ...longest,
-            color: longest.name_color_sap || longest.color_code || 'Sin Color'
+            name_color_sap: longest.color_name || null,
+            color_name: longest.color_name || null,
+            color_code: longest.color_code || null,
+            color: longest.color_name || longest.color_code || 'Sin Color'
         }
     } catch (e) {
         return {
@@ -85,6 +88,7 @@ export async function getPreviewProduct() {
             final_name_es: 'Error cargando datos reales - Mueble de Prueba Largo',
             barcode_text: 'ERROR123',
             color_code: 'ERR',
+            color_name: 'Rojo Error',
             color: 'Rojo Error'
         }
     }
@@ -101,7 +105,7 @@ export async function getRandomPreviewProduct(excludeCode?: string) {
             : ''
 
         const products = await dbQuery(`
-            SELECT p.*, c.name_color_sap
+            SELECT p.*, c.name_color_sap as color_name
             FROM public.cabinet_products p
             LEFT JOIN public.colors c ON p.color_code = c.code_4dig
             WHERE p.final_name_es IS NOT NULL
@@ -111,10 +115,12 @@ export async function getRandomPreviewProduct(excludeCode?: string) {
             LIMIT 1
         `)
 
-        if (!products || products.length === 0) {
+        let p = products?.[0]
+
+        if (!p) {
             // Fallback: retry without the exclusion (edge case: only 1 product in DB)
             const fallback = await dbQuery(`
-                SELECT p.*, c.name_color_sap
+                SELECT p.*, c.name_color_sap as color_name
                 FROM public.cabinet_products p
                 LEFT JOIN public.colors c ON p.color_code = c.code_4dig
                 WHERE p.final_name_es IS NOT NULL
@@ -123,12 +129,16 @@ export async function getRandomPreviewProduct(excludeCode?: string) {
                 LIMIT 1
             `)
             if (!fallback || fallback.length === 0) return null
-            const p = fallback[0]
-            return { ...p, color: p.name_color_sap || p.color_code || 'Sin Color' }
+            p = fallback[0]
         }
 
-        const p = products[0]
-        return { ...p, color: p.name_color_sap || p.color_code || 'Sin Color' }
+        return { 
+            ...p, 
+            name_color_sap: p.color_name || null,
+            color_name: p.color_name || null,
+            color_code: p.color_code || null,
+            color: p.color_name || p.color_code || 'Sin Color' 
+        }
     } catch (e) {
         return null
     }
@@ -136,7 +146,7 @@ export async function getRandomPreviewProduct(excludeCode?: string) {
 
 export async function deleteTemplate(id: string) {
     try {
-        await dbQuery(`DELETE FROM public.templates WHERE id='${id}'`)
+        await dbQuery(`DELETE FROM public.plantillas_doc_tec WHERE id='${id}'`)
         revalidatePath('/templates')
         return { success: true }
     } catch (e: any) {

@@ -26,6 +26,9 @@ export interface ParsedCodeResult {
     carb2: string | null
     private_label_client_name: string | null
     special_label: string | null
+    bisagras: string | null
+    barcode_text: string | null
+    status: string | null
 }
 
 export async function parseProductCode(
@@ -58,7 +61,10 @@ export async function parseProductCode(
         armado_con_lvm: 'NA',
         carb2: 'NA',
         private_label_client_name: 'NA',
-        special_label: 'NA'
+        special_label: 'NA',
+        bisagras: 'NA',
+        barcode_text: null,
+        status: 'ACTIVO'
     }
 
     if (!code) return result
@@ -168,47 +174,73 @@ export async function parseProductCode(
             foundAccessories.push('CIERRE LENTO');
         }
 
-        // --- Lógicas Especiales de Muebles ---
+        // --- Lógicas Especiales de Muebles y Designación ---
         if (descUpper.includes('GODAI')) {
-            if (descUpper.includes('ENTREPA')) {
-                result.designation = 'SOPORTE Y ESTRUCTURA CON ENTREPAÑO';
-            } else if (descUpper.includes('SOPORTE Y ESTRUCTURA')) {
-                result.designation = 'SOPORTE Y ESTRUCTURA';
-            } else if (descUpper.includes('SOPORTE')) {
-                result.designation = 'SOPORTE';
-            } else if (descUpper.includes('CUBO-CAJON') || descUpper.includes('CUBO CAJON')) {
-                result.designation = 'CUBO-CAJON';
-            } else if (descUpper.includes('CUBO')) {
-                result.designation = 'CUBO';
+            if (descUpper.includes('ENTREPA')) result.designation = 'SOPORTE Y ESTRUCTURA CON ENTREPAÑO';
+            else if (descUpper.includes('SOPORTE Y ESTRUCTURA')) result.designation = 'SOPORTE Y ESTRUCTURA';
+            else if (descUpper.includes('SOPORTE')) result.designation = 'SOPORTE';
+            else if (descUpper.includes('CUBO-CAJON') || descUpper.includes('CUBO CAJON')) result.designation = 'CUBO-CAJON';
+            else if (descUpper.includes('CUBO')) result.designation = 'CUBO';
+        }
+
+        if (descUpper.includes('VALDEZ') || descUpper.includes('BASICO') || descUpper.includes('BÁSICO') || descUpper.includes('POLOCK')) {
+            if (descUpper.includes('PISO')) result.designation = 'A PISO';
+            else if (descUpper.includes('ELEVADO')) result.designation = 'ELEVADO';
+            
+            if (descUpper.includes('BASICO') || descUpper.includes('BÁSICO')) {
+                if (descUpper.includes('SIN MANIJA')) foundAccessories.push('SIN MANIJAS');
+                else foundAccessories.push('CON MANIJAS');
             }
         }
 
-        if (descUpper.includes('VALDEZ') || descUpper.includes('BASICO') || descUpper.includes('BÁSICO')) {
-            if (descUpper.includes('PISO')) {
-                result.designation = 'A PISO';
-            } else {
-                result.designation = 'ELEVADO';
-            }
-            
-            if (descUpper.includes('BASICO') || descUpper.includes('BÁSICO')) {
-                if (descUpper.includes('SIN MANIJA')) {
-                    foundAccessories.push('SIN MANIJAS');
-                } else {
-                    foundAccessories.push('CON MANIJAS');
+        // --- Detección de Nombre de Mueble (Fallback si no hay historial) ---
+        if (!result.cabinet_name) {
+            const commonNames = ['POLOCK', 'VALDEZ', 'GODAI', 'TIZIANO', 'DA VINCI', 'BASICO', 'BÁSICO'];
+            for (const name of commonNames) {
+                if (descUpper.includes(name)) {
+                    result.cabinet_name = name;
+                    break;
                 }
             }
         }
+
+        // --- Detección de Destino de Uso por Siglas ---
+        if (!result.use_destination) {
+            if (descUpper.includes('LVM')) result.use_destination = 'LAVAMANOS';
+            else if (descUpper.includes('LVR')) result.use_destination = 'LAVARROPAS';
+            else if (descUpper.includes('LVP')) result.use_destination = 'LAVAPLATOS';
+            else if (descUpper.includes('COC')) result.use_destination = 'COCINA';
+        }
+
+        // --- Detección de Línea ---
+        if (!result.line) {
+            if (descUpper.includes('LIFE')) result.line = 'LIFE';
+            else if (descUpper.includes('ESSENTIAL')) result.line = 'ESSENTIAL';
+            else if (descUpper.includes('CLASS')) result.line = 'CLASS';
+        }
+
+        if (descUpper.includes('CARB 2') || descUpper.includes('CARB2')) {
+            result.carb2 = 'SÍ';
+        }
+
         // -------------------------------------
 
         if (foundAccessories.length > 0) {
             result.accessory_text = foundAccessories.join(' ');
         }
 
+        // --- Valores por defecto para Muebles ---
+        if (result.product_type === 'MUEBLE' || descUpper.includes('MUEBLE')) {
+            if (!result.canto_puertas) result.canto_puertas = 'CANTO 2MM';
+        }
+
         // Smart Lookup de Dimensiones y Textos Históricos
         if (result.ref_code && result.commercial_measure) {
             try {
                 const dimRows = await dbQuery(`
-                    SELECT width_cm, depth_cm, height_cm, weight_kg, cabinet_name, line, designation, isometric_path, isometric_asset_id 
+                    SELECT width_cm, depth_cm, height_cm, weight_kg, cabinet_name, line, designation, accessory_text, 
+                           bisagras, carb2, special_label, zone_home, barcode_text,
+                           isometric_path, isometric_asset_id 
                     FROM public.cabinet_products 
                     WHERE ref_code = '${result.ref_code}' AND commercial_measure = '${result.commercial_measure}'
                     AND width_cm IS NOT NULL
@@ -224,6 +256,27 @@ export async function parseProductCode(
                     if (dims.cabinet_name) result.cabinet_name = dims.cabinet_name;
                     if (dims.line) result.line = dims.line;
                     if (dims.designation && !result.designation) result.designation = dims.designation;
+                    if (dims.bisagras) result.bisagras = dims.bisagras;
+                    if (dims.carb2) result.carb2 = dims.carb2;
+                    if (dims.special_label) result.special_label = dims.special_label;
+                    if (dims.zone_home) result.zone_home = dims.zone_home;
+                    if (dims.barcode_text) result.barcode_text = dims.barcode_text;
+                    
+                    // Fusionar accesorios históricos con los detectados
+                    if (dims.accessory_text) {
+                        const historicalAcc = String(dims.accessory_text).trim().toUpperCase();
+                        const currentAcc = result.accessory_text ? result.accessory_text.toUpperCase() : '';
+                        
+                        if (currentAcc) {
+                            // Si ya hay algo detectado (ej: CANTO 2MM), lo unimos evitando duplicados
+                            const parts = currentAcc.split(' ');
+                            if (!parts.includes(historicalAcc)) {
+                                result.accessory_text = `${currentAcc} ${historicalAcc}`;
+                            }
+                        } else {
+                            result.accessory_text = historicalAcc;
+                        }
+                    }
                     
                     if (
                         (dims.isometric_path && String(dims.isometric_path).trim() !== '' && String(dims.isometric_path).trim() !== 'null') || 

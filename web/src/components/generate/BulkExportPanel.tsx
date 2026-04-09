@@ -10,8 +10,9 @@ import { ValidationWarnings, getMissingFields, getTemplateRequiredFields, fieldL
 import type { TemplateOption } from './TemplatePicker'
 import type { GenerateProduct } from './GenerateProductTable'
 import { resolveAssetsAction } from '@/app/generate/actions'
-import { generateExportHtml, resolveTemplateAssets } from '@/lib/export/exportUtils'
+import { hydrateTemplateElements } from '@/lib/export/exportUtils'
 import { enrichProductData } from '@/lib/engine/productUtils'
+import { PIXELS_PER_MM } from '@/lib/constants'
 
 type ExportStatus = 'pending' | 'exporting' | 'done' | 'error'
 
@@ -39,39 +40,25 @@ async function exportOneProduct(
 
     // 1. Identificar activos a resolver (UUIDs en campos de imagen)
     const assetIds = elements
-        .filter(el => el.type === 'image' && el.content && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(el.content))
+        .filter(el => (el.type === 'image' || el.type === 'dynamic_image') && el.content && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(el.content))
         .map(el => el.content)
     
-    // 2. Resolver assets mediante acción de servidor (incluye logo_empresa)
+    // 2. Resolver assets mediante acción de servidor
     const assetMap = await resolveAssetsAction(assetIds)
 
-    // 3. Hidratar y resolver elementos usando utilidad centralizada
-    const enrichedProduct = enrichProductData(product)
-    const hydrated = await resolveTemplateAssets(elements, enrichedProduct, assetMap)
-    
-    // 4. Reemplazar variables {field} en los contenidos de texto
-    hydrated.forEach((el: any) => {
-        if (el.type === 'text' || el.type === 'dynamic_text') {
-            const rawContent = el.type === 'dynamic_text' ? `{${el.dataField}}` : (el.content || '')
-            el.content = rawContent.replace(/{([^}]+)}/g, (_: string, field: string) => {
-                if (field === 'color') return enrichedProduct.color_name || enrichedProduct.color_code || ''
-                return String(enrichedProduct[field] ?? '')
-            })
-        }
-    })
+    // 3. Hidratar usando la función maestra (R6)
+    // hydrateTemplateElements ya se encarga de resolver variables, iconos y assets
+    const hydrated = await hydrateTemplateElements(elements, product, assetMap)
 
-    // 5. Generar HTML con utilidad centralizada (incluye fuentes)
-    const MM_TO_PX = 3.7795
-    const widthPx = Math.round((template.width_mm || 200) * MM_TO_PX)
-    const heightPx = Math.round((template.height_mm || 100) * MM_TO_PX)
-    
-    const html = generateExportHtml(hydrated, enrichedProduct, widthPx, heightPx)
+    // 5. Generar Payload con utilidad centralizada
+    const widthPx = Math.round((template.width_mm || 200) * PIXELS_PER_MM)
+    const heightPx = Math.round((template.height_mm || 100) * PIXELS_PER_MM)
 
     const response = await fetch('/api/export', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-            html, 
+            elements: hydrated, 
             format, 
             width: widthPx, 
             height: heightPx 
@@ -106,7 +93,7 @@ export function BulkExportPanel({ selectedProducts, template, onClose }: BulkExp
     }, [template])
 
     const [selectedFormat, setSelectedFormat] = useState<'pdf' | 'jpg'>(
-        allowedFormats.includes('pdf') ? 'pdf' : (allowedFormats[0] as any || 'pdf')
+        allowedFormats.length > 0 ? (allowedFormats[0] as any) : 'pdf'
     )
 
     const requiredFields = useMemo(
@@ -184,14 +171,9 @@ export function BulkExportPanel({ selectedProducts, template, onClose }: BulkExp
                 </div>
             </div>
 
-            {/* Advertencias */}
+            {/* Advertencias (informativas, no bloquean) */}
             {hasWarnings && (
-                <div className="flex flex-col gap-3">
-                    <ValidationWarnings warnings={warnings} />
-                    <p className="text-xs text-red-600 font-bold bg-red-50 p-2 rounded border border-red-100 italic">
-                        No se permite la exportación hasta que todos los productos seleccionados tengan su isométrico asociado.
-                    </p>
-                </div>
+                <ValidationWarnings warnings={warnings} />
             )}
 
             {/* Progreso */}
@@ -207,8 +189,8 @@ export function BulkExportPanel({ selectedProducts, template, onClose }: BulkExp
                 </div>
             )}
 
-            {/* Lista de productos */}
-            <div className="border border-slate-100 rounded-xl overflow-hidden divide-y divide-slate-50 max-h-72 overflow-y-auto">
+            {/* Lista de productos — scroll independiente */}
+            <div className="border border-slate-100 rounded-xl overflow-hidden divide-y divide-slate-50 max-h-60 overflow-y-auto">
                 {items.map(item => (
                     <div key={item.product.id} className={`flex items-center gap-3 px-4 py-3 ${item.status === 'exporting' ? 'bg-indigo-50/50' : item.status === 'done' ? 'bg-green-50/30' : item.status === 'error' ? 'bg-red-50/30' : ''}`}>
                         {statusIcon(item.status)}
@@ -228,8 +210,8 @@ export function BulkExportPanel({ selectedProducts, template, onClose }: BulkExp
                 ))}
             </div>
 
-            {/* Acciones */}
-            <div className="flex items-center gap-3 pt-1">
+            {/* Acciones — ancla fija al fondo */}
+            <div className="flex items-center gap-3 pt-1 border-t border-slate-100">
                 {!started ? (
                     <>
                         <div className="flex flex-col gap-2 flex-1">
@@ -246,14 +228,21 @@ export function BulkExportPanel({ selectedProducts, template, onClose }: BulkExp
                             </div>
                             <Button
                                 onClick={startExport}
-                                disabled={!template || hasWarnings}
-                                className={`w-full ${hasWarnings ? 'bg-slate-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'} text-white`}
+                                disabled={!template || isRunning || !allowedFormats.includes(selectedFormat)}
+                                className={`w-full ${
+                                    !allowedFormats.includes(selectedFormat)
+                                        ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300'
+                                        : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-100'
+                                }`}
                             >
                                 <Download className="w-4 h-4 mr-2" />
-                                {hasWarnings ? 'Bloqueado: Faltan Isométricos' : `Iniciar exportación (${total} ${selectedFormat.toUpperCase()})`}
+                                {!allowedFormats.includes(selectedFormat) 
+                                    ? `Formato ${selectedFormat.toUpperCase()} no permitido`
+                                    : `Exportar ${selectedFormat.toUpperCase()} (${total})`
+                                }
                             </Button>
                         </div>
-                        <Button variant="outline" onClick={onClose} className="w-24 mt-auto">
+                        <Button variant="outline" onClick={onClose} className="w-24 self-end">
                             Cancelar
                         </Button>
                     </>

@@ -8,6 +8,15 @@ import { parseProductCode } from '@/lib/engine/codeParser'
 import { redirect } from 'next/navigation'
 import { GoogleGenAI } from '@google/genai'
 
+function normalizeCanto(val: any) {
+    if (val === null || val === undefined || val === '' || val === 'false') return 'CANTO 2 MM'
+    const clean = String(val).toUpperCase().replace(/\s+/g, '')
+    if (clean === 'CANTO0.45MM') return 'CANTO 0.45 MM'
+    if (clean === 'CANTO1.5MM') return 'CANTO 1.5 MM'
+    if (clean === 'CANTO2MM') return 'CANTO 2 MM'
+    return String(val)
+}
+
 export async function parseProductCodeAction(code: string, sapDesc: string, rhFlag: boolean) {
     return await parseProductCode(code, sapDesc, rhFlag)
 }
@@ -69,11 +78,26 @@ export async function createProductAction(data: any) {
         return `'${String(v).replace(/'/g, "''")}'`
     }
 
-    // Conversions
-    const w_in = data.width_cm ? (parseFloat(data.width_cm) / 2.54).toFixed(2) : 'NULL'
-    const d_in = data.depth_cm ? (parseFloat(data.depth_cm) / 2.54).toFixed(2) : 'NULL'
-    const h_in = data.height_cm ? (parseFloat(data.height_cm) / 2.54).toFixed(2) : 'NULL'
-    const w_lb = data.weight_kg ? (parseFloat(data.weight_kg) * 2.20462).toFixed(2) : 'NULL'
+    // Lógica de redondeo especial: <= 0.5 hacia abajo, >= 0.6 hacia arriba
+    function roundToOneDecimal(val: number | string | null) {
+        if (val === null || val === undefined || val === '') return 'NULL'
+        const num = parseFloat(String(val))
+        if (isNaN(num)) return 'NULL'
+        // x * 10 + 0.4 -> floor -> / 10
+        // Ejemplo 24.35 -> 243.5 + 0.4 = 243.9 -> floor = 243 -> 24.3
+        // Ejemplo 24.36 -> 243.6 + 0.4 = 244.0 -> floor = 244 -> 24.4
+        return (Math.floor(num * 10 + 0.4) / 10).toFixed(1)
+    }
+
+    // Conversiones con redondeo especial
+    const w_in = data.width_cm ? roundToOneDecimal(parseFloat(data.width_cm) / 2.54) : 'NULL'
+    const d_in = data.depth_cm ? roundToOneDecimal(parseFloat(data.depth_cm) / 2.54) : 'NULL'
+    const h_in = data.height_cm ? roundToOneDecimal(parseFloat(data.height_cm) / 2.54) : 'NULL'
+    const w_lb = data.weight_kg ? roundToOneDecimal(parseFloat(data.weight_kg) * 2.20462) : 'NULL'
+
+    // Normalización de Marca Propia
+    const isPrivate = !!data.private_label_flag
+    const clientName = isPrivate ? (data.private_label_client_name || 'NA') : 'NA'
 
     await dbQuery(`
         INSERT INTO public.cabinet_products (
@@ -82,13 +106,14 @@ export async function createProductAction(data: any) {
             commercial_measure, accessory_text, designation, width_cm, depth_cm, height_cm, weight_kg, 
             width_in, depth_in, height_in, weight_lb,
             stacking_max, familia_code, ref_code, version_code, sku_base, sku_servicios_ref,
-            final_name_es, final_name_en, status,
-            private_label_flag, private_label_client_name, private_label_client_id
+            final_name_es, final_name_en, status, validation_status,
+            private_label_flag, private_label_client_name, private_label_client_id,
+            bisagras, special_label, barcode_text, isometric_path, isometric_asset_id, door_color_text
         ) VALUES (
             ${esc(data.code)}, ${esc(data.sap_description)}, ${esc(data.product_type || parsed.product_type)}, 
             ${esc(data.cabinet_name)}, ${esc(data.color_code || parsed.color_code)}, ${data.rh === 'RH' || parsed.rh === 'RH' ? 'true' : 'false'}, ${esc(data.rh || parsed.rh || 'NA')},
-            ${data.assembled_flag || parsed.assembled_flag ? 'true' : 'false'}, ${esc(data.canto_puertas || 'CANTO 2 MM')}, 
-            ${esc(data.carb2 || 'NA')},
+            ${data.assembled_flag || parsed.assembled_flag ? 'true' : 'false'}, ${esc(normalizeCanto(data.canto_puertas))}, 
+            ${esc(data.carb2 || parsed.carb2 || 'NA')},
             ${esc(data.line)}, ${esc(data.use_destination || parsed.use_destination)}, ${esc(data.zone_home || parsed.zone_home)}, 
             ${esc(data.commercial_measure)}, ${esc(data.accessory_text)}, ${esc(data.designation)}, 
             ${data.width_cm ? parseFloat(data.width_cm) : 'NULL'}, ${data.depth_cm ? parseFloat(data.depth_cm) : 'NULL'}, 
@@ -96,11 +121,25 @@ export async function createProductAction(data: any) {
             ${w_in}, ${d_in}, ${h_in}, ${w_lb},
             ${data.stacking_max ? parseInt(data.stacking_max) : 'NULL'}, ${esc(parsed.familia_code)}, ${esc(parsed.ref_code)}, 
             ${esc(parsed.version_code)}, ${esc(parsed.sku_base)}, ${esc(data.code)},
-            ${esc(data.final_name_es)}, ${esc(data.final_name_en)}, ${esc(data.status || 'ACTIVO')},
-            ${data.private_label_flag ? 'true' : 'false'}, ${esc(data.private_label_client_name)}, ${esc(clientId)}
+            ${esc(data.final_name_es)}, ${esc(data.final_name_en)}, ${esc(data.status || 'ACTIVO')}, 'ready',
+            ${isPrivate ? 'true' : 'false'}, ${esc(clientName)}, ${esc(clientId)},
+            ${esc(data.bisagras || parsed.bisagras || 'NA')}, ${esc(data.special_label || parsed.special_label || 'NA')},
+            ${esc(data.barcode_text || parsed.barcode_text)}, ${esc(data.isometric_path || parsed.isometric_path)},
+            ${esc(data.isometric_asset_id)}, ${esc(data.door_color_text || 'NA')}
         )
         ON CONFLICT (code) DO NOTHING
     `)
+
+    // Propagación de Isométrico a la misma familia y referencia
+    if (data.isometric_path && parsed.familia_code && parsed.ref_code) {
+        await dbQuery(`
+            UPDATE public.cabinet_products 
+            SET isometric_path = ${esc(data.isometric_path)}, 
+                isometric_asset_id = ${esc(data.isometric_asset_id)}
+            WHERE familia_code = ${esc(parsed.familia_code)} 
+              AND ref_code = ${esc(parsed.ref_code)}
+        `)
+    }
 
     redirect('/products')
 }
@@ -116,11 +155,23 @@ export async function updateProductAction(id: string, data: any) {
         return `'${String(v).replace(/'/g, "''")}'`
     }
 
-    // Conversions
-    const w_in = data.width_cm ? (parseFloat(data.width_cm) / 2.54).toFixed(2) : 'NULL'
-    const d_in = data.depth_cm ? (parseFloat(data.depth_cm) / 2.54).toFixed(2) : 'NULL'
-    const h_in = data.height_cm ? (parseFloat(data.height_cm) / 2.54).toFixed(2) : 'NULL'
-    const w_lb = data.weight_kg ? (parseFloat(data.weight_kg) * 2.20462).toFixed(2) : 'NULL'
+    // Lógica de redondeo especial: <= 0.5 hacia abajo, >= 0.6 hacia arriba
+    function roundToOneDecimal(val: number | string | null) {
+        if (val === null || val === undefined || val === '') return 'NULL'
+        const num = parseFloat(String(val))
+        if (isNaN(num)) return 'NULL'
+        return (Math.floor(num * 10 + 0.4) / 10).toFixed(1)
+    }
+
+    // Conversiones con redondeo especial
+    const w_in = data.width_cm ? roundToOneDecimal(parseFloat(data.width_cm) / 2.54) : 'NULL'
+    const d_in = data.depth_cm ? roundToOneDecimal(parseFloat(data.depth_cm) / 2.54) : 'NULL'
+    const h_in = data.height_cm ? roundToOneDecimal(parseFloat(data.height_cm) / 2.54) : 'NULL'
+    const w_lb = data.weight_kg ? roundToOneDecimal(parseFloat(data.weight_kg) * 2.20462) : 'NULL'
+
+    // Normalización de Marca Propia
+    const isPrivate = !!data.private_label_flag
+    const clientName = isPrivate ? (data.private_label_client_name || 'NA') : 'NA'
 
     // Lógica de ID automático y Flag en UPDATE
     if (data.private_label_client_name && data.private_label_client_name !== 'NA') {
@@ -139,7 +190,7 @@ export async function updateProductAction(id: string, data: any) {
             code=${esc(data.code)}, sap_description=${esc(data.sap_description)}, product_type=${esc(data.product_type || parsed.product_type)},
             cabinet_name=${esc(data.cabinet_name)}, color_code=${esc(data.color_code || parsed.color_code)},
             rh_flag=${data.rh === 'RH' || parsed.rh === 'RH' ? 'true' : 'false'}, rh=${esc(data.rh || parsed.rh || 'NA')}, assembled_flag=${data.assembled_flag ? 'true' : 'false'},
-            canto_puertas=${esc(data.canto_puertas)}, carb2=${esc(data.carb2)}, line=${esc(data.line || parsed.line)},
+            canto_puertas=${esc(normalizeCanto(data.canto_puertas))}, carb2=${esc(data.carb2)}, line=${esc(data.line || parsed.line)},
             use_destination=${esc(data.use_destination)}, zone_home=${esc(data.zone_home || parsed.zone_home)}, commercial_measure=${esc(data.commercial_measure)},
             accessory_text=${esc(data.accessory_text)}, designation=${esc(data.designation)},
             width_cm=${data.width_cm ? parseFloat(data.width_cm) : 'NULL'}, depth_cm=${data.depth_cm ? parseFloat(data.depth_cm) : 'NULL'}, 
@@ -151,12 +202,27 @@ export async function updateProductAction(id: string, data: any) {
             final_name_es=${esc(data.final_name_es)}, final_name_en=${esc(data.final_name_en)},
             status=${esc(data.status || 'ACTIVO')},
             special_label=${esc(data.special_label || 'NA')},
-            private_label_flag=${data.private_label_flag ? 'true' : 'false'},
-            private_label_client_name=${esc(data.private_label_client_name || 'NA')},
+            private_label_flag=${isPrivate ? 'true' : 'false'},
+            private_label_client_name=${esc(clientName)},
             private_label_client_id=${esc(data.private_label_client_id)},
+            isometric_path=${esc(data.isometric_path)},
+            isometric_asset_id=${esc(data.isometric_asset_id)},
+            door_color_text=${esc(data.door_color_text || 'NA')},
+            validation_status='ready',
             updated_at=now()
         WHERE id='${id}'
     `)
+
+    // Propagación de Isométrico a la misma familia y referencia
+    if (data.isometric_path && parsed.familia_code && parsed.ref_code) {
+        await dbQuery(`
+            UPDATE public.cabinet_products 
+            SET isometric_path = ${esc(data.isometric_path)}, 
+                isometric_asset_id = ${esc(data.isometric_asset_id)}
+            WHERE familia_code = ${esc(parsed.familia_code)} 
+              AND ref_code = ${esc(parsed.ref_code)}
+        `)
+    }
 
     redirect('/products')
 }
@@ -165,7 +231,7 @@ export async function massUpdateProducts(ids: string[], updateData: any) {
     if (!ids || ids.length === 0) return
 
     const setClauses: string[] = []
-    if (updateData.canto_puertas !== undefined) setClauses.push(`canto_puertas='${String(updateData.canto_puertas).replace(/'/g, "''")}'`)
+    if (updateData.canto_puertas !== undefined) setClauses.push(`canto_puertas='${String(normalizeCanto(updateData.canto_puertas)).replace(/'/g, "''")}'`)
     if (updateData.carb2 !== undefined) setClauses.push(`carb2='${String(updateData.carb2).replace(/'/g, "''")}'`)
     if (updateData.rh !== undefined) {
         setClauses.push(`rh='${String(updateData.rh).replace(/'/g, "''")}'`)
@@ -370,6 +436,11 @@ export async function getUniquePropertiesAction() {
     const cabinetNames = await dbQuery(`SELECT DISTINCT cabinet_name FROM public.cabinet_products WHERE cabinet_name IS NOT NULL AND cabinet_name != '' ORDER BY cabinet_name ASC`) || []
     const commercialMeasures = await dbQuery(`SELECT DISTINCT commercial_measure FROM public.cabinet_products WHERE commercial_measure IS NOT NULL AND commercial_measure != '' ORDER BY commercial_measure ASC`) || []
     const accessoryTexts = await dbQuery(`SELECT DISTINCT accessory_text FROM public.cabinet_products WHERE accessory_text IS NOT NULL AND accessory_text != '' ORDER BY accessory_text ASC`) || []
+    const bisagrasValues = await dbQuery(`SELECT DISTINCT bisagras FROM public.cabinet_products WHERE bisagras IS NOT NULL AND bisagras != '' ORDER BY bisagras ASC`) || []
+    const carb2Values = await dbQuery(`SELECT DISTINCT carb2 FROM public.cabinet_products WHERE carb2 IS NOT NULL AND carb2 != '' ORDER BY carb2 ASC`) || []
+    const specialLabels = await dbQuery(`SELECT DISTINCT special_label FROM public.cabinet_products WHERE special_label IS NOT NULL AND special_label != '' ORDER BY special_label ASC`) || []
+    const zoneHomes = await dbQuery(`SELECT DISTINCT zone_home FROM public.cabinet_products WHERE zone_home IS NOT NULL AND zone_home != '' ORDER BY zone_home ASC`) || []
+    
     const colors = await dbQuery(`SELECT code_4dig as code_color, name_color_sap FROM public.colors ORDER BY code_4dig ASC`) || []
 
     return {
@@ -380,6 +451,10 @@ export async function getUniquePropertiesAction() {
         cabinetNames: cabinetNames.map((r: any) => r.cabinet_name),
         commercialMeasures: commercialMeasures.map((r: any) => r.commercial_measure),
         accessoryTexts: accessoryTexts.map((r: any) => r.accessory_text),
+        bisagras: bisagrasValues.map((r: any) => r.bisagras),
+        carb2: carb2Values.map((r: any) => r.carb2),
+        specialLabels: specialLabels.map((r: any) => r.special_label),
+        zoneHomes: zoneHomes.map((r: any) => r.zone_home),
         colors: colors.map((r: any) => ({ code: r.code_color, name: r.name_color_sap }))
     }
 }
@@ -485,4 +560,24 @@ export async function saveGlossaryTermsAction(terms: { term_es: string, term_en:
         console.error("Error saving glossary terms:", error)
         return { success: false, message: `Error al guardar términos: ${error.message}` }
     }
+}
+
+export async function getDiagnosticInfoAction() {
+    const hasToken = !!process.env.SUPABASE_ACCESS_TOKEN;
+    const hasServiceKey = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
+    let rulesCount = 0;
+    let error = null;
+    try {
+        const res = await dbQuery(`SELECT count(*) as count FROM public.rules WHERE enabled = true`);
+        rulesCount = res?.[0]?.count || 0;
+    } catch (e: any) {
+        error = e.message;
+    }
+    return { 
+        hasToken, 
+        hasServiceKey,
+        rulesCount, 
+        error, 
+        envKeys: Object.keys(process.env).filter(k => k.includes('SUPABASE')) 
+    };
 }

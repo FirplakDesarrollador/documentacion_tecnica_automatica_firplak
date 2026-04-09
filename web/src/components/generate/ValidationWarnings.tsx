@@ -117,6 +117,14 @@ export function ValidationWarnings({ warnings, compact = false }: ValidationWarn
 }
 
 /**
+ * Determina si un producto tiene isométrico asignado.
+ * Acepta cualquiera de los dos campos como fuente válida.
+ */
+export function hasIsometric(product: Record<string, any>): boolean {
+    return Boolean(product.isometric_asset_id || product.isometric_path)
+}
+
+/**
  * Dado un producto y los criterios requeridos por la plantilla,
  * retorna los nombres legibles de los campos/recursos que faltan.
  */
@@ -124,20 +132,25 @@ export function getMissingFields(product: Record<string, any>, requirements: any
     const missing: string[] = []
 
     for (const req of requirements) {
-        // 1. Validar campos de datos (variables)
+        // 1. Validar campos de datos (dynamic_text con dataField)
         if (req.dataField) {
             const val = product[req.dataField]
             if (val === null || val === undefined || val === '') {
                 missing.push(req.dataField)
             }
         }
-        
-        // 2. Validar marcadores de imagen especiales (isiométrico)
+
+        // 2. Validar marcadores de imagen de isométrico
+        //    Usa la regla: isometric_asset_id OR isometric_path
         if (req.type === 'image') {
-            if (req.content === 'Isométrico' || req.content === 'isometrico_placeholder' || req.dataField === 'isometric_path') {
-                if (!product.isometric_path) {
-                    missing.push('isometric_path')
-                }
+            const isIsometric = (
+                req.content === 'isometrico_placeholder' ||
+                req.content === 'Isométrico' ||
+                req.dataField === 'isometric_path' ||
+                req.dataField === 'isometric_asset_id'
+            )
+            if (isIsometric && !hasIsometric(product)) {
+                missing.push('isometric_asset_id')
             }
         }
     }
@@ -146,14 +159,14 @@ export function getMissingFields(product: Record<string, any>, requirements: any
 }
 
 /**
- * Extrae los elementos requeridos de una plantilla
+ * Extrae los elementos requeridos de una plantilla.
+ * Solo incluye elementos explícitamente marcados como required=true.
+ * Los dynamic_text sin required=true NO se tratan como obligatorios.
  */
 export function getTemplateRequiredFields(elementsJson: string): any[] {
     try {
         const elements: any[] = JSON.parse(elementsJson)
-        // Filtramos solo los elementos que el diseñador marcó como 'required'
-        // O los que son variables (para retrocompatibilidad o seguridad)
-        return elements.filter(el => el.required === true || el.type === 'dynamic_text')
+        return elements.filter(el => el.required === true)
     } catch {
         return []
     }

@@ -15,7 +15,7 @@ export default async function TemplateBuilderPage({
         redirect('/templates')
     }
 
-    const rowsResult = await dbQuery(`SELECT * FROM public.templates WHERE id='${resolvedParams.id}' LIMIT 1`)
+    const rowsResult = await dbQuery(`SELECT * FROM public.plantillas_doc_tec WHERE id='${resolvedParams.id}' LIMIT 1`)
     const rows = Array.isArray(rowsResult) ? rowsResult : (rowsResult?.rows || [])
     const template = rows?.[0]
 

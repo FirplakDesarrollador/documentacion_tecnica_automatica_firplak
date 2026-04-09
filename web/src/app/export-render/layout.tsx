@@ -1,0 +1,12 @@
+/**
+ * Layout minimalista para la ruta de exportación.
+ * Evita heredar la barra lateral y los estilos globales del dashboard
+ * mediante posicionamiento absoluto que cubre toda la pantalla.
+ */
+export default function ExportLayout({ children }: { children: React.ReactNode }) {
+    return (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', margin: 0, padding: 0, background: '#fff', zIndex: 999999, overflow: 'hidden' }}>
+            {children}
+        </div>
+    )
+}

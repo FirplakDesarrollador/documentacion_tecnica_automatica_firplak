@@ -147,6 +147,19 @@ export async function updateAssetAction(assetId: string, data: { name?: string, 
         SET ${updates.join(', ')}, updated_at = now() 
         WHERE id = '${assetId}'
     `)
+
+    // Propagate new file_path to all products that reference this asset as isometric
+    // This prevents drift between the asset record and the product's cached snapshot path
+    if (data.file_path) {
+        await dbQuery(`
+            UPDATE public.cabinet_products
+            SET isometric_path = '${data.file_path.replace(/'/g, "''")}',
+                updated_at = now()
+            WHERE isometric_asset_id = '${assetId}'
+        `)
+    }
+
     revalidatePath('/assets')
+    revalidatePath('/products')
     return { success: true }
 }

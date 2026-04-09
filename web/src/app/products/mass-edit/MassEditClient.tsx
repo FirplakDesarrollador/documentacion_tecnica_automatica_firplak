@@ -73,7 +73,6 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
     const [products, setProducts] = useState<Product[]>(initialProducts)
     const [filterFamily, setFilterFamily] = useState<string[]>([])
     const [filterRef, setFilterRef] = useState<string[]>([])
-    const [filterMeasure, setFilterMeasure] = useState<string[]>([])
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
     // Deletion states
@@ -104,26 +103,29 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
 
     const filteredProducts = useMemo(() => {
         // Si no hay filtros seleccionados, no mostrar nada para evitar selecciones masivas accidentales
-        if (filterFamily.length === 0 && filterRef.length === 0 && filterMeasure.length === 0) {
+        if (filterFamily.length === 0 && filterRef.length === 0) {
             return []
         }
 
         return products.filter(p => {
-            // Normalize product familia_code by removing prefixes if necessary
             let normalizedPCode = p.familia_code || ''
             if (/^[VCP]([A-Z]{3,4}\d{2})$/i.test(normalizedPCode)) {
                 normalizedPCode = normalizedPCode.substring(1)
             } else if (/^[VCP](?!$)/i.test(normalizedPCode)) {
-                // If it starts with V, C, or P and followed by anything, assume it's a prefix
                 normalizedPCode = normalizedPCode.substring(1)
             }
 
             const matchFam = filterFamily.length === 0 || filterFamily.includes(normalizedPCode) || filterFamily.includes(p.familia_code || '')
-            const matchRef = filterRef.length === 0 || (p.ref_code && filterRef.includes(p.ref_code))
-            const matchMeas = filterMeasure.length === 0 || (p.commercial_measure && filterMeasure.includes(p.commercial_measure))
-            return matchFam && matchRef && matchMeas
+            // filterRef contiene valores compuestos "ref_code|||commercial_measure"
+            const matchRef = filterRef.length === 0 || filterRef.some(v => {
+                const [rc, cm] = v.split('|||')
+                const refMatch = p.ref_code === rc
+                const measMatch = !cm || p.commercial_measure === cm
+                return refMatch && measMatch
+            })
+            return matchFam && matchRef
         })
-    }, [products, filterRef, filterFamily, filterMeasure])
+    }, [products, filterRef, filterFamily])
 
     const references = useMemo(() => {
         if (filterFamily.length === 0) return []
@@ -132,43 +134,32 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
             if (/^[VCP]/i.test(normalizedPCode)) normalizedPCode = normalizedPCode.substring(1)
             return filterFamily.includes(normalizedPCode) || filterFamily.includes(p.familia_code || '')
         })
-        const uniqueRefs = new Map<string, string>()
+        // Agrupar por ref_code + commercial_measure para incluir la medida en el label
+        const uniqueRefs = new Map<string, { name: string, measure: string }>()
         availableProducts.forEach(p => {
-            if (p.ref_code) uniqueRefs.set(p.ref_code, p.cabinet_name || '')
+            if (p.ref_code) {
+                const key = `${p.ref_code}|||${p.commercial_measure || ''}`
+                if (!uniqueRefs.has(key)) {
+                    uniqueRefs.set(key, { name: p.cabinet_name || '', measure: p.commercial_measure || '' })
+                }
+            }
         })
-        return Array.from(uniqueRefs.entries()).map(([value, label]) => ({
-            value,
-            label: `${value} - ${label}`
-        })).sort((a, b) => a.value.localeCompare(b.value))
-    }, [products, filterFamily])
-
-    const measures = useMemo(() => {
-        if (filterFamily.length === 0) return []
-        const availableProducts = products.filter(p => {
-            let normalizedPCode = p.familia_code || ''
-            if (/^[VCP]/i.test(normalizedPCode)) normalizedPCode = normalizedPCode.substring(1)
-            const matchFam = filterFamily.includes(normalizedPCode) || filterFamily.includes(p.familia_code || '')
-            // Note: User says measures should not depend on references:
-            // "El filtro de medidas no se condiciona a que haya o no opciones en las referencias."
-            return matchFam
-        })
-        return Array.from(new Set(availableProducts.map(p => p.commercial_measure).filter(Boolean))) as string[]
+        return Array.from(uniqueRefs.entries()).map(([key, { name, measure }]) => {
+            const [rc] = key.split('|||')
+            return {
+                value: key,
+                label: measure ? `${name} - ${measure}` : name
+            }
+        }).sort((a, b) => a.label.localeCompare(b.label))
     }, [products, filterFamily])
 
     const handleFamilyChange = (vals: string[]) => {
         setFilterFamily(vals)
-        if (vals.length === 0) {
-            setFilterRef([])
-            setFilterMeasure([])
-        } else {
-            setFilterRef([])
-            setFilterMeasure([])
-        }
+        setFilterRef([])
     }
 
     const handleReferenceChange = (vals: string[]) => {
         setFilterRef(vals)
-        setFilterMeasure([])
     }
 
     const handleSelectAll = (checked: boolean) => {
@@ -895,22 +886,12 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                             />
                         </div>
                         <div className="grid gap-1">
-                            <Label className="text-[10px] font-medium text-slate-500">Referencia</Label>
+                            <Label className="text-[10px] font-medium text-slate-500">Referencia · Medida</Label>
                             <MultiSelectSearchField
                                 options={references}
                                 values={filterRef}
                                 onChange={handleReferenceChange}
-                                placeholder="Referencia"
-                                className="h-8 text-xs"
-                            />
-                        </div>
-                        <div className="grid gap-1">
-                            <Label className="text-[10px] font-medium text-slate-500">Medida</Label>
-                            <MultiSelectSearchField
-                                options={measures.map(m => ({ value: m, label: m }))}
-                                values={filterMeasure}
-                                onChange={setFilterMeasure}
-                                placeholder="Medida"
+                                placeholder="Referencia · Medida"
                                 className="h-8 text-xs"
                             />
                         </div>
@@ -949,7 +930,7 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {filterFamily.length === 0 && filterRef.length === 0 && filterMeasure.length === 0 ? (
+                                {filterFamily.length === 0 && filterRef.length === 0 ? (
                                     <TableRow>
                                         <TableCell colSpan={12} className="h-[400px] text-center">
                                             <div className="flex flex-col items-center justify-center max-w-sm mx-auto space-y-4">

@@ -14,7 +14,10 @@ const globalForSupabase = globalThis as unknown as { _supabaseServer: ReturnType
 
 export const supabaseServer = globalForSupabase._supabaseServer || createClient(
     supabaseUrl,
-    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY || supabaseAnonKey,
+    process.env.SUPABASE_SERVICE_ROLE_KEY || 
+    process.env.SUPABASE_SECRET_KEY || 
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY || 
+    supabaseAnonKey,
     { auth: { persistSession: false, autoRefreshToken: false } }
 )
 if (process.env.NODE_ENV !== 'production') globalForSupabase._supabaseServer = supabaseServer
@@ -24,9 +27,6 @@ if (process.env.NODE_ENV !== 'production') globalForSupabase._supabaseServer = s
  * Para operaciones masivas de escritura usar supabase.rpc('bulk_update_product_names').
  */
 export async function dbQuery(sql: string, values?: (string | number | boolean | null)[]): Promise<any> {
-    const SUPABASE_PROJECT_ID = 'nbifmxggfusipomspoly'
-    const SUPABASE_MGMT_TOKEN = process.env.SUPABASE_ACCESS_TOKEN || ''
-
     let finalSql = sql
     if (values && values.length > 0) {
         let i = 0
@@ -40,21 +40,20 @@ export async function dbQuery(sql: string, values?: (string | number | boolean |
     }
 
     try {
-        // Endpoint correcto del Management API de Supabase para queries SQL
-        const response = await fetch(`https://api.supabase.com/v1/projects/${SUPABASE_PROJECT_ID}/database/query`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${SUPABASE_MGMT_TOKEN}`
-            },
-            body: JSON.stringify({ query: finalSql })
-        })
-
-        const result = await response.json()
-        if (!response.ok) throw new Error(JSON.stringify(result))
-        return result
+        // Usamos el RPC 'exec_sql' para ejecutar SQL crudo de forma segura y rápida
+        // Esto evita depender del Management API de Supabase y sus límites/tokens inestables
+        const { data, error } = await supabaseServer.rpc('exec_sql', { query_text: finalSql })
+        
+        if (error) throw error
+        
+        // Si el resultado es el objeto de éxito de DML (UPDATE/INSERT/DELETE)
+        if (data && typeof data === 'object' && 'success' in data && data.success === true) {
+            return data
+        }
+        
+        return data || []
     } catch (err: any) {
-        throw new Error(`DB Query Error (${(err as any).status || 500}): ${err.message}`)
+        throw new Error(`DB Query Error: ${err.message}`)
     }
 }
 
@@ -65,5 +64,5 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     auth: { persistSession: false, autoRefreshToken: false }
 })
 
-// Alias admin = mismo cliente (usa dbQuery para server-side)
-export const supabaseAdmin = supabase
+// Alias admin = cliente con privilegios de service role (bypassa RLS)
+export const supabaseAdmin = supabaseServer

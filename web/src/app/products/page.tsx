@@ -71,30 +71,23 @@ export default async function ProductsPage({
     let references: {value: string, label: string}[] = []
     if (f.length > 0) {
         const fFilter = f.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(',')
-        const mFilter = m.length > 0 ? `AND commercial_measure IN (${m.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})` : ''
-        
+
         const refRecords = await dbQuery(`
-            SELECT ref_code, MAX(cabinet_name) as cabinet_name 
-            FROM public.cabinet_products 
-            WHERE status = 'ACTIVO' AND ref_code IS NOT NULL AND familia_code IN (${fFilter}) ${mFilter}
-            GROUP BY ref_code
+            SELECT ref_code, commercial_measure, MAX(cabinet_name) as cabinet_name
+            FROM public.cabinet_products
+            WHERE status = 'ACTIVO' AND ref_code IS NOT NULL AND familia_code IN (${fFilter})
+            GROUP BY ref_code, commercial_measure
+            ORDER BY ref_code, commercial_measure
         `) || []
-        references = refRecords.map((rec: any) => ({ value: rec.ref_code as string, label: `${rec.ref_code} - ${rec.cabinet_name || ''}` })).sort((a: any, b: any) => a.value.localeCompare(b.value))
+        references = refRecords.map((rec: any) => ({
+            value: `${rec.ref_code}|||${rec.commercial_measure || ''}`,
+            label: rec.commercial_measure
+                ? `${rec.cabinet_name || rec.ref_code} - ${rec.commercial_measure}`
+                : `${rec.cabinet_name || rec.ref_code}`
+        }))
     }
 
-    let measures: string[] = []
-    if (f.length > 0) {
-        const fFilter = f.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(',')
-        const rFilter = r.length > 0 ? `AND ref_code IN (${r.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})` : ''
-
-        const measureRecords = await dbQuery(`
-            SELECT DISTINCT commercial_measure 
-            FROM public.cabinet_products 
-            WHERE status = 'ACTIVO' AND commercial_measure IS NOT NULL AND commercial_measure != '' 
-            AND familia_code IN (${fFilter}) ${rFilter}
-        `) || []
-        measures = measureRecords.map((rec: any) => rec.commercial_measure as string).sort()
-    }
+    // Medidas integradas en referencias — no se exponen como filtro separado.
 
     const hasFilterMsg = !hasFilter ? (
         <TableRow>
@@ -155,7 +148,7 @@ export default async function ProductsPage({
                 {/* Filters & Actions Toolbar */}
                 <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between p-4 bg-white border border-slate-200 rounded-xl shadow-soft">
                     <div className="w-full lg:w-auto flex-1">
-                        <ProductSearch families={families} references={references} measures={measures} />
+                        <ProductSearch families={families} references={references} />
                     </div>
                     <div className="flex items-center gap-3 w-full lg:w-auto">
                         <ImportCsvButton />

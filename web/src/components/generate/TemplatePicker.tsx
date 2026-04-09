@@ -1,5 +1,6 @@
 'use client'
 
+import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { LayoutTemplate, ChevronDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -37,6 +38,11 @@ interface TemplatePickerProps {
 export function TemplatePicker({ templates, selectedTemplateId, onSelect, updateUrl = false }: TemplatePickerProps) {
     const router = useRouter()
     const searchParams = useSearchParams()
+    
+    const [isMounted, setIsMounted] = useState(false)
+    useEffect(() => {
+        setIsMounted(true)
+    }, [])
 
     const selected = templates.find(t => t.id === selectedTemplateId)
 
@@ -47,6 +53,20 @@ export function TemplatePicker({ templates, selectedTemplateId, onSelect, update
             params.set('template_id', id)
             router.push(`/generate?${params.toString()}`)
         }
+    }
+
+    if (!isMounted) {
+        return (
+            <Button variant="outline" className="flex items-center gap-2 min-w-[200px] justify-between bg-white border-slate-200 opacity-50 cursor-wait">
+                <div className="flex items-center gap-2 min-w-0">
+                    <LayoutTemplate className="w-4 h-4 shrink-0 text-slate-400" />
+                    <span className="truncate text-sm font-medium text-slate-400">
+                        Cargando...
+                    </span>
+                </div>
+                <ChevronDown className="w-4 h-4 shrink-0 text-slate-300" />
+            </Button>
+        )
     }
 
     if (templates.length === 0) {

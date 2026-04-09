@@ -385,7 +385,11 @@ function translateField(
             const isSafe = /^\d+(?:\.\d+)?(MM|IN|CM)?$/.test(tok) || /^(\d+(?:\.\d+)?)\s*[Xx]\s*(\d+(?:\.\d+)?)$/.test(tok)
             
             if (!isSafe && !isInternal && !isSingleLetter && !missingTerms.includes(tok)) {
-                missingTerms.push(tok)
+                // Solo pedir traducción si la estrategia es explícitamente 'translate'
+                // Si es 'preserve', se emite el término original sin bloquear la validación.
+                if (fieldConfig.fallback_strategy === 'translate') {
+                    missingTerms.push(tok)
+                }
             }
             
             // Emit only if it's not a single letter noise (or if it's internal)
