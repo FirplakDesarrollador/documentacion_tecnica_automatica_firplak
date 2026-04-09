@@ -4,7 +4,7 @@
 > **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estratégico y operativo necesario para navegar y construir eficientemente en este proyecto.
 
 ## 📌 Visión General
-Implementación de la infraestructura de Gobernanza de Seguridad de Terminal y Motor de Versionado Personalizado ('Ciclo de 10'). Se crearon las directivas de seguridad global, la habilidad `project-security-vault` para automatizar excepciones de terminal y el flujo de auditoría proactiva, garantizando una operación más rápida y autónoma del Agente de IA sin comprometer la seguridad del repositorio.
+Estabilización final del pipeline de exportación de etiquetas, logrando 100% de paridad visual entre el Builder y la salida física (PDF/JPG). Se implementó un motor de normalización de datos técnicos para el campo "Canto", se aseguró el acceso absoluto a activos vía Supabase (Secret Key) y se integró persistencia de selección en el cliente mediante localStorage, garantizando una experiencia de usuario fluida y libre de errores de renderizado.
 
 ## 🏗️ Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
