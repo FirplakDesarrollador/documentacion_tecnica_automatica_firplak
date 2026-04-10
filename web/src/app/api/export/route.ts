@@ -15,8 +15,10 @@ export async function POST(req: Request) {
             args: [
                 '--no-sandbox', 
                 '--disable-setuid-sandbox',
-                '--disable-web-security', // Permite cargar imágenes de otros dominios (Supabase)
-                '--disable-features=IsolateOrigins,site-per-process'
+                '--disable-web-security', 
+                '--disable-features=IsolateOrigins,site-per-process',
+                '--disable-extensions',
+                '--disable-infobars'
             ]
         })
 

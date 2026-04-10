@@ -9,25 +9,15 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { buttonVariants } from '@/components/ui/button-variants'
+import { cn } from '@/lib/utils'
 import { AlertCircle, ArrowRight } from 'lucide-react'
 import Link from 'next/link'
-import { validateProductReadiness } from '@/lib/engine/validator'
-
-// MVP Mock of required template variables
-const MVP_REQUIRED_TEMPLATE_ELEMENTS = [
-    { id: '1', type: 'dynamic_text', x: 0, y: 0, width: 0, height: 0, dataField: 'final_name_es' },
-    { id: '2', type: 'barcode', x: 0, y: 0, width: 0, height: 0, dataField: 'code' },
-] as any
+import { getFullValidationSweep } from '@/lib/engine/validationActions'
 
 export default async function ExceptionsPage() {
-    const products = await dbQuery(`SELECT * FROM public.cabinet_products ORDER BY updated_at DESC`) || []
-    const rules = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true`) || []
-
-    // Find products that have issues
-    const exceptionalProducts = products.map((p: any) => {
-        const issues = validateProductReadiness(p, rules, MVP_REQUIRED_TEMPLATE_ELEMENTS)
-        return { product: p, issues }
-    }).filter((item: any) => !item.issues.isValid || item.issues.warnings.length > 0)
+    const validationSummary = await getFullValidationSweep()
+    const exceptionalProducts = validationSummary.details
 
     return (
         <div className="flex flex-col gap-8">
@@ -63,9 +53,14 @@ export default async function ExceptionsPage() {
                                 </TableCell>
                             </TableRow>
                         ) : (
-                            exceptionalProducts.map(({ product, issues }: any) => (
-                                <TableRow key={product.id}>
-                                    <TableCell className="font-semibold text-slate-900">{product.code}</TableCell>
+                            exceptionalProducts.map(({ productId, productCode, productName, issues }: any) => (
+                                <TableRow key={productId}>
+                                    <TableCell>
+                                        <div className="flex flex-col">
+                                            <span className="font-semibold text-slate-900">{productCode}</span>
+                                            <span className="text-[10px] text-slate-500 truncate max-w-[200px]">{productName}</span>
+                                        </div>
+                                    </TableCell>
                                     <TableCell>
                                         {!issues.isValid ? (
                                             <Badge className="bg-rose-50 text-rose-700 ring-1 ring-rose-700/10 hover:bg-rose-50 text-[10px] px-2 py-0.5 font-bold uppercase tracking-tight">Crítico</Badge>
@@ -76,7 +71,9 @@ export default async function ExceptionsPage() {
                                     <TableCell>
                                         <div className="flex gap-1.5 flex-wrap">
                                             {issues.missingFields.map((f: string) => (
-                                                <Badge key={f} className="text-[9px] font-bold border-none bg-slate-100 text-slate-600 px-1.5 py-0 uppercase tracking-tighter">{f}</Badge>
+                                                <Badge key={f} className="text-[9px] font-bold border-none bg-slate-100 text-slate-600 px-1.5 py-0 uppercase tracking-tighter">
+                                                    {f === 'isometric' ? 'Falta Isométrico' : f.replace(/_/g, ' ')}
+                                                </Badge>
                                             ))}
                                             {issues.warnings.map((w: string) => (
                                                 <span key={w} className="text-[10px] text-amber-600 font-medium italic">⚠️ {w}</span>
@@ -84,11 +81,12 @@ export default async function ExceptionsPage() {
                                         </div>
                                     </TableCell>
                                     <TableCell className="text-right">
-                                        <Button variant="ghost" size="sm">
-                                            <Link href={`/products/${product.id}`} className="flex items-center gap-1 text-blue-600">
-                                                Corregir <ArrowRight className="w-4 h-4" />
-                                            </Link>
-                                        </Button>
+                                        <Link 
+                                            href={`/products/${productId}`} 
+                                            className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), "flex items-center gap-1 text-blue-600")}
+                                        >
+                                            Corregir <ArrowRight className="w-4 h-4" />
+                                        </Link>
                                     </TableCell>
                                 </TableRow>
                             ))

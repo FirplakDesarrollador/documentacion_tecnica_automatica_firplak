@@ -7,10 +7,12 @@ import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import Link from 'next/link'
-import { createFamilyAction } from '@/app/products/actions'
+import { upsertFamilyAction } from '@/app/products/actions'
 import { ArrowLeft } from 'lucide-react'
+import { useRouter } from 'next/navigation'
 
 export default function NewFamilyPage() {
+    const router = useRouter()
     const [formData, setFormData] = useState({
         code: '',
         name: '',
@@ -30,7 +32,8 @@ export default function NewFamilyPage() {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
-        await createFamilyAction(formData)
+        await upsertFamilyAction(formData)
+        router.push('/families')
     }
 
     return (

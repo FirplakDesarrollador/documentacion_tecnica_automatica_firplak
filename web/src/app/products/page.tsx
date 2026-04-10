@@ -13,7 +13,6 @@ import { PlusCircle, DatabaseZap, Search } from 'lucide-react'
 import Link from 'next/link'
 import { ImportCsvButton } from '@/components/products/ImportCsvButton'
 import { ProductSearch } from '@/components/products/ProductSearch'
-import { AiTranslateButton } from '@/components/products/AiTranslateButton'
 import { cn } from '@/lib/utils'
 
 export default async function ProductsPage({
@@ -32,6 +31,13 @@ export default async function ProductsPage({
     const f = toArray(searchParams?.f)
     const r = toArray(searchParams?.r)
     const m = toArray(searchParams?.m)
+
+    // Construct query string for persistence
+    const urlParams = new URLSearchParams()
+    f.forEach(v => urlParams.append('f', v))
+    r.forEach(v => urlParams.append('r', v))
+    m.forEach(v => urlParams.append('m', v))
+    const filterQuery = urlParams.toString() ? `?${urlParams.toString()}` : ''
 
     const hasFilter = f.length > 0 || r.length > 0 || m.length > 0
 
@@ -91,21 +97,21 @@ export default async function ProductsPage({
 
     const hasFilterMsg = !hasFilter ? (
         <TableRow>
-            <TableCell colSpan={4} className="h-[400px] text-center">
+            <TableCell colSpan={7} className="h-[400px] text-center">
                 <div className="flex flex-col items-center justify-center max-w-sm mx-auto space-y-4">
                     <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-2">
                         <Search className="w-8 h-8 text-slate-400" />
                     </div>
                     <h3 className="text-lg font-semibold text-slate-900">Encuentra tus productos</h3>
                     <p className="text-sm text-slate-500 text-center leading-relaxed">
-                        Selecciona una <b>Familia</b>, <b>Referencia</b> o <b>Medida</b> en la barra superior para empezar a explorar y gestionar el catálogo técnico.
+                        Selecciona una <b>Familia</b>, <b>Referencia con su medida</b> en la barra superior para empezar a explorar y gestionar el catálogo técnico.
                     </p>
                 </div>
             </TableCell>
         </TableRow>
     ) : products.length === 0 ? (
         <TableRow>
-            <TableCell colSpan={4} className="h-32 text-center text-muted-foreground">
+            <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
                 No se encontraron productos para los filtros seleccionados.
             </TableCell>
         </TableRow>
@@ -121,6 +127,7 @@ export default async function ProductsPage({
                     </p>
                 </div>
                 <div className="flex flex-col sm:flex-row flex-wrap items-start sm:items-center gap-3">
+                    <ImportCsvButton />
                     <Link href="/families">
                         <Button variant="outline" className="w-full sm:w-auto border-slate-200 text-slate-600 hover:bg-slate-50">
                             <PlusCircle className="mr-2 h-4 w-4" />
@@ -133,7 +140,7 @@ export default async function ProductsPage({
                             Cambios masivos
                         </Button>
                     </Link>
-                    <Link href="/products/new">
+                    <Link href={`/products/new${filterQuery}`}>
                         <Button className="w-full sm:w-auto shadow-sm">
                             <PlusCircle className="mr-2 h-4 w-4" />
                             Agregar Producto
@@ -146,14 +153,8 @@ export default async function ProductsPage({
             <div className="flex flex-col gap-6">
                 
                 {/* Filters & Actions Toolbar */}
-                <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between p-4 bg-white border border-slate-200 rounded-xl shadow-soft">
-                    <div className="w-full lg:w-auto flex-1">
-                        <ProductSearch families={families} references={references} />
-                    </div>
-                    <div className="flex items-center gap-3 w-full lg:w-auto">
-                        <ImportCsvButton />
-                        <AiTranslateButton />
-                    </div>
+                <div className="p-4 bg-white border border-slate-200 rounded-xl shadow-soft">
+                    <ProductSearch families={families} references={references} />
                 </div>
 
                 {/* Data Table */}
@@ -200,7 +201,7 @@ export default async function ProductsPage({
                                         </Badge>
                                     </TableCell>
                                     <TableCell className="text-right">
-                                        <Link href={`/products/${product.id}`}>
+                                        <Link href={`/products/${product.id}${filterQuery}`}>
                                             <Button variant="ghost" size="sm" className="font-semibold text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50">Editar</Button>
                                         </Link>
                                     </TableCell>

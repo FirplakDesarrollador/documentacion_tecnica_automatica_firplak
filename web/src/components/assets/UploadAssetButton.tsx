@@ -11,9 +11,10 @@ interface Props {
     variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link";
     className?: string;
     label?: string;
+    type?: string;
 }
 
-export function UploadAssetButton({ onUploadComplete, variant = "default", className, label }: Props = {}) {
+export function UploadAssetButton({ onUploadComplete, variant = "default", className, label, type }: Props = {}) {
     const [isUploading, setIsUploading] = useState(false)
     const fileInputRef = useRef<HTMLInputElement>(null)
     const router = useRouter()
@@ -27,6 +28,7 @@ export function UploadAssetButton({ onUploadComplete, variant = "default", class
         try {
             const formData = new FormData()
             formData.append('file', file)
+            if (type) formData.append('type', type)
 
             const response = await fetch('/api/assets/upload', {
                 method: 'POST',

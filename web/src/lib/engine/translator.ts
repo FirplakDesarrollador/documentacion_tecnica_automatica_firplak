@@ -41,6 +41,7 @@ export interface ProductPayload {
     // Legacy fields (for backwards compat)
     final_name_es?: string | null
     color_name?: string | null
+    zone_home?: string | null
 }
 
 export interface TranslationResult {
@@ -65,7 +66,8 @@ interface FieldConfig {
 
 // ─── Cache ────────────────────────────────────────────────────────────────────
 
-let cachedGlossary: Record<string, string> | null = null
+interface GlossaryEntry { en: string; category: string }
+let cachedGlossary: Record<string, GlossaryEntry> | null = null
 let cachedConfig: Record<string, FieldConfig> | null = null
 let lastGlossaryFetch = 0
 let lastConfigFetch = 0
@@ -83,17 +85,22 @@ function getSupabase() {
 
 // ─── Loaders ─────────────────────────────────────────────────────────────────
 
-async function loadGlossary(): Promise<Record<string, string>> {
+async function loadGlossary(): Promise<Record<string, GlossaryEntry>> {
     if (cachedGlossary && Date.now() - lastGlossaryFetch < CACHE_TTL_MS) return cachedGlossary
     const sb = getSupabase()
     const { data, error } = await sb
         .from('glossary')
-        .select('term_es, term_en')
+        .select('term_es, term_en, category')
         .eq('active', true)
         .order('priority', { ascending: false })
     if (error) throw new Error('Glossary load error: ' + error.message)
-    const g: Record<string, string> = {}
-    data?.forEach((r: any) => { g[r.term_es.toUpperCase().trim()] = r.term_en.toUpperCase().trim() })
+    const g: Record<string, GlossaryEntry> = {}
+    data?.forEach((r: any) => { 
+        g[r.term_es.toUpperCase().trim()] = { 
+            en: r.term_en.toUpperCase().trim(),
+            category: (r.category || 'TECHNICAL_TERM').toUpperCase()
+        } 
+    })
     cachedGlossary = g
     lastGlossaryFetch = Date.now()
     return g
@@ -117,9 +124,10 @@ async function loadConfig(targetEntity: string): Promise<Record<string, FieldCon
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function normalizeTechnicalText(val: string): string {
-    if (!val) return ''
-    const upper = val.toUpperCase().trim()
+function normalizeTechnicalText(val: any): string {
+    if (val === undefined || val === null) return ''
+    const upper = String(val).toUpperCase().trim()
+    if (!upper) return ''
     
     // Conservative rule: only normalize common units with space if they look like measures
     // e.g. "2 MM" -> "2MM", but not touching "LADO A" or codes.
@@ -140,10 +148,11 @@ function normalizeTechnicalText(val: string): string {
 
 const PLACEHOLDERS = ['NA', 'N/A', 'NULL', 'NONE', 'VACÍO', '-', '.', 'UNDEFINED']
 
-function isPlaceholder(val: string): boolean {
-    if (!val) return true
-    const clean = val.toUpperCase().trim()
-    return PLACEHOLDERS.includes(clean) || clean === ''
+function isPlaceholder(val: any): boolean {
+    if (val === undefined || val === null) return true
+    if (typeof val === 'boolean') return false // Booleans are not placeholders
+    const str = String(val).toUpperCase().trim()
+    return PLACEHOLDERS.includes(str) || str === ''
 }
 
 function isSymbolOnly(val: string): boolean {
@@ -271,9 +280,22 @@ const RESOLVED_TYPE_MAP: Record<string, string> = {
     'MUEBLE|PISO':                'BASE CABINET',
     'MUEBLE|EMPOTRADO':           'BUILT-IN CABINET',
     'PLATAFORMA||':               'PLATFORM',
+    'MUEBLE|PISO|LAVARROPAS':      'LAUNDRY BASE CABINET',
+    'MUEBLE|ELEVADO|LAVARROPAS':   'LAUNDRY WALL CABINET',
 }
 
-function resolveTypeBlock(product: ProductPayload): string {
+function resolveTypeBlock(product: ProductPayload, glossary?: Record<string, GlossaryEntry>): string | { isMissing: boolean, key: string } {
+    const rawType = (product.product_type || 'MUEBLE').toUpperCase()
+    const rawDesig = (product.designation || '').toUpperCase()
+    const rawDest = (product.use_destination || '').toUpperCase()
+
+    // 1. Unified Glossary Strategy (Category: RESOLVED_TYPE)
+    const glossaryKey = `${rawType} ${rawDesig} ${rawDest}`.replace(/\s+/g, ' ').trim()
+    if (glossary && glossary[glossaryKey] && glossary[glossaryKey].category === 'RESOLVED_TYPE') {
+        return glossary[glossaryKey].en
+    }
+
+    // 2. Hardcoded / Fallback Logic
     const clean = (s: string | null | undefined) => {
         const n = normalizeTechnicalText(s || '')
         return n.replace(/\b(PARA|A|DE)\b/g, '').replace(/\s+/g, ' ').trim()
@@ -302,13 +324,14 @@ function resolveTypeBlock(product: ProductPayload): string {
     }
     
     // Last resort fallback based on destination context
-    if (dest.includes('LAVAMANOS') || product.commercial_measure?.includes('LVM') || product.special_label?.includes('LVM')) {
-        return 'VANITY'
-    }
-    if (dest.includes('COCINA')) return 'KITCHEN CABINET'
+    const dUpper = dest.toUpperCase()
+    if (dUpper.includes('LAVAMANOS')) return 'VANITY'
+    if (dUpper.includes('COCINA')) return 'KITCHEN CABINET'
+    if (dUpper.includes('LAVARROPAS') || dUpper.includes('LAVADERO') || dUpper.includes('LVR')) return 'LAUNDRY CABINET'
+    if (dUpper.includes('BAÑO')) return 'BATHROOM CABINET'
     
-    // Absolute generic fallback
-    return pType === 'MUEBLE' ? 'CABINET' : pType
+    // If we are here, we don't know what this is. Mark as missing to prompt user.
+    return { isMissing: true, key: glossaryKey }
 }
 
 // ─── Field Translator ─────────────────────────────────────────────────────────
@@ -317,7 +340,7 @@ function resolveTypeBlock(product: ProductPayload): string {
 function translateField(
     rawValue: string,
     fieldConfig: FieldConfig,
-    glossary: Record<string, string>,
+    glossary: Record<string, GlossaryEntry>,
     missingTerms: string[],
     warnings: string[]
 ): string {
@@ -335,21 +358,36 @@ function translateField(
 
     // ── Pre-check: If fallback is preserve ────────────────────────────────────
     if (fieldConfig.fallback_strategy === 'preserve') {
-        const fullGlossary = { ...glossary, ...INTERNAL_GLOSSARY }
-        const direct = fullGlossary[upper]
-        if (direct) {
+        // Check INTERNAL_GLOSSARY first (which are just strings)
+        if (INTERNAL_GLOSSARY[upper]) return INTERNAL_GLOSSARY[upper]
+        
+        // Check User Glossary (which are objects)
+        if (glossary[upper]) {
+            const direct = glossary[upper].en
             if (isPlaceholder(direct)) return ''
             return direct
         }
         // FAIL-SAFE: If the full phrase 'preserve' is not in glossary, 
         // we DO NOT return the Spanish 'upper' yet. We allow the sliding window
-        // below to try to translate the parts. This fixes "MANIJA NEGRA 128".
+        // below to try to translate the parts.
     }
 
     // ── Combined Glossary (Internal has precedence for technical precision) ──
-    const fullGlossary = { ...glossary, ...INTERNAL_GLOSSARY }
-    if (fullGlossary[upper]) return fullGlossary[upper]
+    const fullGlossary: Record<string, GlossaryEntry> = { ...glossary }
+    // Add internal glossary terms as technical terms
+    Object.entries(INTERNAL_GLOSSARY).forEach(([es, en]) => {
+        if (!fullGlossary[es]) fullGlossary[es] = { en, category: 'TECHNICAL_TERM' }
+    })
+
+    if (fullGlossary[upper]) return fullGlossary[upper].en
     
+    // ── Pre-check: Phrase reporting if missing ───────────────────────────────
+    if (fieldConfig.fallback_strategy === 'translate' && !fullGlossary[upper]) {
+        if (upper.split(/\s+/).length > 1 && !missingTerms.includes(upper)) {
+            missingTerms.push(upper)
+        }
+    }
+
     // Multi-word sliding window (up to 4 tokens) - Greedy Approach
     const tokens = upper.split(/\s+/)
     let translatedTokens: string[] = []
@@ -361,7 +399,7 @@ function translateField(
         for (let len = Math.min(5, tokens.length - i); len >= 1; len--) {
             const phrase = tokens.slice(i, i + len).join(' ')
             if (fullGlossary[phrase]) {
-                translatedTokens.push(fullGlossary[phrase])
+                translatedTokens.push(fullGlossary[phrase].en)
                 i += len
                 found = true
                 break
@@ -385,10 +423,13 @@ function translateField(
             const isSafe = /^\d+(?:\.\d+)?(MM|IN|CM)?$/.test(tok) || /^(\d+(?:\.\d+)?)\s*[Xx]\s*(\d+(?:\.\d+)?)$/.test(tok)
             
             if (!isSafe && !isInternal && !isSingleLetter && !missingTerms.includes(tok)) {
-                // Solo pedir traducción si la estrategia es explícitamente 'translate'
-                // Si es 'preserve', se emite el término original sin bloquear la validación.
+                // Si la frase completa ya se reportó, evitamos ruido con palabras sueltas 
+                // a menos que sean muy importantes o la frase sea demasiado larga.
                 if (fieldConfig.fallback_strategy === 'translate') {
-                    missingTerms.push(tok)
+                    const phraseAlreadyMissing = missingTerms.some(m => m.includes(tok) && m.length > tok.length)
+                    if (!phraseAlreadyMissing) {
+                        missingTerms.push(tok)
+                    }
                 }
             }
             
@@ -470,6 +511,10 @@ export async function translateProductToEnglish(
     const warnings: string[] = []
 
     const isActuallyActive = (varId: string) => {
+        // Special case: resolved_type (the commercial type like CABINET/VANITY) 
+        // should ALWAYS be active if it was successfully resolved, as it's the core of the English name.
+        if (varId === 'resolved_type') return true
+        
         if (!activeVariableIds) return true
         const mapping: Record<string, string[]> = {
             'rh': ['rh_flag', 'rh'],
@@ -481,6 +526,7 @@ export async function translateProductToEnglish(
             'accessory_text': ['accessory_text'],
             'door_color_text': ['door_color_text', 'id_color_frente'],
             'special_label': ['special_label'],
+            'zone_home': ['zone_home'],
             'private_label_client_name': ['private_label_client_name'],
             'resolved_type': ['product_type', 'designation', 'use_destination']
         }
@@ -489,15 +535,22 @@ export async function translateProductToEnglish(
     }
 
     const [glossary, config] = await Promise.all([ loadGlossary(), loadConfig(targetEntity) ])
-    const resolvedTypeName = resolveTypeBlock(product)
+    const resolvedTypeRes = resolveTypeBlock(product, glossary)
+    
+    let resolvedTypeName = ''
+    if (typeof resolvedTypeRes === 'string') {
+        resolvedTypeName = resolvedTypeRes
+    } else if (resolvedTypeRes.isMissing) {
+        missingTerms.push(`RESOLVED_TYPE_MISSING:${resolvedTypeRes.key}`)
+    }
 
     interface Slot { order: number; variable_id: string; textEn: string }
     const slots: Slot[] = []
     
     // ── SlotTracker (Smarter Deduplication) ──────────────────────────────────
-    const trackAndAdd = (varId: string, val: string, order: number) => {
+    const trackAndAdd = (varId: string, val: any, order: number) => {
         if (!val || isPlaceholder(val)) return
-        const cleanVal = val.trim()
+        const cleanVal = String(val).trim()
         
         // If context says VANITY, we don't want CABINET anywhere.
         if (cleanVal === 'CABINET') {
@@ -544,86 +597,48 @@ export async function translateProductToEnglish(
         slots.push({ order, variable_id: varId, textEn: cleanVal })
     }
 
-    // ── Variable processing loop ──────────────────────────────────────────────
-
-    // ── rh
-    if (config['rh']?.emit && product.rh && isActuallyActive('rh')) {
-        const translated = translateRH(product.rh)
-        if (translated) trackAndAdd('rh', translated, config['rh'].order_index)
-    }
-
-    // ── carb2
-    if (config['carb2']?.emit && product.carb2 && isActuallyActive('carb2')) {
-        const u = normalizeTechnicalText(product.carb2)
-        if (!isPlaceholder(u)) trackAndAdd('carb2', u, config['carb2'].order_index)
-    }
-
-    // ── cabinet_name
-    if (config['cabinet_name']?.emit && product.cabinet_name && isActuallyActive('cabinet_name')) {
-        const val = translateField(product.cabinet_name, config['cabinet_name'], glossary, missingTerms, warnings)
-        trackAndAdd('cabinet_name', val, config['cabinet_name'].order_index)
-    }
-
-    // ── line
-    if (config['line']?.emit && product.line && isActuallyActive('line')) {
-        const val = translateField(product.line, config['line'], glossary, missingTerms, warnings)
-        trackAndAdd('line', val, config['line'].order_index)
-    }
-
-    // ── resolved_type 
-    if (config['resolved_type']?.emit && isActuallyActive('resolved_type')) {
-        trackAndAdd('resolved_type', resolvedTypeName, config['resolved_type'].order_index)
-    }
-
-    // ── commercial_measure
-    if (config['commercial_measure']?.emit && product.commercial_measure && isActuallyActive('commercial_measure')) {
-        const converted = convertMeasureToPulgadas(product.commercial_measure)
-        const val = converted || translateField(product.commercial_measure, config['commercial_measure'], glossary, missingTerms, warnings)
-        trackAndAdd('commercial_measure', val, config['commercial_measure'].order_index)
-    }
-
-    // ── accessory_text
-    if (config['accessory_text']?.emit && product.accessory_text && isActuallyActive('accessory_text')) {
-        const val = translateField(product.accessory_text, config['accessory_text'], glossary, missingTerms, warnings)
-        trackAndAdd('accessory_text', val, config['accessory_text'].order_index)
-    }
-
-    // ── canto_puertas
-    if (config['canto_puertas']?.emit && product.canto_puertas && isActuallyActive('canto_puertas')) {
-        const val = translateField(product.canto_puertas, config['canto_puertas'], glossary, missingTerms, warnings)
-        trackAndAdd('canto_puertas', val, config['canto_puertas'].order_index)
-    }
-
-    // ── door_color_text
-    if (config['door_color_text']?.emit && product.door_color_text && isActuallyActive('door_color_text')) {
-        const val = translateField(product.door_color_text, config['door_color_text'], glossary, missingTerms, warnings)
-        trackAndAdd('door_color_text', val, config['door_color_text'].order_index)
-    }
-
-    // ── special_label
-    if (config['special_label']?.emit && product.special_label && isActuallyActive('special_label')) {
-        const val = translateField(product.special_label, config['special_label'], glossary, missingTerms, warnings)
-        trackAndAdd('special_label', val, config['special_label'].order_index)
-    }
-
-    // ── Others: client, assembled, lvm...
-    if (config['private_label_client_name']?.emit && product.private_label_client_name) {
-        trackAndAdd('private_label_client_name', product.private_label_client_name, config['private_label_client_name'].order_index)
-    }
-    if (config['assembled_flag']?.emit && product.assembled_flag) {
-        trackAndAdd('assembled_flag', 'ASSEMBLED', config['assembled_flag'].order_index)
-    }
-    if (config['armado_con_lvm']?.emit && product.armado_con_lvm) {
-        const val = translateField(product.armado_con_lvm, config['armado_con_lvm'], glossary, missingTerms, warnings)
+    // ── Variable processing loop (Process ALL config fields for missing terms) ──
+    Object.keys(config).forEach(varId => {
+        const cfg = config[varId]
+        const rawValue = (product as any)[varId] || ''
         
-        // Redundancy check: if already has VANITY, don't repeat WASHBASIN/LAV
-        const currentText = slots.map(s => s.textEn.toUpperCase()).join(' ')
-        const isRedundant = currentText.includes('VANITY') && (val.includes('WASHBASIN') || val.includes('LAV'))
-        
-        if (!isRedundant) {
-            trackAndAdd('armado_con_lvm', val, config['armado_con_lvm'].order_index)
+        // Skip placeholders
+        if (isPlaceholder(rawValue)) return
+
+        // Step A: Term Detection (Only for string fields with 'translate' strategy)
+        if (cfg.fallback_strategy === 'translate' && varId !== 'assembled_flag') {
+            const strVal = String(rawValue)
+            translateField(strVal, cfg, glossary, missingTerms, warnings)
         }
-    }
+
+        // Step B: Emission (Only if emit is true AND it's actually active in ES)
+        if (cfg.emit && isActuallyActive(varId)) {
+            let valEn = ''
+            
+            if (varId === 'rh') {
+                valEn = translateRH(rawValue) || ''
+            } else if (varId === 'commercial_measure') {
+                valEn = convertMeasureToPulgadas(rawValue) || translateField(rawValue, cfg, glossary, missingTerms, warnings)
+            } else if (varId === 'resolved_type') {
+                valEn = resolvedTypeName
+            } else if (varId === 'assembled_flag') {
+                valEn = product.assembled_flag ? 'ASSEMBLED' : ''
+            } else {
+                valEn = translateField(rawValue, cfg, glossary, missingTerms, warnings)
+            }
+
+            if (valEn) {
+                // Redundancy check for LVM
+                if (varId === 'armado_con_lvm') {
+                    const currentText = slots.map(s => s.textEn.toUpperCase()).join(' ')
+                    const isRedundant = currentText.includes('VANITY') && (valEn.includes('WASHBASIN') || valEn.includes('LAV'))
+                    if (!isRedundant) trackAndAdd(varId, valEn, cfg.order_index)
+                } else {
+                    trackAndAdd(varId, valEn, cfg.order_index)
+                }
+            }
+        }
+    })
 
     // ── Sort and Assemble ─────────────────────────────────────────────────────
     slots.sort((a, b) => a.order - b.order)

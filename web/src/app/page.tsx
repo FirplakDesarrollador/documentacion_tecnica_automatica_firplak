@@ -9,17 +9,22 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
+import { getFullValidationSweep } from '@/lib/engine/validationActions'
+
 export default async function Home() {
-  // Fetch real KPIs from Supabase
+  // Fetch real KPIs and validation state
+  const validationSummary = await getFullValidationSweep()
+  
   const kpiRows = await dbQuery(`
     SELECT
       (SELECT COUNT(*) FROM public.cabinet_products) as total_products,
-      (SELECT COUNT(*) FROM public.cabinet_products WHERE validation_status = 'incomplete') as incomplete_products,
       (SELECT COUNT(*) FROM public.plantillas_doc_tec WHERE active = true) as active_templates
   `)
+  
   const kpi = kpiRows?.[0] || {}
   const totalProducts = parseInt(kpi.total_products || '0')
-  const incompleteProducts = parseInt(kpi.incomplete_products || '0')
+  const incompleteProducts = validationSummary.incompleteProductsCount
+  const openExceptions = validationSummary.exceptionsCount
   const activeTemplates = parseInt(kpi.active_templates || '0')
 
   // Recent activity
@@ -31,7 +36,6 @@ export default async function Home() {
   `) || []
 
   // Mock data for unconnected features
-  const openExceptions = 3
   const generatedDocs = 48
 
   const modules = [

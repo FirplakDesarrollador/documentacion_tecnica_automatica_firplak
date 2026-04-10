@@ -15,7 +15,7 @@ export interface ValidationIssues {
  * and ensures those variables are not empty after rule evaluations.
  */
 export function validateProductReadiness(
-    product: Product,
+    product: any, // Use any to allow flexible database objects
     rules: Rule[],
     templates: TemplateElement[]
 ): ValidationIssues {
@@ -27,14 +27,26 @@ export function validateProductReadiness(
         warnings: []
     }
 
-    // 1. Evaluate rules for derived fields
-    const ruleResults = evaluateProductRules(product, rules)
+    // 0. Filter by Status: Inactive products are not evaluated as exceptions
+    if (product.status === 'INACTIVO') {
+        return issues
+    }
 
-    // 2. Extrapolate what data fields our templates actually bind to
+    // 1. Evaluate rules for derived fields
+    const ruleResults = evaluateProductRules(product as Product, rules)
+
+    // 2. Extrapolate what data fields our templates actually bind to and mark as REQUIRED
     const requiredDataFields = new Set<string>()
     templates.forEach(el => {
-        if ((el.type === 'dynamic_text' || el.type === 'barcode') && el.dataField) {
-            requiredDataFields.add(el.dataField)
+        // If the element is marked as required in the template builder, we must validate it
+        if (el.required) {
+            if ((el.type === 'dynamic_text' || el.type === 'barcode' || el.type === 'dynamic_image') && el.dataField) {
+                requiredDataFields.add(el.dataField)
+            }
+            // Special case: Static image placeholder used for isometrics
+            if (el.type === 'image' && el.content === 'Isométrico') {
+                requiredDataFields.add('isometric')
+            }
         }
     })
 
@@ -42,11 +54,14 @@ export function validateProductReadiness(
     requiredDataFields.forEach(field => {
         let value: any = undefined
 
-        if (field === 'final_name_es') {
-            value = ruleResults.finalNameEs
-        } else {
-            value = product[field as keyof Product]
+        // Resolve value from product or rules
+        if (field === 'final_name_es') value = ruleResults.finalNameEs
+        else if (field === 'final_name_en') value = ruleResults.finalNameEn
+        // Handle isometric/attachments
+        else if (field === 'isometric') {
+            value = product.isometric_asset_id || product.isometric_path
         }
+        else value = product[field as keyof Product]
 
         if (value === null || value === undefined || value === '') {
             issues.missingFields.push(field)

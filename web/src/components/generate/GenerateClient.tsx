@@ -59,6 +59,14 @@ export function GenerateClient({
     const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
         initialTemplateId ?? (templates[0]?.id ?? null)
     )
+
+    // Sincronizar selección de plantilla con la URL si cambia externamente (ej: restauración desde localStorage)
+    useEffect(() => {
+        if (initialTemplateId && initialTemplateId !== selectedTemplateId) {
+            setSelectedTemplateId(initialTemplateId)
+        }
+    }, [initialTemplateId])
+
     const [showBulkExport, setShowBulkExport] = useState(false)
 
     const selectedTemplate = useMemo(

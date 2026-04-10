@@ -86,6 +86,10 @@ export function evaluateProductRules(product: Product, rules: Rule[]): RuleEngin
             if (r.target_entity && r.target_entity !== 'product' && r.rule_type === 'name_component') {
                 const requiredType = r.target_entity.trim().toUpperCase()
                 const productType = String(result.transformedProduct.product_type || '').trim().toUpperCase()
+                
+                // Fallback: if productType is empty, assume it matches 'MUEBLE' rules (system base)
+                if (productType === '' && requiredType === 'MUEBLE') return true
+                
                 return requiredType === productType
             }
             return true

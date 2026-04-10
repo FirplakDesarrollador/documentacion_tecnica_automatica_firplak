@@ -89,7 +89,7 @@ export async function parseProductCode(
 
         try {
             const rows = await dbQuery(
-                `SELECT code, product_type, use_destination, zone_home, assembled_default, rh_default FROM public.familias WHERE code = '${lookupFamilia.replace(/'/g, "''")}' LIMIT 1`
+                `SELECT code, product_type, use_destination, zone_home, assembled_default, rh_default, allowed_lines FROM public.familias WHERE code = '${lookupFamilia.replace(/'/g, "''")}' LIMIT 1`
             )
             if (rows && rows.length > 0) {
                 const familia = rows[0]
@@ -98,6 +98,7 @@ export async function parseProductCode(
                 result.zone_home = familia.zone_home
                 result.assembled_flag = familia.assembled_default
                 if (familia.rh_default) result.rh = 'RH'
+                result.allowed_lines = familia.allowed_lines || []
             }
         } catch (e) {
             console.error('codeParser: error querying familia', e)
@@ -152,9 +153,9 @@ export async function parseProductCode(
         if (cantoMatch) {
             const mm = parseFloat(cantoMatch[1]);
             if (mm === 2) {
-                result.canto_puertas = 'CANTO 2MM';
+                result.canto_puertas = 'CANTO 2 MM';
             } else {
-                cantoText = `CANTO ${mm}MM`;
+                cantoText = `CANTO ${mm} MM`;
             }
         }
 
@@ -231,7 +232,7 @@ export async function parseProductCode(
 
         // --- Valores por defecto para Muebles ---
         if (result.product_type === 'MUEBLE' || descUpper.includes('MUEBLE')) {
-            if (!result.canto_puertas) result.canto_puertas = 'CANTO 2MM';
+            if (!result.canto_puertas) result.canto_puertas = 'CANTO 2 MM';
         }
 
         // Smart Lookup de Dimensiones y Textos Históricos

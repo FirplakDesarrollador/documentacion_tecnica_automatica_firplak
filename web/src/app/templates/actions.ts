@@ -153,3 +153,13 @@ export async function deleteTemplate(id: string) {
         return { success: false, error: e.message }
     }
 }
+
+export async function getTemplatesAction() {
+    try {
+        const rows = await dbQuery(`SELECT * FROM public.plantillas_doc_tec WHERE active = true ORDER BY name ASC`)
+        return rows || []
+    } catch (e) {
+        console.error("Error fetching templates:", e)
+        return []
+    }
+}

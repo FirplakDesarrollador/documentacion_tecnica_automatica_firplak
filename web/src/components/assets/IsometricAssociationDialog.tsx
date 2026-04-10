@@ -29,7 +29,23 @@ interface Option {
     label: string
 }
 
-export function IsometricAssociationDialog() {
+interface Props {
+    initialFamilies?: string[]
+    initialReferences?: string[]
+    initialMeasures?: string[]
+    onAssociationComplete?: (asset: any) => void
+    trigger?: React.ReactNode
+}
+
+const EMPTY_ARRAY: string[] = []
+
+export function IsometricAssociationDialog({ 
+    initialFamilies = EMPTY_ARRAY, 
+    initialReferences = EMPTY_ARRAY, 
+    initialMeasures = EMPTY_ARRAY,
+    onAssociationComplete,
+    trigger
+}: Props) {
     const [open, setOpen] = React.useState(false)
     const [loading, setLoading] = React.useState(false)
     const [submitting, setSubmitting] = React.useState(false)
@@ -65,6 +81,10 @@ export function IsometricAssociationDialog() {
     React.useEffect(() => {
         if (open) {
             loadInitialData()
+            // Set initial state from props
+            setSelectedFamilies(initialFamilies)
+            setSelectedReferences(initialReferences)
+            setSelectedMeasures(initialMeasures)
         } else {
             // Reset state on close
             setSelectedFamilies([])
@@ -74,7 +94,7 @@ export function IsometricAssociationDialog() {
             setReferences([])
             setMeasures([])
         }
-    }, [open])
+    }, [open, initialFamilies, initialReferences, initialMeasures])
 
     // Load references when families change
     React.useEffect(() => {
@@ -142,8 +162,12 @@ export function IsometricAssociationDialog() {
             toast.error("Por favor selecciona o sube un isométrico")
             return
         }
-        if (selectedFamilies.length === 0 && selectedReferences.length === 0) {
-            toast.error("Selecciona al menos una familia o referencia")
+        if (selectedFamilies.length === 0) {
+            toast.error("Selecciona al menos una familia")
+            return
+        }
+        if (selectedReferences.length === 0) {
+            toast.error("Debes seleccionar al menos una referencia específica. No se permite asociar a nivel de familia completa.")
             return
         }
 
@@ -156,6 +180,12 @@ export function IsometricAssociationDialog() {
                 measureCodes: selectedMeasures
             })
             toast.success("Isométrico asociado correctamente")
+            
+            if (onAssociationComplete) {
+                const selectedAsset = assets.find(a => a.id === selectedAssetId)
+                onAssociationComplete(selectedAsset)
+            }
+
             setOpen(false)
         } catch (error: any) {
             toast.error(error.message || "Error al asociar isométrico")
@@ -166,12 +196,14 @@ export function IsometricAssociationDialog() {
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger render={
-                <Button variant="outline" className="gap-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 shadow-sm transition-all h-10 px-4">
-                    <Box className="h-4 w-4" />
-                    Isométricos
-                </Button>
-            } />
+            <DialogTrigger 
+                render={trigger || (
+                    <Button variant="outline" className="gap-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 shadow-sm transition-all h-10 px-4">
+                        <Box className="h-4 w-4" />
+                        Isométricos
+                    </Button>
+                )} 
+            />
             <DialogContent className="max-w-md sm:max-w-xl p-0 bg-white border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
                 <DialogHeader className="p-6 pb-2 shrink-0">
                     <DialogTitle className="text-xl font-bold text-slate-900 flex items-center gap-2">
@@ -281,26 +313,14 @@ export function IsometricAssociationDialog() {
                             </div>
 
                             <div className={cn("space-y-2 transition-opacity", selectedFamilies.length === 0 && "opacity-50 pointer-events-none")}>
-                                <Label className="text-slate-700 font-medium">Referencia(s) <span className="text-[10px] text-slate-500 font-normal">(Opcional, filtra dentro de las familias seleccionadas)</span></Label>
+                                <Label className="text-slate-700 font-medium">Referencia · Medida <span className="text-[10px] text-rose-500 font-bold uppercase tracking-tight">(Obligatorio)</span></Label>
                                 <MultiSelectSearchField 
                                     options={references}
                                     values={selectedReferences}
                                     onChange={setSelectedReferences}
-                                    placeholder="Seleccionar Referencias"
+                                    placeholder="Seleccionar Referencias y Medidas"
                                     className="h-11"
                                     emptyMessage="Selecciona familias primero."
-                                />
-                            </div>
-
-                            <div className={cn("space-y-2 transition-opacity", (selectedFamilies.length === 0 && selectedReferences.length === 0) && "opacity-50 pointer-events-none")}>
-                                <Label className="text-slate-700 font-medium">Medida(s) Comercial(es) <span className="text-[10px] text-slate-500 font-normal">(Opcional)</span></Label>
-                                <MultiSelectSearchField 
-                                    options={measures}
-                                    values={selectedMeasures}
-                                    onChange={setSelectedMeasures}
-                                    placeholder="Seleccionar Medidas (Ej: 79X48)"
-                                    className="h-11"
-                                    emptyMessage="Selecciona familias o referencias primero."
                                 />
                             </div>
                         </div>
@@ -319,7 +339,7 @@ export function IsometricAssociationDialog() {
                         Cancelar
                     </Button>
                     <Button 
-                        disabled={submitting || uploading || !selectedAssetId || (selectedFamilies.length === 0 && selectedReferences.length === 0)}
+                        disabled={submitting || uploading || !selectedAssetId || selectedFamilies.length === 0 || selectedReferences.length === 0}
                         onClick={handleSubmit}
                         className="bg-indigo-600 hover:bg-indigo-700 shadow-md h-10 px-6 transition-all"
                     >

@@ -6,6 +6,7 @@ import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
 import { translateProductToEnglish } from '@/lib/engine/translator'
 import { parseProductCode } from '@/lib/engine/codeParser'
 import { redirect } from 'next/navigation'
+import { revalidatePath } from 'next/cache'
 import { GoogleGenAI } from '@google/genai'
 
 function normalizeCanto(val: any) {
@@ -17,13 +18,22 @@ function normalizeCanto(val: any) {
     return String(val)
 }
 
+function formatPGArray(arr: string[] | null | undefined) {
+    if (!arr || !Array.isArray(arr) || arr.length === 0) return "'{}'"
+    // PostgreSQL array syntax: '{val1,val2}'
+    const escaped = arr.map(v => v.trim().replace(/'/g, "''").replace(/"/g, '\\"'))
+    return `'{${escaped.join(',')}}'`
+}
+
 export async function parseProductCodeAction(code: string, sapDesc: string, rhFlag: boolean) {
     return await parseProductCode(code, sapDesc, rhFlag)
 }
 
 export async function translateAction(nameEs: string, ctx?: any) {
-    if (ctx && ctx.product_type) {
-        return await translateProductToEnglish(ctx, ctx.product_type || 'MUEBLE')
+    if (ctx) {
+        // Fallback to 'MUEBLE' if product_type is missing or empty
+        const targetEntity = ctx.product_type && ctx.product_type.trim() !== '' ? ctx.product_type : 'MUEBLE'
+        return await translateProductToEnglish(ctx, targetEntity)
     }
     return { translatedName: '', missingTerms: [], isValid: false, errorReason: 'Motor adaptativo requiere el objeto producto completo.', warnings: [] }
 }
@@ -37,14 +47,42 @@ export async function checkFamilyExists(code: string) {
     return rows && rows.length > 0
 }
 
-export async function createFamilyAction(data: any) {
+export async function checkFamilyExistsAction(code: string) {
+    return await checkFamilyExists(code);
+}
+
+export async function upsertFamilyAction(data: any) {
     if (!data.code) throw new Error("Family code is required")
-    await dbQuery(`
-        INSERT INTO public.familias (code, name, product_type, use_destination, zone_home)
-        VALUES ('${data.code}', ${data.name ? `'${data.name.replace(/'/g, "''")}'` : 'NULL'}, ${data.product_type ? `'${data.product_type}'` : 'NULL'}, ${data.use_destination ? `'${data.use_destination}'` : 'NULL'}, ${data.zone_home ? `'${data.zone_home}'` : 'NULL'})
-        ON CONFLICT (code) DO NOTHING
-    `)
-    redirect('/families')
+    
+    const query = `
+        INSERT INTO public.familias (
+            code, name, product_type, use_destination, zone_home, 
+            allowed_lines, rh_default, assembled_default
+        )
+        VALUES (
+            '${data.code.replace(/'/g, "''")}', 
+            ${data.name ? `'${data.name.replace(/'/g, "''")}'` : 'NULL'}, 
+            ${data.product_type ? `'${data.product_type}'` : 'NULL'}, 
+            ${data.use_destination ? `'${data.use_destination}'` : 'NULL'}, 
+            ${data.zone_home ? `'${data.zone_home}'` : 'NULL'},
+            ${formatPGArray(data.allowed_lines)},
+            ${data.rh_default ? 'true' : 'false'},
+            ${data.assembled_default ? 'true' : 'false'}
+        )
+        ON CONFLICT (code) DO UPDATE SET
+            name = EXCLUDED.name,
+            product_type = EXCLUDED.product_type,
+            use_destination = EXCLUDED.use_destination,
+            zone_home = EXCLUDED.zone_home,
+            allowed_lines = EXCLUDED.allowed_lines,
+            rh_default = EXCLUDED.rh_default,
+            assembled_default = EXCLUDED.assembled_default,
+            updated_at = now()
+        RETURNING *
+    `
+    const rows = await dbQuery(query)
+    revalidatePath('/families')
+    return rows ? rows[0] : null
 }
 
 export async function createProductAction(data: any) {
@@ -59,6 +97,26 @@ export async function createProductAction(data: any) {
                 INSERT INTO public.familias (code, name, product_type, use_destination, zone_home)
                 VALUES ('${parsed.familia_code}', '${(data._newFamily.name || parsed.familia_code).replace(/'/g, "''")}', ${data._newFamily.product_type ? `'${data._newFamily.product_type}'` : 'NULL'}, ${data._newFamily.use_destination ? `'${data._newFamily.use_destination}'` : 'NULL'}, ${data._newFamily.zone_home ? `'${data._newFamily.zone_home}'` : 'NULL'})
                 ON CONFLICT (code) DO NOTHING
+            `)
+        }
+    }
+
+    // New Glossary Terms (Adaptive Learning)
+    if (data._newGlossaryTerms && Array.isArray(data._newGlossaryTerms)) {
+        for (const term of data._newGlossaryTerms) {
+            if (!term.es || !term.en) continue
+            await dbQuery(`
+                INSERT INTO public.glossary (term_es, term_en, active, priority, category)
+                VALUES (
+                    '${term.es.toUpperCase().trim().replace(/'/g, "''")}', 
+                    '${term.en.toUpperCase().trim().replace(/'/g, "''")}', 
+                    true, 
+                    ${term.category === 'RESOLVED_TYPE' ? 20 : 10},
+                    '${(term.category || 'TECHNICAL_TERM').toUpperCase()}'
+                )
+                ON CONFLICT (term_es) DO UPDATE SET 
+                    term_en = EXCLUDED.term_en,
+                    category = EXCLUDED.category
             `)
         }
     }
@@ -83,9 +141,6 @@ export async function createProductAction(data: any) {
         if (val === null || val === undefined || val === '') return 'NULL'
         const num = parseFloat(String(val))
         if (isNaN(num)) return 'NULL'
-        // x * 10 + 0.4 -> floor -> / 10
-        // Ejemplo 24.35 -> 243.5 + 0.4 = 243.9 -> floor = 243 -> 24.3
-        // Ejemplo 24.36 -> 243.6 + 0.4 = 244.0 -> floor = 244 -> 24.4
         return (Math.floor(num * 10 + 0.4) / 10).toFixed(1)
     }
 
@@ -99,7 +154,7 @@ export async function createProductAction(data: any) {
     const isPrivate = !!data.private_label_flag
     const clientName = isPrivate ? (data.private_label_client_name || 'NA') : 'NA'
 
-    await dbQuery(`
+    const result = await dbQuery(`
         INSERT INTO public.cabinet_products (
             code, sap_description, product_type, cabinet_name, color_code, rh_flag, rh,
             assembled_flag, canto_puertas, carb2, line, use_destination, zone_home, 
@@ -127,7 +182,8 @@ export async function createProductAction(data: any) {
             ${esc(data.barcode_text || parsed.barcode_text)}, ${esc(data.isometric_path || parsed.isometric_path)},
             ${esc(data.isometric_asset_id)}, ${esc(data.door_color_text || 'NA')}
         )
-        ON CONFLICT (code) DO NOTHING
+        ON CONFLICT (code) DO UPDATE SET updated_at = now()
+        RETURNING *
     `)
 
     // Propagación de Isométrico a la misma familia y referencia
@@ -141,7 +197,7 @@ export async function createProductAction(data: any) {
         `)
     }
 
-    redirect('/products')
+    return result?.[0]
 }
 
 export async function updateProductAction(id: string, data: any) {
@@ -185,7 +241,7 @@ export async function updateProductAction(id: string, data: any) {
         data.private_label_client_id = null;
     }
 
-    await dbQuery(`
+    const result = await dbQuery(`
         UPDATE public.cabinet_products SET
             code=${esc(data.code)}, sap_description=${esc(data.sap_description)}, product_type=${esc(data.product_type || parsed.product_type)},
             cabinet_name=${esc(data.cabinet_name)}, color_code=${esc(data.color_code || parsed.color_code)},
@@ -211,6 +267,7 @@ export async function updateProductAction(id: string, data: any) {
             validation_status='ready',
             updated_at=now()
         WHERE id='${id}'
+        RETURNING *
     `)
 
     // Propagación de Isométrico a la misma familia y referencia
@@ -224,7 +281,7 @@ export async function updateProductAction(id: string, data: any) {
         `)
     }
 
-    redirect('/products')
+    return result?.[0]
 }
 
 export async function massUpdateProducts(ids: string[], updateData: any) {
@@ -266,9 +323,13 @@ export async function updateFamilyAction(code: string, data: any) {
             product_type=${data.product_type ? `'${data.product_type}'` : 'NULL'},
             use_destination=${data.use_destination ? `'${data.use_destination}'` : 'NULL'},
             zone_home=${data.zone_home ? `'${data.zone_home}'` : 'NULL'},
+            allowed_lines=${formatPGArray(data.allowed_lines)},
+            rh_default=${data.rh_default ? 'true' : 'false'},
+            assembled_default=${data.assembled_default ? 'true' : 'false'},
             updated_at=now()
         WHERE code='${code.replace(/'/g, "''")}'
     `)
+    revalidatePath('/families')
     redirect('/families')
 }
 
@@ -297,18 +358,18 @@ function validateEnglishName(nameStr: string, originalProduct: any): string | nu
     const esNumCount = (originalProduct.final_name_es?.match(/\d+/g) || []).filter((n: string) => n.length >= 2).length
     const enInCount = (nameStr.match(/(\d+)IN/g) || []).length
     const dimParityFail = esNumCount > 0 && enInCount < esNumCount
-
+ 
     // Mandatory Elements Check
     const typeKeywords = ['CABINET', 'VANITY', 'LAV', 'BASE', 'WALL', 'PANTRY', 'LAUNDRY', 'SINK']
     const hasType = typeKeywords.some(tk => nameStr.includes(tk))
     const hasInBlock = nameStr.includes('IN')
-
+ 
     // Consistency
     const useDest = String(originalProduct.use_destination || '').toUpperCase()
     let typeConsistent = true
     if (useDest.includes('COCINA') && nameStr.includes('VANITY')) typeConsistent = false
     if (useDest.includes('LAVAMANO') && !nameStr.includes('VANITY') && !nameStr.includes('LAV')) typeConsistent = false
-
+ 
     if (hasForbidden) return "forbidden_terms"
     if (hasCM) return "contains_cm"
     if (hasHyphen) return "contains_hyphen"
@@ -319,7 +380,7 @@ function validateEnglishName(nameStr: string, originalProduct: any): string | nu
     if (dimParityFail) return "dimension_parity_fail"
     if (needsLav && !hasLav) return "missing_lav"
     if (!typeConsistent) return "type_consistency_fail"
-
+ 
     return null
 }
 
@@ -440,6 +501,8 @@ export async function getUniquePropertiesAction() {
     const carb2Values = await dbQuery(`SELECT DISTINCT carb2 FROM public.cabinet_products WHERE carb2 IS NOT NULL AND carb2 != '' ORDER BY carb2 ASC`) || []
     const specialLabels = await dbQuery(`SELECT DISTINCT special_label FROM public.cabinet_products WHERE special_label IS NOT NULL AND special_label != '' ORDER BY special_label ASC`) || []
     const zoneHomes = await dbQuery(`SELECT DISTINCT zone_home FROM public.cabinet_products WHERE zone_home IS NOT NULL AND zone_home != '' ORDER BY zone_home ASC`) || []
+    const rhValues = await dbQuery(`SELECT DISTINCT rh FROM public.cabinet_products WHERE rh IS NOT NULL AND rh != '' ORDER BY rh ASC`) || []
+    const cantoValues = await dbQuery(`SELECT DISTINCT canto_puertas FROM public.cabinet_products WHERE canto_puertas IS NOT NULL AND canto_puertas != '' ORDER BY canto_puertas ASC`) || []
     
     const colors = await dbQuery(`SELECT code_4dig as code_color, name_color_sap FROM public.colors ORDER BY code_4dig ASC`) || []
 
@@ -451,10 +514,12 @@ export async function getUniquePropertiesAction() {
         cabinetNames: cabinetNames.map((r: any) => r.cabinet_name),
         commercialMeasures: commercialMeasures.map((r: any) => r.commercial_measure),
         accessoryTexts: accessoryTexts.map((r: any) => r.accessory_text),
-        bisagras: bisagrasValues.map((r: any) => r.bisagras),
-        carb2: carb2Values.map((r: any) => r.carb2),
-        specialLabels: specialLabels.map((r: any) => r.special_label),
+        bisagras: ['NA', ...bisagrasValues.map((r: any) => r.bisagras).filter((v: string) => v !== 'NA')],
+        carb2: ['NA', ...carb2Values.map((r: any) => r.carb2).filter((v: string) => v !== 'NA')],
+        specialLabels: ['NA', ...specialLabels.map((r: any) => r.special_label).filter((v: string) => v !== 'NA')],
         zoneHomes: zoneHomes.map((r: any) => r.zone_home),
+        rh: ['NA', ...rhValues.map((r: any) => r.rh).filter((v: string) => v !== 'NA')],
+        cantoPuertas: ['NA', ...cantoValues.map((r: any) => r.canto_puertas).filter((v: string) => v !== 'NA')],
         colors: colors.map((r: any) => ({ code: r.code_color, name: r.name_color_sap }))
     }
 }

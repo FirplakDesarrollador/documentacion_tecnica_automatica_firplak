@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Eye, AlertTriangle } from 'lucide-react'
+import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 
 export interface GenerateProduct {
@@ -80,6 +81,8 @@ export function GenerateProductTable({
         if (status === 'needs_review') return 'destructive'
         return 'secondary'
     }
+
+    const searchParams = useSearchParams()
 
     if (products.length === 0) {
         return (
@@ -160,7 +163,7 @@ export function GenerateProductTable({
                             )}
                             <TableCell className="text-right">
                                 <Link
-                                    href={`/generate/${product.id}${templateId ? `?template_id=${templateId}` : ''}`}
+                                    href={`/generate/${product.id}?${searchParams.toString()}`}
                                 >
                                     <Button
                                         variant="ghost"

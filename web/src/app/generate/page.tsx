@@ -94,14 +94,24 @@ export default async function GeneratePage({
         <div className="flex flex-col gap-8 pb-10">
             {/* Header */}
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                <div>
-                    <h1 className="text-3xl font-bold tracking-tight text-slate-900 flex items-center gap-3">
-                        <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
-                            <FileOutput className="w-5 h-5 text-indigo-600" />
+                <div className="flex-1">
+                    <div className="flex flex-wrap items-center gap-3 mb-1">
+                        <h1 className="text-3xl font-bold tracking-tight text-slate-900 flex items-center gap-3">
+                            <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
+                                <FileOutput className="w-5 h-5 text-indigo-600" />
+                            </div>
+                            Generar Documentos
+                        </h1>
+                        <div className="flex items-center gap-2 mt-1 md:mt-0 ml-0 md:ml-4">
+                            <span className="inline-flex items-center rounded-md bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600 ring-1 ring-inset ring-slate-200 uppercase tracking-tight">
+                                300 DPI
+                            </span>
+                            <span className="inline-flex items-center rounded-md bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700 ring-1 ring-inset ring-indigo-200 uppercase tracking-tight" title="Tiempo máximo que el sistema espera para procesar cada documento">
+                                Espera Máx: 30s
+                            </span>
                         </div>
-                        Generar Documentos
-                    </h1>
-                    <p className="text-slate-500 mt-1">
+                    </div>
+                    <p className="text-slate-500">
                         Filtra productos, elige una plantilla y exporta fichas técnicas de forma individual o masiva.
                     </p>
                 </div>

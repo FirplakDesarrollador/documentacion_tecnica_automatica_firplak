@@ -45,12 +45,23 @@ export default async function GeneratePreviewPage({
     // Determinar template inicial
     const initialTemplateId = templateIdParam ?? templates[0]?.id ?? null
 
+    // Construir el link de regreso con los filtros originales
+    const urlParams = new URLSearchParams()
+    Object.entries(searchParams).forEach(([key, value]) => {
+        if (Array.isArray(value)) {
+            value.forEach(v => urlParams.append(key, v))
+        } else if (value !== undefined) {
+            urlParams.append(key, value)
+        }
+    })
+    const backHref = `/generate${urlParams.toString() ? `?${urlParams.toString()}` : ''}`
+
     return (
         <div className="flex flex-col gap-6 pb-10">
             {/* Header */}
             <div className="flex items-center gap-4">
                 <Link
-                    href="/generate"
+                    href={backHref}
                     className="p-2 hover:bg-slate-100 rounded-xl transition-colors text-slate-500 hover:text-slate-700"
                 >
                     <ArrowLeft className="h-5 w-5" />

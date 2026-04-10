@@ -1,9 +1,16 @@
 import { dbQuery } from '@/lib/supabase'
 import { redirect } from 'next/navigation'
-import { EditProductForm } from './EditProductForm'
+import { ProductForm } from '../ProductForm'
 
-export default async function EditProductPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function EditProductPage({ 
+    params, 
+    searchParams: searchParamsPromise 
+}: { 
+    params: Promise<{ id: string }>,
+    searchParams: Promise<{ [key: string]: string | string[] | undefined }>
+}) {
     const { id } = await params
+    const searchParams = await searchParamsPromise
 
     const rows = await dbQuery(`SELECT * FROM public.cabinet_products WHERE id='${id}' LIMIT 1`)
     const product = rows?.[0]
@@ -12,16 +19,20 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
         redirect('/products')
     }
 
-    return (
-        <div className="flex flex-col gap-6 max-w-5xl mx-auto w-full">
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-3xl font-bold tracking-tight">Editar Producto</h1>
-                    <p className="text-muted-foreground">Actualizar la información maestra del producto.</p>
-                </div>
-            </div>
+    // Construct back link with current filters
+    const urlParams = new URLSearchParams()
+    Object.entries(searchParams).forEach(([key, value]) => {
+        if (Array.isArray(value)) {
+            value.forEach(v => urlParams.append(key, v))
+        } else if (value !== undefined) {
+            urlParams.append(key, value)
+        }
+    })
+    const backHref = `/products${urlParams.toString() ? `?${urlParams.toString()}` : ''}`
 
-            <EditProductForm initialData={product} />
+    return (
+        <div className="max-w-5xl mx-auto w-full">
+            <ProductForm initialData={product} backHref={backHref} />
         </div>
     )
 }

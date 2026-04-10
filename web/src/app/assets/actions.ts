@@ -26,15 +26,18 @@ export async function getReferencesByFamilyAction(familyCodes: string[]) {
     
     const filter = familyCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')
     const refRecords = await dbQuery(`
-        SELECT DISTINCT ref_code, cabinet_name 
+        SELECT ref_code, commercial_measure, MAX(cabinet_name) as cabinet_name
         FROM public.cabinet_products 
         WHERE ref_code IS NOT NULL AND familia_code IN (${filter})
-        ORDER BY ref_code ASC
+        GROUP BY ref_code, commercial_measure
+        ORDER BY ref_code, commercial_measure ASC
     `) || []
     
     return refRecords.map((rec: any) => ({ 
-        value: rec.ref_code as string, 
-        label: `${rec.ref_code} - ${rec.cabinet_name || ''}` 
+        value: `${rec.ref_code}|||${rec.commercial_measure || ''}`, 
+        label: rec.commercial_measure 
+            ? `${rec.cabinet_name || rec.ref_code} - ${rec.commercial_measure}`
+            : `${rec.cabinet_name || rec.ref_code}`
     }))
 }
 
@@ -83,15 +86,22 @@ export async function associateIsometricAction(data: {
     let whereParts = []
     
     if (referenceCodes.length > 0) {
-        whereParts.push(`ref_code IN (${referenceCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
+        // Los valores de referencia pueden ser puros "ref_code" o compuestos "ref_code|||commercial_measure"
+        const specificPairs = referenceCodes.map(v => {
+            const [rc, cm] = v.split('|||')
+            if (cm) {
+                return `(ref_code = '${rc.replace(/'/g, "''")}' AND commercial_measure = '${cm.replace(/'/g, "''")}')`
+            }
+            return `ref_code = '${rc.replace(/'/g, "''")}'`
+        })
+        whereParts.push(`(${specificPairs.join(' OR ')})`)
     } else if (familyCodes.length > 0) {
         whereParts.push(`familia_code IN (${familyCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
+        if (measureCodes && measureCodes.length > 0) {
+            whereParts.push(`commercial_measure IN (${measureCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
+        }
     } else {
         throw new Error("Target selection (Family or Reference) is required")
-    }
-
-    if (measureCodes.length > 0) {
-        whereParts.push(`commercial_measure IN (${measureCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
     }
 
     const whereClause = `WHERE ${whereParts.join(' AND ')}`
