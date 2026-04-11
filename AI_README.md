@@ -4,7 +4,7 @@
 > **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estratégico y operativo necesario para navegar y construir eficientemente en este proyecto.
 
 ## 📌 Visión General
-Salto a la Madurez de Datos (v1.2.0): Se centralizó la generación de documentos técnicos mediante un motor de hidratación 'Code-First', eliminando la dependencia de entradas manuales. Se implementó el soporte para Datasets externos con variables personalizadas y se consolidó el motor de traducción contextual basado en `resolved_type`. La experiencia de usuario se elevó con un Sidebar colapsable persistente, exportación inmediata desde el registro y gobernanza dinámica del nombre de salida de archivos directamente desde la plantilla.
+Madurez de Datos e Infraestructura Inteligente (v1.2.1): Se consolidó el motor de hidratación 'Code-First' y el sistema de **Gobernanza Dinámica de Familias**, permitiendo la creación de categorías en tiempo real ante códigos SAP desconocidos. Se implementó el soporte para Datasets externos con variables personalizadas y se refinó la traducción contextual mediante `resolved_type`. La experiencia de usuario se optimizó con un Sidebar colapsable persistente, exportación inmediata desde el registro y gobernanza dinámica del nombre de salida de archivos directamente desde la plantilla.
 
 ## 🏗️ Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
