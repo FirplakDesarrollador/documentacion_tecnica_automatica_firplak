@@ -29,6 +29,7 @@ export interface ParsedCodeResult {
     bisagras: string | null
     barcode_text: string | null
     status: string | null
+    color_name?: string | null
 }
 
 export async function parseProductCode(
@@ -126,6 +127,73 @@ export async function parseProductCode(
                 console.error('codeParser: error querying version dictionary', e);
             }
         }
+
+        // ─── BÚSQUEDA JERÁRQUICA DE HISTORIAL (SMART LOOKUP V2) ───
+        try {
+            // Intentar primero por SKU BASE (Misma Familia-Ref-Version)
+            let historicalProduct = null;
+            const skuBaseRows = await dbQuery(`
+                SELECT * FROM public.cabinet_products 
+                WHERE sku_base = '${result.sku_base.replace(/'/g, "''")}'
+                AND width_cm IS NOT NULL
+                ORDER BY created_at DESC LIMIT 1
+            `);
+
+            if (skuBaseRows && skuBaseRows.length > 0) {
+                historicalProduct = skuBaseRows[0];
+            } else {
+                // Fallback: Por Familia + Referencia (Mismo mueble, distinta versión)
+                const famRefRows = await dbQuery(`
+                    SELECT * FROM public.cabinet_products 
+                    WHERE familia_code = '${result.familia_code.replace(/'/g, "''")}'
+                    AND ref_code = '${result.ref_code.replace(/'/g, "''")}'
+                    AND width_cm IS NOT NULL
+                    ORDER BY created_at DESC LIMIT 1
+                `);
+                if (famRefRows && famRefRows.length > 0) {
+                    historicalProduct = famRefRows[0];
+                }
+            }
+
+            if (historicalProduct) {
+                const h = historicalProduct;
+                result.cabinet_name = h.cabinet_name || result.cabinet_name;
+                result.line = h.line || result.line;
+                result.designation = h.designation || result.designation;
+                result.commercial_measure = h.commercial_measure || result.commercial_measure;
+                result.width_cm = h.width_cm ? parseFloat(h.width_cm) : result.width_cm;
+                result.depth_cm = h.depth_cm ? parseFloat(h.depth_cm) : result.depth_cm;
+                result.height_cm = h.height_cm ? parseFloat(h.height_cm) : result.height_cm;
+                result.weight_kg = h.weight_kg ? parseFloat(h.weight_kg) : result.weight_kg;
+                result.product_type = h.product_type || result.product_type;
+                result.use_destination = h.use_destination || result.use_destination;
+                result.zone_home = h.zone_home || result.zone_home;
+                result.accessory_text = h.accessory_text || result.accessory_text;
+                result.bisagras = h.bisagras || result.bisagras;
+                result.carb2 = h.carb2 || result.carb2;
+                result.special_label = h.special_label || result.special_label;
+                result.canto_puertas = h.canto_puertas || result.canto_puertas;
+                result.barcode_text = h.barcode_text || result.barcode_text;
+                result.isometric_path = h.isometric_path || result.isometric_path;
+                result.isometric_asset_id = h.isometric_asset_id || result.isometric_asset_id;
+                result.rh = h.rh || result.rh;
+                result.assembled_flag = h.assembled_flag ?? result.assembled_flag;
+            }
+        } catch (e) {
+            console.error('codeParser: error in hierarchical lookup', e);
+        }
+
+        // --- Recuperación automática de nombre de color si no se tiene ---
+        if (result.color_code) {
+            try {
+                const colorRows = await dbQuery(`SELECT name_color_sap FROM public.colors WHERE code_4dig = '${result.color_code.replace(/'/g, "''")}' LIMIT 1`);
+                if (colorRows && colorRows.length > 0) {
+                    (result as any).color_name = colorRows[0].name_color_sap;
+                }
+            } catch (e) {
+                console.error('codeParser: error querying color name', e);
+            }
+        }
     } else {
         result.familia_code = code
     }
@@ -141,7 +209,7 @@ export async function parseProductCode(
             result.assembled_flag = true;
         }
 
-        // Detección de Medida Comercial
+        // Detección de Medida Comercial (Prioridad sobre historial si detectada)
         const measureMatch = descUpper.match(/\b(\d+X\d+)\b/);
         if (measureMatch) {
             result.commercial_measure = measureMatch[1];
@@ -205,6 +273,56 @@ export async function parseProductCode(
             }
         }
 
+        // -------------------------------------
+
+        if (foundAccessories.length > 0) {
+            // Fusionar accesorios históricos con los detectados
+            const historicalAcc = result.accessory_text ? result.accessory_text.toUpperCase() : '';
+            const detectedAcc = foundAccessories.join(' ').toUpperCase();
+            
+            if (historicalAcc) {
+                const historicalParts = historicalAcc.split(' ');
+                const newParts = detectedAcc.split(' ').filter(p => !historicalParts.includes(p));
+                if (newParts.length > 0) {
+                    result.accessory_text = `${historicalAcc} ${newParts.join(' ')}`;
+                }
+            } else {
+                result.accessory_text = detectedAcc;
+            }
+        }
+
+        // Kits (Furniture prepared for Washbasin)
+        const washbasinMatch = sapDescription.match(/\bC\/\s*(?:LVM\s+)?([A-Z0-9]+(?:\s+[A-Z0-9]+)?)/i);
+        if (washbasinMatch && washbasinMatch[1]) {
+            const model = washbasinMatch[1].trim().toUpperCase();
+            if (model !== 'LVM' && model.length > 2) {
+                result.armado_con_lvm = model;
+            }
+        }
+
+        // Detección de Marca Propia
+        if (result.private_label_client_name === 'NA' || result.private_label_client_name === null) {
+            const knownClients = ['CHILEMAT', 'D-ACQUA', 'PROMART', 'FERMETAL', 'SODIMAC CHILE'];
+            let matchedClient = '';
+            for (const client of knownClients) {
+                if (descUpper.includes(client.toUpperCase())) {
+                    matchedClient = client;
+                    break;
+                }
+            }
+            if (!matchedClient) {
+                if (descUpper.includes('SODIMAC')) matchedClient = 'SODIMAC CHILE';
+                else if (descUpper.includes('DAC ')) matchedClient = 'D-ACQUA';
+                else if (descUpper.includes('FMT ')) matchedClient = 'FERMETAL';
+            }
+            if (matchedClient) {
+                try {
+                    const clientRows = await dbQuery(`SELECT name FROM public.clients WHERE UPPER(name) = '${matchedClient.replace(/'/g, "''")}' OR (name = 'SODIMAC CHILE' AND '${matchedClient.replace(/'/g, "''")}' LIKE 'SODIMAC%') LIMIT 1`);
+                    if (clientRows && clientRows.length > 0) result.private_label_client_name = clientRows[0].name;
+                } catch (e) {}
+            }
+        }
+
         // --- Detección de Destino de Uso por Siglas ---
         if (!result.use_destination) {
             if (descUpper.includes('LVM')) result.use_destination = 'LAVAMANOS';
@@ -223,135 +341,6 @@ export async function parseProductCode(
         if (descUpper.includes('CARB 2') || descUpper.includes('CARB2')) {
             result.carb2 = 'SÍ';
         }
-
-        // -------------------------------------
-
-        if (foundAccessories.length > 0) {
-            result.accessory_text = foundAccessories.join(' ');
-        }
-
-        // --- Valores por defecto para Muebles ---
-        if (result.product_type === 'MUEBLE' || descUpper.includes('MUEBLE')) {
-            if (!result.canto_puertas) result.canto_puertas = 'CANTO 2 MM';
-        }
-
-        // Smart Lookup de Dimensiones y Textos Históricos
-        if (result.ref_code && result.commercial_measure) {
-            try {
-                const dimRows = await dbQuery(`
-                    SELECT width_cm, depth_cm, height_cm, weight_kg, cabinet_name, line, designation, accessory_text, 
-                           bisagras, carb2, special_label, zone_home, barcode_text,
-                           isometric_path, isometric_asset_id 
-                    FROM public.cabinet_products 
-                    WHERE ref_code = '${result.ref_code}' AND commercial_measure = '${result.commercial_measure}'
-                    AND width_cm IS NOT NULL
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                `);
-                if (dimRows && dimRows.length > 0) {
-                    const dims = dimRows[0];
-                    if (dims.width_cm !== null) result.width_cm = parseFloat(dims.width_cm);
-                    if (dims.depth_cm !== null) result.depth_cm = parseFloat(dims.depth_cm);
-                    if (dims.height_cm !== null) result.height_cm = parseFloat(dims.height_cm);
-                    if (dims.weight_kg !== null) result.weight_kg = parseFloat(dims.weight_kg);
-                    if (dims.cabinet_name) result.cabinet_name = dims.cabinet_name;
-                    if (dims.line) result.line = dims.line;
-                    if (dims.designation && !result.designation) result.designation = dims.designation;
-                    if (dims.bisagras) result.bisagras = dims.bisagras;
-                    if (dims.carb2) result.carb2 = dims.carb2;
-                    if (dims.special_label) result.special_label = dims.special_label;
-                    if (dims.zone_home) result.zone_home = dims.zone_home;
-                    if (dims.barcode_text) result.barcode_text = dims.barcode_text;
-                    
-                    // Fusionar accesorios históricos con los detectados
-                    if (dims.accessory_text) {
-                        const historicalAcc = String(dims.accessory_text).trim().toUpperCase();
-                        const currentAcc = result.accessory_text ? result.accessory_text.toUpperCase() : '';
-                        
-                        if (currentAcc) {
-                            // Si ya hay algo detectado (ej: CANTO 2MM), lo unimos evitando duplicados
-                            const parts = currentAcc.split(' ');
-                            if (!parts.includes(historicalAcc)) {
-                                result.accessory_text = `${currentAcc} ${historicalAcc}`;
-                            }
-                        } else {
-                            result.accessory_text = historicalAcc;
-                        }
-                    }
-                    
-                    if (
-                        (dims.isometric_path && String(dims.isometric_path).trim() !== '' && String(dims.isometric_path).trim() !== 'null') || 
-                        (dims.isometric_asset_id && String(dims.isometric_asset_id).trim() !== '' && String(dims.isometric_asset_id).trim() !== 'null')
-                    ) {
-                        result.isometric_path = dims.isometric_path || 'exists';
-                    }
-                }
-            } catch (e) {
-                console.error('codeParser: error during smart lookup', e);
-            }
-        }
-
-        // Kits (Furniture prepared for Washbasin)
-        const washbasinMatch = sapDescription.match(/\bC\/\s*(?:LVM\s+)?([A-Z0-9]+(?:\s+[A-Z0-9]+)?)/i);
-        if (washbasinMatch && washbasinMatch[1]) {
-            const model = washbasinMatch[1].trim().toUpperCase();
-            if (model !== 'LVM' && model.length > 2) {
-                result.armado_con_lvm = model;
-            }
-        }
-
-        // --- Detección de Marca Propia (Contenido de la descripción) ---
-        // Solo procedemos si no se ha detectado cliente por versión, o si la versión es genérica
-        if (result.private_label_client_name === 'NA' || result.private_label_client_name === null) {
-            const knownClients = ['CHILEMAT', 'D-ACQUA', 'PROMART', 'FERMETAL', 'SODIMAC CHILE'];
-            let matchedClient = '';
-
-            // Prioridad 1: Búsqueda exacta de nombres conocidos en la descripción
-            for (const client of knownClients) {
-                if (descUpper.includes(client.toUpperCase())) {
-                    matchedClient = client;
-                    break;
-                }
-            }
-
-            // Prioridad 2: Alias comunes o variaciones que no están en la lista exacta
-            if (!matchedClient) {
-                if (descUpper.includes('SODIMAC')) matchedClient = 'SODIMAC CHILE';
-                else if (descUpper.includes('DAC ')) matchedClient = 'D-ACQUA';
-                else if (descUpper.includes('FMT ')) matchedClient = 'FERMETAL';
-            }
-
-            // Prioridad 3: Fallback al método del último guión
-            if (!matchedClient) {
-                const lastHyphenIndex = sapDescription.lastIndexOf('-');
-                if (lastHyphenIndex !== -1 && lastHyphenIndex < sapDescription.length - 1) {
-                    const potential = sapDescription.substring(lastHyphenIndex + 1).trim().toUpperCase();
-                    if (potential.length > 2) {
-                        matchedClient = potential;
-                    }
-                }
-            }
-
-            if (matchedClient) {
-                try {
-                    const clientRows = await dbQuery(`
-                        SELECT name FROM public.clients 
-                        WHERE UPPER(name) = '${matchedClient.replace(/'/g, "''")}'
-                           OR (name = 'SODIMAC CHILE' AND '${matchedClient.replace(/'/g, "''")}' LIKE 'SODIMAC%')
-                           OR (name = 'D-ACQUA' AND '${matchedClient.replace(/'/g, "''")}' = 'ACQUA')
-                           OR (name = 'D-ACQUA' AND '${matchedClient.replace(/'/g, "''")}' = 'DAC')
-                        LIMIT 1
-                    `);
-                    if (clientRows && clientRows.length > 0) {
-                        result.private_label_client_name = clientRows[0].name;
-                    }
-                } catch (e) {
-                    console.error('codeParser: error checking client name', e);
-                }
-            }
-        }
-
-        // --- Detección de Etiquetas Especiales ---
         if (descUpper.includes('FRENTES 18MM')) {
             result.special_label = 'FRENTES 18MM';
         }

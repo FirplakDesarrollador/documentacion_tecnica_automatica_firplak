@@ -8,7 +8,8 @@ import { Label } from "@/components/ui/label"
 import { Loader2, Download, CheckCircle2 } from "lucide-react"
 import { getTemplatesAction } from "@/app/templates/actions"
 import { toast } from "sonner"
-import { hydrateTemplateElements } from "@/lib/export/exportUtils"
+import { hydrateTemplateElements, hydrateText } from "@/lib/export/exportUtils"
+import { enrichProductDataWithIcons } from "@/lib/engine/productUtils"
 import { useRouter } from "next/navigation"
 import { resolveAssetsAction } from "@/app/generate/actions"
 
@@ -68,8 +69,12 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
 
         setIsExporting(true)
         try {
-            // 1. Obtener los iconos del sistema (RH, Canto, etc.) necesarios para la hidratación
-            const assetMap = await resolveAssetsAction([])
+            // 1. Obtener los iconos del sistema y activos específicos (isométrico, logo marca propia)
+            const assetsToResolve = []
+            if (product.isometric_asset_id) assetsToResolve.push(product.isometric_asset_id)
+            if (product.private_label_logo_id) assetsToResolve.push(product.private_label_logo_id)
+            
+            const assetMap = await resolveAssetsAction(assetsToResolve)
 
             // 2. Asegurar que los elementos sean un objeto, no un string
             const elements = typeof selectedTemplate.elements_json === 'string' 
@@ -79,6 +84,10 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
             // 3. Hidratar con el mapa de activos (Crucial para iconos técnicos)
             const hydratedData = await hydrateTemplateElements(elements, product, assetMap)
             
+            // 4. Preparar nombre de archivo dinámico
+            const enrichedProduct = enrichProductDataWithIcons(product, assetMap)
+            const downloadName = hydrateText((selectedTemplate as any).export_filename_format || '{sku_base}_{final_name_es}', enrichedProduct)
+
             const response = await fetch('/api/export', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -90,7 +99,7 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
                         orientation: selectedTemplate.orientation
                     },
                     format: exportFormat,
-                    filename: `${product.code}_${selectedTemplate.name.replace(/\s+/g, '_')}`
+                    filename: downloadName
                 })
             })
 
@@ -100,7 +109,7 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
             const url = window.URL.createObjectURL(blob)
             const a = document.createElement('a')
             a.href = url
-            a.download = `${product.code}_${selectedTemplate.name.replace(/\s+/g, '_')}.${exportFormat}`
+            a.download = `${downloadName}.${exportFormat}`
             document.body.appendChild(a)
             a.click()
             window.URL.revokeObjectURL(url)

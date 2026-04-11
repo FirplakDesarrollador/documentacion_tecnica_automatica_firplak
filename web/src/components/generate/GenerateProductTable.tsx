@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import {
     Table,
     TableBody,
@@ -42,6 +42,7 @@ interface GenerateProductTableProps {
     onSelectionChange: (selected: string[]) => void
     selectedIds: string[]
     templateId: string | null
+    isExternalSource?: boolean
 }
 
 export function GenerateProductTable({
@@ -50,9 +51,30 @@ export function GenerateProductTable({
     onSelectionChange,
     selectedIds,
     templateId,
+    isExternalSource = false,
 }: GenerateProductTableProps) {
     const allSelected = products.length > 0 && products.every(p => selectedIds.includes(p.id))
     const someSelected = products.some(p => selectedIds.includes(p.id))
+
+    const dynamicColumns = useMemo(() => {
+        if (!isExternalSource || !products.length) return []
+        
+        // Campos que ya mostramos en columnas fijas o que son metadatos internos
+        const excludeBase = [
+            'id', 'validation_status', 'code', 'final_name_es', 
+            'status', 'is_external', 'created_at', 'updated_at', 
+            'dataset_id', 'color_name', 'color_code', 'product_type',
+            'sap_description', 'codigo', 'nombre', 'sku'
+        ]
+        
+        // Normalizar exclusión (case-insensitive)
+        const excludeLower = excludeBase.map(e => e.toLowerCase())
+        
+        return Object.keys(products[0]).filter(k => {
+            const kl = k.toLowerCase()
+            return !excludeLower.includes(kl)
+        })
+    }, [isExternalSource, products])
 
     const toggleAll = useCallback(() => {
         if (allSelected) {
@@ -73,13 +95,13 @@ export function GenerateProductTable({
     const statusLabel = (status: string) => {
         if (status === 'ready') return 'Listo'
         if (status === 'needs_review') return 'Revisar'
-        return 'Incompleto'
+        return isExternalSource ? 'Listo' : 'Incompleto'
     }
 
     const statusVariant = (status: string): 'default' | 'destructive' | 'secondary' => {
         if (status === 'ready') return 'default'
         if (status === 'needs_review') return 'destructive'
-        return 'secondary'
+        return isExternalSource ? 'default' : 'secondary'
     }
 
     const searchParams = useSearchParams()
@@ -108,8 +130,17 @@ export function GenerateProductTable({
                         />
                     </TableHead>
                     <TableHead className="w-[140px]">Código</TableHead>
-                    <TableHead>Nombre</TableHead>
-                    <TableHead className="w-[120px]">Color</TableHead>
+                    <TableHead className="min-w-[200px]">Nombre / Descripción</TableHead>
+                    
+                    {/* Renderizado dinámico de columnas para datasets externos */}
+                    {isExternalSource ? (
+                        dynamicColumns.map(col => (
+                            <TableHead key={col} className="capitalize">{col.replace(/_/g, ' ')}</TableHead>
+                        ))
+                    ) : (
+                        <TableHead className="w-[120px]">Color</TableHead>
+                    )}
+
                     <TableHead className="w-[130px]">Estado</TableHead>
                     {templateId && <TableHead className="w-[120px]">Plantilla</TableHead>}
                     <TableHead className="text-right w-[120px]">Acción</TableHead>
@@ -139,9 +170,20 @@ export function GenerateProductTable({
                             <TableCell className="text-slate-600 text-sm">
                                 {product.final_name_es || <span className="text-slate-400 italic">Sin nombre</span>}
                             </TableCell>
-                            <TableCell className="text-slate-500 text-xs font-medium uppercase">
-                                {product.color_name || product.color_code || '—'}
-                            </TableCell>
+                            
+                            {/* Celdas dinámicas o celda de color fija */}
+                            {isExternalSource ? (
+                                dynamicColumns.map(col => (
+                                    <TableCell key={col} className="text-slate-500 text-xs">
+                                        {String(product[col] ?? '—')}
+                                    </TableCell>
+                                ))
+                            ) : (
+                                <TableCell className="text-slate-500 text-xs font-medium uppercase">
+                                    {product.color_name || product.color_code || '—'}
+                                </TableCell>
+                            )}
+
                             <TableCell>
                                 <Badge variant={statusVariant(product.validation_status)} className="text-xs">
                                     {statusLabel(product.validation_status)}

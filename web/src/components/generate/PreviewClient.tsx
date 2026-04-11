@@ -8,7 +8,7 @@ import { toast } from 'sonner'
 import { TemplatePicker, type TemplateOption } from '@/components/generate/TemplatePicker'
 import { ValidationWarnings, getMissingFields, getTemplateRequiredFields } from '@/components/generate/ValidationWarnings'
 import { resolveAssetsAction } from '@/app/generate/actions'
-import { hydrateTemplateElements } from '@/lib/export/exportUtils'
+import { hydrateTemplateElements, hydrateText } from '@/lib/export/exportUtils'
 import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { PIXELS_PER_MM } from '@/lib/constants'
 import DocumentRenderSurface from '@/components/export/DocumentRenderSurface'
@@ -224,7 +224,8 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                     elements: hydrated, 
                     format: exportFormat, 
                     width: widthPx, 
-                    height: heightPx 
+                    height: heightPx,
+                    filename: hydrateText((selectedTemplate as any).export_filename_format || '{sku_base}_{final_name_es}', enrichedProduct)
                 }),
             })
 
@@ -234,7 +235,8 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
             const url = window.URL.createObjectURL(blob)
             const a = document.createElement('a')
             a.href = url
-            a.download = `${product.code}_${selectedTemplate.name.replace(/\s+/g, '_')}.${exportFormat}`
+            const downloadName = hydrateText((selectedTemplate as any).export_filename_format || '{sku_base}_{final_name_es}', enrichedProduct)
+            a.download = `${downloadName}.${exportFormat}`
             document.body.appendChild(a)
             a.click()
             window.URL.revokeObjectURL(url)

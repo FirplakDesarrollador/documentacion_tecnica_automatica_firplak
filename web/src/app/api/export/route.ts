@@ -3,7 +3,7 @@ import puppeteer from 'puppeteer'
 
 export async function POST(req: Request) {
     try {
-        const { elements, format = 'pdf', width = 800, height = 400 } = await req.json()
+        const { elements, format = 'pdf', width = 800, height = 400, filename } = await req.json()
 
         if (!elements) {
             return NextResponse.json({ error: 'Missing template elements payload' }, { status: 400 })
@@ -74,12 +74,14 @@ export async function POST(req: Request) {
 
         await browser.close()
 
+        const downloadName = filename ? (filename.endsWith(`.${format}`) ? filename : `${filename}.${format}`) : `export.${format}`
+
         // Return the generated file
         return new NextResponse(resultBuffer as unknown as BodyInit, {
             status: 200,
             headers: {
                 'Content-Type': contentType,
-                'Content-Disposition': `attachment; filename="export.${format}"`
+                'Content-Disposition': `attachment; filename="${downloadName}"`
             }
         })
 

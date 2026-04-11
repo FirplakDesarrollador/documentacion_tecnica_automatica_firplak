@@ -16,7 +16,8 @@ import {
     ChevronLeft,
     ChevronRight,
     PanelLeftClose,
-    PanelLeftOpen
+    PanelLeftOpen,
+    Database
 } from 'lucide-react'
 
 import { useState, useEffect } from 'react'
@@ -61,6 +62,7 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
         { name: 'Productos', href: '/products', icon: Package },
         { name: 'Excepciones', href: '/exceptions', icon: AlertCircle },
         { name: 'Plantillas', href: '/templates', icon: LayoutTemplate },
+        { name: 'Bases de Datos', href: '/datasets', icon: Database },
         { name: 'Reglas', href: '/rules', icon: BookOpen },
         { name: 'Recursos', href: '/assets', icon: ImageIcon },
         { name: 'Generar', href: '/generate', icon: FileText },
@@ -246,8 +248,14 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
                 </header>
                 
                 {/* Main Content */}
-                <main className="flex-1 overflow-auto bg-slate-50 p-4 md:p-6 lg:p-8">
-                    <div className="mx-auto max-w-7xl">
+                <main className={cn(
+                    "flex-1 overflow-auto bg-slate-50 p-4 md:p-6 lg:p-8",
+                    pathname?.includes('/builder') && "overflow-hidden flex flex-col h-full p-4"
+                )}>
+                    <div className={cn(
+                        "mx-auto max-w-7xl",
+                        pathname?.includes('/builder') && "flex-1 flex flex-col h-full w-full max-w-none"
+                    )}>
                         {children}
                     </div>
                 </main>

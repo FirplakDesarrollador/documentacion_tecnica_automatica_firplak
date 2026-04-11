@@ -96,6 +96,9 @@ const ADDABLE_FIELDS = [
     { field: 'assembled_flag', label: 'Armado', type: 'boolean' },
     { field: 'armado_con_lvm', label: 'Kit Lavamanos', type: 'text' },
     { field: 'carb2', label: 'Certificación CARB2', type: 'text' },
+    { field: 'code', label: 'Código SKU', type: 'text' },
+    { field: 'sku_base', label: 'Código Base SKU', type: 'text' },
+    { field: 'barcode_text', label: 'Código de Barras', type: 'text' },
     { field: 'private_label_client_name', label: 'Cliente marca propia', type: 'text' },
 ]
 

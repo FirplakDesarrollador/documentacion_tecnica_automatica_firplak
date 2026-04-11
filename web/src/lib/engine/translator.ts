@@ -254,48 +254,33 @@ function convertMeasureToPulgadas(value: string): string | null {
     return `${w}INX${h}IN`
 }
 
-// ─── Resolved Type Builder ────────────────────────────────────────────────────
-// Combines product_type + designation + use_destination → commercial EN type block.
-
-const RESOLVED_TYPE_MAP: Record<string, string> = {
-    'MUEBLE|ELEVADO|LAVAMANOS':   'WALL MOUNTED VANITY',
-    'MUEBLE|ELEVADO|LAVAMANOS DOBLE': 'WALL MOUNTED DOUBLE VANITY',
-    'MUEBLE|PISO|LAVAMANOS':      'FREESTANDING VANITY',
-    'MUEBLE|CUBO|LAVAMANOS':      'VANITY CUBE',
-    'MUEBLE|CUBO-CAJON|LAVAMANOS': 'VANITY CUBE DRAWER',
-    'MUEBLE|SOPORTE|LAVAMANOS':   'VANITY SUPPORT',
-    'MUEBLE|SOPORTE Y ESTRUCTURA|LAVAMANOS': 'VANITY SUPPORT AND STRUCTURE',
-    'MUEBLE|SOPORTE Y ESTRUCTURA CON ENTREPAÑO|LAVAMANOS': 'VANITY SUPPORT AND STRUCTURE WITH SHELF',
-    'MUEBLE|ELEVADO|COCINA':      'WALL CABINET',
-    'MUEBLE|PISO|COCINA':         'BASE CABINET',
-    'MUEBLE|EMPOTRADO|LAVAMANOS': 'BUILT-IN VANITY',
-    'TAPA||LAVAMANOS':            'VANITY TOP',
-    'TAPA|VESSEL|LAVAMANOS':      'VESSEL VANITY TOP',
-    'TAPA|INTEL|LAVAMANOS':       'INTEL VANITY TOP',
-    // Fallbacks con solo tipo + designación (cuando no hay destino explícito)
-    'MUEBLE|CUBO':                'VANITY CUBE',
-    'MUEBLE|CUBO-CAJON':          'VANITY CUBE DRAWER',
-    'MUEBLE|SOPORTE':             'VANITY SUPPORT',
-    'MUEBLE|ELEVADO':             'WALL CABINET',
-    'MUEBLE|PISO':                'BASE CABINET',
-    'MUEBLE|EMPOTRADO':           'BUILT-IN CABINET',
-    'PLATAFORMA||':               'PLATFORM',
-    'MUEBLE|PISO|LAVARROPAS':      'LAUNDRY BASE CABINET',
-    'MUEBLE|ELEVADO|LAVARROPAS':   'LAUNDRY WALL CABINET',
-}
-
 function resolveTypeBlock(product: ProductPayload, glossary?: Record<string, GlossaryEntry>): string | { isMissing: boolean, key: string } {
     const rawType = (product.product_type || 'MUEBLE').toUpperCase()
     const rawDesig = (product.designation || '').toUpperCase()
     const rawDest = (product.use_destination || '').toUpperCase()
 
     // 1. Unified Glossary Strategy (Category: RESOLVED_TYPE)
+    // Keys are stored in DB as: "MUEBLE ELEVADO LAVAMANOS"
     const glossaryKey = `${rawType} ${rawDesig} ${rawDest}`.replace(/\s+/g, ' ').trim()
     if (glossary && glossary[glossaryKey] && glossary[glossaryKey].category === 'RESOLVED_TYPE') {
-        return glossary[glossaryKey].en
+        const result = glossary[glossaryKey].en
+        if (result && !isPlaceholder(result)) return result
     }
 
-    // 2. Hardcoded / Fallback Logic
+    // 2. Fallbacks con sub-combos en Glosario (Greedy Match)
+    const subKeys = [
+        `${rawType} ${rawDesig}`,
+        `${rawType} ${rawDest}`
+    ].map(k => k.trim())
+
+    for (const skey of subKeys) {
+        if (glossary && glossary[skey] && glossary[skey].category === 'RESOLVED_TYPE') {
+            const result = glossary[skey].en
+            if (result && !isPlaceholder(result)) return result
+        }
+    }
+
+    // 3. Fallbacks de Emergencia Geométricos (Legacy Logic)
     const clean = (s: string | null | undefined) => {
         const n = normalizeTechnicalText(s || '')
         return n.replace(/\b(PARA|A|DE)\b/g, '').replace(/\s+/g, ' ').trim()
@@ -305,30 +290,15 @@ function resolveTypeBlock(product: ProductPayload, glossary?: Record<string, Glo
     const desig = clean(product.designation || '')
     const dest  = clean(product.use_destination || '')
 
-    // Use-case specific type overrides (Priority)
     if (pType === 'TAPA') {
         if (desig.includes('VESSEL')) return 'VESSEL VANITY TOP'
         if (desig.includes('INTEL')) return 'INTEL VANITY TOP'
         return 'VANITY TOP'
     }
-
-    const keys = [
-        `${pType}|${desig}|${dest}`,
-        `${pType}|${dest}|${desig}`,
-        `${pType}|${desig}`,
-        `${pType}|${dest}`
-    ]
-
-    for (const key of keys) {
-        if (RESOLVED_TYPE_MAP[key]) return RESOLVED_TYPE_MAP[key]
-    }
     
-    // Last resort fallback based on destination context
+    // If we are here and it's a known vanity context but no glossary match
     const dUpper = dest.toUpperCase()
     if (dUpper.includes('LAVAMANOS')) return 'VANITY'
-    if (dUpper.includes('COCINA')) return 'KITCHEN CABINET'
-    if (dUpper.includes('LAVARROPAS') || dUpper.includes('LAVADERO') || dUpper.includes('LVR')) return 'LAUNDRY CABINET'
-    if (dUpper.includes('BAÑO')) return 'BATHROOM CABINET'
     
     // If we are here, we don't know what this is. Mark as missing to prompt user.
     return { isMissing: true, key: glossaryKey }
@@ -603,16 +573,22 @@ export async function translateProductToEnglish(
         const rawValue = (product as any)[varId] || ''
         
         // Skip placeholders
-        if (isPlaceholder(rawValue)) return
+        if (isPlaceholder(rawValue) && varId !== 'resolved_type') return
 
         // Step A: Term Detection (Only for string fields with 'translate' strategy)
-        if (cfg.fallback_strategy === 'translate' && varId !== 'assembled_flag') {
+        if (cfg.fallback_strategy === 'translate' && varId !== 'assembled_flag' && varId !== 'resolved_type') {
             const strVal = String(rawValue)
             translateField(strVal, cfg, glossary, missingTerms, warnings)
         }
 
-        // Step B: Emission (Only if emit is true AND it's actually active in ES)
-        if (cfg.emit && isActuallyActive(varId)) {
+        // Step B: Emission
+        // Strict fulfillment of USER rules: 
+        // 1. Must be EMIT=true
+        // 2. Behavior must NOT be 'classify_and_resolve' (which are intermediate variables)
+        // 3. Must be actually active in ES naming rules
+        const showByBehavior = cfg.behavior !== 'classify_and_resolve'
+
+        if (cfg.emit && showByBehavior && isActuallyActive(varId)) {
             let valEn = ''
             
             if (varId === 'rh') {

@@ -5,9 +5,10 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { PlusCircle, Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Bold, Italic, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, AlignVerticalJustifyEnd, AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Undo2, Redo2, Copy, Trash2, Settings, BookOpen, Shuffle, RotateCcw, LayoutGrid, Combine } from 'lucide-react'
+import { PlusCircle, Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Bold, Italic, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, AlignVerticalJustifyEnd, AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Undo2, Redo2, Copy, Trash2, Settings, BookOpen, Shuffle, RotateCcw, LayoutGrid, Combine, FileText, FileEdit, AlertTriangle, CheckCircle2, ShieldAlert } from 'lucide-react'
 import { toast } from 'sonner'
-import { updateTemplate, getPreviewProduct, getRandomPreviewProduct } from '@/app/templates/actions'
+import { updateTemplate, getPreviewProduct, getRandomPreviewProduct, validateExportFilenameLength } from '@/app/templates/actions'
+import { getDatasetsAction, FieldDef } from '@/app/datasets/actions'
 import { resolveAssetsAction } from '@/app/generate/actions'
 import { useRouter } from 'next/navigation'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -15,6 +16,7 @@ import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { PIXELS_PER_MM } from '@/lib/constants'
+import { hydrateText } from '@/lib/export/exportUtils'
 
 export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'box' | 'dashed_line' | 'dynamic_image' | 'icon_group'
 
@@ -56,7 +58,7 @@ export interface TemplateElement {
 
 const MAX_HISTORY = 10
 
-function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPreviewMode, type, previewData, dataField, fontSize, lineHeight, letterSpacing, textTransform, width, height }: { text: string, textAlign?: 'left' | 'center' | 'right' | undefined, verticalAlign?: 'top' | 'middle' | 'bottom' | undefined, isPreviewMode: boolean, type: string, previewData?: any, dataField?: string, fontSize?: number, lineHeight?: number, letterSpacing?: number, textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize', width?: number, height?: number }) {
+function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPreviewMode, type, previewData, dataField, fontSize, lineHeight, letterSpacing, textTransform, width, height }: { text: string, textAlign?: 'left' | 'center' | 'right' | undefined, verticalAlign?: 'top' | 'middle' | 'bottom' | undefined, isPreviewMode: boolean, type: string, previewData?: any, dataField?: string, fontSize?: number, lineHeight?: number, letterSpacing?: number, textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize', width?: number, height?: number, [key: string]: any }) {
     const textRef = useRef<HTMLDivElement>(null)
     const [isOverflowing, setIsOverflowing] = useState(false)
     const [adjustedFontSize, setAdjustedFontSize] = useState<number>(fontSize || 12)
@@ -65,18 +67,11 @@ function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPr
     const displayText = React.useMemo(() => {
         if (!isPreviewMode || !previewData) return text
 
-        const getVal = (varName: string) => {
-            if (varName === 'color' || varName === 'color_name' || varName === 'name_color_sap') {
-                return previewData.color_name || '[VACÍO]';
-            }
-            if (varName === 'color_code') return previewData.color_code || '[VACÍO]';
-            const val = previewData[varName];
-            return val === null || val === undefined || val === '' ? '[VACÍO]' : String(val);
-        }
+        const { getVariableValue } = require('@/lib/export/exportUtils')
 
         if (type === 'dynamic_text') {
             const varName = text.replace(/[{}]/g, '');
-            return getVal(varName);
+            return getVariableValue(previewData, varName) || '[VACÍO]';
         }
 
         let interpolated = text
@@ -84,8 +79,8 @@ function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPr
         if (matches) {
             matches.forEach(match => {
                 const varName = match.slice(1, -1)
-                const replacement = getVal(varName);
-                interpolated = interpolated.replace(match, replacement)
+                const replacement = getVariableValue(previewData, varName);
+                interpolated = interpolated.replace(match, replacement || '[VACÍO]')
             })
         }
         return interpolated
@@ -280,7 +275,9 @@ function DynamicImageElement({
     )
 }
 
-function RichTextEditor({ content, onChange }: { content: string, onChange: (val: string) => void }) {
+type FieldDef = { key: string; label: string; original: string; is_identifier: boolean }
+
+function RichTextEditor({ content, onChange, isExternalDataSource = false, datasetSchema = [] }: { content: string, onChange: (val: string) => void, isExternalDataSource?: boolean, datasetSchema?: FieldDef[] }) {
     const editorRef = useRef<HTMLDivElement>(null);
     const lastRangeRef = useRef<Range | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
@@ -1035,32 +1032,42 @@ function RichTextEditor({ content, onChange }: { content: string, onChange: (val
                     }}
                 >
                     <option value="" disabled>+ Variable</option>
-                    <optgroup label="Producto">
-                        <option value="sku_base">Código SKU</option>
-                        <option value="final_name_es">Nombre (ES)</option>
-                        <option value="final_name_en">Nombre (EN)</option>
-                        <option value="technical_description_es">Descripción Técnica (ES)</option>
-                        <option value="technical_description_en">Descripción Técnica (EN)</option>
-                        <option value="color_code">Código color</option>
-                        <option value="name_color_sap">Nombre color</option>
-                        <option value="use_destination">Uso (Designación)</option>
-                        <option value="zone_home">Zona Firplak</option>
-                        <option value="carb2">Certificación CARB2</option>
-                    </optgroup>
-                    <optgroup label="Medidas">
-                        <option value="width_cm">Ancho (cm)</option>
-                        <option value="height_cm">Alto (cm)</option>
-                        <option value="depth_cm">Fondo (cm)</option>
-                        <option value="width_in">Ancho (in)</option>
-                        <option value="height_in">Alto (in)</option>
-                        <option value="depth_in">Fondo (in)</option>
-                    </optgroup>
-                    <optgroup label="Otros">
-                        <option value="commercial_measure">Medida Comercial</option>
-                        <option value="weight_kg">Peso (kg)</option>
-                        <option value="weight_lb">Peso (lb)</option>
-                        <option value="line">Línea</option>
-                    </optgroup>
+                    {isExternalDataSource && datasetSchema.length > 0 ? (
+                        <optgroup label="Dataset Externo">
+                            {datasetSchema.map(f => (
+                                <option key={f.key} value={f.key}>{f.label}</option>
+                            ))}
+                        </optgroup>
+                    ) : (
+                        <>
+                        <optgroup label="Producto">
+                            <option value="sku_base">Código SKU</option>
+                            <option value="final_name_es">Nombre (ES)</option>
+                            <option value="final_name_en">Nombre (EN)</option>
+                            <option value="technical_description_es">Descripción Técnica (ES)</option>
+                            <option value="technical_description_en">Descripción Técnica (EN)</option>
+                            <option value="color_code">Código color</option>
+                            <option value="name_color_sap">Nombre color</option>
+                            <option value="use_destination">Uso (Designación)</option>
+                            <option value="zone_home">Zona Firplak</option>
+                            <option value="carb2">Certificación CARB2</option>
+                        </optgroup>
+                        <optgroup label="Medidas">
+                            <option value="width_cm">Ancho (cm)</option>
+                            <option value="height_cm">Alto (cm)</option>
+                            <option value="depth_cm">Fondo (cm)</option>
+                            <option value="width_in">Ancho (in)</option>
+                            <option value="height_in">Alto (in)</option>
+                            <option value="depth_in">Fondo (in)</option>
+                        </optgroup>
+                        <optgroup label="Otros">
+                            <option value="commercial_measure">Medida Comercial</option>
+                            <option value="weight_kg">Peso (kg)</option>
+                            <option value="weight_lb">Peso (lb)</option>
+                            <option value="line">Línea</option>
+                        </optgroup>
+                        </>
+                    )}
                     {/* NOTE: Icon variables removed from text — use 'Icono Variable' element type instead */}
                 </select>
             </div>
@@ -1571,14 +1578,19 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
     )
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function BuilderCanvas({ template, assets = [] }: { template: any, assets?: any[] }) {
+export function BuilderCanvas({ template, assets = [], datasetSchema: initialSchema = [] }: { template: any, assets?: any[], datasetSchema?: any[] }) {
 
     const [elements, setElements] = useState<TemplateElement[]>([])
     const [selectedIds, setSelectedIds] = useState<string[]>([])
     const [isSaving, setIsSaving] = useState(false)
     const [isModified, setIsModifiedState] = useState(false)
     const isModifiedRef = useRef(false)
+
+    // Global settings states
+    const [templateName, setTemplateName] = useState(template.name || '')
+    const [dataSource, setDataSource] = useState(template.data_source || 'core_firplak')
+    const [datasetSchema, setDatasetSchema] = useState(initialSchema)
+    const [availableDatasets, setAvailableDatasets] = useState<any[]>([])
 
     const setIsModified = useCallback((val: boolean) => {
         isModifiedRef.current = val
@@ -1590,6 +1602,9 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
     const [pendingHref, setPendingHref] = useState<string | null>(null)
     const [exportFormats, setExportFormats] = useState<string[]>(
         template.export_formats ? template.export_formats.split(',') : ['pdf', 'jpg']
+    )
+    const [exportFilenameFormat, setExportFilenameFormat] = useState<string>(
+        template.export_filename_format || '{sku_base}_{final_name_es}'
     )
 
     // History Stack for Undo / Redo
@@ -1611,6 +1626,8 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
     const [isLoadingRandom, setIsLoadingRandom] = useState(false)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [previewData, setPreviewData] = useState<any>(null)
+    const [isValidating, setIsValidating] = useState(false)
+    const [validationResult, setValidationResult] = useState<{ success: boolean, error?: string, count?: number } | null>(null)
     const assetMap = React.useMemo(() => {
         const map: Record<string, string> = {}
         assets.forEach(a => {
@@ -1623,6 +1640,105 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
         if (!previewData) return null
         return enrichProductDataWithIcons(previewData, assetMap)
     }, [previewData, assetMap])
+
+    // Fetch datasets info
+    useEffect(() => {
+        getDatasetsAction().then(res => setAvailableDatasets(res))
+    }, [])
+
+    const handleDataSourceChange = async (newSource: string) => {
+        setDataSource(newSource)
+        setIsModified(true)
+        
+        // Update schema locally
+        if (newSource === 'core_firplak') {
+            setDatasetSchema([])
+        } else {
+            const ds = availableDatasets.find(d => d.id === newSource)
+            if (ds && ds.schema_json) {
+                const raw = ds.schema_json
+                if (Array.isArray(raw)) {
+                    setDatasetSchema(raw)
+                } else if (raw && typeof raw === 'object') {
+                    const selectedCols = raw.selectedColumns || []
+                    setDatasetSchema(selectedCols.map((col: string) => ({
+                        key: col,
+                        label: col.replace(/_/g, ' '),
+                        original: col,
+                        is_identifier: col === raw.fieldMap?.code
+                    })))
+                }
+            }
+        }
+
+        // Reload preview product for the new source
+        const data = await getPreviewProduct(newSource)
+        const assetsRemote = await resolveAssetsAction([])
+        setPreviewData(enrichProductDataWithIcons(data, assetsRemote))
+    }
+
+    // Determinar si es fuente externa o core Firplak
+    const isExternalDataSource = dataSource && dataSource !== 'core_firplak'
+
+    // Lista de variables disponibles (estáticas para Firplak, dinámicas para datasets externos)
+    const CORE_VARIABLE_OPTS = [
+        { group: 'Identificadores', options: [
+            { key: 'code', label: 'Código SKU (Completo)' },
+            { key: 'sku_base', label: 'Código base SKU' },
+            { key: 'barcode_text', label: 'Código de Barras' },
+        ]},
+        { group: 'Producto/Atributos', options: [
+            { key: 'product_type', label: 'Tipo de Producto' },
+            { key: 'cabinet_name', label: 'Nombre Mueble' },
+            { key: 'designation', label: 'Uso (Designación)' },
+            { key: 'commercial_measure', label: 'Medida Comercial' },
+            { key: 'accessory_text', label: 'Accesorios/Riel' },
+            { key: 'color', label: 'Color (Nombre)' },
+            { key: 'color_code', label: 'Código color' },
+            { key: 'name_color_sap', label: 'Nombre color' },
+            { key: 'zone_home', label: 'Zona Firplak' },
+            { key: 'carb2', label: 'Certificación CARB2' },
+        ]},
+        { group: 'Generados/Técnicos', options: [
+            { key: 'final_name_es', label: 'Nombre (ES)' },
+            { key: 'final_name_en', label: 'Nombre (EN)' },
+            { key: 'technical_description_es', label: 'Descripción Técnica (ES)' },
+            { key: 'technical_description_en', label: 'Descripción Técnica (EN)' },
+        ]},
+        { group: 'Medidas', options: [
+            { key: 'width_cm', label: 'Ancho (cm)' },
+            { key: 'height_cm', label: 'Alto (cm)' },
+            { key: 'depth_cm', label: 'Fondo (cm)' },
+            { key: 'width_in', label: 'Ancho (in)' },
+            { key: 'height_in', label: 'Alto (in)' },
+            { key: 'depth_in', label: 'Fondo (in)' },
+        ]},
+        { group: 'Otros', options: [
+            { key: 'commercial_measure', label: 'Medida Comercial' },
+            { key: 'weight_kg', label: 'Peso (kg)' },
+            { key: 'weight_lb', label: 'Peso (lb)' },
+            { key: 'line', label: 'Línea' },
+        ]},
+    ]
+
+    const renderVariableOptions = () => {
+        if (isExternalDataSource && datasetSchema.length > 0) {
+            return (
+                <optgroup label="Dataset Externo">
+                    {datasetSchema.map(f => (
+                        <option key={f.key} value={f.key}>{f.label}</option>
+                    ))}
+                </optgroup>
+            )
+        }
+        return CORE_VARIABLE_OPTS.map(group => (
+            <optgroup key={group.group} label={group.group}>
+                {group.options.map(o => (
+                    <option key={o.key} value={o.key}>{o.label}</option>
+                ))}
+            </optgroup>
+        ))
+    }
 
     const canvasRef = useRef<HTMLDivElement>(null)
 
@@ -1935,8 +2051,11 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
     const handleSave = async () => {
         setIsSaving(true)
         const res = await updateTemplate(template.id, {
+            name: templateName,
+            data_source: dataSource,
             elements_json: JSON.stringify(elements),
-            export_formats: exportFormats.join(',')
+            export_formats: exportFormats.join(','),
+            export_filename_format: exportFilenameFormat
         })
         setIsSaving(false)
 
@@ -1951,7 +2070,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
     const handleTogglePreview = async () => {
         if (!isPreviewMode) {
             if (!previewData) {
-                const data = await getPreviewProduct()
+                const data = await getPreviewProduct(dataSource)
                 // Resolve system asset URLs (icons, logos) and enrich product data with icon fields
                 const assetMap = await resolveAssetsAction([])
                 setPreviewData(enrichProductDataWithIcons(data, assetMap))
@@ -1964,7 +2083,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
         setIsLoadingRandom(true)
         try {
             // Pass current product code so the server excludes it (avoids same product twice)
-            const data = await getRandomPreviewProduct(previewData?.code)
+            const data = await getRandomPreviewProduct(previewData?.code, dataSource)
             if (data) {
                 const assetMap = await resolveAssetsAction([])
                 setPreviewData(enrichProductDataWithIcons(data, assetMap))
@@ -1980,7 +2099,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
     const handleBasePreview = async () => {
         setIsLoadingRandom(true)
         try {
-            const data = await getPreviewProduct()
+            const data = await getPreviewProduct(dataSource)
             const assetMap = await resolveAssetsAction([])
             setPreviewData(enrichProductDataWithIcons(data, assetMap))
         } finally {
@@ -2273,9 +2392,9 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
     }
 
     return (
-        <div className="flex flex-col gap-4 xl:flex-row h-full">
+        <div className="flex-1 flex flex-col gap-4 xl:flex-row min-h-0 overflow-hidden">
             {/* Toolbar / Canvas Area */}
-            <div className="flex-1 flex flex-col gap-4">
+            <div className="flex-1 flex flex-col gap-4 overflow-y-auto overflow-x-hidden pr-3 custom-scrollbar pb-40">
                 <div className="flex justify-between items-center bg-white p-4 rounded-xl border shadow-sm">
                     <div className="flex gap-2 flex-wrap items-center">
                         <Button variant="outline" size="sm" onClick={() => addElement('text')}>
@@ -2470,7 +2589,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                     {/* Text types */}
                                     {(childEl.type === 'dynamic_text' || childEl.type === 'text') && (
                                         <OverflowText
-                                            {...childEl}
+                                            {...(childEl as any)}
                                             text={childEl.type === 'dynamic_text' ? `{${childEl.dataField}}` : (childEl.content || '')}
                                             isPreviewMode={isPreviewMode}
                                             previewData={previewData}
@@ -2546,7 +2665,7 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
             </div>
 
             {/* Properties Panel */}
-            <div className="w-full xl:w-80 flex flex-col shrink-0 h-[calc(100vh-220px)] sticky top-4">
+            <div className="w-full xl:w-80 flex flex-col shrink-0 h-full">
                 <Card className="flex-1 flex flex-col overflow-hidden bg-slate-50/50 shadow-inner">
                     <div className="p-4 border-b border-slate-200 bg-white/50 backdrop-blur-sm flex justify-between items-center shrink-0">
                         <h3 className="font-bold text-slate-800 flex items-center gap-2">
@@ -2631,27 +2750,21 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                         onChange={(e) => updateSelectedElements({ dataField: e.target.value })}
                                     >
                                         <option value="" disabled>-- Selecciona una variable --</option>
-                                        <option value="final_name_es">Nombre (ES)</option>
-                                        <option value="final_name_en">Nombre (EN)</option>
-                                        <option value="code">Código Artículo (SKU)</option>
-                                        <option value="sku_base">SKU Sin Color</option>
-                                        <option value="barcode_text">Código de Barras EAN</option>
-                                        <option value="color">Color (Nombre)</option>
-                                        <option value="color_code">Color (Código)</option>
-                                        <option value="sap_description">Descripción SAP</option>
-                                        <option value="cabinet_name">Nombre Gabinete Genérico</option>
-                                        <option value="line">Línea</option>
-                                        <option value="commercial_measure">Medida Comercial</option>
-                                        <option value="use_destination">Uso</option>
-                                        <option value="zone_home">Zona</option>
-                                        <option value="width_cm">Ancho (cm)</option>
-                                        <option value="depth_cm">Fondo (cm)</option>
-                                        <option value="height_cm">Alto (cm)</option>
-                                        <option value="weight_kg">Peso (kg)</option>
-                                        <option value="width_in">Ancho (in)</option>
-                                        <option value="depth_in">Fondo (in)</option>
-                                        <option value="height_in">Alto (in)</option>
-                                        <option value="weight_lb">Peso (lb)</option>
+                                        {isExternalDataSource && datasetSchema.length > 0 ? (
+                                            <optgroup label="Dataset Externo">
+                                                {datasetSchema.map(f => (
+                                                    <option key={f.key} value={f.key}>{f.label}</option>
+                                                ))}
+                                            </optgroup>
+                                        ) : (
+                                            CORE_VARIABLE_OPTS.map(group => (
+                                                <optgroup key={group.group} label={group.group}>
+                                                    {group.options.map(opt => (
+                                                        <option key={opt.key} value={opt.key}>{opt.label}</option>
+                                                    ))}
+                                                </optgroup>
+                                            ))
+                                        )}
                                         {/* NOTE: Icon data fields removed — use 'Icono Variable' element type instead */}
                                     </select>
                                 </div>
@@ -2663,6 +2776,8 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                     <RichTextEditor 
                                         content={activeEl.content || ''}
                                         onChange={(val) => updateSelectedElements({ content: val })}
+                                        isExternalDataSource={isExternalDataSource}
+                                        datasetSchema={datasetSchema}
                                     />
                                     <span className="text-[10px] text-gray-500 mt-1 block">Puedes seleccionar una palabra y usar los botones para ponerla en <b>Negrita</b>, <i>Cursiva</i>, etc.</span>
                                 </div>
@@ -3058,10 +3173,153 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                         </div>
                     )}
 
-                    {/* Global Template Settings (Visible when NO elements are selected) */}
-                    {!activeEl && selectedIds.length === 0 && (
                         <div className="space-y-4 border-t pt-4 border-slate-200">
-                            <Label className="font-semibold text-xs text-muted-foreground uppercase flex items-center">Configuración de Plantilla</Label>
+                            <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center">
+                                    <FileEdit className="w-4 h-4 text-indigo-600" />
+                                </div>
+                                <h4 className="font-bold text-slate-800 text-sm">Nombre de Exportación</h4>
+                            </div>
+
+                            <div className="space-y-3">
+                                <div className="flex flex-col gap-2">
+                                    <Input
+                                        value={exportFilenameFormat}
+                                        onChange={(e) => {
+                                            setExportFilenameFormat(e.target.value)
+                                            setIsModified(true)
+                                        }}
+                                        placeholder="Ej: ETIQ_{sku_base}_{final_name_es}"
+                                        className="font-mono text-sm h-10"
+                                    />
+                                    <select
+                                        className="w-full h-10 rounded-md border border-input bg-white px-2 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            if (val) {
+                                                setExportFilenameFormat(prev => prev + `{${val}}`)
+                                                setIsModified(true)
+                                                e.target.value = ""
+                                            }
+                                        }}
+                                        value=""
+                                    >
+                                        <option value="" disabled>+ Insertar Variable</option>
+                                        {isExternalDataSource && datasetSchema.length > 0 ? (
+                                            datasetSchema.map(f => (
+                                                <option key={f.key} value={f.key}>{f.label}</option>
+                                            ))
+                                        ) : (
+                                            CORE_VARIABLE_OPTS.map(group => (
+                                                <optgroup key={group.group} label={group.group}>
+                                                    {group.options.map(o => (
+                                                        <option key={o.key} value={o.key}>{o.label}</option>
+                                                    ))}
+                                                </optgroup>
+                                            ))
+                                        )}
+                                    </select>
+                                </div>
+
+                                <Button 
+                                    variant="outline" 
+                                    size="sm" 
+                                    className="w-full h-8 text-xs font-semibold gap-2 border-slate-200 hover:bg-slate-50 transition-colors"
+                                    onClick={async () => {
+                                        setIsValidating(true);
+                                        setValidationResult(null);
+                                        try {
+                                            const res = await validateExportFilenameLength(exportFilenameFormat, template.data_source);
+                                            setValidationResult(res);
+                                            if (res.success) {
+                                                toast.success(`Validación exitosa: ${res.count} registros cumplen.`);
+                                            } else {
+                                                toast.error(res.error);
+                                            }
+                                        } finally {
+                                            setIsValidating(false);
+                                        }
+                                    }}
+                                    disabled={isValidating}
+                                >
+                                    {isValidating ? <Loader2 className="h-3 w-3 animate-spin" /> : <ShieldAlert className="h-3 w-3 text-indigo-500" />}
+                                    Verificar largo del nombre
+                                </Button>
+
+                                {validationResult && (
+                                    <div className={cn(
+                                        "p-2 rounded-lg border flex items-start gap-2",
+                                        validationResult.success ? "bg-green-50 border-green-100" : "bg-red-50 border-red-100"
+                                    )}>
+                                        {validationResult.success ? (
+                                            <CheckCircle2 className="h-3 w-3 text-green-600 shrink-0 mt-0.5" />
+                                        ) : (
+                                            <AlertTriangle className="h-3 w-3 text-red-600 shrink-0 mt-0.5" />
+                                        )}
+                                        <div className="flex-1">
+                                            <p className={cn(
+                                                "text-[10px] font-bold",
+                                                validationResult.success ? "text-green-800" : "text-red-800"
+                                            )}>
+                                                {validationResult.success ? "Éxito" : "Largo excedido"}
+                                            </p>
+                                            <p className={cn(
+                                                "text-[9px] mt-0.5",
+                                                validationResult.success ? "text-green-600" : "text-red-600"
+                                            )}>
+                                                {validationResult.success 
+                                                    ? 'Todos los nombres cumplen.' 
+                                                    : validationResult.error}
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
+                                    <p className="text-[9px] text-slate-500 font-medium uppercase mb-1">Previsualización:</p>
+                                    <p className="text-[11px] font-mono text-indigo-600 break-all bg-white p-1 rounded border">
+                                        {hydrateText(exportFilenameFormat, enrichedData || previewData || { sku_base: 'SKU123', final_name_es: 'NOMBRE_EJEMPLO' })}.pdf
+                                    </p>
+                                    <p className="text-[9px] text-slate-400 mt-1 italic">
+                                        Longitud estimada: <b>{hydrateText(exportFilenameFormat, enrichedData || previewData || { sku_base: 'SKU123', final_name_es: 'NOMBRE_EJEMPLO' }).length}</b> caracteres.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <Label className="font-semibold text-xs text-muted-foreground uppercase flex items-center pt-4">Configuración de Plantilla</Label>
+                            
+                            <div className="space-y-4 bg-white p-4 rounded-xl border border-indigo-100 shadow-sm">
+                                <div>
+                                    <Label className="text-[11px] font-bold text-slate-500 mb-1.5 block uppercase">Nombre de Plantilla</Label>
+                                    <Input 
+                                        value={templateName} 
+                                        onChange={(e) => {
+                                            setTemplateName(e.target.value)
+                                            setIsModified(true)
+                                        }}
+                                        className="h-9 text-sm border-indigo-50 focus:border-indigo-200"
+                                    />
+                                </div>
+
+                                <div>
+                                    <Label className="text-[11px] font-bold text-slate-500 mb-1.5 block uppercase">Fuente de Datos (Base de Datos)</Label>
+                                    <select
+                                        className="flex h-9 w-full rounded-md border border-indigo-50 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus:border-indigo-200"
+                                        value={dataSource}
+                                        onChange={(e) => handleDataSourceChange(e.target.value)}
+                                    >
+                                        <option value="core_firplak">Firplak Core (Catálogo Maestro)</option>
+                                        <optgroup label="Bases de Datos Externas">
+                                            {availableDatasets.map(ds => (
+                                                <option key={ds.id} value={ds.id}>{ds.name}</option>
+                                            ))}
+                                        </optgroup>
+                                    </select>
+                                    <p className="text-[10px] text-slate-400 mt-1.5 leading-tight">
+                                        Cambiar la fuente actualizará las variables disponibles y la previsualización.
+                                    </p>
+                                </div>
+                            </div>
                             
                             <div className="flex flex-col gap-3">
                                 <Label className="text-xs font-bold text-slate-700">Formatos de Exportación Permitidos</Label>
@@ -3101,7 +3359,6 @@ export function BuilderCanvas({ template, assets = [] }: { template: any, assets
                                 </p>
                             </div>
                         </div>
-                        )}
                     </div>
                 </Card>
             </div>

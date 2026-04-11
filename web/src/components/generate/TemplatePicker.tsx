@@ -25,6 +25,7 @@ export interface TemplateOption {
     active: boolean
     elements_json: string
     export_formats?: string
+    export_filename_format?: string
 }
 
 interface TemplatePickerProps {

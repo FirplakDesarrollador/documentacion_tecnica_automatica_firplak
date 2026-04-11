@@ -8,6 +8,46 @@ export interface ExportOptions {
     height: number
 }
 
+const normalizeString = (str: string) => {
+    return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim()
+}
+
+export const getVariableValue = (context: any, field: string) => {
+    if (!context || !field) return ''
+    
+    // 1. Try exact match
+    if (context[field] !== undefined && context[field] !== null) {
+        return String(context[field])
+    }
+
+    // 2. Special technical mappings
+    if (field === 'color' || field === 'color_name' || field === 'name_color_sap') {
+        return context.color_name || context.name_color_sap || ''
+    }
+    if (field === 'color_code') return context.color_code || ''
+
+    // 3. Normalized search (case-insensitive, tilde-insensitive)
+    const normalizedTarget = normalizeString(field)
+    
+    // Cache normalized keys for performance if this is called frequently, 
+    // but for a single product context, a simple find is fine.
+    const matchingKey = Object.keys(context).find(key => normalizeString(key) === normalizedTarget)
+    
+    if (matchingKey) {
+        const val = context[matchingKey]
+        return (val === null || val === undefined) ? '' : String(val)
+    }
+
+    return ''
+}
+
+export const hydrateText = (text: string, context: any) => {
+    if (!text) return ''
+    return text.replace(/{([^}]+)}/g, (_: string, field: string) => {
+        return getVariableValue(context, field)
+    })
+}
+
 /**
  * Función maestra de hidratación (R6).
  * Resuelve variables {field}, activos (UUIDs) e iconos dinámicos en una sola pasada.
@@ -36,18 +76,6 @@ export async function hydrateTemplateElements(
         return `${baseUrl}/storage/v1/object/public/assets/${cleanPath}`
     }
 
-    const hydrateText = (text: string, context: any) => {
-        if (!text) return ''
-        return text.replace(/{([^}]+)}/g, (_: string, field: string) => {
-            if (field === 'color' || field === 'color_name' || field === 'name_color_sap') {
-                return context.color_name || context.name_color_sap || ''
-            }
-            if (field === 'color_code') return context.color_code || ''
-            const val = context[field]
-            return (val === null || val === undefined) ? '' : String(val)
-        })
-    }
-
     return elements.map(el => {
         const cloned = { ...el }
 
@@ -60,9 +88,14 @@ export async function hydrateTemplateElements(
             if (assetMap[content]) {
                 src = assetMap[content]
             } 
-            // 2. Mapeo de assets de sistema
+            // 2. Mapeo de assets de sistema y lógica de Marca Propia
             else if (content === 'logo_empresa' || content === 'Logo Empresa Pordefecto') {
-                src = assetMap['Logo Empresa Pordefecto'] || assetMap['logo_empresa'] || ''
+                // Si es Marca Propia y hay un logo específico, lo priorizamos
+                if (product.private_label_flag && product.private_label_logo_id && assetMap[product.private_label_logo_id]) {
+                    src = assetMap[product.private_label_logo_id]
+                } else {
+                    src = assetMap['Logo Empresa Pordefecto'] || assetMap['logo_empresa'] || ''
+                }
             }
             // 3. Mapeo de isométrico (R8)
             else if (['isometrico_placeholder', 'Isométrico', 'Isométrico (Placeholder)', 'isometric_path', 'image'].includes(content) || cloned.dataField === 'isometric_path') {

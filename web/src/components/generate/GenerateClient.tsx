@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import { Search, Download, AlertTriangle, X } from 'lucide-react'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -23,6 +24,8 @@ interface GenerateClientProps {
     references: { value: string, label: string }[]
     initialTemplateId: string | null
     hasFilter: boolean
+    rules: any[]
+    isExternalSource?: boolean
 }
 
 export function GenerateClient({
@@ -32,7 +35,10 @@ export function GenerateClient({
     references,
     initialTemplateId,
     hasFilter,
+    rules,
+    isExternalSource = false,
 }: GenerateClientProps) {
+    const router = useRouter()
     const [selectedIds, setSelectedIds] = useState<string[]>([])
     const [isLoaded, setIsLoaded] = useState(false)
 
@@ -109,19 +115,30 @@ export function GenerateClient({
     const handleTemplateChange = useCallback((id: string) => {
         setSelectedTemplateId(id)
         setSelectedIds([]) // reset selection when template changes
-    }, [])
+        
+        // Sincronizar con la URL para refrescar el componente de servidor y los filtros
+        const params = new URLSearchParams(window.location.search)
+        params.set('template_id', id)
+        router.push(`/generate?${params.toString()}`)
+    }, [router])
 
     return (
         <div className="flex flex-col gap-6">
             {/* Toolbar */}
             <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between p-4 bg-white border border-slate-200 rounded-xl shadow-sm">
                 <div className="w-full lg:w-auto flex-1">
-                    <GenerateFilters
-                        families={families}
-                        references={references}
-                    />
+                    {!isExternalSource ? (
+                        <GenerateFilters
+                            families={families}
+                            references={references}
+                        />
+                    ) : (
+                        <div className="flex items-center gap-2">
+                            <span className="text-sm text-slate-500 font-medium px-2 py-1 bg-indigo-50 text-indigo-700 rounded-md ring-1 ring-indigo-200">Dataset Externo (No aplica filtros de Familia)</span>
+                        </div>
+                    )}
                 </div>
-                <div className="flex items-center gap-3 w-full lg:w-auto">
+                <div className="flex items-center gap-3 w-full lg:w-auto mt-3 lg:mt-0">
                     <TemplatePicker
                         templates={templates}
                         selectedTemplateId={selectedTemplateId}
@@ -231,6 +248,7 @@ export function GenerateClient({
                         <BulkExportPanel
                             selectedProducts={selectedProducts}
                             template={selectedTemplate}
+                            rules={rules}
                             onClose={() => setShowBulkExport(false)}
                         />
                     </div>

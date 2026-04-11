@@ -15,6 +15,7 @@ import { DeleteTemplateButton } from '@/components/templates/DeleteTemplateButto
 
 export default async function TemplatesPage() {
     const templates = await dbQuery(`SELECT * FROM public.plantillas_doc_tec ORDER BY updated_at DESC`) || []
+    const datasets = await dbQuery(`SELECT id, name FROM public.custom_datasets ORDER BY created_at DESC`) || []
 
     return (
         <div className="flex flex-col gap-8">
@@ -28,7 +29,7 @@ export default async function TemplatesPage() {
                 </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
-                    <NewTemplateDialog />
+                    <NewTemplateDialog datasets={datasets} />
                 </div>
             </div>
 

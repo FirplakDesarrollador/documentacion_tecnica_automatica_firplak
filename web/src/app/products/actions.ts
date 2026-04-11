@@ -197,7 +197,16 @@ export async function createProductAction(data: any) {
         `)
     }
 
-    return result?.[0]
+    if (result && result.length > 0) {
+        const rows = await dbQuery(`
+            SELECT p.*, c.name_color_sap as color_name
+            FROM public.cabinet_products p
+            LEFT JOIN public.colors c ON p.color_code = c.code_4dig
+            WHERE p.id = '${result[0].id}'
+        `);
+        return rows?.[0] || result[0];
+    }
+    return null;
 }
 
 export async function updateProductAction(id: string, data: any) {
@@ -281,7 +290,16 @@ export async function updateProductAction(id: string, data: any) {
         `)
     }
 
-    return result?.[0]
+    if (result && result.length > 0) {
+        const rows = await dbQuery(`
+            SELECT p.*, c.name_color_sap as color_name
+            FROM public.cabinet_products p
+            LEFT JOIN public.colors c ON p.color_code = c.code_4dig
+            WHERE p.id = '${result[0].id}'
+        `);
+        return rows?.[0] || result[0];
+    }
+    return null;
 }
 
 export async function massUpdateProducts(ids: string[], updateData: any) {

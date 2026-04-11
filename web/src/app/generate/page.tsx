@@ -86,9 +86,41 @@ export default async function GeneratePage({
 
     // --- Cargar plantillas activas ---
     const templates = await dbQuery(
-        `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json, export_formats
+        `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json, export_formats, export_filename_format, data_source
          FROM public.plantillas_doc_tec WHERE active = true ORDER BY updated_at DESC`
     ) || []
+
+    // --- Cargar reglas del motor ---
+    const rules = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true`) || []
+
+    const selectedTemplateInfo = templates.find((t: any) => t.id === templateId) || templates[0]
+    const currentDataSource = selectedTemplateInfo?.data_source || 'core_firplak'
+    const isDataSourceExternal = currentDataSource !== 'core_firplak'
+
+    let effectiveHasFilter = hasFilter
+    
+    // Si la plantilla es de un dataset externo, sobreescribimos los productos con todo el dataset
+    // (no aplican los filtros de Familia/Referencia)
+    if (isDataSourceExternal) {
+        effectiveHasFilter = true 
+        const dsRows = await dbQuery(`
+            SELECT id, data_json 
+            FROM public.custom_dataset_rows 
+            WHERE dataset_id = '${currentDataSource.replace(/'/g, "''")}'
+            LIMIT 500
+        `) || []
+        
+        products = dsRows.map((r: any) => {
+            const parsed = typeof r.data_json === 'string' ? JSON.parse(r.data_json) : r.data_json
+            return {
+                ...parsed,
+                id: r.id,
+                code: parsed.code || parsed.sku || parsed.id || r.id,
+                final_name_es: parsed.final_name_es || parsed.name || parsed.nombre || 'Registro dataset',
+                status: 'ACTIVO'
+            }
+        })
+    }
 
     return (
         <div className="flex flex-col gap-8 pb-10">
@@ -120,10 +152,12 @@ export default async function GeneratePage({
             <GenerateClient
                 products={products}
                 templates={templates}
+                rules={rules}
                 families={families}
                 references={references}
                 initialTemplateId={templateId}
-                hasFilter={hasFilter}
+                hasFilter={effectiveHasFilter}
+                isExternalSource={isDataSourceExternal}
             />
         </div>
     )

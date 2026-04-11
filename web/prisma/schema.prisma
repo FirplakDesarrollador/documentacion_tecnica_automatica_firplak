@@ -116,15 +116,34 @@ model Asset {
 }
 
 model Template {
-  id            String   @id @default(cuid())
-  name          String
-  document_type String
-  width_mm      Float
-  height_mm     Float
-  orientation   String
-  elements_json String
-  version       Int      @default(1)
-  active        Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id             String   @id @default(cuid())
+  name           String
+  document_type  String
+  width_mm       Float
+  height_mm      Float
+  orientation    String
+  data_source    String   @default("core_firplak")
+  elements_json  String
+  version        Int      @default(1)
+  export_formats String?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model CustomDataset {
+  id          String             @id @default(cuid())
+  name        String             @unique
+  schema_json String             @default("{}") // Mapeo de headers
+  createdAt   DateTime           @default(now())
+  rows        CustomDatasetRow[]
+}
+
+model CustomDatasetRow {
+  id         String        @id @default(cuid())
+  dataset_id String
+  data_json  String        @default("{}") // JSON data real
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  dataset    CustomDataset @relation(fields: [dataset_id], references: [id])
 }

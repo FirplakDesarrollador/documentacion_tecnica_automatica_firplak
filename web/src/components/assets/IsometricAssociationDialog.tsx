@@ -313,12 +313,12 @@ export function IsometricAssociationDialog({
                             </div>
 
                             <div className={cn("space-y-2 transition-opacity", selectedFamilies.length === 0 && "opacity-50 pointer-events-none")}>
-                                <Label className="text-slate-700 font-medium">Referencia · Medida <span className="text-[10px] text-rose-500 font-bold uppercase tracking-tight">(Obligatorio)</span></Label>
+                                <Label className="text-slate-700 font-medium">Código · Referencia · Medida <span className="text-[10px] text-rose-500 font-bold uppercase tracking-tight">(Obligatorio)</span></Label>
                                 <MultiSelectSearchField 
                                     options={references}
                                     values={selectedReferences}
                                     onChange={setSelectedReferences}
-                                    placeholder="Seleccionar Referencias y Medidas"
+                                    placeholder="Seleccionar Código, Referencia y Medida"
                                     className="h-11"
                                     emptyMessage="Selecciona familias primero."
                                 />

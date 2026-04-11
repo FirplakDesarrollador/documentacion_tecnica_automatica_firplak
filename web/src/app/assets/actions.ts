@@ -30,14 +30,12 @@ export async function getReferencesByFamilyAction(familyCodes: string[]) {
         FROM public.cabinet_products 
         WHERE ref_code IS NOT NULL AND familia_code IN (${filter})
         GROUP BY ref_code, commercial_measure
-        ORDER BY ref_code, commercial_measure ASC
+        ORDER BY ref_code, commercial_measure
     `) || []
     
     return refRecords.map((rec: any) => ({ 
         value: `${rec.ref_code}|||${rec.commercial_measure || ''}`, 
-        label: rec.commercial_measure 
-            ? `${rec.cabinet_name || rec.ref_code} - ${rec.commercial_measure}`
-            : `${rec.cabinet_name || rec.ref_code}`
+        label: rec.commercial_measure ? `${rec.cabinet_name || rec.ref_code} - ${rec.commercial_measure}` : `${rec.cabinet_name || rec.ref_code}`
     }))
 }
 

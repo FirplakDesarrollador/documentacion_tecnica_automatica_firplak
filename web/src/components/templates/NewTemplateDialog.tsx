@@ -18,7 +18,7 @@ import { PlusCircle, Loader2 } from "lucide-react"
 import { createTemplate } from "@/app/templates/actions"
 import { toast } from "sonner"
 
-export function NewTemplateDialog() {
+export function NewTemplateDialog({ datasets = [] }: { datasets?: {id: string, name: string}[] }) {
     const [open, setOpen] = useState(false)
     const [loading, setLoading] = useState(false)
     const router = useRouter()
@@ -31,14 +31,15 @@ export function NewTemplateDialog() {
         const name = formData.get("name") as string
         const width = parseFloat(formData.get("width") as string)
         const height = parseFloat(formData.get("height") as string)
+        const dataSource = formData.get("data_source") as string
 
-        if (!name || isNaN(width) || isNaN(height)) {
+        if (!name || isNaN(width) || isNaN(height) || !dataSource) {
             toast.error("Por favor completa todos los campos correctamente.")
             setLoading(false)
             return
         }
 
-        const res = await createTemplate({ name, width_mm: width, height_mm: height })
+        const res = await createTemplate({ name, width_mm: width, height_mm: height, data_source: dataSource })
         setLoading(false)
 
         if (res.success) {
@@ -72,6 +73,20 @@ export function NewTemplateDialog() {
                                 Nombre
                             </Label>
                             <Input id="name" name="name" placeholder="Ej. Etiqueta Estándar" className="col-span-3" required />
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <Label htmlFor="data_source" className="text-right leading-tight">
+                                Fuente de Datos
+                            </Label>
+                            <select
+                                id="data_source" name="data_source" required
+                                className="col-span-3 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                            >
+                                <option value="core_firplak">Catálogo Core: Productos Firplak</option>
+                                {datasets.map(ds => (
+                                    <option key={ds.id} value={ds.id}>{ds.name} (Dataset Externo)</option>
+                                ))}
+                            </select>
                         </div>
                         <div className="grid grid-cols-4 items-center gap-4">
                             <Label htmlFor="width" className="text-right">

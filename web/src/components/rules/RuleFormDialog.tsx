@@ -48,10 +48,18 @@ const FIELD_OPTIONS = [
     { value: 'familia_code', label: 'Familia' },
     { value: 'product_type', label: 'Tipo de Producto' },
     { value: 'rh_flag', label: 'RH (Humedad)' },
+    { value: 'edge_2mm_flag', label: 'Canto 2mm' },
     { value: 'assembled_flag', label: 'Armado' },
     { value: 'line', label: 'Línea/Modelo' },
     { value: 'sap_description', label: 'Descripción SAP' },
-    { value: 'code', label: 'Código SKA' },
+    { value: 'code', label: 'Código SKU' },
+    { value: 'sku_base', label: 'Código Base SKU' },
+    { value: 'barcode_text', label: 'Código de Barras' },
+    { value: 'zone_home', label: 'Zona Firplak' },
+    { value: 'designation', label: 'Designación' },
+    { value: 'cabinet_name', label: 'Nombre Mueble' },
+    { value: 'commercial_measure', label: 'Medida Comercial' },
+    { value: 'accessory_text', label: 'Accesorios/Riel' },
 ]
 
 const OPERATOR_OPTIONS = [

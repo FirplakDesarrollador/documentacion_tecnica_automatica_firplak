@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useCallback, useMemo } from 'react'
-import { Download, Loader2, CheckCircle2, XCircle, Clock, Package, AlertTriangle } from 'lucide-react'
+import { useState, useCallback, useMemo, useRef } from 'react'
+import { Download, Loader2, CheckCircle2, XCircle, Clock, Package, AlertTriangle, StopCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
@@ -10,8 +10,9 @@ import { ValidationWarnings, getMissingFields, getTemplateRequiredFields, fieldL
 import type { TemplateOption } from './TemplatePicker'
 import type { GenerateProduct } from './GenerateProductTable'
 import { resolveAssetsAction } from '@/app/generate/actions'
-import { hydrateTemplateElements } from '@/lib/export/exportUtils'
-import { enrichProductData } from '@/lib/engine/productUtils'
+import { hydrateTemplateElements, hydrateText } from '@/lib/export/exportUtils'
+import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
+import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
 import { PIXELS_PER_MM } from '@/lib/constants'
 
 type ExportStatus = 'pending' | 'exporting' | 'done' | 'error'
@@ -25,13 +26,15 @@ interface ProductExportItem {
 interface BulkExportPanelProps {
     selectedProducts: GenerateProduct[]
     template: TemplateOption | null
+    rules: any[]
     onClose: () => void
 }
 
 async function exportOneProduct(
     product: GenerateProduct, 
     template: TemplateOption, 
-    format: 'pdf' | 'jpg'
+    format: 'pdf' | 'jpg',
+    rules: any[]
 ): Promise<void> {
     let elements: any[] = []
     try {
@@ -54,6 +57,16 @@ async function exportOneProduct(
     const widthPx = Math.round((template.width_mm || 200) * PIXELS_PER_MM)
     const heightPx = Math.round((template.height_mm || 100) * PIXELS_PER_MM)
 
+    // 5. Preparar nombre de archivo dinámico aplicando el motor de reglas
+    const engineResult = evaluateProductRules(product as any, rules)
+    const final_name_es = engineResult.finalNameEs || product.final_name_es || ''
+    
+    // Unir el producto con el nombre derivado para que hydrateText lo encuentre
+    const contextWithDerivedName = { ...product, final_name_es }
+    const enriched = enrichProductDataWithIcons(contextWithDerivedName, assetMap)
+    
+    const downloadName = hydrateText((template as any).export_filename_format || '{sku_base}_{final_name_es}', enriched)
+
     const response = await fetch('/api/export', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -61,7 +74,8 @@ async function exportOneProduct(
             elements: hydrated, 
             format, 
             width: widthPx, 
-            height: heightPx 
+            height: heightPx,
+            filename: downloadName
         }),
     })
 
@@ -71,20 +85,22 @@ async function exportOneProduct(
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${product.code}_${template.name.replace(/\s+/g, '_')}.${format}`
+    const downloadNameActual = hydrateText((template as any).export_filename_format || '{sku_base}_{final_name_es}', enriched)
+    a.download = `${downloadNameActual}.${format}`
     document.body.appendChild(a)
     a.click()
     window.URL.revokeObjectURL(url)
     document.body.removeChild(a)
 }
 
-export function BulkExportPanel({ selectedProducts, template, onClose }: BulkExportPanelProps) {
+export function BulkExportPanel({ selectedProducts, template, rules, onClose }: BulkExportPanelProps) {
     const [items, setItems] = useState<ProductExportItem[]>(
         selectedProducts.map(p => ({ product: p, status: 'pending' }))
     )
     const [isRunning, setIsRunning] = useState(false)
     const [started, setStarted] = useState(false)
     const [warningsConfirmed, setWarningsConfirmed] = useState(false)
+    const isCancelledRef = useRef(false)
     
     // Formatos permitidos por la plantilla
     const allowedFormats = useMemo(() => {
@@ -128,20 +144,36 @@ export function BulkExportPanel({ selectedProducts, template, onClose }: BulkExp
         if (!template) return
         setIsRunning(true)
         setStarted(true)
+        isCancelledRef.current = false
 
         for (const item of items) {
+            // Verificar si el usuario canceló
+            if (isCancelledRef.current) {
+                break
+            }
+
             if (item.status !== 'pending') continue
             updateItem(item.product.id, 'exporting')
             try {
-                await exportOneProduct(item.product, template, selectedFormat)
+                await exportOneProduct(item.product, template, selectedFormat, rules)
                 updateItem(item.product.id, 'done')
             } catch (err: any) {
                 updateItem(item.product.id, 'error', err?.message || 'Error desconocido')
             }
         }
 
+        const wasCancelled = isCancelledRef.current
         setIsRunning(false)
-        toast.success(`Exportación completada: ${done + 1} archivo(s) descargado(s)`)
+        if (wasCancelled) {
+            toast.error('Exportación detenida por el usuario')
+        } else {
+            toast.success(`Exportación completada: ${items.filter(i => i.status === 'done').length} archivo(s) descargado(s)`)
+        }
+    }
+
+    const cancelExport = () => {
+        isCancelledRef.current = true
+        setIsRunning(false)
     }
 
     const statusIcon = (status: ExportStatus) => {
@@ -243,13 +275,25 @@ export function BulkExportPanel({ selectedProducts, template, onClose }: BulkExp
                             </Button>
                         </div>
                         <Button variant="outline" onClick={onClose} className="w-24 self-end">
-                            Cancelar
+                            Cerrar
                         </Button>
                     </>
                 ) : (
-                    <Button variant="outline" onClick={onClose} className="flex-1">
-                        {isRunning ? 'Exportando...' : 'Cerrar'}
-                    </Button>
+                    <div className="flex items-center gap-2 w-full">
+                        {isRunning && (
+                            <Button 
+                                variant="destructive" 
+                                onClick={cancelExport} 
+                                className="flex-1 bg-red-50 text-red-600 hover:bg-red-100 border-none shadow-none font-bold"
+                            >
+                                <StopCircle className="w-4 h-4 mr-2" />
+                                Detener Exportación
+                            </Button>
+                        )}
+                        <Button variant="outline" onClick={onClose} className={isRunning ? 'w-24' : 'flex-1'}>
+                            {isRunning ? 'Esperar' : 'Cerrar'}
+                        </Button>
+                    </div>
                 )}
             </div>
         </div>
