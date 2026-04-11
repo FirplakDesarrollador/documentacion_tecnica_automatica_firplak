@@ -4,7 +4,7 @@
 > **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estratégico y operativo necesario para navegar y construir eficientemente en este proyecto.
 
 ## 📌 Visión General
-Consolidación de la experiencia de usuario (UX Premium) con la implementación del Sidebar colapsable persistente y la optimización del modo 'Canvas Full Screen' para el Builder. Se estabilizó el pipeline de renderizado mediante señales de sincronización (`data-scaling`) y se completó la transición a seguridad RLS en Supabase. El sistema ahora opera en un entorno de 'Gobernanza de Terminal Seguro', permitiendo una operación del Agente de IA más rápida y fluida.
+Salto a la Madurez de Datos (v1.2.0): Se centralizó la generación de documentos técnicos mediante un motor de hidratación 'Code-First', eliminando la dependencia de entradas manuales. Se implementó el soporte para Datasets externos con variables personalizadas y se consolidó el motor de traducción contextual basado en `resolved_type`. La experiencia de usuario se elevó con un Sidebar colapsable persistente, exportación inmediata desde el registro y gobernanza dinámica del nombre de salida de archivos directamente desde la plantilla.
 
 ## 🏗️ Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
