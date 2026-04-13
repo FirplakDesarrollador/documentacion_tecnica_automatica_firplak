@@ -4,7 +4,7 @@
 > **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estratégico y operativo necesario para navegar y construir eficientemente en este proyecto.
 
 ## 📌 Visión General
-Madurez de Datos e Infraestructura Inteligente (v1.2.1): Se consolidó el motor de hidratación 'Code-First' y el sistema de **Gobernanza Dinámica de Familias**, permitiendo la creación de categorías en tiempo real ante códigos SAP desconocidos. Se implementó el soporte para Datasets externos con variables personalizadas y se refinó la traducción contextual mediante `resolved_type`. La experiencia de usuario se optimizó con un Sidebar colapsable persistente, exportación inmediata desde el registro y gobernanza dinámica del nombre de salida de archivos directamente desde la plantilla.
+Infraestructura de Datos y Exportación Inteligente (v1.2.2): Se implementó el módulo de **Datasets** para la ingesta masiva de archivos CSV, permitiendo el uso de variables personalizadas en las plantillas. Se consolidó la **Gobernanza de Nombres de Archivos**, permitiendo configurar reglas de nombrado dinámicas directamente en el diseño para automatizar la salida de documentos personalizados. Se optimizó el pipeline de exportación masiva y se integró la generación de documentos desde el flujo de creación de nuevos productos.
 
 ## 🏗️ Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
