@@ -48,6 +48,7 @@ export function TemplatePicker({ templates, selectedTemplateId, onSelect, update
     const selected = templates.find(t => t.id === selectedTemplateId)
 
     const handleSelect = (id: string) => {
+        console.log("[TemplatePicker] handleSelect disparado con ID:", id)
         if (onSelect) onSelect(id)
         if (updateUrl) {
             const params = new URLSearchParams(searchParams.toString())
@@ -102,6 +103,10 @@ export function TemplatePicker({ templates, selectedTemplateId, onSelect, update
                         <DropdownMenuRadioItem
                             key={t.id}
                             value={t.id}
+                            onSelect={(e) => {
+                                // Llamar directamente por seguridad en caso que onValueChange falle
+                                handleSelect(t.id)
+                            }}
                             className="flex flex-col items-start gap-1 py-3 px-3 cursor-pointer"
                         >
                             <div className="flex items-center gap-2 w-full">

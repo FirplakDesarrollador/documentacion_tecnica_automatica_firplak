@@ -14,7 +14,7 @@ import { NewTemplateDialog } from '@/components/templates/NewTemplateDialog'
 import { DeleteTemplateButton } from '@/components/templates/DeleteTemplateButton'
 
 export default async function TemplatesPage() {
-    const templates = await dbQuery(`SELECT * FROM public.plantillas_doc_tec ORDER BY updated_at DESC`) || []
+    const templates = await dbQuery(`SELECT * FROM public.plantillas_doc_tec ORDER BY created_at ASC`) || []
     const datasets = await dbQuery(`SELECT id, name FROM public.custom_datasets ORDER BY created_at DESC`) || []
 
     return (

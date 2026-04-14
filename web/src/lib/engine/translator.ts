@@ -74,6 +74,11 @@ let lastConfigFetch = 0
 
 const CACHE_TTL_MS = 60_000
 
+export function resetGlossaryCache() {
+    cachedGlossary = null
+    lastGlossaryFetch = 0
+}
+
 // ─── Supabase ─────────────────────────────────────────────────────────────────
 
 function getSupabase() {
@@ -85,8 +90,11 @@ function getSupabase() {
 
 // ─── Loaders ─────────────────────────────────────────────────────────────────
 
-async function loadGlossary(): Promise<Record<string, GlossaryEntry>> {
-    if (cachedGlossary && Date.now() - lastGlossaryFetch < CACHE_TTL_MS) return cachedGlossary
+async function loadGlossary(force: boolean = false): Promise<Record<string, GlossaryEntry>> {
+    if (!force && cachedGlossary && Date.now() - lastGlossaryFetch < CACHE_TTL_MS) return cachedGlossary
+    
+    if (force) resetGlossaryCache()
+
     const sb = getSupabase()
     const { data, error } = await sb
         .from('glossary')
@@ -475,10 +483,13 @@ function validateResult(name: string, missingTerms: string[], warnings: string[]
 export async function translateProductToEnglish(
     product: ProductPayload,
     targetEntity: string = 'MUEBLE',
-    activeVariableIds?: string[]
+    activeVariableIds?: string[],
+    forceRefresh: boolean = false
 ): Promise<TranslationResult> {
     const missingTerms: string[] = []
     const warnings: string[] = []
+    
+    if (forceRefresh) resetGlossaryCache()
 
     const isActuallyActive = (varId: string) => {
         // Special case: resolved_type (the commercial type like CABINET/VANITY) 

@@ -1,12 +1,24 @@
 'use client'
 
 import { useState, useCallback, useMemo, useRef } from 'react'
-import { Download, Loader2, CheckCircle2, XCircle, Clock, Package, AlertTriangle, StopCircle } from 'lucide-react'
+import { 
+    Download, 
+    Loader2, 
+    CheckCircle2, 
+    XCircle, 
+    Clock, 
+    Package, 
+    AlertTriangle, 
+    StopCircle, 
+    FolderRoot, 
+    FolderCheck, 
+    Trash2 
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { ValidationWarnings, getMissingFields, getTemplateRequiredFields, fieldLabel } from './ValidationWarnings'
+import { ValidationWarnings, getMissingFields, getTemplateRequiredFields } from './ValidationWarnings'
 import type { TemplateOption } from './TemplatePicker'
 import type { GenerateProduct } from './GenerateProductTable'
 import { resolveAssetsAction } from '@/app/generate/actions'
@@ -30,42 +42,49 @@ interface BulkExportPanelProps {
     onClose: () => void
 }
 
+function sanitizeFilename(name: string): string {
+    // Eliminar caracteres prohibidos en sistemas de archivos (\ / : * ? " < > |)
+    // Especialmente el '/' que estaba causando el error del usuario
+    return name.replace(/[\\/:*?"<>|]/g, '_').trim()
+}
+
 async function exportOneProduct(
     product: GenerateProduct, 
     template: TemplateOption, 
     format: 'pdf' | 'jpg',
-    rules: any[]
+    rules: any[],
+    directoryHandle: any | null = null
 ): Promise<void> {
     let elements: any[] = []
     try {
         elements = JSON.parse(template.elements_json || '[]')
     } catch { elements = [] }
 
-    // 1. Identificar activos a resolver (UUIDs en campos de imagen)
+    // 1. Identificar activos a resolver
     const assetIds = elements
         .filter(el => (el.type === 'image' || el.type === 'dynamic_image') && el.content && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(el.content))
         .map(el => el.content)
     
-    // 2. Resolver assets mediante acción de servidor
+    // 2. Resolver assets
     const assetMap = await resolveAssetsAction(assetIds)
 
-    // 3. Hidratar usando la función maestra (R6)
-    // hydrateTemplateElements ya se encarga de resolver variables, iconos y assets
+    // 3. Hidratar
     const hydrated = await hydrateTemplateElements(elements, product, assetMap)
 
-    // 5. Generar Payload con utilidad centralizada
-    const widthPx = Math.round((template.width_mm || 200) * PIXELS_PER_MM)
-    const heightPx = Math.round((template.height_mm || 100) * PIXELS_PER_MM)
-
-    // 5. Preparar nombre de archivo dinámico aplicando el motor de reglas
+    // 4. Preparar nombre y contexto
     const engineResult = evaluateProductRules(product as any, rules)
     const final_name_es = engineResult.finalNameEs || product.final_name_es || ''
-    
-    // Unir el producto con el nombre derivado para que hydrateText lo encuentre
     const contextWithDerivedName = { ...product, final_name_es }
     const enriched = enrichProductDataWithIcons(contextWithDerivedName, assetMap)
     
-    const downloadName = hydrateText((template as any).export_filename_format || '{sku_base}_{final_name_es}', enriched)
+    // Obtenemos el nombre base y lo sanitizamos para evitar errores de sistema de archivos
+    const rawDownloadName = hydrateText((template as any).export_filename_format || '{sku_base}_{final_name_es}', enriched)
+    const downloadName = sanitizeFilename(rawDownloadName)
+    const fileName = `${downloadName}.${format}`
+
+    // 5. Payload para el API
+    const widthPx = Math.round((template.width_mm || 200) * PIXELS_PER_MM)
+    const heightPx = Math.round((template.height_mm || 100) * PIXELS_PER_MM)
 
     const response = await fetch('/api/export', {
         method: 'POST',
@@ -82,15 +101,28 @@ async function exportOneProduct(
     if (!response.ok) throw new Error(`Error exportando ${product.code}`)
 
     const blob = await response.blob()
-    const url = window.URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    const downloadNameActual = hydrateText((template as any).export_filename_format || '{sku_base}_{final_name_es}', enriched)
-    a.download = `${downloadNameActual}.${format}`
-    document.body.appendChild(a)
-    a.click()
-    window.URL.revokeObjectURL(url)
-    document.body.removeChild(a)
+
+    // 6. Guardar: En Carpeta o mediante Descarga Navegador
+    if (directoryHandle) {
+        try {
+            const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true })
+            const writable = await fileHandle.createWritable()
+            await writable.write(blob)
+            await writable.close()
+        } catch (err) {
+            console.error("Error guardando en carpeta seleccionada", err)
+            throw new Error(`Permiso denegado o error al guardar archivo: ${fileName}`)
+        }
+    } else {
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = fileName
+        document.body.appendChild(a)
+        a.click()
+        window.URL.revokeObjectURL(url)
+        document.body.removeChild(a)
+    }
 }
 
 export function BulkExportPanel({ selectedProducts, template, rules, onClose }: BulkExportPanelProps) {
@@ -99,10 +131,11 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
     )
     const [isRunning, setIsRunning] = useState(false)
     const [started, setStarted] = useState(false)
-    const [warningsConfirmed, setWarningsConfirmed] = useState(false)
+    const [directoryHandle, setDirectoryHandle] = useState<any | null>(null)
+    const [directoryName, setDirectoryName] = useState<string | null>(null)
     const isCancelledRef = useRef(false)
     
-    // Formatos permitidos por la plantilla
+    // Formatos permitidos
     const allowedFormats = useMemo(() => {
         if (!template?.export_formats) return ['pdf', 'jpg']
         return template.export_formats.split(',').map((f: string) => f.trim().toLowerCase())
@@ -140,6 +173,22 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
         ))
     }, [])
 
+    const handlePickDirectory = async () => {
+        try {
+            const handle = await (window as any).showDirectoryPicker({
+                mode: 'readwrite'
+            })
+            setDirectoryHandle(handle)
+            setDirectoryName(handle.name)
+            toast.success(`Carpeta seleccionada: ${handle.name}`)
+        } catch (err: any) {
+            if (err.name !== 'AbortError') {
+                toast.error("Error al seleccionar carpeta")
+                console.error(err)
+            }
+        }
+    }
+
     const startExport = async () => {
         if (!template) return
         setIsRunning(true)
@@ -147,15 +196,12 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
         isCancelledRef.current = false
 
         for (const item of items) {
-            // Verificar si el usuario canceló
-            if (isCancelledRef.current) {
-                break
-            }
-
+            if (isCancelledRef.current) break
             if (item.status !== 'pending') continue
+
             updateItem(item.product.id, 'exporting')
             try {
-                await exportOneProduct(item.product, template, selectedFormat, rules)
+                await exportOneProduct(item.product, template, selectedFormat, rules, directoryHandle)
                 updateItem(item.product.id, 'done')
             } catch (err: any) {
                 updateItem(item.product.id, 'error', err?.message || 'Error desconocido')
@@ -167,7 +213,7 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
         if (wasCancelled) {
             toast.error('Exportación detenida por el usuario')
         } else {
-            toast.success(`Exportación completada: ${items.filter(i => i.status === 'done').length} archivo(s) descargado(s)`)
+            toast.success(`Exportación completada: ${items.filter(i => i.status === 'done').length} archivo(s) guardado(s)`)
         }
     }
 
@@ -242,39 +288,87 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                 ))}
             </div>
 
+            {/* Destino y Formato */}
+            {!started && (
+                <div className="flex flex-col gap-4 p-4 bg-slate-50 border border-slate-200 rounded-xl">
+                    <div className="flex flex-col gap-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">
+                            Destino de exportación
+                        </label>
+                        {!directoryHandle ? (
+                            <Button 
+                                variant="outline" 
+                                size="sm" 
+                                onClick={handlePickDirectory}
+                                className="w-full bg-white border-slate-200 text-slate-600 hover:text-indigo-600 hover:border-indigo-200 transition-all border-dashed"
+                            >
+                                <FolderRoot className="w-4 h-4 mr-2" />
+                                Elegir carpeta de destino (Opcional)
+                            </Button>
+                        ) : (
+                            <div className="flex items-center gap-2 w-full">
+                                <div className="flex-1 flex items-center justify-between bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
+                                    <div className="flex items-center gap-2 truncate">
+                                        <FolderCheck className="w-4 h-4 text-indigo-500 shrink-0" />
+                                        <span className="text-sm font-medium text-indigo-700 truncate">
+                                            {directoryName}
+                                        </span>
+                                    </div>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={() => { setDirectoryHandle(null); setDirectoryName(null); }}
+                                        className="h-8 w-8 text-slate-400 hover:text-red-500"
+                                    >
+                                        <Trash2 className="w-4 h-4" />
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
+                        <p className="text-[10px] text-slate-400 ml-1 italic leading-tight">
+                            * Si no eliges carpeta, los archivos se descargarán por defecto en "Descargas".
+                        </p>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">
+                            Formato de archivo
+                        </label>
+                        <div className="flex items-center gap-2 p-1 bg-slate-200/50 rounded-lg w-full">
+                            {allowedFormats.map(f => (
+                                <button
+                                    key={f}
+                                    onClick={() => setSelectedFormat(f as any)}
+                                    className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${selectedFormat === f ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                >
+                                    {f.toUpperCase()}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Acciones — ancla fija al fondo */}
             <div className="flex items-center gap-3 pt-1 border-t border-slate-100">
                 {!started ? (
                     <>
-                        <div className="flex flex-col gap-2 flex-1">
-                            <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-lg w-full">
-                                {allowedFormats.map(f => (
-                                    <button
-                                        key={f}
-                                        onClick={() => setSelectedFormat(f as any)}
-                                        className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${selectedFormat === f ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                                    >
-                                        {f.toUpperCase()}
-                                    </button>
-                                ))}
-                            </div>
-                            <Button
-                                onClick={startExport}
-                                disabled={!template || isRunning || !allowedFormats.includes(selectedFormat)}
-                                className={`w-full ${
-                                    !allowedFormats.includes(selectedFormat)
-                                        ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300'
-                                        : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-100'
-                                }`}
-                            >
-                                <Download className="w-4 h-4 mr-2" />
-                                {!allowedFormats.includes(selectedFormat) 
-                                    ? `Formato ${selectedFormat.toUpperCase()} no permitido`
-                                    : `Exportar ${selectedFormat.toUpperCase()} (${total})`
-                                }
-                            </Button>
-                        </div>
-                        <Button variant="outline" onClick={onClose} className="w-24 self-end">
+                        <Button
+                            onClick={startExport}
+                            disabled={!template || isRunning || !allowedFormats.includes(selectedFormat)}
+                            className={`flex-1 ${
+                                !allowedFormats.includes(selectedFormat)
+                                    ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300'
+                                    : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-100'
+                            }`}
+                        >
+                            <Download className="w-4 h-4 mr-2" />
+                            {!allowedFormats.includes(selectedFormat) 
+                                ? `Formato ${selectedFormat.toUpperCase()} no permitido`
+                                : `Iniciar Exportación (${total})`
+                            }
+                        </Button>
+                        <Button variant="outline" onClick={onClose} className="w-24">
                             Cerrar
                         </Button>
                     </>

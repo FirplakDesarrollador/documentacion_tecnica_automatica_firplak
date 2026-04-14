@@ -134,7 +134,7 @@ function DropdownMenuRadioItem({ value, children, className }: DropdownMenuRadio
   const { setOpen } = React.useContext(DropdownMenuContext)
   const isSelected = selected === value
 
-  const handleClick = () => {
+  const handleSelectAction = () => {
     onValueChange(value)
     setOpen(false)
   }
@@ -142,7 +142,15 @@ function DropdownMenuRadioItem({ value, children, className }: DropdownMenuRadio
   return (
     <button
       type="button"
-      onClick={handleClick}
+      onClick={(e) => {
+        // Mantenemos onClick para accesibilidad (teclado: Enter/Space)
+        handleSelectAction()
+      }}
+      onMouseDown={(e) => {
+        // En algunos entornos el click falla; forzamos la selección en el momento de la pulsación
+        e.preventDefault() // Prevenir que mousedown robe foco y rompa la cadena de clics
+        handleSelectAction()
+      }}
       className={cn(
         "w-full text-left flex items-start gap-2 px-3 py-2 text-sm hover:bg-slate-50 transition-colors",
         isSelected && "bg-indigo-50",

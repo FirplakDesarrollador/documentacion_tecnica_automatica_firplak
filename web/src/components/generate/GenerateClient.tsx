@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import { Search, Download, AlertTriangle, X } from 'lucide-react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -16,6 +16,13 @@ import { TemplatePicker, type TemplateOption } from '@/components/generate/Templ
 import { GenerateProductTable, type GenerateProduct } from '@/components/generate/GenerateProductTable'
 import { ValidationWarnings, getMissingFields, getTemplateRequiredFields } from '@/components/generate/ValidationWarnings'
 import { BulkExportPanel } from '@/components/generate/BulkExportPanel'
+
+const STORAGE_KEYS = {
+    SELECTED_IDS: 'generate-selected-ids',
+    FAMILY: 'generate_filter_family',
+    REFERENCE: 'generate_filter_reference',
+    TEMPLATE: 'generate_filter_template_id'
+}
 
 interface GenerateClientProps {
     products: GenerateProduct[]
@@ -39,42 +46,105 @@ export function GenerateClient({
     isExternalSource = false,
 }: GenerateClientProps) {
     const router = useRouter()
+    const searchParams = useSearchParams()
+    
+    // --- Estados de Selección de Productos ---
     const [selectedIds, setSelectedIds] = useState<string[]>([])
     const [isLoaded, setIsLoaded] = useState(false)
 
-    // Cargar selección inicial desde localStorage
+    // --- Estados de Filtros ---
+    const [familyIds, setFamilyIds] = useState<string[]>(() => searchParams.getAll('f'))
+    const [referenceIds, setReferenceIds] = useState<string[]>(() => searchParams.getAll('r'))
+
+    // --- Estado de Plantilla ---
+    const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
+        initialTemplateId ?? (templates[0]?.id ?? null)
+    )
+
+    const [showBulkExport, setShowBulkExport] = useState(false)
+
+    // 1. Cargar estados iniciales desde localStorage si la URL está vacía
     useEffect(() => {
-        const saved = localStorage.getItem('generate-selected-ids')
-        if (saved) {
-            try {
-                setSelectedIds(JSON.parse(saved))
-            } catch (e) {
-                console.error("Error loading selected ids", e)
+        // Cargar selección de productos
+        const savedIds = localStorage.getItem(STORAGE_KEYS.SELECTED_IDS)
+        if (savedIds) {
+            try { setSelectedIds(JSON.parse(savedIds)) } catch (e) { console.error(e) }
+        }
+
+        const hasUrlFilters = searchParams.has('f') || searchParams.has('r')
+        if (!hasUrlFilters) {
+            const savedFam = localStorage.getItem(STORAGE_KEYS.FAMILY)
+            const savedRef = localStorage.getItem(STORAGE_KEYS.REFERENCE)
+            const savedTpl = localStorage.getItem(STORAGE_KEYS.TEMPLATE)
+
+            if (savedFam) {
+                try {
+                    const parsed = JSON.parse(savedFam)
+                    if (Array.isArray(parsed) && parsed.length > 0) setFamilyIds(parsed)
+                } catch (e) { console.error(e) }
+            }
+            if (savedRef) {
+                try {
+                    const parsed = JSON.parse(savedRef)
+                    if (Array.isArray(parsed) && parsed.length > 0) setReferenceIds(parsed)
+                } catch (e) { console.error(e) }
+            }
+            if (savedTpl && !initialTemplateId) {
+                // Solo restaurar si no hay nada en la URL que mande
+                const exists = templates.some(t => t.id === savedTpl)
+                if (exists) setSelectedTemplateId(savedTpl)
             }
         }
         setIsLoaded(true)
     }, [])
 
-    // Persistir selección cuando cambie
+    // 2. Sincronización Unificada con la URL (Debounced)
     useEffect(() => {
-        if (isLoaded) {
-            localStorage.setItem('generate-selected-ids', JSON.stringify(selectedIds))
-        }
-    }, [selectedIds, isLoaded])
+        if (!isLoaded) return
 
-    const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
-        initialTemplateId ?? (templates[0]?.id ?? null)
-    )
+        const timeout = setTimeout(() => {
+            const params = new URLSearchParams()
+            
+            // Filtros
+            familyIds.forEach(id => params.append('f', id))
+            referenceIds.forEach(id => params.append('r', id))
+            
+            // Plantilla
+            if (selectedTemplateId) {
+                params.set('template_id', selectedTemplateId)
+            }
 
-    // Sincronizar selección de plantilla con la URL si cambia externamente (ej: restauración desde localStorage)
+            // Persistencia
+            localStorage.setItem(STORAGE_KEYS.SELECTED_IDS, JSON.stringify(selectedIds))
+            localStorage.setItem(STORAGE_KEYS.FAMILY, JSON.stringify(familyIds))
+            localStorage.setItem(STORAGE_KEYS.REFERENCE, JSON.stringify(referenceIds))
+            if (selectedTemplateId) {
+                localStorage.setItem(STORAGE_KEYS.TEMPLATE, selectedTemplateId)
+            }
+
+            const current = searchParams.toString()
+            const next = params.toString()
+
+            if (current !== next) {
+                router.push(`/generate?${next}`)
+            }
+        }, 300)
+
+        return () => clearTimeout(timeout)
+    }, [familyIds, referenceIds, selectedTemplateId, selectedIds, isLoaded, router, searchParams])
+
+    // 3. Sincronizar selección de plantilla con cambios en la URL (Navegación externa/atrás)
+    // Usamos este patrón para evitar que el estado local "pelee" con la prop inicial durante el re-renderizado
+    const [lastSyncedInitialId, setLastSyncedInitialId] = useState(initialTemplateId)
+    
     useEffect(() => {
-        if (initialTemplateId && initialTemplateId !== selectedTemplateId) {
+        if (initialTemplateId !== lastSyncedInitialId) {
             setSelectedTemplateId(initialTemplateId)
+            setLastSyncedInitialId(initialTemplateId)
         }
-    }, [initialTemplateId])
+    }, [initialTemplateId, lastSyncedInitialId])
 
-    const [showBulkExport, setShowBulkExport] = useState(false)
-
+    // --- Computed Values ---
     const selectedTemplate = useMemo(
         () => templates.find(t => t.id === selectedTemplateId) ?? null,
         [templates, selectedTemplateId]
@@ -110,17 +180,31 @@ export function GenerateClient({
     )
 
     const hasWarnings = warnings.some(w => w.missingFields.length > 0)
-    const allSelectedComplete = selectedIds.length > 0 && !hasWarnings
 
-    const handleTemplateChange = useCallback((id: string) => {
+    // --- Handlers ---
+    const handleFilterChange = (families: string[], references: string[]) => {
+        setFamilyIds(families)
+        setReferenceIds(references)
+    }
+
+    const handleTemplateChange = (id: string) => {
+        const newTpl = templates.find(t => t.id === id)
+        const oldTpl = selectedTemplate
+        
+        console.log(`[GenerateClient] Intentando cambiar plantilla a ID: ${id}. Anterior: ${oldTpl?.id}`)
+
         setSelectedTemplateId(id)
         setSelectedIds([]) // reset selection when template changes
-        
-        // Sincronizar con la URL para refrescar el componente de servidor y los filtros
-        const params = new URLSearchParams(window.location.search)
-        params.set('template_id', id)
-        router.push(`/generate?${params.toString()}`)
-    }, [router])
+
+        // Si cambiamos entre fuentes de datos (Core vs Externo), reseteamos los filtros
+        if (newTpl?.data_source !== oldTpl?.data_source) {
+            console.log(`[GenerateClient] Fuente de datos cambió (${oldTpl?.data_source} -> ${newTpl?.data_source}). Limpiando filtros.`)
+            setFamilyIds([])
+            setReferenceIds([])
+        }
+    }
+
+    console.log(`[GenerateClient] Render actual. initialTemplateId: ${initialTemplateId}, selectedTemplateId: ${selectedTemplateId}`)
 
     return (
         <div className="flex flex-col gap-6">
@@ -131,6 +215,9 @@ export function GenerateClient({
                         <GenerateFilters
                             families={families}
                             references={references}
+                            familyIds={familyIds}
+                            referenceIds={referenceIds}
+                            onChange={handleFilterChange}
                         />
                     ) : (
                         <div className="flex items-center gap-2">

@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { createProductAction, updateProductAction, getUniquePropertiesAction, parseProductCodeAction, translateAction, checkProductExistsAction, getDiagnosticInfoAction, getClientsAction, checkFamilyExistsAction, upsertFamilyAction } from './actions'
+import { createProductAction, updateProductAction, getUniquePropertiesAction, parseProductCodeAction, translateAction, checkProductExistsAction, getDiagnosticInfoAction, getClientsAction, checkFamilyExistsAction, upsertFamilyAction, saveGlossaryTermsAction } from './actions'
 import { Checkbox } from '@/components/ui/checkbox'
 import { getColorByNameAction, getRulesAction } from '@/app/rules/actions'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
@@ -382,13 +382,13 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
         formData.product_type, formData.zone_home, formData.use_destination
     ]);
 
-    const handleGenerateNames = async () => {
+    const handleGenerateNames = async (force: boolean = false) => {
         if (rules.length > 0) {
             const evalResult = evaluateProductRules(formData as any as Product, rules)
             const finalEs = evalResult.finalNameEs
 
-            if (finalEs !== formData.final_name_es) {
-                const { translatedName, isValid, missingTerms } = await translateAction(finalEs, formData)
+            if (finalEs !== formData.final_name_es || force) {
+                const { translatedName, isValid, missingTerms } = await translateAction(finalEs, formData, force)
                 
                 const missing = missingTerms || []
                 const rtMissing = missing.find(m => m.startsWith('RESOLVED_TYPE_MISSING:'))
@@ -403,7 +403,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
 
                 setMissingGlossaryTerms(otherMissing)
                 
-                if (!isValid && missing.length > 0) {
+                if (!isValid && missing.length > 0 && !force) {
                     toast.error(`Traducción técnica pendiente.`)
                 }
 
@@ -420,6 +420,51 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
         setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))
     }
 
+    const handleTeachSystem = async () => {
+        const termsToSave: any[] = []
+        
+        // Glossary terms
+        Object.entries(glossaryDefinitions).forEach(([es, en]) => {
+            if (en) {
+                termsToSave.push({ term_es: es, term_en: en, category: 'TECHNICAL_TERM', priority: 10 })
+            }
+        })
+        
+        // Resolved Type
+        if (resolvedTypeMissing && resolvedTypeMissing.value) {
+            termsToSave.push({ 
+                term_es: resolvedTypeMissing.key, 
+                term_en: resolvedTypeMissing.value, 
+                category: 'RESOLVED_TYPE', 
+                priority: 20 
+            })
+        }
+        
+        if (termsToSave.length === 0) {
+            toast.error("Por favor define al menos una traducción antes de guardar.")
+            return
+        }
+        
+        try {
+            const res = await saveGlossaryTermsAction(termsToSave)
+            if (res.success) {
+                toast.success("Sistema actualizado. Regenerando bilingüe...")
+                
+                // Limpiamos estados locales inmediatamente para ocultar el cuadro azul
+                setMissingGlossaryTerms([])
+                setResolvedTypeMissing(null)
+                setGlossaryDefinitions({})
+                
+                // Forzamos regeneración inmediata invalidando caché
+                await handleGenerateNames(true)
+            } else {
+                toast.error(res.message)
+            }
+        } catch (e: any) {
+            toast.error("Error al aprender términos: " + e.message)
+        }
+    }
+
     const onActualSubmit = async () => {
         try {
             const payload = { 
@@ -431,33 +476,34 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                 private_label_logo_id: privateLabelData.logo_id
             };
 
+            const newGlossaryTerms = []
+            
+            // Add missing glossary terms
+            Object.entries(glossaryDefinitions).forEach(([es, en]) => {
+                if (en) {
+                    newGlossaryTerms.push({ es, en, category: 'TECHNICAL_TERM' })
+                }
+            })
+
+            // Add missing resolved type
+            if (resolvedTypeMissing && resolvedTypeMissing.value) {
+                newGlossaryTerms.push({ 
+                    es: resolvedTypeMissing.key, 
+                    en: resolvedTypeMissing.value, 
+                    category: 'RESOLVED_TYPE' 
+                })
+            }
+
+            const payloadWithGlossary = {
+                ...payload,
+                _newGlossaryTerms: newGlossaryTerms.length > 0 ? newGlossaryTerms : undefined
+            };
+
             if (isEdit) {
-                const res = await updateProductAction(initialData.id, payload);
+                const res = await updateProductAction(initialData.id, payloadWithGlossary);
                 toast.success("Producto actualizado correctamente");
                 router.push('/products');
             } else {
-                const newGlossaryTerms = []
-                
-                // Add missing glossary terms
-                Object.entries(glossaryDefinitions).forEach(([es, en]) => {
-                    if (en) {
-                        newGlossaryTerms.push({ es, en, category: 'TECHNICAL_TERM' })
-                    }
-                })
-
-                // Add missing resolved type
-                if (resolvedTypeMissing && resolvedTypeMissing.value) {
-                    newGlossaryTerms.push({ 
-                        es: resolvedTypeMissing.key, 
-                        en: resolvedTypeMissing.value, 
-                        category: 'RESOLVED_TYPE' 
-                    })
-                }
-
-                const payloadWithGlossary = {
-                    ...payload,
-                    _newGlossaryTerms: newGlossaryTerms.length > 0 ? newGlossaryTerms : undefined
-                };
                 const res = await createProductAction(payloadWithGlossary);
                 if (res) {
                     setSavedProduct(res);
@@ -965,10 +1011,20 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                             {isAnalyzed && (missingGlossaryTerms.length > 0 || resolvedTypeMissing) && (
                                 <Card className="border-blue-200 border-2 bg-blue-50 shadow-lg animate-in fade-in slide-in-from-right-4 duration-300">
                                     <CardHeader className="pb-3 border-b border-blue-100">
-                                        <CardTitle className="text-xl font-bold text-blue-900 flex items-center gap-2">
-                                            <Sparkles className="w-5 h-5 text-blue-600"/>
-                                            Aprendizaje de Glosario Técnico
-                                        </CardTitle>
+                                        <div className="flex items-center justify-between">
+                                            <CardTitle className="text-xl font-bold text-blue-900 flex items-center gap-2">
+                                                <Sparkles className="w-5 h-5 text-blue-600"/>
+                                                Aprendizaje de Glosario Técnico
+                                            </CardTitle>
+                                            <Button 
+                                                type="button" 
+                                                onClick={handleTeachSystem}
+                                                className="bg-blue-600 hover:bg-blue-700 text-white shadow-md gap-2 border-2 border-blue-400 font-bold"
+                                            >
+                                                <ShieldCheck className="w-4 h-4"/>
+                                                Enseñarle al sistema
+                                            </Button>
+                                        </div>
                                         <CardDescription className="text-blue-800/80 font-medium">
                                             Para generar una documentación bilingüe perfecta, por favor define la traducción de los siguientes términos nuevos o combinaciones:
                                         </CardDescription>

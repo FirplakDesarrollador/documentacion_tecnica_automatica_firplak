@@ -87,7 +87,7 @@ export default async function GeneratePage({
     // --- Cargar plantillas activas ---
     const templates = await dbQuery(
         `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json, export_formats, export_filename_format, data_source
-         FROM public.plantillas_doc_tec WHERE active = true ORDER BY updated_at DESC`
+         FROM public.plantillas_doc_tec WHERE active = true ORDER BY created_at ASC`
     ) || []
 
     // --- Cargar reglas del motor ---

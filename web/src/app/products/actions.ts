@@ -29,11 +29,11 @@ export async function parseProductCodeAction(code: string, sapDesc: string, rhFl
     return await parseProductCode(code, sapDesc, rhFlag)
 }
 
-export async function translateAction(nameEs: string, ctx?: any) {
+export async function translateAction(nameEs: string, ctx?: any, force: boolean = false) {
     if (ctx) {
         // Fallback to 'MUEBLE' if product_type is missing or empty
         const targetEntity = ctx.product_type && ctx.product_type.trim() !== '' ? ctx.product_type : 'MUEBLE'
-        return await translateProductToEnglish(ctx, targetEntity)
+        return await translateProductToEnglish(ctx, targetEntity, undefined, force)
     }
     return { translatedName: '', missingTerms: [], isValid: false, errorReason: 'Motor adaptativo requiere el objeto producto completo.', warnings: [] }
 }
@@ -212,6 +212,26 @@ export async function createProductAction(data: any) {
 export async function updateProductAction(id: string, data: any) {
     if (!data.code) throw new Error('Code is required')
     const parsed = await parseProductCode(data.code, data.sap_description, data.rh_flag)
+    
+    // New Glossary Terms (Adaptive Learning) - Same as Create
+    if (data._newGlossaryTerms && Array.isArray(data._newGlossaryTerms)) {
+        for (const term of data._newGlossaryTerms) {
+            if (!term.es || !term.en) continue
+            await dbQuery(`
+                INSERT INTO public.glossary (term_es, term_en, active, priority, category)
+                VALUES (
+                    '${term.es.toUpperCase().trim().replace(/'/g, "''")}', 
+                    '${term.en.toUpperCase().trim().replace(/'/g, "''")}', 
+                    true, 
+                    ${term.category === 'RESOLVED_TYPE' ? 20 : 10},
+                    '${(term.category || 'TECHNICAL_TERM').toUpperCase()}'
+                )
+                ON CONFLICT (term_es) DO UPDATE SET 
+                    term_en = EXCLUDED.term_en,
+                    category = EXCLUDED.category
+            `)
+        }
+    }
 
     function esc(v: any) {
         if (v === null || v === undefined) return 'NULL'
