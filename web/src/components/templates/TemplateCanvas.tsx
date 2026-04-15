@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils'
 import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { PIXELS_PER_MM } from '@/lib/constants'
 import { hydrateText } from '@/lib/export/exportUtils'
+import { resolveZoneHomeEnAction } from '@/app/products/actions'
 
 export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'box' | 'dashed_line' | 'dynamic_image' | 'icon_group'
 
@@ -1641,6 +1642,14 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         return enrichProductDataWithIcons(previewData, assetMap)
     }, [previewData, assetMap])
 
+    // Helper: resuelve zone_home_en desde el Glosario antes de enriquecer (preview del builder)
+    const enrichWithZone = async (data: any, resolvedAssetMap: Record<string, string>) => {
+        if (!data) return enrichProductDataWithIcons(data, resolvedAssetMap)
+        const zoneEn = await resolveZoneHomeEnAction(data.zone_home)
+        const dataWithZone = zoneEn ? { ...data, zone_home_en: zoneEn } : data
+        return enrichProductDataWithIcons(dataWithZone, resolvedAssetMap)
+    }
+
     // Fetch datasets info
     useEffect(() => {
         getDatasetsAction().then(res => setAvailableDatasets(res))
@@ -1674,7 +1683,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         // Reload preview product for the new source
         const data = await getPreviewProduct(newSource)
         const assetsRemote = await resolveAssetsAction([])
-        setPreviewData(enrichProductDataWithIcons(data, assetsRemote))
+        setPreviewData(await enrichWithZone(data, assetsRemote))
     }
 
     // Determinar si es fuente externa o core Firplak
@@ -2073,7 +2082,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                 const data = await getPreviewProduct(dataSource)
                 // Resolve system asset URLs (icons, logos) and enrich product data with icon fields
                 const assetMap = await resolveAssetsAction([])
-                setPreviewData(enrichProductDataWithIcons(data, assetMap))
+                setPreviewData(await enrichWithZone(data, assetMap))
             }
         }
         setIsPreviewMode(!isPreviewMode)
@@ -2086,7 +2095,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             const data = await getRandomPreviewProduct(previewData?.code, dataSource)
             if (data) {
                 const assetMap = await resolveAssetsAction([])
-                setPreviewData(enrichProductDataWithIcons(data, assetMap))
+                setPreviewData(await enrichWithZone(data, assetMap))
                 if (!isPreviewMode) setIsPreviewMode(true)
             } else {
                 toast('No se encontraron más productos')
@@ -2101,7 +2110,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         try {
             const data = await getPreviewProduct(dataSource)
             const assetMap = await resolveAssetsAction([])
-            setPreviewData(enrichProductDataWithIcons(data, assetMap))
+            setPreviewData(await enrichWithZone(data, assetMap))
         } finally {
             setIsLoadingRandom(false)
         }

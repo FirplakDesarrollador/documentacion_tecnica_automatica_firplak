@@ -107,10 +107,10 @@ export default function EditFamilyPage({ params: paramsPromise }: { params: Prom
                         autoFocus
                         className="bg-white border-blue-300 shadow-sm focus:ring-blue-500"
                         value={customValues[name] || ''} 
-                        onChange={e => setCustomValues((c: any) => ({...c, [name]: e.target.value.toUpperCase()}))}
+                        onChange={e => setCustomValues((c: any) => ({...c, [name]: e.target.value}))}
                         onBlur={() => {
                             if (customValues[name]) {
-                                setFormData((prev: any) => ({...prev, [name]: customValues[name].toUpperCase()}))
+                                setFormData((prev: any) => ({...prev, [name]: customValues[name]}))
                             } else {
                                 setFormData((prev: any) => ({...prev, [name]: ''}))
                             }
@@ -226,7 +226,7 @@ export default function EditFamilyPage({ params: paramsPromise }: { params: Prom
                                         className="h-12 text-lg font-bold bg-white border-amber-100 focus:border-amber-400 focus:ring-amber-100 rounded-xl"
                                         placeholder="Ej: MUEBLE DE BAÑO LIFE..."
                                         value={formData.name}
-                                        onChange={e => setFormData(p => ({...p, name: e.target.value.toUpperCase()}))}
+                                        onChange={e => setFormData(p => ({...p, name: e.target.value}))}
                                     />
                                 </div>
 

@@ -1,4 +1,5 @@
 import { dbQuery } from '@/lib/supabase'
+import { getFamilyFilters, getReferenceFilters } from '@/lib/data/filters'
 import {
     Table,
     TableBody,
@@ -56,42 +57,10 @@ export default async function ProductsPage({
         ) || []
     }
 
-    // Usamos familia_code directamente de products para evitar el mismatch
-    // (familias.code = 'BAN05' pero products.familia_code = 'VBAN05')
-    const familiaRecords = await dbQuery(
-        `SELECT familia_code, MAX(name) as name FROM (
-            SELECT DISTINCT p.familia_code, f.name
-            FROM public.cabinet_products p
-            LEFT JOIN public.familias f ON f.code = CASE 
-                WHEN p.familia_code ~ '^[VCP].*' THEN SUBSTRING(p.familia_code FROM 2)
-                ELSE p.familia_code 
-            END
-            WHERE p.familia_code IS NOT NULL
-         ) sub GROUP BY familia_code ORDER BY familia_code ASC`
-    ) || []
-    const families = familiaRecords.map((fam: any) => ({
-        value: fam.familia_code,
-        label: fam.name ? `${fam.familia_code} - ${fam.name}` : fam.familia_code
-    }))
-
-    let references: {value: string, label: string}[] = []
-    if (f.length > 0) {
-        const fFilter = f.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(',')
-
-        const refRecords = await dbQuery(`
-            SELECT ref_code, commercial_measure, MAX(cabinet_name) as cabinet_name
-            FROM public.cabinet_products
-            WHERE status = 'ACTIVO' AND ref_code IS NOT NULL AND familia_code IN (${fFilter})
-            GROUP BY ref_code, commercial_measure
-            ORDER BY ref_code, commercial_measure
-        `) || []
-        references = refRecords.map((rec: any) => ({
-            value: `${rec.ref_code}|||${rec.commercial_measure || ''}`,
-            label: rec.commercial_measure
-                ? `${rec.cabinet_name || rec.ref_code} - ${rec.commercial_measure}`
-                : `${rec.cabinet_name || rec.ref_code}`
-        }))
-    }
+    // --- Filtros centralizados (src/lib/data/filters.ts) ---
+    // Para modificar cómo se obtienen familias o referencias, edita ese módulo.
+    const families = await getFamilyFilters()
+    const references = await getReferenceFilters(f)
 
     // Medidas integradas en referencias — no se exponen como filtro separado.
 

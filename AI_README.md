@@ -4,7 +4,7 @@
 > **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estratégico y operativo necesario para navegar y construir eficientemente en este proyecto.
 
 ## 📌 Visión General
-Infraestructura de Datos y Exportación Inteligente (v1.2.2): Se implementó el módulo de **Datasets** para la ingesta masiva de archivos CSV, permitiendo el uso de variables personalizadas en las plantillas. Se consolidó la **Gobernanza de Nombres de Archivos**, permitiendo configurar reglas de nombrado dinámicas directamente en el diseño para automatizar la salida de documentos personalizados. Se optimizó el pipeline de exportación masiva y se integró la generación de documentos desde el flujo de creación de nuevos productos.
+Infraestructura de Datos y Exportación Inteligente (v1.2.3): Se consolidó el **Layout Avanzado de Interfaz** mediante la migración a Flexbox, resolviendo solapamientos de eventos en navegación. Se implementó una **Barra Lateral Adaptativa** (Slim/Normal) con persistencia y un **Dashboard de Salud de Servicios** en tiempo real (DB, AI, Storage). Se simplificó la administración eliminando la pestaña de configuración y centralizando los parámetros técnicos mediante badges informativos en los módulos funcionales.
 
 ## 🏗️ Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
@@ -29,6 +29,7 @@ Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
 
 ## 🤖 Instrucciones para Agentes
 - **⚠️ Prioridad de Bugfix**: El motor `codeParser` está fallando al rellenar campos históricos (`Smart Lookup`). Antes de añadir nuevas features, debuguear la lógica de fallback en `codeParser.ts`.
+- **Estructura de Layout**: Preferir **Flexbox** sobre CSS Grid para contenedores de alto nivel (Sidebar/Main) para evitar bugs de interceptación de eventos producidos por elementos portales o overlays.
 - **No inventes herramientas**: Revisa siempre `execution/` por scripts existentes antes de crear nuevos.
 - **Actualiza el Contexto**: Usa la habilidad `project-context-keeper` para mantener este archivo actualizado cuando realices cambios estructurales significativos.
 - **Sigue el Workflows**: Usa `/release` para subir cambios y `/archive-session` para cerrar.

@@ -35,7 +35,29 @@ export async function translateAction(nameEs: string, ctx?: any, force: boolean 
         const targetEntity = ctx.product_type && ctx.product_type.trim() !== '' ? ctx.product_type : 'MUEBLE'
         return await translateProductToEnglish(ctx, targetEntity, undefined, force)
     }
-    return { translatedName: '', missingTerms: [], isValid: false, errorReason: 'Motor adaptativo requiere el objeto producto completo.', warnings: [] }
+    return { translatedName: '', missingTerms: [], isValid: false, errorReason: 'Motor adaptativo requiere el objeto producto completo.', warnings: [], fieldTranslations: {} }
+}
+
+/**
+ * Resolves the English label for a given zone_home value using the Supabase glossary.
+ * Client components (TemplateCanvas, PostSaveExportModal) should call this before
+ * calling enrichProductDataWithIcons so that zone_home_en is correctly populated.
+ * Returns null if no translation is found (productUtils will use its built-in fallback map).
+ */
+export async function resolveZoneHomeEnAction(zoneEs: string | null | undefined): Promise<string | null> {
+    if (!zoneEs) return null
+    const key = zoneEs.trim().toUpperCase()
+    try {
+        const rows = await dbQuery(
+            `SELECT term_en FROM public.glossary 
+             WHERE term_es = '${key.replace(/'/g, "''")}' 
+               AND active = true 
+             LIMIT 1`
+        )
+        return (rows && rows.length > 0) ? (rows[0].term_en as string) : null
+    } catch {
+        return null
+    }
 }
 
 export async function checkFamilyExists(code: string) {
@@ -108,8 +130,8 @@ export async function createProductAction(data: any) {
             await dbQuery(`
                 INSERT INTO public.glossary (term_es, term_en, active, priority, category)
                 VALUES (
-                    '${term.es.toUpperCase().trim().replace(/'/g, "''")}', 
-                    '${term.en.toUpperCase().trim().replace(/'/g, "''")}', 
+                    '${term.es.trim().replace(/'/g, "''")}', 
+                    '${term.en.trim().replace(/'/g, "''")}', 
                     true, 
                     ${term.category === 'RESOLVED_TYPE' ? 20 : 10},
                     '${(term.category || 'TECHNICAL_TERM').toUpperCase()}'
@@ -369,6 +391,12 @@ export async function updateFamilyAction(code: string, data: any) {
     `)
     revalidatePath('/families')
     redirect('/families')
+}
+
+export async function deleteFamilyAction(code: string) {
+    if (!code) throw new Error("Family code is required")
+    await dbQuery(`DELETE FROM public.familias WHERE code='${code.replace(/'/g, "''")}'`)
+    revalidatePath('/families')
 }
 
 /**
@@ -651,7 +679,7 @@ export async function saveGlossaryTermsAction(terms: { term_es: string, term_en:
         for (const t of terms) {
             await dbQuery(`
                 INSERT INTO public.glossary (term_es, term_en, category, priority, active)
-                VALUES ('${t.term_es.toUpperCase().replace(/'/g, "''")}', '${t.term_en.toUpperCase().replace(/'/g, "''")}', '${t.category}', ${t.priority}, true)
+                VALUES ('${t.term_es.replace(/'/g, "''")}', '${t.term_en.replace(/'/g, "''")}', '${t.category}', ${t.priority}, true)
                 ON CONFLICT (term_es) DO UPDATE 
                 SET term_en = EXCLUDED.term_en,
                     category = EXCLUDED.category,

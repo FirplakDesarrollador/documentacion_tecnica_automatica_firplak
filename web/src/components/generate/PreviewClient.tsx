@@ -12,6 +12,7 @@ import { hydrateTemplateElements, hydrateText } from '@/lib/export/exportUtils'
 import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { PIXELS_PER_MM } from '@/lib/constants'
 import DocumentRenderSurface from '@/components/export/DocumentRenderSurface'
+import { resolveZoneHomeEnAction } from '@/app/products/actions'
 
 
 
@@ -212,7 +213,9 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
 
             // Usar la misma lógica de hidratación que el preview (R6)
             const hydrated = await hydrateTemplateElements(elements, product, assetMap)
-            const enrichedProduct = enrichProductDataWithIcons(product, assetMap)
+            const zoneEn = await resolveZoneHomeEnAction(product.zone_home)
+            const productWithZone = zoneEn ? { ...product, zone_home_en: zoneEn } : product
+            const enrichedProduct = enrichProductDataWithIcons(productWithZone, assetMap)
 
             const widthPx = Math.round((selectedTemplate.width_mm || 200) * PIXELS_PER_MM)
             const heightPx = Math.round((selectedTemplate.height_mm || 100) * PIXELS_PER_MM)

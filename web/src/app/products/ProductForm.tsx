@@ -310,10 +310,10 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                     <Input 
                         autoFocus
                         value={customState[name] || ''} 
-                        onChange={e => setCustomState((c: any) => ({...c, [name]: e.target.value.toUpperCase()}))}
+                        onChange={e => setCustomState((c: any) => ({...c, [name]: e.target.value}))}
                         onBlur={() => {
                             if (customState[name]) {
-                                setState((prev: any) => ({...prev, [name]: customState[name].toUpperCase()}))
+                                setState((prev: any) => ({...prev, [name]: customState[name]}))
                             } else {
                                 setState((prev: any) => ({...prev, [name]: ''}))
                             }
@@ -663,7 +663,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                                     <Input 
                                                         placeholder="Ej: SODIMAC"
                                                         value={privateLabelData.client_name}
-                                                        onChange={(e) => setPrivateLabelData(p => ({ ...p, client_name: e.target.value.toUpperCase() }))}
+                                                        onChange={(e) => setPrivateLabelData(p => ({ ...p, client_name: e.target.value }))}
                                                         className="border-indigo-100"
                                                     />
                                                 </div>
@@ -730,7 +730,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                             placeholder="Ej: VANITY MINIMALISTA"
                                             value={familyData.name}
                                             onChange={(e) => {
-                                                setFamilyData(p => ({ ...p, name: e.target.value.toUpperCase() }))
+                                                setFamilyData(p => ({ ...p, name: e.target.value }))
                                                 setFamilySaved(false)
                                             }}
                                             className={`${familySaved ? 'border-emerald-200' : 'border-amber-200'} bg-white h-11 focus:ring-blue-500`}

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Edit2, PlusCircle, ArrowLeft } from 'lucide-react'
 import Link from 'next/link'
+import { DeleteButton } from './DeleteButton'
 
 export default async function FamiliesPage() {
     const families = await dbQuery(`
@@ -56,13 +57,14 @@ export default async function FamiliesPage() {
                                         <TableCell className="font-mono font-medium text-slate-700">{family.code}</TableCell>
                                         <TableCell className="text-slate-600">{family.name}</TableCell>
                                         <TableCell className="text-slate-600">{family.use_destination}</TableCell>
-                                        <TableCell className="text-right">
+                                        <TableCell className="text-right flex items-center justify-end gap-1">
                                             <Link href={`/families/edit/${family.code}`}>
                                                 <Button variant="ghost" size="sm" className="h-8 px-2 text-slate-400 hover:text-slate-900">
                                                     <Edit2 className="h-4 w-4 mr-2" />
                                                     Editar
                                                 </Button>
                                             </Link>
+                                            <DeleteButton code={family.code} />
                                         </TableCell>
                                     </TableRow>
                                 ))

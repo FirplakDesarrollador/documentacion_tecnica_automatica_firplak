@@ -26,6 +26,7 @@ import { hydrateTemplateElements, hydrateText } from '@/lib/export/exportUtils'
 import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
 import { PIXELS_PER_MM } from '@/lib/constants'
+import { resolveZoneHomeEnAction } from '@/app/products/actions'
 
 type ExportStatus = 'pending' | 'exporting' | 'done' | 'error'
 
@@ -74,7 +75,8 @@ async function exportOneProduct(
     // 4. Preparar nombre y contexto
     const engineResult = evaluateProductRules(product as any, rules)
     const final_name_es = engineResult.finalNameEs || product.final_name_es || ''
-    const contextWithDerivedName = { ...product, final_name_es }
+    const zoneEn = await resolveZoneHomeEnAction(product.zone_home)
+    const contextWithDerivedName = { ...product, final_name_es, zone_home_en: zoneEn || undefined }
     const enriched = enrichProductDataWithIcons(contextWithDerivedName, assetMap)
     
     // Obtenemos el nombre base y lo sanitizamos para evitar errores de sistema de archivos

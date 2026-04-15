@@ -1,15 +1,41 @@
 /**
+ * Minimal built-in fallback map for zone translations.
+ * This is NOT the source of truth – the glossary is.
+ * It only exists as an emergency safety net in case the translation engine
+ * cannot run (e.g. during SSR or offline exports).
+ * New zones should ALWAYS be added to the Supabase glossary table with category='ZONE'.
+ */
+const ZONE_FALLBACK_MAP: Record<string, string> = {
+    'COCINA': 'kitchen',
+    'BAÑO': 'bathroom',
+    'ROPAS': 'laundry',
+}
+
+/**
  * Enriches product data with dynamic labels for document generation.
  * Specifically calculates technical descriptions in Spanish and English.
+ *
+ * IMPORTANT: For zone_home translation, callers that have access to the
+ * translation engine result should inject `zone_home_en` into the product
+ * object BEFORE calling this function. That value takes highest priority.
+ * The ZONE_FALLBACK_MAP is a last-resort safety net only.
  */
 export function enrichProductData(product: any) {
     if (!product) return product;
 
-    const zoneStr = (product.zone_home || 'BAÑO').toUpperCase();
     const isAssembled = !!product.assembled_flag;
 
     const zoneEs = (product.zone_home || 'baño').toLowerCase();
-    const zoneEn = product.zone_home_en || 'Bathroom';
+
+    // Priority 1: dynamically injected by the caller (from translation engine)
+    // Priority 2: built-in fallback map (emergency safety net)
+    // Priority 3: show the Spanish name capitalized so it's visibly wrong, not silently wrong
+    const rawZoneKey = (product.zone_home || '').toUpperCase().trim();
+    const zoneEn = product.zone_home_en
+        || ZONE_FALLBACK_MAP[rawZoneKey]
+        || (product.zone_home
+            ? product.zone_home.charAt(0).toUpperCase() + product.zone_home.slice(1).toLowerCase()
+            : 'Bathroom');
 
     const actionEs = isAssembled ? 'instalar' : 'armar';
     const sigla = isAssembled ? 'RTI' : 'RTA';
@@ -32,8 +58,8 @@ export function enrichProductData(product: any) {
         height_in,
         weight_lb,
         technical_description_es: `Zona: ${zoneEs} / listo para ${actionEs} (${sigla})`,
-        technical_description_en: `Zone: ${zoneEn} / Ready-to-${actionEn} (${sigla})`,
-        zone_home_en: zoneEn
+        technical_description_en: `Zone: ${zoneEn.toLowerCase()} / Ready-to-${actionEn} (${sigla})`,
+        zone_home_en: zoneEn.toLowerCase()
     };
 }
 

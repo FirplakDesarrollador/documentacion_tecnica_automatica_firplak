@@ -2,41 +2,14 @@
 
 import { dbQuery } from '@/lib/supabase'
 import { revalidatePath } from 'next/cache'
+import { getFamilyFilters, getReferenceFilters } from '@/lib/data/filters'
 
 export async function getFamiliesAction() {
-    const families = await dbQuery(`
-        SELECT DISTINCT p.familia_code, f.name
-        FROM public.cabinet_products p
-        LEFT JOIN public.familias f ON f.code = CASE 
-            WHEN p.familia_code ~ '^[VCP].*' THEN SUBSTRING(p.familia_code FROM 2)
-            ELSE p.familia_code 
-        END
-        WHERE p.familia_code IS NOT NULL
-        ORDER BY p.familia_code ASC
-    `) || []
-    
-    return families.map((fam: any) => ({
-        value: fam.familia_code,
-        label: fam.name ? `${fam.familia_code} - ${fam.name}` : fam.familia_code
-    }))
+    return await getFamilyFilters()
 }
 
 export async function getReferencesByFamilyAction(familyCodes: string[]) {
-    if (!familyCodes || familyCodes.length === 0) return []
-    
-    const filter = familyCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')
-    const refRecords = await dbQuery(`
-        SELECT ref_code, commercial_measure, MAX(cabinet_name) as cabinet_name
-        FROM public.cabinet_products 
-        WHERE ref_code IS NOT NULL AND familia_code IN (${filter})
-        GROUP BY ref_code, commercial_measure
-        ORDER BY ref_code, commercial_measure
-    `) || []
-    
-    return refRecords.map((rec: any) => ({ 
-        value: `${rec.ref_code}|||${rec.commercial_measure || ''}`, 
-        label: rec.commercial_measure ? `${rec.cabinet_name || rec.ref_code} - ${rec.commercial_measure}` : `${rec.cabinet_name || rec.ref_code}`
-    }))
+    return await getReferenceFilters(familyCodes)
 }
 
 export async function getMeasuresByFamilyAndRefAction(familyCodes: string[], referenceCodes: string[]) {

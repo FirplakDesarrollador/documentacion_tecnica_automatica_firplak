@@ -12,6 +12,7 @@ import { hydrateTemplateElements, hydrateText } from "@/lib/export/exportUtils"
 import { enrichProductDataWithIcons } from "@/lib/engine/productUtils"
 import { useRouter } from "next/navigation"
 import { resolveAssetsAction } from "@/app/generate/actions"
+import { resolveZoneHomeEnAction } from "@/app/products/actions"
 
 interface PostSaveExportModalProps {
     isOpen: boolean
@@ -85,7 +86,9 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
             const hydratedData = await hydrateTemplateElements(elements, product, assetMap)
             
             // 4. Preparar nombre de archivo dinámico
-            const enrichedProduct = enrichProductDataWithIcons(product, assetMap)
+            const zoneEn = await resolveZoneHomeEnAction(product.zone_home)
+            const productWithZone = zoneEn ? { ...product, zone_home_en: zoneEn } : product
+            const enrichedProduct = enrichProductDataWithIcons(productWithZone, assetMap)
             const downloadName = hydrateText((selectedTemplate as any).export_filename_format || '{sku_base}_{final_name_es}', enrichedProduct)
 
             const response = await fetch('/api/export', {

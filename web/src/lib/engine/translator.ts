@@ -50,6 +50,7 @@ export interface TranslationResult {
     isValid: boolean
     errorReason: string
     warnings: string[]
+    fieldTranslations: Record<string, string>
 }
 
 interface FieldConfig {
@@ -488,6 +489,7 @@ export async function translateProductToEnglish(
 ): Promise<TranslationResult> {
     const missingTerms: string[] = []
     const warnings: string[] = []
+    const fieldTranslations: Record<string, string> = {}
     
     if (forceRefresh) resetGlossaryCache()
 
@@ -587,9 +589,18 @@ export async function translateProductToEnglish(
         if (isPlaceholder(rawValue) && varId !== 'resolved_type') return
 
         // Step A: Term Detection (Only for string fields with 'translate' strategy)
+        let resolvedFieldEn = ''
         if (cfg.fallback_strategy === 'translate' && varId !== 'assembled_flag' && varId !== 'resolved_type') {
             const strVal = String(rawValue)
-            translateField(strVal, cfg, glossary, missingTerms, warnings)
+            resolvedFieldEn = translateField(strVal, cfg, glossary, missingTerms, warnings)
+        } else if (varId === 'resolved_type') {
+            resolvedFieldEn = resolvedTypeName
+        }
+
+        // Always store field level translations, regardless of whether they are emitted
+        // as they can be useful for rendering templates and dynamic text labels.
+        if (resolvedFieldEn) {
+            fieldTranslations[varId] = resolvedFieldEn
         }
 
         // Step B: Emission
@@ -648,7 +659,8 @@ export async function translateProductToEnglish(
         missingTerms: [...new Set(missingTerms)],
         isValid,
         errorReason,
-        warnings
+        warnings,
+        fieldTranslations
     }
 }
 
@@ -667,7 +679,8 @@ export async function translateSpanishToEnglish(
             translatedName: result.translatedName,
             missingTerms: result.missingTerms,
             isValid: result.isValid,
-            errorReason: result.errorReason
+            errorReason: result.errorReason,
+            fieldTranslations: result.fieldTranslations
         }
     }
 
@@ -677,6 +690,7 @@ export async function translateSpanishToEnglish(
         translatedName: '',
         missingTerms: [],
         isValid: false,
-        errorReason: 'Motor adaptativo requiere el objeto producto completo (15 campos). Pasaste solo un string.'
+        errorReason: 'Motor adaptativo requiere el objeto producto completo (15 campos). Pasaste solo un string.',
+        fieldTranslations: {}
     }
 }

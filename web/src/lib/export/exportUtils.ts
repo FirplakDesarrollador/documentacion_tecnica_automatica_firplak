@@ -1,6 +1,33 @@
 import { dbQuery } from '@/lib/supabase'
 import { PIXELS_PER_MM } from '@/lib/constants'
 
+/**
+ * Resolves the English translation for a zone_home value from the Supabase glossary.
+ * This is the single point of truth: if a zone exists in the glossary with category='ZONE',
+ * it will be used. Otherwise returns null so productUtils can apply its built-in fallback.
+ * The result is cached per-request to avoid repeated DB queries during bulk exports.
+ */
+const _zoneCache: Record<string, string> = {}
+async function resolveZoneHomeEn(zoneEs: string | null | undefined): Promise<string | null> {
+    if (!zoneEs) return null
+    const key = zoneEs.trim().toUpperCase()
+    if (_zoneCache[key] !== undefined) return _zoneCache[key] || null
+    
+    try {
+        const rows = await dbQuery(
+            `SELECT term_en FROM public.glossary 
+             WHERE term_es = '${key.replace(/'/g, "\'\'")}' 
+               AND active = true 
+             LIMIT 1`
+        )
+        const result = (rows && rows.length > 0) ? rows[0].term_en as string : null
+        _zoneCache[key] = result || ''
+        return result
+    } catch {
+        return null
+    }
+}
+
 export interface ExportOptions {
     html: string
     format: 'pdf' | 'jpg' | 'png'
@@ -62,7 +89,16 @@ export async function hydrateTemplateElements(
     
     // 1. Enriquecer producto con iconos dinámicos (R1, R2)
     const { enrichProductDataWithIcons } = await import('@/lib/engine/productUtils')
-    const enrichedProduct = enrichProductDataWithIcons(product, assetMap)
+
+    // Resolver la traducción de la zona desde el Glosario ANTES de enriquecer.
+    // Esto garantiza que technical_description_en siempre use el valor real del glosario
+    // y no un fallback estático. Todos los pipelines (export, preview, bulk) pasan por aquí.
+    const zoneEnFromGlossary = await resolveZoneHomeEn(product.zone_home)
+    const productWithZone = zoneEnFromGlossary
+        ? { ...product, zone_home_en: zoneEnFromGlossary }
+        : product
+
+    const enrichedProduct = enrichProductDataWithIcons(productWithZone, assetMap)
 
     const ensureAbsolute = (path: string) => {
         if (!path || path === 'undefined' || path === 'null') return ''
