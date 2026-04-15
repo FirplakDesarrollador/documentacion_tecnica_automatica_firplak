@@ -4,7 +4,7 @@
 > **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estratégico y operativo necesario para navegar y construir eficientemente en este proyecto.
 
 ## 📌 Visión General
-Infraestructura de Datos y Exportación Inteligente (v1.2.3): Se consolidó el **Layout Avanzado de Interfaz** mediante la migración a Flexbox, resolviendo solapamientos de eventos en navegación. Se implementó una **Barra Lateral Adaptativa** (Slim/Normal) con persistencia y un **Dashboard de Salud de Servicios** en tiempo real (DB, AI, Storage). Se simplificó la administración eliminando la pestaña de configuración y centralizando los parámetros técnicos mediante badges informativos en los módulos funcionales.
+Infraestructura de Datos y Gobernanza Institucional (v1.2.3): Se implementó el **"Filtro Madre" centralizado** para garantizar consistencia en todo el aplicativo y se activó la **traducción al inglés en tiempo real** para nuevos ingresos. Se expandieron las capacidades de Gestión de Familias (CRUD y soporte Mayúsculas/Minúsculas) y se estabilizó el sistema de **Clonación de Plantillas**. El proyecto fue purgado de archivos temporales y alineado para su despliegue en la infraestructura estratégica de **FirplakDesarrollador**, garantizando un entorno de producción limpio y escalable.
 
 ## 🏗️ Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
