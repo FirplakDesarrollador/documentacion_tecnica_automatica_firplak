@@ -62,11 +62,11 @@ export function DuplicateTemplateDialog({
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
+            <DialogTrigger render={
                 <Button variant="ghost" size="sm" className="font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-100">
                     <Copy className="h-4 w-4" />
                 </Button>
-            </DialogTrigger>
+            } />
             <DialogContent className="sm:max-w-[425px]">
                 <form onSubmit={onSubmit}>
                     <DialogHeader>
