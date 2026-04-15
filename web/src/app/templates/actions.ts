@@ -25,6 +25,42 @@ export async function createTemplate(data: {
     }
 }
 
+export async function duplicateTemplate(id: string, newName: string, dataSource: string) {
+    try {
+        const rows = await dbQuery(`SELECT * FROM public.plantillas_doc_tec WHERE id = '${id}' LIMIT 1`)
+        if (!rows || rows.length === 0) return { success: false, error: 'Plantilla original no encontrada' }
+
+        const original = rows[0]
+        
+        // Escape elements_json safely. Original is already a stringified JSON.
+        const safeJson = original.elements_json ? original.elements_json.replace(/'/g, "''") : '[]'
+
+        const inserted = await dbQuery(`
+            INSERT INTO public.plantillas_doc_tec (
+                name, width_mm, height_mm, orientation, document_type, elements_json, active, data_source, export_formats, export_filename_format
+            )
+            VALUES (
+                '${newName.replace(/'/g, "''")}', 
+                ${original.width_mm}, 
+                ${original.height_mm}, 
+                '${original.orientation}', 
+                '${original.document_type}', 
+                '${safeJson}', 
+                true, 
+                '${dataSource.replace(/'/g, "''")}',
+                ${original.export_formats ? `'${original.export_formats.replace(/'/g, "''")}'` : 'NULL'},
+                ${original.export_filename_format ? `'${original.export_filename_format.replace(/'/g, "''")}'` : 'NULL'}
+            )
+            RETURNING id
+        `)
+
+        revalidatePath('/templates')
+        return { success: true, id: inserted?.[0]?.id }
+    } catch (e: any) {
+        return { success: false, error: e.message }
+    }
+}
+
 export async function updateTemplate(id: string, data: {
     elements_json: string
     name?: string
