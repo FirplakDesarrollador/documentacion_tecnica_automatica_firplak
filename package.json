@@ -5,6 +5,11 @@
   "workspaces": [
     "web"
   ],
+  "dependencies": {
+    "next": "16.1.6",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
   "scripts": {
     "build": "npm run build --prefix web",
     "install": "PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true npm install --prefix web"
