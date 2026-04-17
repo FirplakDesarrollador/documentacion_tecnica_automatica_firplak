@@ -1,0 +1,11 @@
+execution/
+directives/
+prisma/
+*.ps1
+*.csv
+*.json
+!package.json
+!vercel.json
+!.vercelignore
+!web/
+!web/**
