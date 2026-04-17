@@ -1,7 +1,7 @@
 {
   "version": 2,
-  "buildCommand": "npm run build --workspace=web",
-  "installCommand": "npm install --workspace=web",
+  "buildCommand": "npm run build --prefix web",
+  "installCommand": "PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true npm install --prefix web",
   "outputDirectory": "web/.next",
   "framework": "nextjs"
 }
