@@ -1,0 +1,149 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Product {
+  id                        String   @id @default(cuid())
+  code                      String   @unique
+  familia_code              String?
+  ref_code                  String?
+  version_code              String?
+  sap_description           String?
+  barcode_text              String?
+  product_type              String?
+  use_destination           String?
+  zone_home                 String?
+  cabinet_name              String?
+  designation               String?
+  line                      String?
+  commercial_measure        String?
+  assembled_flag            Boolean  @default(false)
+  rh_flag                   Boolean  @default(false)
+  accessory_text            String?
+  door_color_text           String?
+  edge_2mm_flag             Boolean  @default(false)
+  color_code                String?
+  width_cm                  Float?
+  depth_cm                  Float?
+  height_cm                 Float?
+  weight_kg                 Float?
+  width_in                  Float?
+  depth_in                  Float?
+  height_in                 Float?
+  weight_lb                 Float?
+  icon_rh                   Boolean  @default(false)
+  icon_full_extension       Boolean  @default(false)
+  icon_soft_close           Boolean  @default(false)
+  icon_edge_2mm             Boolean  @default(false)
+  isometric_path            String?
+  isometric_asset_id        String?
+  private_label_flag        Boolean  @default(false)
+  private_label_client_name String?
+  private_label_client_id   String?
+  final_name_es             String?
+  final_name_en             String?
+  stacking_max              Int?
+  validation_status         String   @default("incomplete")
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+  private_label_client      Client?  @relation(fields: [private_label_client_id], references: [id])
+  isometric_asset           Asset?   @relation("ProductIsometric", fields: [isometric_asset_id], references: [id])
+  color                     Color?   @relation(fields: [color_code], references: [code_4dig])
+}
+
+model Color {
+  id             String    @id @default(cuid())
+  code_4dig      String    @unique
+  code_short     Int?
+  name_color_sap String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  products       Product[]
+}
+
+model Familia {
+  id                String   @id @default(cuid())
+  code              String   @unique
+  name              String
+  product_type      String?
+  use_destination   String?
+  zone_home         String?
+  assembled_default Boolean  @default(false)
+  rh_default        Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model Client {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  logo_id   String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  logo      Asset?    @relation("ClientLogo", fields: [logo_id], references: [id])
+  products  Product[]
+}
+
+model Rule {
+  id                   String   @id @default(cuid())
+  rule_type            String
+  target_entity        String
+  condition_expression String
+  action_type          String
+  action_payload       String
+  priority             Int      @default(0)
+  enabled              Boolean  @default(true)
+  notes                String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+model Asset {
+  id                 String    @id @default(cuid())
+  type               String
+  name               String
+  file_path          String
+  tags               String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  clients            Client[]  @relation("ClientLogo")
+  isometric_products Product[] @relation("ProductIsometric")
+}
+
+model Template {
+  id             String   @id @default(cuid())
+  name           String
+  document_type  String
+  width_mm       Float
+  height_mm      Float
+  orientation    String
+  data_source    String   @default("core_firplak")
+  elements_json  String
+  version        Int      @default(1)
+  export_formats String?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model CustomDataset {
+  id          String             @id @default(cuid())
+  name        String             @unique
+  schema_json String             @default("{}") // Mapeo de headers
+  createdAt   DateTime           @default(now())
+  rows        CustomDatasetRow[]
+}
+
+model CustomDatasetRow {
+  id         String        @id @default(cuid())
+  dataset_id String
+  data_json  String        @default("{}") // JSON data real
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  dataset    CustomDataset @relation(fields: [dataset_id], references: [id])
+}
