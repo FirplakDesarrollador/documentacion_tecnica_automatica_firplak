@@ -30,6 +30,7 @@ export interface ParsedCodeResult {
     barcode_text: string | null
     status: string | null
     color_name?: string | null
+    allowed_lines?: string[]
 }
 
 export async function parseProductCode(
