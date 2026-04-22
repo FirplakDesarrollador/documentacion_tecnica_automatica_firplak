@@ -1,7 +1,7 @@
 {
   "version": 2,
   "framework": "nextjs",
-  "rootDirectory": "web",
   "installCommand": "PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true npm install",
-  "buildCommand": "next build"
+  "buildCommand": "npm run build -w web",
+  "outputDirectory": "web/.next"
 }
