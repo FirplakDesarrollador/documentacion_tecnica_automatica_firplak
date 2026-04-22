@@ -186,7 +186,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                     setAllowedLines(parsed.allowed_lines)
                     // Si solo hay una línea permitida y el producto no tiene una, la pre-seleccionamos
                     if (parsed.allowed_lines.length === 1 && !formData.line) {
-                        setFormData(p => ({ ...p, line: parsed.allowed_lines[0] }))
+                        setFormData(p => ({ ...p, line: parsed.allowed_lines![0] }))
                     }
                 } else {
                     setAllowedLines([])
