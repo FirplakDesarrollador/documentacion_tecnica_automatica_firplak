@@ -8,7 +8,8 @@
   "scripts": {
     "dev": "npm run dev -w web",
     "build": "npm run build -w web",
-    "postinstall": "echo 'Root install complete'"
+    "postinstall": "npm run postinstall -w web"
+
   },
   "dependencies": {
     "next": "16.1.6",
