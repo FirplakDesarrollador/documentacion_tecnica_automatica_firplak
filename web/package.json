@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "postinstall": "prisma generate",
     "release": "npm version patch && git push origin Oswaldo --follow-tags"
+
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",
