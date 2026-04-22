@@ -24,6 +24,7 @@ export interface TemplateOption {
     orientation: string
     active: boolean
     elements_json: string
+    data_source?: string
     export_formats?: string
     export_filename_format?: string
 }
@@ -103,10 +104,6 @@ export function TemplatePicker({ templates, selectedTemplateId, onSelect, update
                         <DropdownMenuRadioItem
                             key={t.id}
                             value={t.id}
-                            onSelect={(e) => {
-                                // Llamar directamente por seguridad en caso que onValueChange falle
-                                handleSelect(t.id)
-                            }}
                             className="flex flex-col items-start gap-1 py-3 px-3 cursor-pointer"
                         >
                             <div className="flex items-center gap-2 w-full">

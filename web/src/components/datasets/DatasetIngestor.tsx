@@ -341,7 +341,7 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                                     </div>
                                     <Badge variant="outline" className="text-[8px] font-black uppercase">{encoding}</Badge>
                                 </div>
-                                <Select value={encoding} onValueChange={setEncoding}>
+                                <Select value={encoding} onValueChange={(val) => setEncoding(val ?? encoding)}>
                                     <SelectTrigger className="h-10 border-slate-100 bg-slate-50 rounded-xl font-bold text-slate-700 shadow-none">
                                         <SelectValue placeholder="Selecciona codificación" />
                                     </SelectTrigger>
@@ -427,7 +427,7 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                                         </div>
                                         <Select 
                                             value={fieldMap.code || ""} 
-                                            onValueChange={(val) => setFieldMap(p => ({ ...p, code: val }))}
+                                            onValueChange={(val) => setFieldMap(p => ({ ...p, code: val ?? '' }))}
                                         >
                                             <SelectTrigger className="w-full h-11 rounded-xl border-slate-200 bg-slate-50 font-bold text-slate-700">
                                                 <SelectValue placeholder="Selecciona columna ID" />
@@ -452,7 +452,7 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                                         </div>
                                         <Select 
                                             value={fieldMap.final_name_es || ""} 
-                                            onValueChange={(val) => setFieldMap(p => ({ ...p, final_name_es: val }))}
+                                            onValueChange={(val) => setFieldMap(p => ({ ...p, final_name_es: val ?? '' }))}
                                         >
                                             <SelectTrigger className="w-full h-11 rounded-xl border-slate-200 bg-slate-50 font-bold text-slate-700">
                                                 <SelectValue placeholder="Selecciona columna Nombre" />

@@ -259,7 +259,7 @@ export async function validateExportFilenameLength(pattern: string, dataSource: 
                 SELECT data_json FROM public.custom_dataset_rows 
                 WHERE dataset_id = '${dataSource.replace(/'/g, "''")}'
             `)
-            products = rows.map(r => typeof r.data_json === 'string' ? JSON.parse(r.data_json) : r.data_json)
+            products = rows.map((r: any) => typeof r.data_json === 'string' ? JSON.parse(r.data_json) : r.data_json)
         } else {
             products = await dbQuery(`
                 SELECT p.*, c.name_color_sap as color_name

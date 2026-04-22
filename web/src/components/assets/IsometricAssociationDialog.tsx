@@ -196,14 +196,14 @@ export function IsometricAssociationDialog({
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger 
-                render={trigger || (
+            <DialogTrigger>
+                {trigger || (
                     <Button variant="outline" className="gap-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 shadow-sm transition-all h-10 px-4">
                         <Box className="h-4 w-4" />
                         Isométricos
                     </Button>
-                )} 
-            />
+                )}
+            </DialogTrigger>
             <DialogContent className="max-w-md sm:max-w-xl p-0 bg-white border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
                 <DialogHeader className="p-6 pb-2 shrink-0">
                     <DialogTitle className="text-xl font-bold text-slate-900 flex items-center gap-2">

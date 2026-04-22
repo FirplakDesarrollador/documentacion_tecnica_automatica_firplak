@@ -1092,7 +1092,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                         <CardTitle className="text-lg font-bold text-blue-900">Nomenclatura Generada</CardTitle>
                                         <CardDescription>Vista previa de cómo aparecerán los nombres en los documentos.</CardDescription>
                                     </div>
-                                    <Button type="button" onClick={handleGenerateNames} className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm mt-0 text-xs h-8">
+                                    <Button type="button" onClick={() => handleGenerateNames(true)} className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm mt-0 text-xs h-8">
                                         Refrescar
                                     </Button>
                                 </CardHeader>

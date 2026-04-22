@@ -186,7 +186,7 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
                                 <Label htmlFor="template" className="text-sm font-semibold text-slate-700">Plantilla Disponible</Label>
                                 <Select 
                                     value={selectedTemplateId} 
-                                    onValueChange={setSelectedTemplateId}
+                                    onValueChange={(val) => setSelectedTemplateId(val ?? selectedTemplateId)}
                                     disabled={isLoadingTemplates}
                                 >
                                     <SelectTrigger id="template" className="h-12 bg-white border-slate-200">

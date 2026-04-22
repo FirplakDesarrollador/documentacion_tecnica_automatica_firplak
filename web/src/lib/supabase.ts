@@ -42,7 +42,7 @@ export async function dbQuery(sql: string, values?: (string | number | boolean |
     try {
         // Usamos el RPC 'exec_sql' para ejecutar SQL crudo de forma segura y rápida
         // Esto evita depender del Management API de Supabase y sus límites/tokens inestables
-        const { data, error } = await supabaseServer.rpc('exec_sql', { query_text: finalSql })
+        const { data, error } = await (supabaseServer as any).rpc('exec_sql', { query_text: finalSql })
         
         if (error) throw error
         
