@@ -31,6 +31,8 @@ export interface ParsedCodeResult {
     status: string | null
     color_name?: string | null
     allowed_lines?: string[]
+    isometric_asset_id?: string | null
+    final_name_es?: string | null
 }
 
 export async function parseProductCode(
