@@ -1,0 +1,11 @@
+{
+  "title": "Traducción Dinámica de Zonas y Ciclo de Vida de Plantillas",
+  "summary": "Optimización del motor de traducción para resolver zonas desde el glosario en tiempo real y mejoras en la gestión de plantillas (clonación con redimensionamiento y edición de metadatos).",
+  "last_modified": "2026-05-04T10:32:00-05:00",
+  "references": [
+    "web/src/app/products/actions.ts",
+    "web/src/app/templates/actions.ts",
+    "web/src/lib/export/exportUtils.ts",
+    "web/src/components/templates/EditTemplateDialog.tsx"
+  ]
+}
