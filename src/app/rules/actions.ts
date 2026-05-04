@@ -70,32 +70,20 @@ export async function revalidateRulesAndProductsAction() {
 export async function previewNamingRulesAction(productType: string, pendingRules: any[]) {
     // Fetch 5 random products of the given type with all fields needed for name evaluation
     const safeType = productType.replace(/'/g, "''")
-<<<<<<< HEAD
     const rows = await dbQuery(`
         SELECT *
         FROM public.v_ui_generate_list
         WHERE product_type = '${safeType}'
           AND product_name IS NOT NULL
-=======
-    const products = await dbQuery(`
-        SELECT *
-        FROM public.cabinet_products
-        WHERE product_type = '${safeType}'
-          AND cabinet_name IS NOT NULL
->>>>>>> origin/Oswaldo_cambios
           AND status = 'ACTIVO'
         ORDER BY random()
         LIMIT 5
     `) || []
 
-<<<<<<< HEAD
     if (rows.length === 0) return []
 
     const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
     const products = rows.map(mapRowToComposedProduct)
-=======
-    if (products.length === 0) return []
->>>>>>> origin/Oswaldo_cambios
 
     // Import the evaluator and translator dynamically (server-side only)
     const { evaluateProductRules } = await import('@/lib/engine/ruleEvaluator')
@@ -137,7 +125,6 @@ export async function previewNamingRulesAction(productType: string, pendingRules
 }
 
 export async function getProductsCountByFamilyAction(productType: string) {
-<<<<<<< HEAD
     const safeType = productType.replace(/'/g, "''")
     const result = await dbQuery(`
         SELECT COUNT(id) as exact_count
@@ -150,19 +137,6 @@ export async function getProductsCountByFamilyAction(productType: string) {
         return 0
     }
     return parseInt(result[0].exact_count, 10) || 0
-=======
-    const { count, error } = await supabaseAdmin
-        .from('cabinet_products')
-        .select('*', { count: 'exact', head: true })
-        .eq('product_type', productType)
-        .not('cabinet_name', 'is', null)
-
-    if (error) {
-        console.error("Count Error:", error.message)
-        return 0
-    }
-    return count || 0
->>>>>>> origin/Oswaldo_cambios
 }
 
 export async function applyNamesToProductTypeBatchAction(productType: string, offset: number, limit: number) {

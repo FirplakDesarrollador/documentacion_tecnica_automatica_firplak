@@ -36,25 +36,12 @@ export default async function GeneratePreviewPage({
     // 2. Cargar el producto según el origen
     let product: any = null
     
-<<<<<<< HEAD
     // Intentar buscar en productos core V6.1
     const { composeProductById } = await import('@/lib/engine/product_composer')
     const coreProduct = await composeProductById(id)
     
     if (coreProduct) {
         product = coreProduct
-=======
-    // Intentar buscar en productos core
-    const pRows = await dbQuery(
-        `SELECT p.*, c.name_color_sap as color_name 
-         FROM public.cabinet_products p
-         LEFT JOIN public.colors c ON p.color_code = c.code_4dig
-         WHERE p.id='${id}' LIMIT 1`
-    )
-    
-    if (pRows && pRows[0]) {
-        product = pRows[0]
->>>>>>> origin/Oswaldo_cambios
     } else {
         // Buscar en datasets externos
         const dRows = await dbQuery(

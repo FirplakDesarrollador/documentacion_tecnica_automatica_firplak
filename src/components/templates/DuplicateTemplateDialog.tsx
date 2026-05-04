@@ -22,21 +22,15 @@ export function DuplicateTemplateDialog({
     id, 
     originalName,
     originalDataSource,
-<<<<<<< HEAD
     originalWidth,
     originalHeight,
-=======
->>>>>>> origin/Oswaldo_cambios
     datasets = [] 
 }: { 
     id: string, 
     originalName: string,
     originalDataSource: string,
-<<<<<<< HEAD
     originalWidth: number,
     originalHeight: number,
-=======
->>>>>>> origin/Oswaldo_cambios
     datasets?: {id: string, name: string}[] 
 }) {
     const [open, setOpen] = useState(false)
@@ -50,25 +44,16 @@ export function DuplicateTemplateDialog({
         const formData = new FormData(e.currentTarget)
         const newName = formData.get("name") as string
         const dataSource = formData.get("data_source") as string
-<<<<<<< HEAD
         const width = parseFloat(formData.get("width") as string)
         const height = parseFloat(formData.get("height") as string)
 
         if (!newName || !dataSource || isNaN(width) || isNaN(height)) {
-=======
-
-        if (!newName || !dataSource) {
->>>>>>> origin/Oswaldo_cambios
             toast.error("Por favor completa los campos correctamente.")
             setLoading(false)
             return
         }
 
-<<<<<<< HEAD
         const res = await duplicateTemplate(id, newName, dataSource, width, height)
-=======
-        const res = await duplicateTemplate(id, newName, dataSource)
->>>>>>> origin/Oswaldo_cambios
         setLoading(false)
 
         if (res.success) {
@@ -126,7 +111,6 @@ export function DuplicateTemplateDialog({
                                 ))}
                             </select>
                         </div>
-<<<<<<< HEAD
                         <div className="grid grid-cols-4 items-center gap-4">
                             <Label htmlFor="width" className="text-right">
                                 Ancho (mm)
@@ -155,8 +139,6 @@ export function DuplicateTemplateDialog({
                                 required 
                             />
                         </div>
-=======
->>>>>>> origin/Oswaldo_cambios
                     </div>
                     <DialogFooter>
                         <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={loading}>

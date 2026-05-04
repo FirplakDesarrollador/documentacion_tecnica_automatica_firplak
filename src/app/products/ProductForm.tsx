@@ -9,40 +9,25 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createProductAction, updateProductAction, getUniquePropertiesAction, parseProductCodeAction, translateAction, checkProductExistsAction, getDiagnosticInfoAction, getClientsAction, checkFamilyExistsAction, upsertFamilyAction, saveGlossaryTermsAction } from './actions'
 import { Checkbox } from '@/components/ui/checkbox'
-<<<<<<< HEAD
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { getColorByNameAction, getRulesAction } from '@/app/rules/actions'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
 import { ArrowLeft, FileBadge2, AlertTriangle, Sparkles, Building2, Image as ImageIcon, Save, Box, ShieldCheck, History, AlertCircle } from 'lucide-react'
-=======
-import { getColorByNameAction, getRulesAction } from '@/app/rules/actions'
-import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
-import { ArrowLeft, FileBadge2, AlertTriangle, Sparkles, Building2, Image as ImageIcon, Save, Box, ShieldCheck } from 'lucide-react'
->>>>>>> origin/Oswaldo_cambios
 import { toast } from 'sonner'
 import { Product } from '@prisma/client'
 import { UploadAssetButton } from '@/components/assets/UploadAssetButton'
 import { ConfirmOverwriteModal } from '@/components/products/ConfirmOverwriteModal'
 import { IsometricAssociationDialog } from '@/components/assets/IsometricAssociationDialog'
 import { PostSaveExportModal } from '@/components/products/PostSaveExportModal'
-<<<<<<< HEAD
 import { cn } from '@/lib/utils'
-=======
->>>>>>> origin/Oswaldo_cambios
 
 interface ProductFormProps {
     initialData?: any
     backHref?: string
-<<<<<<< HEAD
     readOnly?: boolean
 }
 
 export function ProductForm({ initialData, backHref, readOnly = false }: ProductFormProps) {
-=======
-}
-
-export function ProductForm({ initialData, backHref }: ProductFormProps) {
->>>>>>> origin/Oswaldo_cambios
     const isEdit = !!initialData
     const router = useRouter()
     const [dupeAlertModal, setDupeAlertModal] = useState<string | null>(null)
@@ -92,10 +77,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
         zone_home: initialData?.zone_home || '',
         isometric_path: initialData?.isometric_path || '',
         isometric_asset_id: initialData?.isometric_asset_id || '',
-<<<<<<< HEAD
         isometric_from_different_version: false,
-=======
->>>>>>> origin/Oswaldo_cambios
         bisagras: initialData?.bisagras || 'NA',
         carb2: initialData?.carb2 || 'NA',
         special_label: initialData?.special_label || 'NA',
@@ -123,10 +105,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
     })
 
     const [isAnalyzed, setIsAnalyzed] = useState(isEdit)
-<<<<<<< HEAD
     const [analysisSource, setAnalysisSource] = useState<'parser' | 'sku_match' | 'version_match' | 'reference_match' | 'composed' | null>(null)
-=======
->>>>>>> origin/Oswaldo_cambios
     const [isNewFamily, setIsNewFamily] = useState(false)
     const [allowedLines, setAllowedLines] = useState<string[]>([])
     const [rules, setRules] = useState<any[]>([])
@@ -138,12 +117,8 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
         product_type: '',
         use_destination: '',
         rh_default: false,
-<<<<<<< HEAD
         assembled_default: false,
         manufacturing_process: ''
-=======
-        assembled_default: false
->>>>>>> origin/Oswaldo_cambios
     })
     const [familySaved, setFamilySaved] = useState(false)
 
@@ -201,7 +176,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
         })
     }
 
-<<<<<<< HEAD
     // ── Validación Estricta de Formato SKU ──
     const validateSkuFormat = (code: string): string | null => {
         if (!code || !code.trim()) return 'El código es obligatorio.';
@@ -236,12 +210,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                 return;
             }
             const parsed = await parseProductCodeAction(formData.code, formData.sap_description, formData.rh === 'RH')
-=======
-    const handleAutoProcess = async () => {
-        handleCheckDupe(async () => {
-            if (formData.code.split('-').length >= 2 || formData.code.trim().length > 3) {
-                const parsed = await parseProductCodeAction(formData.code, formData.sap_description, formData.rh === 'RH')
->>>>>>> origin/Oswaldo_cambios
                 
                 let colorName = formData.color_name
                 if (parsed.color_code && parsed.color_code !== formData.color_code) {
@@ -254,11 +222,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                     setAllowedLines(parsed.allowed_lines)
                     // Si solo hay una línea permitida y el producto no tiene una, la pre-seleccionamos
                     if (parsed.allowed_lines.length === 1 && !formData.line) {
-<<<<<<< HEAD
-                        setFormData(p => ({ ...p, line: parsed.allowed_lines[0] }))
-=======
                         setFormData(p => ({ ...p, line: parsed.allowed_lines![0] }))
->>>>>>> origin/Oswaldo_cambios
                     }
                 } else {
                     setAllowedLines([])
@@ -291,10 +255,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                     barcode_text: parsed.barcode_text || prev.barcode_text || '',
                     isometric_path: (parsed.isometric_path && parsed.isometric_path !== 'null') ? parsed.isometric_path : prev.isometric_path,
                     isometric_asset_id: parsed.isometric_asset_id || prev.isometric_asset_id || '',
-<<<<<<< HEAD
                     isometric_from_different_version: !!parsed.isometric_from_different_version,
-=======
->>>>>>> origin/Oswaldo_cambios
                     status: parsed.status || prev.status || 'ACTIVO',
                     armado_con_lvm: parsed.armado_con_lvm || prev.armado_con_lvm || '',
                     assembled_flag: (parsed.assembled_flag !== undefined) ? parsed.assembled_flag : prev.assembled_flag
@@ -302,10 +263,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
 
                 if (parsed.barcode_text) setHasBarcode(true)
                 if (!isAnalyzed) setIsAnalyzed(true)
-<<<<<<< HEAD
                 setAnalysisSource((parsed as any)._source || 'parser')
-=======
->>>>>>> origin/Oswaldo_cambios
 
                 // Verificación de Familia
                 const familyExists = await checkFamilyExistsAction(formData.code)
@@ -322,7 +280,8 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                         product_type: guessedType,
                         use_destination: parsed.use_destination || '',
                         rh_default: parsed.rh === 'RH',
-                        assembled_default: !!parsed.assembled_flag
+                        assembled_default: !!parsed.assembled_flag,
+                        manufacturing_process: 'FABRICADO'
                     }
                     setFamilyData(newFamilyData)
                     
@@ -368,12 +327,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                 } else {
                     toast.success("Datos completados automáticamente.")
                 }
-<<<<<<< HEAD
-=======
-            } else {
-                toast.error("El código es demasiado corto o inválido.")
-            }
->>>>>>> origin/Oswaldo_cambios
         })
     }
 
@@ -394,10 +347,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                         autoFocus
                         value={customState[name] || ''} 
                         onChange={e => setCustomState((c: any) => ({...c, [name]: e.target.value}))}
-<<<<<<< HEAD
                         disabled={readOnly}
-=======
->>>>>>> origin/Oswaldo_cambios
                         onBlur={() => {
                             if (customState[name]) {
                                 setState((prev: any) => ({...prev, [name]: customState[name]}))
@@ -407,11 +357,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                         }}
                         placeholder={`Escribe nueva ${placeholder.toLowerCase()}`}
                     />
-<<<<<<< HEAD
                     <Button variant="ghost" onClick={() => setState((p: any) => ({...p, [name]: ''}))} disabled={readOnly}>X</Button>
-=======
-                    <Button variant="ghost" onClick={() => setState((p: any) => ({...p, [name]: ''}))}>X</Button>
->>>>>>> origin/Oswaldo_cambios
                 </div>
             )
         }
@@ -430,10 +376,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
             <select 
                 className={`flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 ${name === 'line' && allowedLines.length > 0 ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : ''}`}
                 value={finalOptions.includes(currentValue) ? currentValue : (currentValue ? currentValue : '')}
-<<<<<<< HEAD
                 disabled={readOnly}
-=======
->>>>>>> origin/Oswaldo_cambios
                 onChange={(e) => {
                     setState((prev: any) => ({ ...prev, [name]: e.target.value }))
                     if (e.target.value !== '__NEW__') {
@@ -442,11 +385,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                 }}
             >
                 <option value="" disabled>Seleccionar {placeholder.toLowerCase()}...</option>
-<<<<<<< HEAD
                 {!readOnly && <option value="__NEW__" className="font-bold text-blue-600 bg-blue-50">➕ Agregar nueva...</option>}
-=======
-                <option value="__NEW__" className="font-bold text-blue-600 bg-blue-50">➕ Agregar nueva...</option>
->>>>>>> origin/Oswaldo_cambios
                 {currentValue && !options.includes(currentValue) && currentValue !== '__NEW__' && (
                     <option value={currentValue}>{currentValue}</option>
                 )}
@@ -621,7 +560,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
     const handleSaveClick = (e: React.FormEvent) => {
         e.preventDefault()
         
-<<<<<<< HEAD
         // Validaciones Obligatorias V6.1
         const saveFormatError = validateSkuFormat(formData.code);
         if (saveFormatError) {
@@ -694,9 +632,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                 return
             }
         }
-
-=======
->>>>>>> origin/Oswaldo_cambios
         // Validación de Isométrico Obligatorio
         if (!formData.isometric_path || formData.isometric_path === '') {
             toast.error("El isométrico es obligatorio", {
@@ -705,16 +640,12 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
             return
         }
 
-<<<<<<< HEAD
         if (readOnly) {
             toast.error("Acción no permitida", {
                 description: "Por ahora esta función está deshabilitada. La edición avanzada será migrada en una fase posterior. Modo consulta."
             })
             return
         }
-
-=======
->>>>>>> origin/Oswaldo_cambios
         if (isEdit) {
             setIsConfirmingSave(true);
         } else {
@@ -733,7 +664,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
                     <Card className="max-w-md w-full shadow-2xl animate-in fade-in zoom-in-95 duration-200">
                         <CardHeader>
-<<<<<<< HEAD
                             <CardTitle className="flex items-center gap-2 text-rose-600 font-bold uppercase">
                                 <AlertTriangle className="w-6 h-6"/>
                                 SKU ya existe en Catálogo
@@ -756,20 +686,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                 >
                                     Ver producto existente
                                 </Button>
-=======
-                            <CardTitle className="flex items-center gap-2 text-amber-600">
-                                <AlertTriangle className="w-5 h-5"/>
-                                Producto Duplicado
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <p className="text-slate-600 mb-6">
-                                Este producto ya existe en la base de datos, ¿deseas editarlo?
-                            </p>
-                            <div className="flex justify-end gap-3">
-                                <Button variant="outline" onClick={() => setDupeAlertModal(null)}>Cancelar</Button>
-                                <Button className="bg-amber-600 hover:bg-amber-700 text-white" onClick={() => router.push(`/products/${dupeAlertModal}`)}>Sí, deseo editarlo</Button>
->>>>>>> origin/Oswaldo_cambios
                             </div>
                         </CardContent>
                     </Card>
@@ -784,7 +700,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                 currentData={formData}
             />
             
-<<<<<<< HEAD
             {readOnly && (
                 <div className="bg-blue-50 border-l-4 border-blue-400 p-4 rounded-lg flex items-center gap-3 mb-6 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300">
                     <AlertCircle className="h-5 w-5 text-blue-500" />
@@ -794,9 +709,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                     </div>
                 </div>
             )}
-
-=======
->>>>>>> origin/Oswaldo_cambios
             <div className="flex items-center gap-4">
                 {backHref && (
                     <Link
@@ -831,11 +743,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                     placeholder="VBAN12-0032-000-0368"
                                     className="h-12 text-lg font-mono border-slate-300 focus:ring-blue-500"
                                     value={formData.code} onChange={handleChange}
-<<<<<<< HEAD
                                     readOnly={isEdit || readOnly}
-=======
-                                    readOnly={isEdit}
->>>>>>> origin/Oswaldo_cambios
                                 />
                             </div>
 
@@ -846,10 +754,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                     placeholder="MUEBLE VITELI LVM 79X48..."
                                     className="h-12 border-slate-300"
                                     value={formData.sap_description} onChange={handleChange}
-<<<<<<< HEAD
                                     disabled={readOnly}
-=======
->>>>>>> origin/Oswaldo_cambios
                                 />
                             </div>
 
@@ -866,10 +771,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                     <Checkbox 
                                         checked={isPrivateLabel} 
                                         onCheckedChange={(c) => setIsPrivateLabel(!!c)}
-<<<<<<< HEAD
                                         disabled={readOnly}
-=======
->>>>>>> origin/Oswaldo_cambios
                                         className="h-6 w-6 border-indigo-300 data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600"
                                     />
                                 </div>
@@ -879,14 +781,9 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-indigo-700 uppercase">Cliente / Marca</Label>
                                             <select 
-<<<<<<< HEAD
                                                 className="flex h-10 w-full rounded-md border border-indigo-200 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none disabled:opacity-50"
                                                 value={privateLabelData.client_id}
                                                 disabled={readOnly}
-=======
-                                                className="flex h-10 w-full rounded-md border border-indigo-200 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                                                value={privateLabelData.client_id}
->>>>>>> origin/Oswaldo_cambios
                                                 onChange={(e) => setPrivateLabelData(p => ({ ...p, client_id: e.target.value }))}
                                             >
                                                 <option value="" disabled>Seleccionar marca...</option>
@@ -906,16 +803,12 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                                         value={privateLabelData.client_name}
                                                         onChange={(e) => setPrivateLabelData(p => ({ ...p, client_name: e.target.value }))}
                                                         className="border-indigo-100"
-<<<<<<< HEAD
                                                         disabled={readOnly}
-=======
->>>>>>> origin/Oswaldo_cambios
                                                     />
                                                 </div>
                                                 <div className="grid gap-2">
                                                     <Label className="text-xs font-bold text-slate-500 uppercase">Logo de Cliente</Label>
                                                     <div className="flex items-center gap-2">
-<<<<<<< HEAD
                                                         {!readOnly && (
                                                             <UploadAssetButton 
                                                                 onUploadComplete={(asset) => setPrivateLabelData(p => ({ ...p, logo_id: asset.id }))}
@@ -930,15 +823,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                                                 Logo vinculado
                                                             </div>
                                                         )}
-=======
-                                                        <UploadAssetButton 
-                                                            onUploadComplete={(asset) => setPrivateLabelData(p => ({ ...p, logo_id: asset.id }))}
-                                                            variant="outline"
-                                                            className="flex-1 border-indigo-100 text-indigo-700 hover:bg-indigo-50"
-                                                            label="Subir Logo"
-                                                            type="logo"
-                                                        />
->>>>>>> origin/Oswaldo_cambios
                                                         {privateLabelData.logo_id && (
                                                             <div className="w-10 h-10 bg-green-50 border border-green-200 rounded flex items-center justify-center">
                                                                 <ImageIcon className="w-5 h-5 text-green-600" />
@@ -957,10 +841,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                     variant="outline"
                                     type="button" 
                                     onClick={handleManualProcess}
-<<<<<<< HEAD
                                     disabled={readOnly}
-=======
->>>>>>> origin/Oswaldo_cambios
                                     className="border-indigo-200 text-indigo-700 hover:bg-indigo-50"
                                 >
                                     Rellenar Manualmente
@@ -968,18 +849,13 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                 <Button 
                                     type="button" 
                                     onClick={handleAutoProcess}
-<<<<<<< HEAD
                                     disabled={readOnly}
-=======
->>>>>>> origin/Oswaldo_cambios
                                     className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-md transition-all gap-2"
                                 >
                                     <Sparkles className="w-4 h-4" />
                                     Generar Automáticamente
                                 </Button>
                             </div>
-<<<<<<< HEAD
-
                             {analysisSource && (
                                 <div className={`mt-4 p-3 rounded-lg border flex items-start gap-3 animate-in fade-in slide-in-from-top-1 duration-300 ${
                                     analysisSource === 'sku_match' ? 'bg-amber-50 border-amber-200 text-amber-800' : 
@@ -1006,8 +882,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                     </div>
                                 </div>
                             )}
-=======
->>>>>>> origin/Oswaldo_cambios
                         </CardContent>
                     </Card>
 
@@ -1034,7 +908,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                                 setFamilySaved(false)
                                             }}
                                             className={`${familySaved ? 'border-emerald-200' : 'border-amber-200'} bg-white h-11 focus:ring-blue-500`}
-<<<<<<< HEAD
                                             disabled={readOnly}
                                         />
                                     </div>
@@ -1070,11 +943,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                         })}
                                     </div>
                                     <div className="grid gap-2">
-=======
-                                        />
-                                    </div>
-                                    <div className="grid gap-2">
->>>>>>> origin/Oswaldo_cambios
                                         <Label className={`text-xs font-extrabold ${familySaved ? 'text-emerald-800' : 'text-amber-800'} uppercase tracking-wider`}>Zona (Ambiente)</Label>
                                         {renderCreatableSelect('zone_home', datalistOptions.zoneHomes || [], 'ZONA', familyData, (fn: any) => {
                                             const updated = typeof fn === 'function' ? fn(familyData) : fn
@@ -1082,7 +950,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                             setFamilySaved(false)
                                         })}
                                     </div>
-<<<<<<< HEAD
                                     <div className="grid gap-2">
                                         <Label className={`text-xs font-extrabold ${familySaved ? 'text-emerald-800' : 'text-amber-800'} uppercase tracking-wider`}>Uso / Destino</Label>
                                         {renderCreatableSelect('use_destination', datalistOptions.useDestinations || [], 'DESTINO', familyData, (fn: any) => {
@@ -1103,12 +970,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                         })}
                                     </div>
                                     <div className="space-y-4 pt-6">
-=======
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div className="space-y-4">
->>>>>>> origin/Oswaldo_cambios
                                         <div className="flex items-center gap-3 p-3 bg-white/60 rounded-xl border border-slate-200/50">
                                             <Checkbox 
                                                 id="rh_default"
@@ -1117,10 +978,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                                     setFamilyData(p => ({ ...p, rh_default: !!v }))
                                                     setFamilySaved(false)
                                                 }}
-<<<<<<< HEAD
                                                 disabled={readOnly}
-=======
->>>>>>> origin/Oswaldo_cambios
                                             />
                                             <Label htmlFor="rh_default" className="text-sm font-bold text-slate-700 cursor-pointer">Material RH por defecto</Label>
                                         </div>
@@ -1132,15 +990,11 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                                     setFamilyData(p => ({ ...p, assembled_default: !!v }))
                                                     setFamilySaved(false)
                                                 }}
-<<<<<<< HEAD
                                                 disabled={readOnly}
-=======
->>>>>>> origin/Oswaldo_cambios
                                             />
                                             <Label htmlFor="assembled_default" className="text-sm font-bold text-slate-700 cursor-pointer">Armado por defecto</Label>
                                         </div>
                                     </div>
-<<<<<<< HEAD
                                 </div>
 
                                 <div className="bg-white/40 p-4 rounded-xl border border-dashed border-slate-300">
@@ -1182,66 +1036,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                             {familySaved ? 'SOBREESCRIBIR DATOS, APLICAR Y CONTINUAR' : 'APLICAR DATOS AL PRODUCTO Y CONTINUAR'}
                                         </Button>
                                     )}
-=======
-                                    <div className="bg-white/40 p-4 rounded-xl border border-dashed border-slate-300">
-                                        <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
-                                            <ShieldCheck className="w-3 h-3 inline mr-1 mb-0.5" />
-                                            ESTOS VALORES SE HEREDARÁN AUTOMÁTICAMENTE A LOS PRODUCTOS DE ESTA FAMILIA. LAS EXCEPCIONES EN EL CÓDIGO (COMO "MRH") TENDRÁN PRIORIDAD.
-                                        </p>
-                                    </div>
-                                </div>
-                                
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div className="grid gap-2">
-                                        <Label className="text-xs font-extrabold text-amber-800 uppercase tracking-wider">Línea</Label>
-                                        {renderCreatableSelect('line', datalistOptions.lines || [], 'LÍNEA', familyData, (fn: any) => {
-                                            const updated = typeof fn === 'function' ? fn(familyData) : fn
-                                            setFamilyData(updated)
-                                            setFamilySaved(false)
-                                        })}
-                                    </div>
-                                    <div className="grid gap-2">
-                                        <Label className="text-xs font-extrabold text-amber-800 uppercase tracking-wider">Tipo de Producto</Label>
-                                        {renderCreatableSelect('product_type', datalistOptions.productTypes || [], 'TIPO PRODUCTO', familyData, (fn: any) => {
-                                            const updated = typeof fn === 'function' ? fn(familyData) : fn
-                                            setFamilyData(updated)
-                                            setFamilySaved(false)
-                                        })}
-                                    </div>
-                                </div>
-
-                                <div className="pt-4 flex justify-end">
-                                    <Button 
-                                        type="button"
-                                        onClick={async () => {
-                                            try {
-                                                // Persistencia inmediata
-                                                await upsertFamilyAction({
-                                                    code: formData.familia_code,
-                                                    ...familyData
-                                                })
-                                                
-                                                // Propagar datos al producto
-                                                setFormData(prev => ({
-                                                    ...prev,
-                                                    zone_home: familyData.zone_home || prev.zone_home,
-                                                    line: familyData.line || prev.line,
-                                                    product_type: familyData.product_type || prev.product_type,
-                                                    rh: familyData.rh_default ? 'RH' : prev.rh,
-                                                    assembled_flag: familyData.assembled_default || prev.assembled_flag
-                                                }))
-                                                
-                                                setFamilySaved(true)
-                                                toast.success(familySaved ? "Familia actualizada exitosamente" : "Familia guardada exitosamente")
-                                            } catch (error: any) {
-                                                toast.error("Error al guardar familia: " + error.message)
-                                            }
-                                        }}
-                                        className={`${familySaved ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'} text-white font-bold px-8 shadow-md transition-all h-12 rounded-xl`}
-                                    >
-                                        {familySaved ? 'SOBREESCRIBIR FAMILIA, APLICAR Y CONTINUAR' : 'GUARDAR FAMILIA, APLICAR Y CONTINUAR'}
-                                    </Button>
->>>>>>> origin/Oswaldo_cambios
                                 </div>
                             </CardContent>
                         </Card>
@@ -1345,10 +1139,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                                         id="assembled_flag" 
                                                         checked={formData.assembled_flag} 
                                                         onCheckedChange={(c) => setFormData(p => ({ ...p, assembled_flag: !!c }))} 
-<<<<<<< HEAD
                                                         disabled={readOnly}
-=======
->>>>>>> origin/Oswaldo_cambios
                                                     />
                                                     <Label htmlFor="assembled_flag" className="text-xs font-bold text-slate-700 cursor-pointer">Es Armado</Label>
                                                 </div>
@@ -1358,10 +1149,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                                         id="has_barcode" 
                                                         checked={hasBarcode} 
                                                         onCheckedChange={(c) => setHasBarcode(!!c)} 
-<<<<<<< HEAD
                                                         disabled={readOnly}
-=======
->>>>>>> origin/Oswaldo_cambios
                                                     />
                                                     <Label htmlFor="has_barcode" className="text-xs font-bold text-slate-700 cursor-pointer">¿Lleva código de barras?</Label>
                                                 </div>
@@ -1375,10 +1163,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                                             onChange={handleChange}
                                                             placeholder="Código..."
                                                             className="w-32 h-8 text-xs border-indigo-200 focus:ring-indigo-500 bg-white"
-<<<<<<< HEAD
                                                             disabled={readOnly}
-=======
->>>>>>> origin/Oswaldo_cambios
                                                         />
                                                     </div>
                                                 )}
@@ -1393,10 +1178,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                                             onChange={handleChange}
                                                             placeholder="Ej: LVM SIKUANI"
                                                             className="w-32 h-8 text-xs border-blue-200 focus:ring-blue-500 bg-white"
-<<<<<<< HEAD
                                                             disabled={readOnly}
-=======
->>>>>>> origin/Oswaldo_cambios
                                                         />
                                                     </div>
                                                 )}
@@ -1404,7 +1186,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
 
                                             {/* Isometric Action Group */}
                                             <div className="w-full lg:w-auto">
-<<<<<<< HEAD
                                                  {formData.ref_code && !readOnly && (
                                                      <div className="flex flex-col sm:flex-row items-center gap-3">
                                                          {formData.isometric_path && (
@@ -1454,35 +1235,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                                          <span className="text-xs font-bold">Isométrico Vinculado</span>
                                                      </div>
                                                  )}
-=======
-                                                {formData.ref_code && (
-                                                    formData.isometric_path ? (
-                                                        <div className="flex items-center gap-2 p-2 px-4 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-200 shadow-sm">
-                                                            <FileBadge2 className="w-4 h-4"/>
-                                                            <span className="text-xs font-bold">Isométrico OK ({formData.ref_code})</span>
-                                                        </div>
-                                                    ) : (
-                                                        <IsometricAssociationDialog 
-                                                            initialFamilies={formData.familia_code ? [formData.familia_code] : []}
-                                                            initialReferences={formData.ref_code ? [`${formData.ref_code}|||${formData.commercial_measure || ''}`] : []}
-                                                            initialMeasures={formData.commercial_measure ? [formData.commercial_measure] : []}
-                                                            onAssociationComplete={(asset) => {
-                                                                setFormData(p => ({ 
-                                                                    ...p, 
-                                                                    isometric_path: asset.file_path || 'exists',
-                                                                    isometric_asset_id: asset.id
-                                                                }))
-                                                            }}
-                                                            trigger={
-                                                                <Button variant="outline" className="w-full lg:w-auto gap-2 border-amber-200 text-amber-700 hover:bg-amber-50 h-10 shadow-sm">
-                                                                    <Box className="w-4 h-4" />
-                                                                    Asociar Isométrico
-                                                                </Button>
-                                                            }
-                                                        />
-                                                    )
-                                                )}
->>>>>>> origin/Oswaldo_cambios
                                             </div>
                                         </div>
                                     </div>
@@ -1497,7 +1249,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                                 <Sparkles className="w-5 h-5 text-blue-600"/>
                                                 Aprendizaje de Glosario Técnico
                                             </CardTitle>
-<<<<<<< HEAD
                                             {!readOnly && (
                                                 <Button 
                                                     type="button" 
@@ -1508,16 +1259,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                                     Enseñarle al sistema
                                                 </Button>
                                             )}
-=======
-                                            <Button 
-                                                type="button" 
-                                                onClick={handleTeachSystem}
-                                                className="bg-blue-600 hover:bg-blue-700 text-white shadow-md gap-2 border-2 border-blue-400 font-bold"
-                                            >
-                                                <ShieldCheck className="w-4 h-4"/>
-                                                Enseñarle al sistema
-                                            </Button>
->>>>>>> origin/Oswaldo_cambios
                                         </div>
                                         <CardDescription className="text-blue-800/80 font-medium">
                                             Para generar una documentación bilingüe perfecta, por favor define la traducción de los siguientes términos nuevos o combinaciones:
@@ -1544,10 +1285,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                                             value={resolvedTypeMissing.value}
                                                             onChange={(e) => setResolvedTypeMissing(p => p ? ({ ...p, value: e.target.value.toUpperCase() }) : null)}
                                                             className="border-blue-200 focus:ring-blue-500 h-10 font-bold text-blue-900"
-<<<<<<< HEAD
                                                             disabled={readOnly}
-=======
->>>>>>> origin/Oswaldo_cambios
                                                         />
                                                     </div>
                                                 </div>
@@ -1574,10 +1312,7 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                                                     [term]: e.target.value.toUpperCase()
                                                                 }))}
                                                                 className="border-blue-100 focus:ring-blue-500 h-9 text-sm"
-<<<<<<< HEAD
                                                                 disabled={readOnly}
-=======
->>>>>>> origin/Oswaldo_cambios
                                                             />
                                                         </div>
                                                     ))}
@@ -1594,17 +1329,11 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                         <CardTitle className="text-lg font-bold text-blue-900">Nomenclatura Generada</CardTitle>
                                         <CardDescription>Vista previa de cómo aparecerán los nombres en los documentos.</CardDescription>
                                     </div>
-<<<<<<< HEAD
                                     {!readOnly && (
-                                        <Button type="button" onClick={handleGenerateNames} className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm mt-0 text-xs h-8">
+                                        <Button type="button" onClick={() => handleGenerateNames()} className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm mt-0 text-xs h-8">
                                             Refrescar
                                         </Button>
                                     )}
-=======
-                                    <Button type="button" onClick={() => handleGenerateNames(true)} className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm mt-0 text-xs h-8">
-                                        Refrescar
-                                    </Button>
->>>>>>> origin/Oswaldo_cambios
                                 </CardHeader>
                                 <CardContent className="p-6 space-y-4">
                                     <div className="grid gap-2">
@@ -1630,7 +1359,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                     <div className="grid grid-cols-3 gap-4">
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Ancho (cm)</Label>
-<<<<<<< HEAD
                                             <Input type="number" step="0.1" name="width_cm" value={formData.width_cm} onChange={handleChange} className="border-orange-200 bg-orange-50/20" disabled={readOnly} />
                                         </div>
                                         <div className="grid gap-2">
@@ -1640,35 +1368,16 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Alto (cm)</Label>
                                             <Input type="number" step="0.1" name="height_cm" value={formData.height_cm} onChange={handleChange} className="border-orange-200 bg-orange-50/20" disabled={readOnly} />
-=======
-                                            <Input type="number" step="0.1" name="width_cm" value={formData.width_cm} onChange={handleChange} className="border-orange-200 bg-orange-50/20" />
-                                        </div>
-                                        <div className="grid gap-2">
-                                            <Label className="text-xs font-bold text-slate-500 uppercase">Fondo (cm)</Label>
-                                            <Input type="number" step="0.1" name="depth_cm" value={formData.depth_cm} onChange={handleChange} className="border-orange-200 bg-orange-50/20" />
-                                        </div>
-                                        <div className="grid gap-2">
-                                            <Label className="text-xs font-bold text-slate-500 uppercase">Alto (cm)</Label>
-                                            <Input type="number" step="0.1" name="height_cm" value={formData.height_cm} onChange={handleChange} className="border-orange-200 bg-orange-50/20" />
->>>>>>> origin/Oswaldo_cambios
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Peso Bruto (kg)</Label>
-<<<<<<< HEAD
                                             <Input type="number" step="0.1" name="weight_kg" value={formData.weight_kg} onChange={handleChange} className="border-orange-200 bg-orange-50/20" disabled={readOnly} />
                                         </div>
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Apilamiento Max</Label>
                                             <Input type="number" name="stacking_max" value={formData.stacking_max} onChange={handleChange} disabled={readOnly} />
-=======
-                                            <Input type="number" step="0.1" name="weight_kg" value={formData.weight_kg} onChange={handleChange} className="border-orange-200 bg-orange-50/20" />
-                                        </div>
-                                        <div className="grid gap-2">
-                                            <Label className="text-xs font-bold text-slate-500 uppercase">Apilamiento Max</Label>
-                                            <Input type="number" name="stacking_max" value={formData.stacking_max} onChange={handleChange} />
->>>>>>> origin/Oswaldo_cambios
                                         </div>
                                     </div>
 
@@ -1681,7 +1390,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                 </Link>
                                 <Button 
                                     onClick={handleSaveClick} 
-<<<<<<< HEAD
                                     disabled={readOnly}
                                     className={cn(
                                         "h-11 px-10 font-bold shadow-lg gap-2 text-white",
@@ -1690,12 +1398,6 @@ export function ProductForm({ initialData, backHref }: ProductFormProps) {
                                 >
                                     <Save className="w-4 h-4" />
                                     {isEdit ? (readOnly ? 'Modo Consulta' : 'Sobreescribir producto') : 'Guardar Producto'}
-=======
-                                    className={`h-11 px-10 font-bold shadow-lg gap-2 ${isEdit ? 'bg-red-600 hover:bg-red-700' : 'bg-slate-900 hover:bg-slate-800'} text-white`}
-                                >
-                                    <Save className="w-4 h-4" />
-                                    {isEdit ? 'Sobreescribir producto' : 'Guardar Producto'}
->>>>>>> origin/Oswaldo_cambios
                                 </Button>
                             </div>
                         </>

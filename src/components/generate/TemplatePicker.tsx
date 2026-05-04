@@ -24,15 +24,9 @@ export interface TemplateOption {
     orientation: string
     active: boolean
     elements_json: string
-<<<<<<< HEAD
     export_formats?: string
     export_filename_format?: string
     data_source?: string
-=======
-    data_source?: string
-    export_formats?: string
-    export_filename_format?: string
->>>>>>> origin/Oswaldo_cambios
 }
 
 interface TemplatePickerProps {

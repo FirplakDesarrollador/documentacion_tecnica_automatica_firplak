@@ -29,12 +29,8 @@ export default function EditFamilyPage({ params: paramsPromise }: { params: Prom
         product_type: '',
         use_destination: '',
         rh_default: false,
-<<<<<<< HEAD
         assembled_default: false,
         manufacturing_process: 'FABRICADO'
-=======
-        assembled_default: false
->>>>>>> origin/Oswaldo_cambios
     })
 
     useEffect(() => {
@@ -57,12 +53,8 @@ export default function EditFamilyPage({ params: paramsPromise }: { params: Prom
                             product_type: data.product_type || '',
                             use_destination: data.use_destination || '',
                             rh_default: !!data.rh_default,
-<<<<<<< HEAD
                             assembled_default: !!data.assembled_default,
                             manufacturing_process: data.manufacturing_process || 'FABRICADO'
-=======
-                            assembled_default: !!data.assembled_default
->>>>>>> origin/Oswaldo_cambios
                         })
                     }
                 }
@@ -256,7 +248,6 @@ export default function EditFamilyPage({ params: paramsPromise }: { params: Prom
                                         <Label className="text-xs font-bold text-amber-800 uppercase tracking-widest ml-1">Zona (Ambiente)</Label>
                                         {renderCreatableSelect('zone_home', datalistOptions.zoneHomes || [], 'ZONA', <MapPin className="w-4 h-4" />)}
                                     </div>
-<<<<<<< HEAD
                                     <div className="grid gap-2">
                                         <Label className="text-xs font-bold text-amber-800 uppercase tracking-widest ml-1">Proceso de Manufactura</Label>
                                         <div className="relative">
@@ -278,14 +269,6 @@ export default function EditFamilyPage({ params: paramsPromise }: { params: Prom
                                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                                                 </svg>
                                             </div>
-=======
-                                    <div className="flex items-end">
-                                        <div className="bg-amber-50 p-3 rounded-xl border border-amber-100 w-full flex items-center gap-2">
-                                            <ShieldCheck className="w-5 h-5 text-amber-500" />
-                                            <span className="text-[10px] text-amber-800 leading-tight font-medium uppercase">
-                                                Información sincronizada con el motor de nomenclatura V2.1
-                                            </span>
->>>>>>> origin/Oswaldo_cambios
                                         </div>
                                     </div>
                                 </div>

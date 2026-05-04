@@ -33,10 +33,7 @@ interface GenerateClientProps {
     hasFilter: boolean
     rules: any[]
     isExternalSource?: boolean
-<<<<<<< HEAD
     totalCount?: number
-=======
->>>>>>> origin/Oswaldo_cambios
 }
 
 export function GenerateClient({
@@ -48,10 +45,7 @@ export function GenerateClient({
     hasFilter,
     rules,
     isExternalSource = false,
-<<<<<<< HEAD
     totalCount = 0,
-=======
->>>>>>> origin/Oswaldo_cambios
 }: GenerateClientProps) {
     const router = useRouter()
     const searchParams = useSearchParams()
@@ -244,7 +238,6 @@ export function GenerateClient({
 
             {/* Selected template info */}
             {selectedTemplate && (
-<<<<<<< HEAD
                 <div className="flex flex-wrap items-center justify-between gap-4 text-sm px-1">
                     <div className="flex flex-wrap items-center gap-2 text-slate-500">
                         <span>Plantilla activa:</span>
@@ -261,17 +254,6 @@ export function GenerateClient({
                             Mostrando {products.length} de {totalCount} productos encontrados
                         </div>
                     )}
-=======
-                <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500 px-1">
-                    <span>Plantilla activa:</span>
-                    <Badge variant="outline" className="font-medium text-indigo-600 border-indigo-200 bg-indigo-50">
-                        {selectedTemplate.name}
-                    </Badge>
-                    <span className="text-slate-400">·</span>
-                    <span>{selectedTemplate.width_mm}×{selectedTemplate.height_mm}mm</span>
-                    <span className="text-slate-400">·</span>
-                    <span className="capitalize">{selectedTemplate.document_type}</span>
->>>>>>> origin/Oswaldo_cambios
                 </div>
             )}
 

@@ -398,7 +398,6 @@ function translateField(
             const isSingleLetter = /^[A-Z]$/.test(tok)
             const isInternal = !!INTERNAL_GLOSSARY[tok]
 
-<<<<<<< HEAD
             // Tokens seguros: números puros, números con unidad basica, o strings de medida (SOLO PUNTO DECIMAL)
             const isSafe = /^\d+(?:\.\d+)?(MM|IN|CM)?$/.test(tok) || /^(\d+(?:\.\d+)?)\s*[Xx]\s*(\d+(?:\.\d+)?)$/.test(tok)
             
@@ -406,12 +405,6 @@ function translateField(
             const isInvalidFormat = /^\d+(?:[.,]\d{3})*(?:,\d+)?(MM|IN|CM)?$/.test(tok) || /^(\d+(?:[.,]\d+)?)\s*[Xx]\s*(\d+(?:[.,]\d+)?)$/.test(tok)
             
             if (!isSafe && !isInternal && !isSingleLetter && !isInvalidFormat && !missingTerms.includes(tok)) {
-=======
-            // Tokens seguros: números puros, números con unidad basica, o strings de medida
-            const isSafe = /^\d+(?:\.\d+)?(MM|IN|CM)?$/.test(tok) || /^(\d+(?:\.\d+)?)\s*[Xx]\s*(\d+(?:\.\d+)?)$/.test(tok)
-            
-            if (!isSafe && !isInternal && !isSingleLetter && !missingTerms.includes(tok)) {
->>>>>>> origin/Oswaldo_cambios
                 // Si la frase completa ya se reportó, evitamos ruido con palabras sueltas 
                 // a menos que sean muy importantes o la frase sea demasiado larga.
                 if (fieldConfig.fallback_strategy === 'translate') {

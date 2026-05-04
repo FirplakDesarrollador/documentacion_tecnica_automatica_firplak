@@ -26,11 +26,7 @@ function AutoScalingText({ el }: { el: any }) {
                                (textRef.current.scrollWidth > container.clientWidth + 4)
             
             if (hasOverflow && adjustedFontSize > 5) {
-<<<<<<< HEAD
-                setAdjustedFontSize(prev => Math.max(5, prev - 0.5))
-=======
                 setAdjustedFontSize((prev: number) => Math.max(5, prev - 0.5))
->>>>>>> origin/Oswaldo_cambios
                 setIsScaling(true)
             } else {
                 setIsScaling(false)
@@ -91,11 +87,7 @@ function AutoScalingIconContent({ el }: { el: any }) {
                                (containerRef.current.scrollWidth > containerRef.current.clientWidth + 4)
             
             if (hasOverflow && adjustedCaptionFontSize > 4) {
-<<<<<<< HEAD
-                setAdjustedCaptionFontSize(prev => Math.max(4, prev - 0.5))
-=======
                 setAdjustedCaptionFontSize((prev: number) => Math.max(4, prev - 0.5))
->>>>>>> origin/Oswaldo_cambios
                 setIsScaling(true)
             } else {
                 setIsScaling(false)

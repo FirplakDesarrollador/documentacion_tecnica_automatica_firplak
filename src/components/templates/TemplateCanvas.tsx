@@ -276,11 +276,6 @@ function DynamicImageElement({
     )
 }
 
-<<<<<<< HEAD
-type FieldDef = { key: string; label: string; original: string; is_identifier: boolean }
-=======
-
->>>>>>> origin/Oswaldo_cambios
 
 function RichTextEditor({ content, onChange, isExternalDataSource = false, datasetSchema = [] }: { content: string, onChange: (val: string) => void, isExternalDataSource?: boolean, datasetSchema?: FieldDef[] }) {
     const editorRef = useRef<HTMLDivElement>(null);

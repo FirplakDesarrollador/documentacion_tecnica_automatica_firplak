@@ -12,10 +12,7 @@ export interface EvaluationTrace {
 
 export interface RuleEngineResult {
     finalNameEs: string
-<<<<<<< HEAD
-=======
     finalNameEn: string
->>>>>>> origin/Oswaldo_cambios
     activeIcons: string[]
     trace: EvaluationTrace[]
     activeVariableIds: string[] // Tracking which fields were used in the final name
@@ -77,10 +74,7 @@ function hydratePayload(payload: string, product: Product): string {
 export function evaluateProductRules(product: Product, rules: Rule[]): RuleEngineResult {
     const result: RuleEngineResult = {
         finalNameEs: '',
-<<<<<<< HEAD
-=======
         finalNameEn: '',
->>>>>>> origin/Oswaldo_cambios
         activeIcons: [],
         trace: [],
         activeVariableIds: [],

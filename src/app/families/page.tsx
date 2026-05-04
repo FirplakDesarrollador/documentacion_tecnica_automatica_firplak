@@ -8,7 +8,6 @@ import { DeleteButton } from './DeleteButton'
 
 export default async function FamiliesPage() {
     const families = await dbQuery(`
-<<<<<<< HEAD
         SELECT 
             family_code as code, 
             family_name as name, 
@@ -17,9 +16,6 @@ export default async function FamiliesPage() {
             zone_home 
         FROM public.families 
         ORDER BY family_code ASC
-=======
-        SELECT * FROM public.familias ORDER BY code ASC
->>>>>>> origin/Oswaldo_cambios
     `) || []
 
     return (
@@ -64,11 +60,7 @@ export default async function FamiliesPage() {
                                 </TableRow>
                             ) : (
                                 families.map((family: any) => (
-<<<<<<< HEAD
                                     <TableRow key={family.code} className="hover:bg-slate-50/50 transition-colors">
-=======
-                                    <TableRow key={family.id} className="hover:bg-slate-50/50 transition-colors">
->>>>>>> origin/Oswaldo_cambios
                                         <TableCell className="font-mono font-medium text-slate-700">{family.code}</TableCell>
                                         <TableCell className="text-slate-600">{family.name}</TableCell>
                                         <TableCell className="text-slate-600">{family.use_destination}</TableCell>

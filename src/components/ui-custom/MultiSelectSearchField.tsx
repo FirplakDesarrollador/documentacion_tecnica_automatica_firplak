@@ -102,11 +102,7 @@ export function MultiSelectSearchField({
         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50 text-slate-400" />
       </PopoverTrigger>
       <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-1 rounded-xl border-slate-200 shadow-premium" align="start">
-<<<<<<< HEAD
         <Command filter={(value, search) => value.toLowerCase().includes(search.toLowerCase()) ? 1 : 0}>
-=======
-        <Command>
->>>>>>> origin/Oswaldo_cambios
           <CommandInput placeholder={`Buscar ${placeholder.toLowerCase()}...`} />
           <CommandList>
             <CommandEmpty>{emptyMessage}</CommandEmpty>

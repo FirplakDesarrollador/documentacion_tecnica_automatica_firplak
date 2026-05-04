@@ -1,10 +1,6 @@
 'use server'
 
-<<<<<<< HEAD
 import { dbQuery, supabaseServer } from '@/lib/supabase'
-=======
-import { dbQuery } from '@/lib/supabase'
->>>>>>> origin/Oswaldo_cambios
 import { Product } from '@prisma/client'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
 import { translateProductToEnglish } from '@/lib/engine/translator'
@@ -69,11 +65,7 @@ export async function checkFamilyExists(code: string) {
     const parsed = await parseProductCode(code, '', false)
     if (!parsed.familia_code) return true
 
-<<<<<<< HEAD
     const rows = await dbQuery(`SELECT family_code FROM public.families WHERE family_code = '${parsed.familia_code.replace(/'/g, "''")}' LIMIT 1`)
-=======
-    const rows = await dbQuery(`SELECT code FROM public.familias WHERE code = '${parsed.familia_code.replace(/'/g, "''")}' LIMIT 1`)
->>>>>>> origin/Oswaldo_cambios
     return rows && rows.length > 0
 }
 
@@ -85,15 +77,9 @@ export async function upsertFamilyAction(data: any) {
     if (!data.code) throw new Error("Family code is required")
     
     const query = `
-<<<<<<< HEAD
         INSERT INTO public.families (
             family_code, family_name, product_type, use_destination, zone_home, 
             allowed_lines, rh_default, assembled_default, manufacturing_process
-=======
-        INSERT INTO public.familias (
-            code, name, product_type, use_destination, zone_home, 
-            allowed_lines, rh_default, assembled_default
->>>>>>> origin/Oswaldo_cambios
         )
         VALUES (
             '${data.code.replace(/'/g, "''")}', 
@@ -103,28 +89,18 @@ export async function upsertFamilyAction(data: any) {
             ${data.zone_home ? `'${data.zone_home}'` : 'NULL'},
             ${formatPGArray(data.allowed_lines)},
             ${data.rh_default ? 'true' : 'false'},
-<<<<<<< HEAD
             ${data.assembled_default ? 'true' : 'false'},
             ${data.manufacturing_process ? `'${data.manufacturing_process}'` : "'FABRICADO'"}
         )
         ON CONFLICT (family_code) DO UPDATE SET
             family_name = EXCLUDED.family_name,
-=======
-            ${data.assembled_default ? 'true' : 'false'}
-        )
-        ON CONFLICT (code) DO UPDATE SET
-            name = EXCLUDED.name,
->>>>>>> origin/Oswaldo_cambios
             product_type = EXCLUDED.product_type,
             use_destination = EXCLUDED.use_destination,
             zone_home = EXCLUDED.zone_home,
             allowed_lines = EXCLUDED.allowed_lines,
             rh_default = EXCLUDED.rh_default,
             assembled_default = EXCLUDED.assembled_default,
-<<<<<<< HEAD
             manufacturing_process = EXCLUDED.manufacturing_process,
-=======
->>>>>>> origin/Oswaldo_cambios
             updated_at = now()
         RETURNING *
     `
@@ -133,7 +109,6 @@ export async function upsertFamilyAction(data: any) {
     return rows ? rows[0] : null
 }
 
-<<<<<<< HEAD
 function buildCreateProductV6Payload(data: any, parsed: any, isPrivate: boolean, clientId: string, clientName: string, sap_description_recommended: string, final_name_es: string, final_name_en: string) {
     const payload: any = {
         reference: {
@@ -211,15 +186,11 @@ function buildCreateProductV6Payload(data: any, parsed: any, isPrivate: boolean,
 
     return payload;
 }
-
-=======
->>>>>>> origin/Oswaldo_cambios
 export async function createProductAction(data: any) {
     if (!data.code) throw new Error('Code is required')
 
     const parsed = await parseProductCode(data.code, data.sap_description, data.rh_flag)
 
-<<<<<<< HEAD
     const rules = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true ORDER BY priority ASC`) || []
 
     const workingProduct = {
@@ -250,22 +221,6 @@ export async function createProductAction(data: any) {
 
     const translateResult = await translateProductToEnglish({...workingProduct, final_name_es}, workingProduct.product_type || 'MUEBLE')
     const final_name_en = translateResult.isValid ? translateResult.translatedName : ''
-
-    // Glossary Terms
-=======
-    if (data._newFamily && parsed.familia_code) {
-        const existing = await dbQuery(`SELECT code FROM public.familias WHERE code = '${parsed.familia_code.replace(/'/g, "''")}' LIMIT 1`)
-        if (!existing || existing.length === 0) {
-            await dbQuery(`
-                INSERT INTO public.familias (code, name, product_type, use_destination, zone_home)
-                VALUES ('${parsed.familia_code}', '${(data._newFamily.name || parsed.familia_code).replace(/'/g, "''")}', ${data._newFamily.product_type ? `'${data._newFamily.product_type}'` : 'NULL'}, ${data._newFamily.use_destination ? `'${data._newFamily.use_destination}'` : 'NULL'}, ${data._newFamily.zone_home ? `'${data._newFamily.zone_home}'` : 'NULL'})
-                ON CONFLICT (code) DO NOTHING
-            `)
-        }
-    }
-
-    // New Glossary Terms (Adaptive Learning)
->>>>>>> origin/Oswaldo_cambios
     if (data._newGlossaryTerms && Array.isArray(data._newGlossaryTerms)) {
         for (const term of data._newGlossaryTerms) {
             if (!term.es || !term.en) continue
@@ -285,7 +240,6 @@ export async function createProductAction(data: any) {
         }
     }
 
-<<<<<<< HEAD
     // Private Label Client
     let clientId = data.private_label_client_id
     if (data.private_label_flag && (!clientId || clientId === '__NEW__') && data.private_label_client_name) {
@@ -297,7 +251,7 @@ export async function createProductAction(data: any) {
 
     const payload = buildCreateProductV6Payload(data, parsed, isPrivate, clientId, clientName, sap_description_recommended, final_name_es, final_name_en)
 
-    const { data: result, error } = await supabaseServer.rpc('create_product_v6_transaction', { payload })
+    const { data: result, error } = await (supabaseServer as any).rpc('create_product_v6_transaction', { payload })
     if (error) throw new Error(`Transaction failed: ${error.message}`)
 
     // Propagar Isométrico
@@ -350,207 +304,6 @@ export async function updateProductAction(id: string, data: any) {
         WHERE p.id = $1
     `, [id])
     return rows?.[0] || null
-=======
-    // Logic for Private Label Client
-    let clientId = data.private_label_client_id
-    if (data.private_label_flag && (!clientId || clientId === '__NEW__') && data.private_label_client_name) {
-        // Create new client if it's private label and we only have a name
-        const newClient = await createClientAction(data.private_label_client_name, data.private_label_logo_id)
-        clientId = newClient.id
-    }
-
-    function esc(v: any) {
-        if (v === null || v === undefined || v === '') return 'NULL'
-        if (typeof v === 'boolean') return v ? 'true' : 'false'
-        if (typeof v === 'number') return String(v)
-        return `'${String(v).replace(/'/g, "''")}'`
-    }
-
-    // Lógica de redondeo especial: <= 0.5 hacia abajo, >= 0.6 hacia arriba
-    function roundToOneDecimal(val: number | string | null) {
-        if (val === null || val === undefined || val === '') return 'NULL'
-        const num = parseFloat(String(val))
-        if (isNaN(num)) return 'NULL'
-        return (Math.floor(num * 10 + 0.4) / 10).toFixed(1)
-    }
-
-    // Conversiones con redondeo especial
-    const w_in = data.width_cm ? roundToOneDecimal(parseFloat(data.width_cm) / 2.54) : 'NULL'
-    const d_in = data.depth_cm ? roundToOneDecimal(parseFloat(data.depth_cm) / 2.54) : 'NULL'
-    const h_in = data.height_cm ? roundToOneDecimal(parseFloat(data.height_cm) / 2.54) : 'NULL'
-    const w_lb = data.weight_kg ? roundToOneDecimal(parseFloat(data.weight_kg) * 2.20462) : 'NULL'
-
-    // Normalización de Marca Propia
-    const isPrivate = !!data.private_label_flag
-    const clientName = isPrivate ? (data.private_label_client_name || 'NA') : 'NA'
-
-    const result = await dbQuery(`
-        INSERT INTO public.cabinet_products (
-            code, sap_description, product_type, cabinet_name, color_code, rh_flag, rh,
-            assembled_flag, canto_puertas, carb2, line, use_destination, zone_home, 
-            commercial_measure, accessory_text, designation, width_cm, depth_cm, height_cm, weight_kg, 
-            width_in, depth_in, height_in, weight_lb,
-            stacking_max, familia_code, ref_code, version_code, sku_base, sku_servicios_ref,
-            final_name_es, final_name_en, status, validation_status,
-            private_label_flag, private_label_client_name, private_label_client_id,
-            bisagras, special_label, barcode_text, isometric_path, isometric_asset_id, door_color_text
-        ) VALUES (
-            ${esc(data.code)}, ${esc(data.sap_description)}, ${esc(data.product_type || parsed.product_type)}, 
-            ${esc(data.cabinet_name)}, ${esc(data.color_code || parsed.color_code)}, ${data.rh === 'RH' || parsed.rh === 'RH' ? 'true' : 'false'}, ${esc(data.rh || parsed.rh || 'NA')},
-            ${data.assembled_flag || parsed.assembled_flag ? 'true' : 'false'}, ${esc(normalizeCanto(data.canto_puertas))}, 
-            ${esc(data.carb2 || parsed.carb2 || 'NA')},
-            ${esc(data.line)}, ${esc(data.use_destination || parsed.use_destination)}, ${esc(data.zone_home || parsed.zone_home)}, 
-            ${esc(data.commercial_measure)}, ${esc(data.accessory_text)}, ${esc(data.designation)}, 
-            ${data.width_cm ? parseFloat(data.width_cm) : 'NULL'}, ${data.depth_cm ? parseFloat(data.depth_cm) : 'NULL'}, 
-            ${data.height_cm ? parseFloat(data.height_cm) : 'NULL'}, ${data.weight_kg ? parseFloat(data.weight_kg) : 'NULL'},
-            ${w_in}, ${d_in}, ${h_in}, ${w_lb},
-            ${data.stacking_max ? parseInt(data.stacking_max) : 'NULL'}, ${esc(parsed.familia_code)}, ${esc(parsed.ref_code)}, 
-            ${esc(parsed.version_code)}, ${esc(parsed.sku_base)}, ${esc(data.code)},
-            ${esc(data.final_name_es)}, ${esc(data.final_name_en)}, ${esc(data.status || 'ACTIVO')}, 'ready',
-            ${isPrivate ? 'true' : 'false'}, ${esc(clientName)}, ${esc(clientId)},
-            ${esc(data.bisagras || parsed.bisagras || 'NA')}, ${esc(data.special_label || parsed.special_label || 'NA')},
-            ${esc(data.barcode_text || parsed.barcode_text)}, ${esc(data.isometric_path || parsed.isometric_path)},
-            ${esc(data.isometric_asset_id)}, ${esc(data.door_color_text || 'NA')}
-        )
-        ON CONFLICT (code) DO UPDATE SET updated_at = now()
-        RETURNING *
-    `)
-
-    // Propagación de Isométrico a la misma familia y referencia
-    if (data.isometric_path && parsed.familia_code && parsed.ref_code) {
-        await dbQuery(`
-            UPDATE public.cabinet_products 
-            SET isometric_path = ${esc(data.isometric_path)}, 
-                isometric_asset_id = ${esc(data.isometric_asset_id)}
-            WHERE familia_code = ${esc(parsed.familia_code)} 
-              AND ref_code = ${esc(parsed.ref_code)}
-        `)
-    }
-
-    if (result && result.length > 0) {
-        const rows = await dbQuery(`
-            SELECT p.*, c.name_color_sap as color_name
-            FROM public.cabinet_products p
-            LEFT JOIN public.colors c ON p.color_code = c.code_4dig
-            WHERE p.id = '${result[0].id}'
-        `);
-        return rows?.[0] || result[0];
-    }
-    return null;
-}
-
-export async function updateProductAction(id: string, data: any) {
-    if (!data.code) throw new Error('Code is required')
-    const parsed = await parseProductCode(data.code, data.sap_description, data.rh_flag)
-    
-    // New Glossary Terms (Adaptive Learning) - Same as Create
-    if (data._newGlossaryTerms && Array.isArray(data._newGlossaryTerms)) {
-        for (const term of data._newGlossaryTerms) {
-            if (!term.es || !term.en) continue
-            await dbQuery(`
-                INSERT INTO public.glossary (term_es, term_en, active, priority, category)
-                VALUES (
-                    '${term.es.toUpperCase().trim().replace(/'/g, "''")}', 
-                    '${term.en.toUpperCase().trim().replace(/'/g, "''")}', 
-                    true, 
-                    ${term.category === 'RESOLVED_TYPE' ? 20 : 10},
-                    '${(term.category || 'TECHNICAL_TERM').toUpperCase()}'
-                )
-                ON CONFLICT (term_es) DO UPDATE SET 
-                    term_en = EXCLUDED.term_en,
-                    category = EXCLUDED.category
-            `)
-        }
-    }
-
-    function esc(v: any) {
-        if (v === null || v === undefined) return 'NULL'
-        if (typeof v === 'boolean') return v ? 'true' : 'false'
-        if (typeof v === 'number') return String(v)
-        return `'${String(v).replace(/'/g, "''")}'`
-    }
-
-    // Lógica de redondeo especial: <= 0.5 hacia abajo, >= 0.6 hacia arriba
-    function roundToOneDecimal(val: number | string | null) {
-        if (val === null || val === undefined || val === '') return 'NULL'
-        const num = parseFloat(String(val))
-        if (isNaN(num)) return 'NULL'
-        return (Math.floor(num * 10 + 0.4) / 10).toFixed(1)
-    }
-
-    // Conversiones con redondeo especial
-    const w_in = data.width_cm ? roundToOneDecimal(parseFloat(data.width_cm) / 2.54) : 'NULL'
-    const d_in = data.depth_cm ? roundToOneDecimal(parseFloat(data.depth_cm) / 2.54) : 'NULL'
-    const h_in = data.height_cm ? roundToOneDecimal(parseFloat(data.height_cm) / 2.54) : 'NULL'
-    const w_lb = data.weight_kg ? roundToOneDecimal(parseFloat(data.weight_kg) * 2.20462) : 'NULL'
-
-    // Normalización de Marca Propia
-    const isPrivate = !!data.private_label_flag
-    const clientName = isPrivate ? (data.private_label_client_name || 'NA') : 'NA'
-
-    // Lógica de ID automático y Flag en UPDATE
-    if (data.private_label_client_name && data.private_label_client_name !== 'NA') {
-        data.private_label_flag = true;
-        if (data.private_label_client_name === 'CHILEMAT') data.private_label_client_id = 'CL-CH01';
-        else if (data.private_label_client_name === 'D-ACQUA') data.private_label_client_id = 'CL-DA01';
-        else if (data.private_label_client_name === 'PROMART') data.private_label_client_id = 'CL-PR01';
-        else if (data.private_label_client_name === 'FERMETAL') data.private_label_client_id = 'CL-FE01';
-    } else if (data.private_label_client_name === 'NA') {
-        data.private_label_flag = false;
-        data.private_label_client_id = null;
-    }
-
-    const result = await dbQuery(`
-        UPDATE public.cabinet_products SET
-            code=${esc(data.code)}, sap_description=${esc(data.sap_description)}, product_type=${esc(data.product_type || parsed.product_type)},
-            cabinet_name=${esc(data.cabinet_name)}, color_code=${esc(data.color_code || parsed.color_code)},
-            rh_flag=${data.rh === 'RH' || parsed.rh === 'RH' ? 'true' : 'false'}, rh=${esc(data.rh || parsed.rh || 'NA')}, assembled_flag=${data.assembled_flag ? 'true' : 'false'},
-            canto_puertas=${esc(normalizeCanto(data.canto_puertas))}, carb2=${esc(data.carb2)}, line=${esc(data.line || parsed.line)},
-            use_destination=${esc(data.use_destination)}, zone_home=${esc(data.zone_home || parsed.zone_home)}, commercial_measure=${esc(data.commercial_measure)},
-            accessory_text=${esc(data.accessory_text)}, designation=${esc(data.designation)},
-            width_cm=${data.width_cm ? parseFloat(data.width_cm) : 'NULL'}, depth_cm=${data.depth_cm ? parseFloat(data.depth_cm) : 'NULL'}, 
-            height_cm=${data.height_cm ? parseFloat(data.height_cm) : 'NULL'}, weight_kg=${data.weight_kg ? parseFloat(data.weight_kg) : 'NULL'},
-            width_in=${w_in}, depth_in=${d_in}, height_in=${h_in}, weight_lb=${w_lb},
-            stacking_max=${data.stacking_max ? parseInt(data.stacking_max) : 'NULL'},
-            familia_code=${esc(parsed.familia_code)}, ref_code=${esc(parsed.ref_code)},
-            version_code=${esc(parsed.version_code)}, sku_base=${esc(parsed.sku_base)},
-            final_name_es=${esc(data.final_name_es)}, final_name_en=${esc(data.final_name_en)},
-            status=${esc(data.status || 'ACTIVO')},
-            special_label=${esc(data.special_label || 'NA')},
-            private_label_flag=${isPrivate ? 'true' : 'false'},
-            private_label_client_name=${esc(clientName)},
-            private_label_client_id=${esc(data.private_label_client_id)},
-            isometric_path=${esc(data.isometric_path)},
-            isometric_asset_id=${esc(data.isometric_asset_id)},
-            door_color_text=${esc(data.door_color_text || 'NA')},
-            validation_status='ready',
-            updated_at=now()
-        WHERE id='${id}'
-        RETURNING *
-    `)
-
-    // Propagación de Isométrico a la misma familia y referencia
-    if (data.isometric_path && parsed.familia_code && parsed.ref_code) {
-        await dbQuery(`
-            UPDATE public.cabinet_products 
-            SET isometric_path = ${esc(data.isometric_path)}, 
-                isometric_asset_id = ${esc(data.isometric_asset_id)}
-            WHERE familia_code = ${esc(parsed.familia_code)} 
-              AND ref_code = ${esc(parsed.ref_code)}
-        `)
-    }
-
-    if (result && result.length > 0) {
-        const rows = await dbQuery(`
-            SELECT p.*, c.name_color_sap as color_name
-            FROM public.cabinet_products p
-            LEFT JOIN public.colors c ON p.color_code = c.code_4dig
-            WHERE p.id = '${result[0].id}'
-        `);
-        return rows?.[0] || result[0];
-    }
-    return null;
->>>>>>> origin/Oswaldo_cambios
 }
 
 export async function massUpdateProducts(ids: string[], updateData: any) {
@@ -587,27 +340,17 @@ export async function deleteProducts(ids: string[]) {
 export async function updateFamilyAction(code: string, data: any) {
     if (!code) throw new Error("Family code is required")
     await dbQuery(`
-<<<<<<< HEAD
         UPDATE public.families SET
             family_name=${data.name ? `'${data.name.replace(/'/g, "''")}'` : 'NULL'},
-=======
-        UPDATE public.familias SET
-            name=${data.name ? `'${data.name.replace(/'/g, "''")}'` : 'NULL'},
->>>>>>> origin/Oswaldo_cambios
             product_type=${data.product_type ? `'${data.product_type}'` : 'NULL'},
             use_destination=${data.use_destination ? `'${data.use_destination}'` : 'NULL'},
             zone_home=${data.zone_home ? `'${data.zone_home}'` : 'NULL'},
             allowed_lines=${formatPGArray(data.allowed_lines)},
             rh_default=${data.rh_default ? 'true' : 'false'},
             assembled_default=${data.assembled_default ? 'true' : 'false'},
-<<<<<<< HEAD
             manufacturing_process=${data.manufacturing_process ? `'${data.manufacturing_process}'` : "'FABRICADO'"},
             updated_at=now()
         WHERE family_code='${code.replace(/'/g, "''")}'
-=======
-            updated_at=now()
-        WHERE code='${code.replace(/'/g, "''")}'
->>>>>>> origin/Oswaldo_cambios
     `)
     revalidatePath('/families')
     redirect('/families')
@@ -615,11 +358,7 @@ export async function updateFamilyAction(code: string, data: any) {
 
 export async function deleteFamilyAction(code: string) {
     if (!code) throw new Error("Family code is required")
-<<<<<<< HEAD
     await dbQuery(`DELETE FROM public.families WHERE family_code='${code.replace(/'/g, "''")}'`)
-=======
-    await dbQuery(`DELETE FROM public.familias WHERE code='${code.replace(/'/g, "''")}'`)
->>>>>>> origin/Oswaldo_cambios
     revalidatePath('/families')
 }
 
@@ -681,20 +420,9 @@ async function sleep(ms: number) {
 export async function translateProductsAction(ids?: string[], mode: 'missing' | 'repair' | 'all' = 'missing') {
     try {
         let query = `
-<<<<<<< HEAD
             SELECT *
             FROM public.v_ui_generate_list 
             WHERE final_complete_name_es IS NOT NULL 
-=======
-            SELECT 
-                id, code, product_type, designation, cabinet_name, line,
-                use_destination, commercial_measure, accessory_text, canto_puertas,
-                door_color_text, rh, carb2, assembled_flag, special_label,
-                private_label_client_name, armado_con_lvm,
-                final_name_es, final_name_en, validation_status
-            FROM public.cabinet_products 
-            WHERE final_name_es IS NOT NULL 
->>>>>>> origin/Oswaldo_cambios
         `
         
         if (ids && ids.length > 0) {
@@ -702,16 +430,11 @@ export async function translateProductsAction(ids?: string[], mode: 'missing' | 
             query += ` AND id IN (${idList})`
         }
 
-<<<<<<< HEAD
         const rows = await dbQuery(query)
         if (!rows || rows.length === 0) return { success: true, count: 0, message: "No se encontraron productos para procesar." }
 
         const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
         const allProducts = rows.map(mapRowToComposedProduct)
-=======
-        const allProducts = await dbQuery(query)
-        if (!allProducts || allProducts.length === 0) return { success: true, count: 0, message: "No se encontraron productos para procesar." }
->>>>>>> origin/Oswaldo_cambios
 
         // Filter products based on mode
         const toTranslate = allProducts.filter((p: any) => {
@@ -786,18 +509,13 @@ export async function translateMissingProducts() {
 export async function getUniquePropertiesAction() {
     const lines = await dbQuery(`
         SELECT DISTINCT line 
-<<<<<<< HEAD
         FROM public.product_references 
-=======
-        FROM public.cabinet_products 
->>>>>>> origin/Oswaldo_cambios
         WHERE line IS NOT NULL 
           AND line != '' 
           AND line NOT IN (SELECT name_color_sap FROM public.colors)
         ORDER BY line ASC
     `) || []
     
-<<<<<<< HEAD
     const designations = await dbQuery(`SELECT DISTINCT designation FROM public.product_references WHERE designation IS NOT NULL AND designation != '' ORDER BY designation ASC`) || []
     const productTypes = await dbQuery(`SELECT DISTINCT product_type FROM public.families WHERE product_type IS NOT NULL AND product_type != '' ORDER BY product_type ASC`) || []
     const useDestinations = await dbQuery(`SELECT DISTINCT use_destination FROM public.families WHERE use_destination IS NOT NULL AND use_destination != '' ORDER BY use_destination ASC`) || []
@@ -812,22 +530,6 @@ export async function getUniquePropertiesAction() {
     const zoneHomes = await dbQuery(`SELECT DISTINCT zone_home FROM public.families WHERE zone_home IS NOT NULL AND zone_home != '' ORDER BY zone_home ASC`) || []
     const rhValues = await dbQuery(`SELECT DISTINCT ref_attrs->>'rh' as rh FROM public.product_references WHERE ref_attrs->>'rh' IS NOT NULL AND ref_attrs->>'rh' != '' ORDER BY ref_attrs->>'rh' ASC`) || []
     const cantoValues = await dbQuery(`SELECT DISTINCT ref_attrs->>'canto_puertas' as canto_puertas FROM public.product_references WHERE ref_attrs->>'canto_puertas' IS NOT NULL AND ref_attrs->>'canto_puertas' != '' ORDER BY ref_attrs->>'canto_puertas' ASC`) || []
-=======
-    const designations = await dbQuery(`SELECT DISTINCT designation FROM public.cabinet_products WHERE designation IS NOT NULL AND designation != '' ORDER BY designation ASC`) || []
-    const productTypes = await dbQuery(`SELECT DISTINCT product_type FROM public.cabinet_products WHERE product_type IS NOT NULL AND product_type != '' ORDER BY product_type ASC`) || []
-    const useDestinations = await dbQuery(`SELECT DISTINCT use_destination FROM public.cabinet_products WHERE use_destination IS NOT NULL AND use_destination != '' ORDER BY use_destination ASC`) || []
-    
-    // Nuevas variables unicas
-    const cabinetNames = await dbQuery(`SELECT DISTINCT cabinet_name FROM public.cabinet_products WHERE cabinet_name IS NOT NULL AND cabinet_name != '' ORDER BY cabinet_name ASC`) || []
-    const commercialMeasures = await dbQuery(`SELECT DISTINCT commercial_measure FROM public.cabinet_products WHERE commercial_measure IS NOT NULL AND commercial_measure != '' ORDER BY commercial_measure ASC`) || []
-    const accessoryTexts = await dbQuery(`SELECT DISTINCT accessory_text FROM public.cabinet_products WHERE accessory_text IS NOT NULL AND accessory_text != '' ORDER BY accessory_text ASC`) || []
-    const bisagrasValues = await dbQuery(`SELECT DISTINCT bisagras FROM public.cabinet_products WHERE bisagras IS NOT NULL AND bisagras != '' ORDER BY bisagras ASC`) || []
-    const carb2Values = await dbQuery(`SELECT DISTINCT carb2 FROM public.cabinet_products WHERE carb2 IS NOT NULL AND carb2 != '' ORDER BY carb2 ASC`) || []
-    const specialLabels = await dbQuery(`SELECT DISTINCT special_label FROM public.cabinet_products WHERE special_label IS NOT NULL AND special_label != '' ORDER BY special_label ASC`) || []
-    const zoneHomes = await dbQuery(`SELECT DISTINCT zone_home FROM public.cabinet_products WHERE zone_home IS NOT NULL AND zone_home != '' ORDER BY zone_home ASC`) || []
-    const rhValues = await dbQuery(`SELECT DISTINCT rh FROM public.cabinet_products WHERE rh IS NOT NULL AND rh != '' ORDER BY rh ASC`) || []
-    const cantoValues = await dbQuery(`SELECT DISTINCT canto_puertas FROM public.cabinet_products WHERE canto_puertas IS NOT NULL AND canto_puertas != '' ORDER BY canto_puertas ASC`) || []
->>>>>>> origin/Oswaldo_cambios
     
     const colors = await dbQuery(`SELECT code_4dig as code_color, name_color_sap FROM public.colors ORDER BY code_4dig ASC`) || []
 
@@ -856,24 +558,14 @@ export async function checkProductExistsAction(code?: string, sapDesc?: string) 
     let sapDescSafe = sapDesc ? String(sapDesc).trim().replace(/'/g, "''") : ""
 
     let conditions = []
-<<<<<<< HEAD
     if (codeSafe) conditions.push(`sku_complete = '${codeSafe}'`)
     if (sapDescSafe) conditions.push(`sap_description_original = '${sapDescSafe}'`)
-=======
-    if (codeSafe) conditions.push(`code = '${codeSafe}'`)
-    if (sapDescSafe) conditions.push(`sap_description = '${sapDescSafe}'`)
->>>>>>> origin/Oswaldo_cambios
 
     if (conditions.length === 0) return null
 
     const res = await dbQuery(`
-<<<<<<< HEAD
         SELECT id, sku_complete as code, sap_description_original as sap_description 
         FROM public.product_skus 
-=======
-        SELECT id, code, sap_description 
-        FROM public.cabinet_products 
->>>>>>> origin/Oswaldo_cambios
         WHERE ${conditions.join(' OR ')}
         LIMIT 1
     `)
@@ -889,30 +581,10 @@ export async function getClientsAction() {
         console.error("Error fetching from public.clients:", e)
     }
     
-<<<<<<< HEAD
-=======
-    let fromProducts: any[] = []
-    try {
-        fromProducts = await dbQuery(`
-            SELECT DISTINCT private_label_client_name as name 
-            FROM public.cabinet_products 
-            WHERE private_label_client_name IS NOT NULL 
-              AND private_label_client_name != '' 
-              AND private_label_client_name != 'NA'
-        `) || []
-    } catch (e) {
-        console.error("Error fetching from products:", e)
-    }
-    
->>>>>>> origin/Oswaldo_cambios
     const defaults = ["CHILEMAT", "D-ACQUA", "PROMART", "FERMETAL"].map(n => ({ id: n, name: n, logo_id: null }))
     
     const combined = [
         ...fromClients, 
-<<<<<<< HEAD
-=======
-        ...(fromProducts || []).map((p: any) => ({ id: p.name, name: p.name, logo_asset_id: null })),
->>>>>>> origin/Oswaldo_cambios
         ...defaults
     ]
     

@@ -30,7 +30,6 @@ export default async function GeneratePage({
 
     // --- Cargar productos filtrados ---
     let products: any[] = []
-<<<<<<< HEAD
     let totalCount = 0
     if (hasFilter) {
         const filtersObj = {
@@ -43,21 +42,6 @@ export default async function GeneratePage({
         const result = await composeProductsByFilters(filtersObj, 200)
         products = result.products
         totalCount = result.totalCount
-=======
-    if (hasFilter) {
-        const conditions: string[] = []
-        if (f.length > 0) conditions.push(`familia_code IN (${f.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
-        if (rDecoded.length > 0) conditions.push(`ref_code IN (${rDecoded.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
-        if (mDecoded.length > 0) conditions.push(`commercial_measure IN (${mDecoded.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
-        else if (m.length > 0) conditions.push(`commercial_measure IN (${m.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
-        const where = conditions.length > 0 ? `WHERE status = 'ACTIVO' AND ${conditions.join(' AND ')}` : "WHERE status = 'ACTIVO'"
-        products = await dbQuery(
-            `SELECT p.*, c.name_color_sap as color_name
-             FROM public.cabinet_products p
-             LEFT JOIN public.colors c ON p.color_code = c.code_4dig
-             ${where} ORDER BY p.code ASC LIMIT 200`
-        ) || []
->>>>>>> origin/Oswaldo_cambios
     }
 
     // --- Filtros centralizados (src/lib/data/filters.ts) ---
@@ -141,10 +125,7 @@ export default async function GeneratePage({
                 initialTemplateId={templateId}
                 hasFilter={effectiveHasFilter}
                 isExternalSource={isDataSourceExternal}
-<<<<<<< HEAD
                 totalCount={totalCount}
-=======
->>>>>>> origin/Oswaldo_cambios
             />
         </div>
     )

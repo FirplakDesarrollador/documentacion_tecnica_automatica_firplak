@@ -6,11 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import Link from 'next/link'
-<<<<<<< HEAD
-import { AiAssistantPanel } from '@/components/ai/AiAssistantPanel'
-=======
 // AiAssistantPanel removed - component does not exist yet
->>>>>>> origin/Oswaldo_cambios
 import { updateProductAction } from '../actions'
 import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
@@ -294,14 +290,7 @@ export function EditProductForm({ initialData }: { initialData: any }) {
             </div>
 
             <div className="md:col-span-1">
-<<<<<<< HEAD
-                <AiAssistantPanel
-                    sapDescription={formData.sap_description}
-                    onApplySuggestions={handleApplySuggestions}
-                />
-=======
                 {/* AiAssistantPanel - TODO: implement component */}
->>>>>>> origin/Oswaldo_cambios
             </div>
         </div>
     )

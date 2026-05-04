@@ -45,7 +45,6 @@ export default async function ProductsPage({
     let products: any[] = []
     if (hasFilter) {
         const conditions: string[] = []
-<<<<<<< HEAD
         if (f.length > 0) conditions.push(`family_code IN (${f.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
         if (r.length > 0) conditions.push(`reference_code IN (${r.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
         if (m.length > 0) conditions.push(`commercial_measure IN (${m.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
@@ -65,18 +64,6 @@ export default async function ProductsPage({
             color_name: p.name_color_sap,
             validation_status: p.validation_status
         }))
-=======
-        if (f.length > 0) conditions.push(`familia_code IN (${f.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
-        if (r.length > 0) conditions.push(`ref_code IN (${r.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
-        if (m.length > 0) conditions.push(`commercial_measure IN (${m.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
-        const where = conditions.length > 0 ? `WHERE status = 'ACTIVO' AND ${conditions.join(' AND ')}` : "WHERE status = 'ACTIVO'"
-        products = await dbQuery(
-            `SELECT p.*, c.name_color_sap as color_name
-             FROM public.cabinet_products p
-             LEFT JOIN public.colors c ON p.color_code = c.code_4dig
-             ${where} ORDER BY p.updated_at DESC LIMIT 100`
-        ) || []
->>>>>>> origin/Oswaldo_cambios
     }
 
     // --- Filtros centralizados (src/lib/data/filters.ts) ---

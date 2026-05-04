@@ -17,26 +17,15 @@ export async function getMeasuresByFamilyAndRefAction(familyCodes: string[], ref
     
     let whereParts = []
     if (familyCodes && familyCodes.length > 0) {
-<<<<<<< HEAD
         whereParts.push(`family_code IN (${familyCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
     }
     if (referenceCodes && referenceCodes.length > 0) {
         whereParts.push(`reference_code IN (${referenceCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
-=======
-        whereParts.push(`familia_code IN (${familyCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
-    }
-    if (referenceCodes && referenceCodes.length > 0) {
-        whereParts.push(`ref_code IN (${referenceCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
->>>>>>> origin/Oswaldo_cambios
     }
 
     const measureRecords = await dbQuery(`
         SELECT DISTINCT commercial_measure 
-<<<<<<< HEAD
         FROM public.v_ui_generate_list 
-=======
-        FROM public.cabinet_products 
->>>>>>> origin/Oswaldo_cambios
         WHERE commercial_measure IS NOT NULL AND (${whereParts.join(' OR ')})
         ORDER BY commercial_measure ASC
     `) || []
@@ -47,7 +36,6 @@ export async function getMeasuresByFamilyAndRefAction(familyCodes: string[], ref
     }))
 }
 
-<<<<<<< HEAD
 export async function getVersionsByFamilyAndRefAction(familyCodes: string[], referenceCodes: string[]) {
     if ((!familyCodes || familyCodes.length === 0) && (!referenceCodes || referenceCodes.length === 0)) return []
     
@@ -74,8 +62,6 @@ export async function getVersionsByFamilyAndRefAction(familyCodes: string[], ref
     }))
 }
 
-=======
->>>>>>> origin/Oswaldo_cambios
 export async function getAssetsByTypeAction(type: string) {
     return await dbQuery(`SELECT * FROM public.assets WHERE type = '${type}' ORDER BY created_at DESC`) || []
 }
@@ -84,16 +70,10 @@ export async function associateIsometricAction(data: {
     assetId: string,
     familyCodes: string[],
     referenceCodes: string[],
-<<<<<<< HEAD
     measureCodes?: string[],
     versionCodes?: string[]
 }) {
     const { assetId, familyCodes, referenceCodes, measureCodes = [], versionCodes = [] } = data
-=======
-    measureCodes?: string[]
-}) {
-    const { assetId, familyCodes, referenceCodes, measureCodes = [] } = data
->>>>>>> origin/Oswaldo_cambios
     
     if (!assetId) throw new Error("Asset ID is required")
     
@@ -101,7 +81,6 @@ export async function associateIsometricAction(data: {
     if (!asset || asset.length === 0) throw new Error("Asset not found")
     const filePath = asset[0].file_path
 
-<<<<<<< HEAD
     // --- 1. Identify Target References ---
     let refIds: string[] = []
     
@@ -122,30 +101,10 @@ export async function associateIsometricAction(data: {
         }
         const refs = await dbQuery(query)
         refIds = refs.map((r: any) => r.id)
-=======
-    let whereParts = []
-    
-    if (referenceCodes.length > 0) {
-        // Los valores de referencia pueden ser puros "ref_code" o compuestos "ref_code|||commercial_measure"
-        const specificPairs = referenceCodes.map(v => {
-            const [rc, cm] = v.split('|||')
-            if (cm) {
-                return `(ref_code = '${rc.replace(/'/g, "''")}' AND commercial_measure = '${cm.replace(/'/g, "''")}')`
-            }
-            return `ref_code = '${rc.replace(/'/g, "''")}'`
-        })
-        whereParts.push(`(${specificPairs.join(' OR ')})`)
-    } else if (familyCodes.length > 0) {
-        whereParts.push(`familia_code IN (${familyCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
-        if (measureCodes && measureCodes.length > 0) {
-            whereParts.push(`commercial_measure IN (${measureCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
-        }
->>>>>>> origin/Oswaldo_cambios
     } else {
         throw new Error("Target selection (Family or Reference) is required")
     }
 
-<<<<<<< HEAD
     if (refIds.length === 0) throw new Error("No references found for the selection")
 
     // --- 2. Perform Update based on Granularity ---
@@ -176,17 +135,7 @@ export async function associateIsometricAction(data: {
             WHERE id IN ${refsFilter}
         `)
     }
-=======
-    const whereClause = `WHERE ${whereParts.join(' AND ')}`
 
-    await dbQuery(`
-        UPDATE public.cabinet_products 
-        SET isometric_asset_id = '${assetId}', 
-            isometric_path = '${filePath}',
-            updated_at = now()
-        ${whereClause}
-    `)
->>>>>>> origin/Oswaldo_cambios
 
     revalidatePath('/assets')
     revalidatePath('/products')
@@ -214,7 +163,6 @@ export async function deleteAssetAction(assetId: string) {
         throw new Error("No puedes eliminar un recurso del sistema por defecto.")
     }
 
-<<<<<<< HEAD
     // Protección V6.1: Impedir borrado de assets en uso por referencias o versiones
     const safeId = assetId.replace(/'/g, "''")
 
@@ -249,9 +197,6 @@ export async function deleteAssetAction(assetId: string) {
     }
 
     await dbQuery(`DELETE FROM public.assets WHERE id = '${safeId}'`)
-=======
-    await dbQuery(`DELETE FROM public.assets WHERE id = '${assetId}'`)
->>>>>>> origin/Oswaldo_cambios
     revalidatePath('/assets')
     return { success: true }
 }
@@ -269,7 +214,6 @@ export async function updateAssetAction(assetId: string, data: { name?: string, 
         WHERE id = '${assetId}'
     `)
 
-<<<<<<< HEAD
     // Propagate new file_path to V6.1 tables only
     if (data.file_path) {
         const newPath = data.file_path.replace(/'/g, "''")
@@ -290,24 +234,10 @@ export async function updateAssetAction(assetId: string, data: { name?: string, 
                 updated_at = now()
             WHERE version_attrs->>'isometric_asset_id' = '${assetId}'
         `)
-=======
-    // Propagate new file_path to all products that reference this asset as isometric
-    // This prevents drift between the asset record and the product's cached snapshot path
-    if (data.file_path) {
-        await dbQuery(`
-            UPDATE public.cabinet_products
-            SET isometric_path = '${data.file_path.replace(/'/g, "''")}',
-                updated_at = now()
-            WHERE isometric_asset_id = '${assetId}'
-        `)
->>>>>>> origin/Oswaldo_cambios
     }
 
     revalidatePath('/assets')
     revalidatePath('/products')
     return { success: true }
 }
-<<<<<<< HEAD
 
-=======
->>>>>>> origin/Oswaldo_cambios

@@ -32,7 +32,6 @@ export async function translateEnglishBatchAction(
 
     try {
         // 1. Fetch products via PostgREST (no Management API limits)
-<<<<<<< HEAD
         const { data: rows, error: fetchError } = await supabase
             .from('v_ui_generate_list')
             .select('*')
@@ -45,25 +44,6 @@ export async function translateEnglishBatchAction(
 
         const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
         const products = rows.map(mapRowToComposedProduct)
-
-=======
-        const { data: products, error: fetchError } = await supabase
-            .from('cabinet_products')
-            .select(`
-                id, code, product_type, designation, cabinet_name, line,
-                use_destination, commercial_measure, accessory_text, canto_puertas,
-                door_color_text, rh, carb2, assembled_flag, special_label,
-                private_label_client_name, armado_con_lvm,
-                final_name_es, final_name_en, validation_status
-            `)
-            .in('id', ids)
-
-        if (fetchError) throw new Error(`Fetch Error: ${fetchError.message}`)
-        if (!products || products.length === 0) {
-            return { success: true, data: createEmptyResult() }
-        }
-
->>>>>>> origin/Oswaldo_cambios
         const result = createEmptyResult()
         const missingTermsTracker = new Map<string, Set<string>>()
         const updatesToApply: { id: string, final_name_en: string, validation_status: string }[] = []

@@ -1,8 +1,5 @@
 import { dbQuery } from '@/lib/supabase'
-<<<<<<< HEAD
 import { composeProductBySku } from './product_composer'
-=======
->>>>>>> origin/Oswaldo_cambios
 
 export interface ParsedCodeResult {
     familia_code: string | null
@@ -34,13 +31,10 @@ export interface ParsedCodeResult {
     barcode_text: string | null
     status: string | null
     color_name?: string | null
-<<<<<<< HEAD
     isometric_from_different_version?: boolean
-=======
     allowed_lines?: string[]
     isometric_asset_id?: string | null
     final_name_es?: string | null
->>>>>>> origin/Oswaldo_cambios
 }
 
 export async function parseProductCode(
@@ -94,11 +88,8 @@ export async function parseProductCode(
         result.color_code = parts[3]
         result.sku_base = parts.slice(0, 3).join('-')
 
-<<<<<<< HEAD
         // --- NEW PRODUCT FALLBACK ---
         // If not found in the new schema, we fallback to hierarchical lookup and family rules.
-=======
->>>>>>> origin/Oswaldo_cambios
         let lookupFamilia = result.familia_code
         if (lookupFamilia.toUpperCase().startsWith('V')) {
             lookupFamilia = lookupFamilia.substring(1)
@@ -106,11 +97,7 @@ export async function parseProductCode(
 
         try {
             const rows = await dbQuery(
-<<<<<<< HEAD
                 `SELECT family_code, product_type, use_destination, zone_home, assembled_default, rh_default, allowed_lines FROM public.families WHERE family_code = '${lookupFamilia.replace(/'/g, "''")}' LIMIT 1`
-=======
-                `SELECT code, product_type, use_destination, zone_home, assembled_default, rh_default, allowed_lines FROM public.familias WHERE code = '${lookupFamilia.replace(/'/g, "''")}' LIMIT 1`
->>>>>>> origin/Oswaldo_cambios
             )
             if (rows && rows.length > 0) {
                 const familia = rows[0]
@@ -122,11 +109,7 @@ export async function parseProductCode(
                 result.allowed_lines = familia.allowed_lines || []
             }
         } catch (e) {
-<<<<<<< HEAD
             console.error('codeParser: error querying family fallback', e)
-=======
-            console.error('codeParser: error querying familia', e)
->>>>>>> origin/Oswaldo_cambios
         }
 
         if (result.version_code?.toUpperCase() === 'MRH') {
@@ -136,7 +119,6 @@ export async function parseProductCode(
         // --- Detección de Versión desde Diccionario ---
         if (result.version_code) {
             try {
-<<<<<<< HEAD
                 const verRows = await dbQuery(`SELECT version_code, version_description, automatic_version_rules FROM public.global_version_rules WHERE version_code = '${result.version_code.toUpperCase().replace(/'/g, "''")}' LIMIT 1`);
                 if (verRows && verRows.length > 0) {
                     const ver = verRows[0];
@@ -248,77 +230,6 @@ export async function parseProductCode(
             }
         } catch (e) {
             console.error('codeParser: error in hierarchical lookup V6.1', e);
-=======
-                const verRows = await dbQuery(`SELECT code, description, automatic_rules FROM public.versions WHERE code = '${result.version_code.toUpperCase().replace(/'/g, "''")}' LIMIT 1`);
-                if (verRows && verRows.length > 0) {
-                    const ver = verRows[0];
-                    const rules = ver.automatic_rules || {};
-                    
-                    if (rules.rh) result.rh = rules.rh;
-                    if (rules.client_name) result.private_label_client_name = rules.client_name;
-                    
-                    // Guardamos la descripción para usarla en accessory_text si sapDescription existe
-                    (result as any)._version_description = ver.description;
-                }
-            } catch (e) {
-                console.error('codeParser: error querying version dictionary', e);
-            }
-        }
-
-        // ─── BÚSQUEDA JERÁRQUICA DE HISTORIAL (SMART LOOKUP V2) ───
-        try {
-            // Intentar primero por SKU BASE (Misma Familia-Ref-Version)
-            let historicalProduct = null;
-            const skuBaseRows = await dbQuery(`
-                SELECT * FROM public.cabinet_products 
-                WHERE sku_base = '${result.sku_base.replace(/'/g, "''")}'
-                AND width_cm IS NOT NULL
-                ORDER BY created_at DESC LIMIT 1
-            `);
-
-            if (skuBaseRows && skuBaseRows.length > 0) {
-                historicalProduct = skuBaseRows[0];
-            } else {
-                // Fallback: Por Familia + Referencia (Mismo mueble, distinta versión)
-                const famRefRows = await dbQuery(`
-                    SELECT * FROM public.cabinet_products 
-                    WHERE familia_code = '${result.familia_code.replace(/'/g, "''")}'
-                    AND ref_code = '${result.ref_code.replace(/'/g, "''")}'
-                    AND width_cm IS NOT NULL
-                    ORDER BY created_at DESC LIMIT 1
-                `);
-                if (famRefRows && famRefRows.length > 0) {
-                    historicalProduct = famRefRows[0];
-                }
-            }
-
-            if (historicalProduct) {
-                const h = historicalProduct;
-                result.cabinet_name = h.cabinet_name || result.cabinet_name;
-                result.line = h.line || result.line;
-                result.designation = h.designation || result.designation;
-                result.commercial_measure = h.commercial_measure || result.commercial_measure;
-                result.width_cm = h.width_cm ? parseFloat(h.width_cm) : result.width_cm;
-                result.depth_cm = h.depth_cm ? parseFloat(h.depth_cm) : result.depth_cm;
-                result.height_cm = h.height_cm ? parseFloat(h.height_cm) : result.height_cm;
-                result.weight_kg = h.weight_kg ? parseFloat(h.weight_kg) : result.weight_kg;
-                result.product_type = h.product_type || result.product_type;
-                result.use_destination = h.use_destination || result.use_destination;
-                result.zone_home = h.zone_home || result.zone_home;
-                result.accessory_text = h.accessory_text || result.accessory_text;
-                result.bisagras = h.bisagras || result.bisagras;
-                result.carb2 = h.carb2 || result.carb2;
-                result.special_label = h.special_label || result.special_label;
-                result.canto_puertas = h.canto_puertas || result.canto_puertas;
-                result.barcode_text = h.barcode_text || result.barcode_text;
-                result.isometric_path = h.isometric_path || result.isometric_path;
-                result.isometric_asset_id = h.isometric_asset_id || result.isometric_asset_id;
-                result.rh = h.rh || result.rh;
-                result.assembled_flag = h.assembled_flag ?? result.assembled_flag;
-            }
-        } catch (e) {
-            console.error('codeParser: error in hierarchical lookup', e);
->>>>>>> origin/Oswaldo_cambios
         }
 
         // --- Recuperación automática de nombre de color si no se tiene ---
@@ -348,7 +259,6 @@ export async function parseProductCode(
         }
 
         // Detección de Medida Comercial (Prioridad sobre historial si detectada)
-<<<<<<< HEAD
         // Soporta: 150X55, 150 X 55, 150.5X55, 150,5X55
         const measureMatch = descUpper.match(/\b(\d+(?:[.,]\d+)?)\s*[Xx]\s*(\d+(?:[.,]\d+)?)\b/);
         if (measureMatch) {
@@ -376,11 +286,6 @@ export async function parseProductCode(
         }
         if (technicalSpec) {
             result.special_label = technicalSpec;
-=======
-        const measureMatch = descUpper.match(/\b(\d+X\d+)\b/);
-        if (measureMatch) {
-            result.commercial_measure = measureMatch[1];
->>>>>>> origin/Oswaldo_cambios
         }
 
         // Detección de Cantos Especiales
@@ -392,20 +297,9 @@ export async function parseProductCode(
                 result.canto_puertas = 'CANTO 2 MM';
             } else {
                 cantoText = `CANTO ${mm} MM`;
-<<<<<<< HEAD
                 foundAccessories.push(cantoText);
             }
         }
-
-=======
-            }
-        }
-
-        // Detección de Accesorios
-        let foundAccessories = []
-        if (cantoText) foundAccessories.push(cantoText)
-
->>>>>>> origin/Oswaldo_cambios
         // Agregar descripción de la versión desde el diccionario si existe
         const versionDesc = (result as any)._version_description;
         if (versionDesc && versionDesc !== result.version_code) {
@@ -517,13 +411,9 @@ export async function parseProductCode(
             result.carb2 = 'SÍ';
         }
         if (descUpper.includes('FRENTES 18MM')) {
-<<<<<<< HEAD
             result.special_label = (result.special_label && result.special_label !== 'NA') 
                 ? `${result.special_label} FRENTES 18MM` 
                 : 'FRENTES 18MM';
-=======
-            result.special_label = 'FRENTES 18MM';
->>>>>>> origin/Oswaldo_cambios
         }
     }
 

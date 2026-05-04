@@ -18,10 +18,7 @@ import {
     getFamiliesAction, 
     getReferencesByFamilyAction, 
     getMeasuresByFamilyAndRefAction,
-<<<<<<< HEAD
     getVersionsByFamilyAndRefAction,
-=======
->>>>>>> origin/Oswaldo_cambios
     getAssetsByTypeAction,
     associateIsometricAction 
 } from "@/app/assets/actions"
@@ -37,14 +34,9 @@ interface Props {
     initialFamilies?: string[]
     initialReferences?: string[]
     initialMeasures?: string[]
-<<<<<<< HEAD
     initialVersions?: string[]
     onAssociationComplete?: (asset: any) => void
     trigger?: React.ReactElement
-=======
-    onAssociationComplete?: (asset: any) => void
-    trigger?: React.ReactNode
->>>>>>> origin/Oswaldo_cambios
 }
 
 const EMPTY_ARRAY: string[] = []
@@ -53,10 +45,7 @@ export function IsometricAssociationDialog({
     initialFamilies = EMPTY_ARRAY, 
     initialReferences = EMPTY_ARRAY, 
     initialMeasures = EMPTY_ARRAY,
-<<<<<<< HEAD
     initialVersions = EMPTY_ARRAY,
-=======
->>>>>>> origin/Oswaldo_cambios
     onAssociationComplete,
     trigger
 }: Props) {
@@ -68,20 +57,14 @@ export function IsometricAssociationDialog({
     const [families, setFamilies] = React.useState<Option[]>([])
     const [references, setReferences] = React.useState<Option[]>([])
     const [measures, setMeasures] = React.useState<Option[]>([])
-<<<<<<< HEAD
     const [versions, setVersions] = React.useState<Option[]>([])
-=======
->>>>>>> origin/Oswaldo_cambios
     const [assets, setAssets] = React.useState<any[]>([])
 
     // Selection state
     const [selectedFamilies, setSelectedFamilies] = React.useState<string[]>([])
     const [selectedReferences, setSelectedReferences] = React.useState<string[]>([])
     const [selectedMeasures, setSelectedMeasures] = React.useState<string[]>([])
-<<<<<<< HEAD
     const [selectedVersions, setSelectedVersions] = React.useState<string[]>([])
-=======
->>>>>>> origin/Oswaldo_cambios
     const [selectedAssetId, setSelectedAssetId] = React.useState<string>("")
 
     const loadInitialData = async () => {
@@ -107,26 +90,17 @@ export function IsometricAssociationDialog({
             setSelectedFamilies(initialFamilies)
             setSelectedReferences(initialReferences)
             setSelectedMeasures(initialMeasures)
-<<<<<<< HEAD
             setSelectedVersions(initialVersions)
-=======
->>>>>>> origin/Oswaldo_cambios
         } else {
             // Reset state on close
             setSelectedFamilies([])
             setSelectedReferences([])
             setSelectedMeasures([])
-<<<<<<< HEAD
             setSelectedVersions([])
             setSelectedAssetId("")
             setReferences([])
             setMeasures([])
             setVersions([])
-=======
-            setSelectedAssetId("")
-            setReferences([])
-            setMeasures([])
->>>>>>> origin/Oswaldo_cambios
         }
     }, [open, initialFamilies, initialReferences, initialMeasures])
 
@@ -146,7 +120,6 @@ export function IsometricAssociationDialog({
 
     // Load measures when families or references change
     React.useEffect(() => {
-<<<<<<< HEAD
         const loadMeasuresAndVersions = async () => {
             if (selectedFamilies.length > 0 || selectedReferences.length > 0) {
                 const [meas, vers] = await Promise.all([
@@ -163,18 +136,6 @@ export function IsometricAssociationDialog({
             }
         }
         loadMeasuresAndVersions()
-=======
-        const loadMeasures = async () => {
-            if (selectedFamilies.length > 0 || selectedReferences.length > 0) {
-                const meas = await getMeasuresByFamilyAndRefAction(selectedFamilies, selectedReferences)
-                setMeasures(meas)
-            } else {
-                setMeasures([])
-                setSelectedMeasures([])
-            }
-        }
-        loadMeasures()
->>>>>>> origin/Oswaldo_cambios
     }, [selectedFamilies, selectedReferences])
 
     const fileInputRef = React.useRef<HTMLInputElement>(null)
@@ -230,12 +191,8 @@ export function IsometricAssociationDialog({
                 assetId: selectedAssetId,
                 familyCodes: selectedFamilies,
                 referenceCodes: selectedReferences,
-<<<<<<< HEAD
                 measureCodes: selectedMeasures,
                 versionCodes: selectedVersions
-=======
-                measureCodes: selectedMeasures
->>>>>>> origin/Oswaldo_cambios
             })
             toast.success("Isométrico asociado correctamente")
             
@@ -254,24 +211,14 @@ export function IsometricAssociationDialog({
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
-<<<<<<< HEAD
             <DialogTrigger 
                 render={trigger || (
-=======
-            <DialogTrigger>
-                {trigger || (
->>>>>>> origin/Oswaldo_cambios
                     <Button variant="outline" className="gap-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 shadow-sm transition-all h-10 px-4">
                         <Box className="h-4 w-4" />
                         Isométricos
                     </Button>
-<<<<<<< HEAD
                 )} 
             />
-=======
-                )}
-            </DialogTrigger>
->>>>>>> origin/Oswaldo_cambios
             <DialogContent className="max-w-md sm:max-w-xl p-0 bg-white border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
                 <DialogHeader className="p-6 pb-2 shrink-0">
                     <DialogTitle className="text-xl font-bold text-slate-900 flex items-center gap-2">
@@ -391,8 +338,6 @@ export function IsometricAssociationDialog({
                                     emptyMessage="Selecciona familias primero."
                                 />
                             </div>
-<<<<<<< HEAD
-
                             <div className={cn("space-y-2 transition-opacity", selectedReferences.length === 0 && "opacity-50 pointer-events-none")}>
                                 <Label className="text-slate-700 font-medium">Versión(es) <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">(Opcional: Por defecto aplica a todas)</span></Label>
                                 <MultiSelectSearchField 
@@ -404,8 +349,6 @@ export function IsometricAssociationDialog({
                                     emptyMessage="Selecciona referencias primero."
                                 />
                             </div>
-=======
->>>>>>> origin/Oswaldo_cambios
                         </div>
                     </div>
 
