@@ -10,7 +10,6 @@ export async function GET(
 
   try {
     const rows = await dbQuery(`
-<<<<<<< HEAD
         SELECT 
             family_code as code, 
             family_name as name, 
@@ -24,9 +23,6 @@ export async function GET(
         FROM public.families 
         WHERE family_code = '${code.replace(/'/g, "''")}' 
         LIMIT 1
-=======
-        SELECT * FROM public.familias WHERE code = '${code.replace(/'/g, "''")}' LIMIT 1
->>>>>>> origin/Oswaldo_cambios
     `)
 
     if (!rows || rows.length === 0) {

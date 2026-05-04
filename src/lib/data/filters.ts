@@ -37,18 +37,6 @@ export interface ReferenceFilterOption {
  */
 export async function getFamilyFilters(): Promise<FamilyFilterOption[]> {
     const records = await dbQuery(
-<<<<<<< HEAD
-        `SELECT 
-            f.family_code as familia_code, 
-            f.family_name
-         FROM public.families f
-         WHERE EXISTS (
-             SELECT 1 FROM public.product_references r 
-             WHERE r.family_code = f.family_code 
-             AND r.status = 'ACTIVO'
-         )
-         ORDER BY f.family_code ASC`
-=======
         `SELECT familia_code, MAX(family_name) as family_name
          FROM (
              SELECT
@@ -68,7 +56,6 @@ export async function getFamilyFilters(): Promise<FamilyFilterOption[]> {
          ) sub
          GROUP BY familia_code
          ORDER BY familia_code ASC`
->>>>>>> origin/Oswaldo_cambios
     ) || []
 
     return records.map((fam: any) => ({
@@ -95,26 +82,11 @@ export async function getReferenceFilters(
 
     const records = await dbQuery(
         `SELECT 
-<<<<<<< HEAD
-            reference_code as ref_code, 
-            commercial_measure, 
-            designation,
-            product_name as cabinet_name,
-            special_label
-         FROM public.product_references
-         WHERE status = 'ACTIVO'
-           AND reference_code IS NOT NULL
-           AND family_code IN (${fFilter})
-         ORDER BY reference_code, commercial_measure`
-    ) || []
-
-    return records.map((rec: any) => {
-        // Formato solicitado: Número de referencia, Designación, nombre, medida comercial, special_label
-=======
             ref_code, 
             commercial_measure, 
             MAX(designation) as designation,
-            MAX(cabinet_name) as cabinet_name
+            MAX(cabinet_name) as cabinet_name,
+            MAX(special_label) as special_label
          FROM public.cabinet_products
          WHERE status = 'ACTIVO'
            AND ref_code IS NOT NULL
@@ -124,18 +96,13 @@ export async function getReferenceFilters(
     ) || []
 
     return records.map((rec: any) => {
-        // Formato solicitado: Número de referencia, Designación, nombre, medida comercial
->>>>>>> origin/Oswaldo_cambios
+        // Formato solicitado: Número de referencia, Designación, nombre, medida comercial, special_label
         const parts = [
             rec.ref_code,
             rec.designation,
             rec.cabinet_name,
-<<<<<<< HEAD
             rec.commercial_measure,
             rec.special_label && rec.special_label.toUpperCase() !== 'NA' ? rec.special_label : null
-=======
-            rec.commercial_measure
->>>>>>> origin/Oswaldo_cambios
         ].filter(Boolean) // Eliminamos nulos o vacíos
 
         return {
