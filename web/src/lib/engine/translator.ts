@@ -398,10 +398,13 @@ function translateField(
             const isSingleLetter = /^[A-Z]$/.test(tok)
             const isInternal = !!INTERNAL_GLOSSARY[tok]
 
-            // Tokens seguros: números puros, números con unidad basica, o strings de medida
+            // Tokens seguros: números puros, números con unidad basica, o strings de medida (SOLO PUNTO DECIMAL)
             const isSafe = /^\d+(?:\.\d+)?(MM|IN|CM)?$/.test(tok) || /^(\d+(?:\.\d+)?)\s*[Xx]\s*(\d+(?:\.\d+)?)$/.test(tok)
             
-            if (!isSafe && !isInternal && !isSingleLetter && !missingTerms.includes(tok)) {
+            // Detectar formatos inválidos (comas o separadores de miles) para no enviarlos a missingTerms
+            const isInvalidFormat = /^\d+(?:[.,]\d{3})*(?:,\d+)?(MM|IN|CM)?$/.test(tok) || /^(\d+(?:[.,]\d+)?)\s*[Xx]\s*(\d+(?:[.,]\d+)?)$/.test(tok)
+            
+            if (!isSafe && !isInternal && !isSingleLetter && !isInvalidFormat && !missingTerms.includes(tok)) {
                 // Si la frase completa ya se reportó, evitamos ruido con palabras sueltas 
                 // a menos que sean muy importantes o la frase sea demasiado larga.
                 if (fieldConfig.fallback_strategy === 'translate') {

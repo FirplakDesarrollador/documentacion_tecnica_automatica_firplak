@@ -25,7 +25,7 @@ export async function createTemplate(data: {
     }
 }
 
-export async function duplicateTemplate(id: string, newName: string, dataSource: string) {
+export async function duplicateTemplate(id: string, newName: string, dataSource: string, width_mm: number, height_mm: number) {
     try {
         const rows = await dbQuery(`SELECT * FROM public.plantillas_doc_tec WHERE id = '${id}' LIMIT 1`)
         if (!rows || rows.length === 0) return { success: false, error: 'Plantilla original no encontrada' }
@@ -34,6 +34,9 @@ export async function duplicateTemplate(id: string, newName: string, dataSource:
         
         // Escape elements_json safely. Original is already a stringified JSON.
         const safeJson = original.elements_json ? original.elements_json.replace(/'/g, "''") : '[]'
+        const finalWidth = width_mm || original.width_mm
+        const finalHeight = height_mm || original.height_mm
+        const orientation = finalWidth >= finalHeight ? 'horizontal' : 'vertical'
 
         const inserted = await dbQuery(`
             INSERT INTO public.plantillas_doc_tec (
@@ -41,9 +44,9 @@ export async function duplicateTemplate(id: string, newName: string, dataSource:
             )
             VALUES (
                 '${newName.replace(/'/g, "''")}', 
-                ${original.width_mm}, 
-                ${original.height_mm}, 
-                '${original.orientation}', 
+                ${finalWidth}, 
+                ${finalHeight}, 
+                '${orientation}', 
                 '${original.document_type}', 
                 '${safeJson}', 
                 true, 
@@ -62,8 +65,10 @@ export async function duplicateTemplate(id: string, newName: string, dataSource:
 }
 
 export async function updateTemplate(id: string, data: {
-    elements_json: string
+    elements_json?: string
     name?: string
+    width_mm?: number
+    height_mm?: number
     export_formats?: string
     export_filename_format?: string
     data_source?: string
@@ -73,15 +78,27 @@ export async function updateTemplate(id: string, data: {
         const formatsClause = data.export_formats ? `, export_formats='${data.export_formats.replace(/'/g, "''")}' ` : ''
         const filenameClause = data.export_filename_format ? `, export_filename_format='${data.export_filename_format.replace(/'/g, "''")}' ` : ''
         const sourceClause = data.data_source ? `, data_source='${data.data_source.replace(/'/g, "''")}' ` : ''
+        const widthClause = data.width_mm ? `, width_mm=${data.width_mm} ` : ''
+        const heightClause = data.height_mm ? `, height_mm=${data.height_mm} ` : ''
         
+        let orientationClause = ''
+        if (data.width_mm && data.height_mm) {
+            orientationClause = `, orientation='${data.width_mm >= data.height_mm ? 'horizontal' : 'vertical'}'`
+        }
+
+        const elementsClause = data.elements_json ? `elements_json='${data.elements_json.replace(/'/g, "''")}', ` : ''
+
         await dbQuery(`
             UPDATE public.plantillas_doc_tec SET
-                elements_json='${data.elements_json.replace(/'/g, "''")}' 
+                ${elementsClause}
+                updated_at=now()
                 ${nameClause} 
+                ${widthClause}
+                ${heightClause}
+                ${orientationClause}
                 ${formatsClause} 
                 ${filenameClause} 
-                ${sourceClause},
-                updated_at=now()
+                ${sourceClause}
             WHERE id='${id}'
         `)
 
@@ -113,17 +130,15 @@ export async function getPreviewProduct(dataSource: string = 'core_firplak') {
     }
 
     try {
-        const products = await dbQuery(`
-            SELECT p.*, c.name_color_sap as color_name
-            FROM public.cabinet_products p
-            LEFT JOIN public.colors c ON p.color_code = c.code_4dig
-            WHERE p.final_name_es IS NOT NULL
-              AND p.status != 'INACTIVO'
-            ORDER BY p.updated_at DESC
+        const rows = await dbQuery(`
+            SELECT *
+            FROM public.v_ui_generate_list
+            WHERE final_complete_name_es IS NOT NULL
+              AND status != 'INACTIVO'
             LIMIT 50
         `)
 
-        if (!products || products.length === 0) {
+        if (!rows || rows.length === 0) {
             return {
                 code: 'MOCK-1234',
                 final_name_es: 'Mueble de Baño con Espejo y Lavamanos Blanco Premium',
@@ -131,6 +146,9 @@ export async function getPreviewProduct(dataSource: string = 'core_firplak') {
                 color_code: 'BLAN'
             }
         }
+
+        const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
+        const products = rows.map(mapRowToComposedProduct)
 
         let longest = products[0]
         for (const p of products) {
@@ -142,8 +160,6 @@ export async function getPreviewProduct(dataSource: string = 'core_firplak') {
         return {
             ...longest,
             name_color_sap: longest.color_name || null,
-            color_name: longest.color_name || null,
-            color_code: longest.color_code || null,
             color: longest.color_name || longest.color_code || 'Sin Color'
         }
     } catch (e) {
@@ -184,43 +200,41 @@ export async function getRandomPreviewProduct(excludeCode?: string, dataSource: 
 
     try {
         const excludeClause = excludeCode
-            ? `AND p.code != '${excludeCode.replace(/'/g, "''")}'`
+            ? `AND sku_complete != '${excludeCode.replace(/'/g, "''")}'`
             : ''
 
-        const products = await dbQuery(`
-            SELECT p.*, c.name_color_sap as color_name
-            FROM public.cabinet_products p
-            LEFT JOIN public.colors c ON p.color_code = c.code_4dig
-            WHERE p.final_name_es IS NOT NULL
-              AND p.status != 'INACTIVO'
+        const rows = await dbQuery(`
+            SELECT *
+            FROM public.v_ui_generate_list
+            WHERE final_complete_name_es IS NOT NULL
+              AND status != 'INACTIVO'
             ${excludeClause}
             ORDER BY RANDOM()
             LIMIT 1
         `)
 
-        let p = products?.[0]
+        const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
+        let p = rows && rows.length > 0 ? mapRowToComposedProduct(rows[0]) : undefined
 
         if (!p) {
             // Fallback: retry without the exclusion (edge case: only 1 product in DB)
-            const fallback = await dbQuery(`
-                SELECT p.*, c.name_color_sap as color_name
-                FROM public.cabinet_products p
-                LEFT JOIN public.colors c ON p.color_code = c.code_4dig
-                WHERE p.final_name_es IS NOT NULL
-                  AND p.status != 'INACTIVO'
+            const fallbackRows = await dbQuery(`
+                SELECT *
+                FROM public.v_ui_generate_list
+                WHERE final_complete_name_es IS NOT NULL
+                  AND status != 'INACTIVO'
                 ORDER BY RANDOM()
                 LIMIT 1
             `)
-            if (!fallback || fallback.length === 0) return null
-            p = fallback[0]
+            p = fallbackRows && fallbackRows.length > 0 ? mapRowToComposedProduct(fallbackRows[0]) : undefined
         }
 
-        return { 
-            ...p, 
+        if (!p) return null
+
+        return {
+            ...p,
             name_color_sap: p.color_name || null,
-            color_name: p.color_name || null,
-            color_code: p.color_code || null,
-            color: p.color_name || p.color_code || 'Sin Color' 
+            color: p.color_name || p.color_code || 'Sin Color'
         }
     } catch (e) {
         return null
@@ -261,12 +275,13 @@ export async function validateExportFilenameLength(pattern: string, dataSource: 
             `)
             products = rows.map(r => typeof r.data_json === 'string' ? JSON.parse(r.data_json) : r.data_json)
         } else {
-            products = await dbQuery(`
-                SELECT p.*, c.name_color_sap as color_name
-                FROM public.cabinet_products p
-                LEFT JOIN public.colors c ON p.color_code = c.code_4dig
-                WHERE p.status != 'INACTIVO'
+            const rows = await dbQuery(`
+                SELECT *
+                FROM public.v_ui_generate_list
+                WHERE status != 'INACTIVO'
             `)
+            const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
+            products = rows.map(mapRowToComposedProduct)
         }
 
         if (!products || products.length === 0) return { success: true, count: 0 }

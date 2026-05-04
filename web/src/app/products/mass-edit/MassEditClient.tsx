@@ -67,9 +67,10 @@ import { MultiSelectSearchField } from '@/components/ui-custom/MultiSelectSearch
 interface MassEditClientProps {
     products: Product[]
     families: { value: string, label: string }[]
+    readOnly?: boolean
 }
 
-export function MassEditClient({ products: initialProducts, families }: MassEditClientProps) {
+export function MassEditClient({ products: initialProducts, families, readOnly = false }: MassEditClientProps) {
     const [products, setProducts] = useState<Product[]>(initialProducts)
     const [filterFamily, setFilterFamily] = useState<string[]>([])
     const [filterRef, setFilterRef] = useState<string[]>([])
@@ -517,6 +518,16 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
             </div>
 
             {/* Panel superior de controles (Acciones Globales y Filtros) */}
+            {readOnly && (
+                <div className="bg-blue-50 border-l-4 border-blue-400 p-4 rounded-lg flex items-center gap-3 mb-2 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300">
+                    <AlertCircle className="h-5 w-5 text-blue-500" />
+                    <div>
+                        <p className="text-sm font-bold text-blue-800 font-outfit uppercase">Modo Consulta</p>
+                        <p className="text-[11px] text-blue-700 font-medium">La edición masiva y traducción están deshabilitadas temporalmente en esta fase de migración.</p>
+                    </div>
+                </div>
+            )}
+
             <div className="flex flex-col lg:flex-row gap-4">
                 {/* Acciones Globales (Izquierda, más espacio) */}
                 <div className="flex-1 p-4 border rounded-md bg-blue-50 border-blue-200 flex flex-col justify-between">
@@ -531,7 +542,7 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                             </Badge>
                         </div>
 
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3 mb-4">
+                        <div className={cn("grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3 mb-4", readOnly && "opacity-60 pointer-events-none")}>
                             <div className="flex items-center space-x-2">
                                 <select
                                     className="flex h-7 w-full rounded-md border border-input bg-background px-2 py-0 text-[10px] shadow-sm transition-colors cursor-pointer"
@@ -627,10 +638,10 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                             </div>
                         </div>
 
-                        <div className="flex gap-2">
+                        <div className={cn("flex gap-2", readOnly && "opacity-60 pointer-events-none")}>
                             <Button
                                 onClick={handleApplyBatchUpdate}
-                                disabled={selectedIds.size === 0}
+                                disabled={selectedIds.size === 0 || readOnly}
                                 size="sm"
                                 className="flex-1 h-8 bg-blue-600 hover:bg-blue-700 text-white"
                             >
@@ -641,7 +652,7 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                             <Button
                                 variant="destructive"
                                 onClick={() => startDelete(Array.from(selectedIds))}
-                                disabled={selectedIds.size === 0}
+                                disabled={selectedIds.size === 0 || readOnly}
                                 size="sm"
                                 className="h-8"
                             >
@@ -665,7 +676,7 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                             <Button
                                 size="sm"
                                 onClick={handleApplyNamingRules}
-                                disabled={selectedIds.size === 0 || isNaming}
+                                disabled={selectedIds.size === 0 || isNaming || readOnly}
                                 title="Aplica las reglas de nombrado activas a los productos seleccionados"
                                 className="w-full text-[10px] h-7 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
                             >
@@ -718,7 +729,7 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                             <Button
                                 size="sm"
                                 onClick={() => handleBatchTranslate('repair')}
-                                disabled={selectedIds.size === 0 || isTranslating}
+                                disabled={selectedIds.size === 0 || isTranslating || readOnly}
                                 title="Traduce los seleccionados usando el glosario"
                                 className="w-full text-[10px] h-7 bg-blue-600 hover:bg-blue-700 text-white font-bold"
                             >
@@ -899,150 +910,152 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                 </div>
             </div>
 
-                {/* Tabla de resultados */}
-                <div className="w-full border rounded-md bg-white overflow-hidden flex flex-col h-[65vh]">
-                    <div className="overflow-auto flex-1 custom-scrollbar">
-                        <Table className="min-w-[1400px]">
-                            <TableHeader className="sticky top-0 bg-white z-10 shadow-sm">
+            {/* Tabla de resultados */}
+            <div className="w-full border rounded-md bg-white overflow-hidden flex flex-col h-[65vh]">
+                <div className="overflow-auto flex-1 custom-scrollbar">
+                    <Table className="min-w-[1400px]">
+                        <TableHeader className="sticky top-0 bg-white z-10 shadow-sm">
+                            <TableRow>
+                                <TableHead className="w-12 text-center sticky left-0 bg-white z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                                    <Checkbox
+                                        disabled={filteredProducts.length === 0}
+                                        checked={filteredProducts.length > 0 && selectedIds.size === filteredProducts.length}
+                                        onCheckedChange={(c) => handleSelectAll(!!c)}
+                                    />
+                                </TableHead>
+                                <TableHead className="sticky left-12 bg-white z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Código</TableHead>
+                                <TableHead className="min-w-[200px]">Descripción SAP</TableHead>
+                                <TableHead className="min-w-[200px]">Nombre Final (ES)</TableHead>
+                                <TableHead className="min-w-[200px]">Nombre EN (US)</TableHead>
+                                <TableHead>Estado</TableHead>
+                                <TableHead>Uso</TableHead>
+                                <TableHead>Zona</TableHead>
+                                <TableHead>Línea</TableHead>
+                                <TableHead className="whitespace-nowrap">Color</TableHead>
+                                <TableHead className="whitespace-nowrap">WxDxH (cm)</TableHead>
+                                <TableHead>Medida / Ref</TableHead>
+                                <TableHead className="text-center">Canto</TableHead>
+                                <TableHead className="text-center">Material (RH)</TableHead>
+                                <TableHead className="text-center">Armado</TableHead>
+                                <TableHead className="text-right">Acciones</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {filterFamily.length === 0 && filterRef.length === 0 ? (
                                 <TableRow>
-                                    <TableHead className="w-12 text-center sticky left-0 bg-white z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                                        <Checkbox
-                                            disabled={filteredProducts.length === 0}
-                                            checked={filteredProducts.length > 0 && selectedIds.size === filteredProducts.length}
-                                            onCheckedChange={(c) => handleSelectAll(!!c)}
-                                        />
-                                    </TableHead>
-                                    <TableHead className="sticky left-12 bg-white z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Código</TableHead>
-                                    <TableHead className="min-w-[200px]">Descripción SAP</TableHead>
-                                    <TableHead className="min-w-[200px]">Nombre Final (ES)</TableHead>
-                                    <TableHead className="min-w-[200px]">Nombre EN (US)</TableHead>
-                                    <TableHead>Estado</TableHead>
-                                    <TableHead>Uso</TableHead>
-                                    <TableHead>Zona</TableHead>
-                                    <TableHead>Línea</TableHead>
-                                    <TableHead className="whitespace-nowrap">Color</TableHead>
-                                    <TableHead className="whitespace-nowrap">WxDxH (cm)</TableHead>
-                                    <TableHead>Medida / Ref</TableHead>
-                                    <TableHead className="text-center">Canto</TableHead>
-                                    <TableHead className="text-center">Material (RH)</TableHead>
-                                    <TableHead className="text-center">Armado</TableHead>
-                                    <TableHead className="text-right">Acciones</TableHead>
+                                    <TableCell colSpan={12} className="h-[400px] text-center">
+                                        <div className="flex flex-col items-center justify-center max-w-sm mx-auto space-y-4">
+                                            <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-2">
+                                                <Search className="w-8 h-8 text-slate-400" />
+                                            </div>
+                                            <h3 className="text-lg font-semibold text-slate-900">Empieza tu verificación</h3>
+                                            <p className="text-sm text-slate-500 text-center leading-relaxed">
+                                                Selecciona una <b>Familia</b> para filtrar el catálogo y realizar ediciones masivas de forma segura.
+                                            </p>
+                                        </div>
+                                    </TableCell>
                                 </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {filterFamily.length === 0 && filterRef.length === 0 ? (
-                                    <TableRow>
-                                        <TableCell colSpan={12} className="h-[400px] text-center">
-                                            <div className="flex flex-col items-center justify-center max-w-sm mx-auto space-y-4">
-                                                <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-2">
-                                                    <Search className="w-8 h-8 text-slate-400" />
-                                                </div>
-                                                <h3 className="text-lg font-semibold text-slate-900">Empieza tu verificación</h3>
-                                                <p className="text-sm text-slate-500 text-center leading-relaxed">
-                                                    Selecciona una <b>Familia</b> para filtrar el catálogo y realizar ediciones masivas de forma segura.
-                                                </p>
+                            ) : filteredProducts.length === 0 ? (
+                                <TableRow>
+                                    <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">
+                                        No se encontraron productos con estos filtros.
+                                    </TableCell>
+                                </TableRow>
+                            ) : (
+                                filteredProducts.map(p => (
+                                    <TableRow key={p.id} className={selectedIds.has(p.id) ? 'bg-blue-50/50' : ''}>
+                                        <TableCell className="text-center sticky left-0 bg-white z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                                            <Checkbox
+                                                disabled={readOnly}
+                                                checked={selectedIds.has(p.id)}
+                                                onCheckedChange={(c) => handleSelectOne(p.id, !!c)}
+                                            />
+                                        </TableCell>
+                                        <TableCell className="font-medium text-xs font-mono sticky left-12 bg-white z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">{p.code}</TableCell>
+                                        <TableCell className="text-xs max-w-[250px] truncate" title={p.sap_description || ''}>
+                                            {p.sap_description || '-'}
+                                        </TableCell>
+                                        <TableCell className="text-xs font-medium max-w-[250px] truncate" title={p.final_name_es || ''}>
+                                            {p.final_name_es || '-'}
+                                        </TableCell>
+                                        <TableCell className="text-[10px] font-medium max-w-[250px] truncate" title={p.final_name_en || ''}>
+                                            {p.final_name_en || <span className="text-slate-400 italic">Pendiente</span>}
+                                        </TableCell>
+                                        <TableCell>
+                                            <Badge
+                                                variant={
+                                                    p.validation_status === 'ready'
+                                                        ? 'default'
+                                                        : p.validation_status === 'needs_review'
+                                                            ? 'destructive'
+                                                            : 'secondary'
+                                                }
+                                            >
+                                                {p.validation_status === 'incomplete' ? 'Incompleto' :
+                                                    p.validation_status === 'needs_review' ? 'Revisar' : 'Listo'}
+                                            </Badge>
+                                        </TableCell>
+                                        <TableCell>
+                                            {p.designation ? (
+                                                <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-100 text-[10px] font-medium uppercase">
+                                                    {p.designation}
+                                                </Badge>
+                                            ) : (
+                                                <span className="text-red-500 text-[10px] font-bold italic flex items-center gap-1">
+                                                    <AlertTriangle className="w-3 h-3" /> Sin Uso
+                                                </span>
+                                            )}
+                                        </TableCell>
+                                        <TableCell>
+                                            <Badge
+                                                variant="outline"
+                                                className={cn(
+                                                    "text-[10px] font-medium",
+                                                    p.zone_home === 'BAÑO' ? 'bg-blue-50 text-blue-700 border-blue-100' :
+                                                    p.zone_home === 'COCINA' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
+                                                    p.zone_home === 'ZONA DE ROPA' ? 'bg-purple-50 text-purple-700 border-purple-100' :
+                                                    'bg-slate-50 text-slate-600 border-slate-100'
+                                                )}
+                                            >
+                                                {p.zone_home || '-'}
+                                            </Badge>
+                                        </TableCell>
+                                        <TableCell className="text-xs font-medium">
+                                            {p.line || '-'}
+                                        </TableCell>
+                                        <TableCell className="text-xs">
+                                            {p.color_code || '-'}
+                                        </TableCell>
+                                        <TableCell className="text-xs whitespace-nowrap">
+                                            {p.width_cm || p.depth_cm || p.height_cm ? `${p.width_cm||'-'} x ${p.depth_cm||'-'} x ${p.height_cm||'-'}` : '-'}
+                                        </TableCell>
+                                        <TableCell className="text-sm">
+                                            <div className="flex flex-col">
+                                                <span>{p.commercial_measure || '-'}</span>
+                                                <span className="text-xs text-muted-foreground">{p.ref_code || '-'}</span>
                                             </div>
                                         </TableCell>
-                                    </TableRow>
-                                ) : filteredProducts.length === 0 ? (
-                                    <TableRow>
-                                        <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">
-                                            No se encontraron productos con estos filtros.
+                                        <TableCell className="text-center">
+                                            {p.canto_puertas ? <Badge variant="outline" className={cn("text-[10px]", p.canto_puertas === 'CANTO 2 MM' ? "bg-emerald-50 text-emerald-700" : "bg-slate-50 text-slate-700")}>{p.canto_puertas.replace('CANTO ', '')}</Badge> : <span className="text-muted-foreground text-[10px]">-</span>}
                                         </TableCell>
-                                    </TableRow>
-                                ) : (
-                                    filteredProducts.map(p => (
-                                        <TableRow key={p.id} className={selectedIds.has(p.id) ? 'bg-blue-50/50' : ''}>
-                                            <TableCell className="text-center sticky left-0 bg-white z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                                                <Checkbox
-                                                    checked={selectedIds.has(p.id)}
-                                                    onCheckedChange={(c) => handleSelectOne(p.id, !!c)}
-                                                />
-                                            </TableCell>
-                                            <TableCell className="font-medium text-xs font-mono sticky left-12 bg-white z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">{p.code}</TableCell>
-                                            <TableCell className="text-xs max-w-[250px] truncate" title={p.sap_description || ''}>
-                                                {p.sap_description || '-'}
-                                            </TableCell>
-                                            <TableCell className="text-xs font-medium max-w-[250px] truncate" title={p.final_name_es || ''}>
-                                                {p.final_name_es || '-'}
-                                            </TableCell>
-                                            <TableCell className="text-[10px] font-medium max-w-[250px] truncate" title={p.final_name_en || ''}>
-                                                {p.final_name_en || <span className="text-slate-400 italic">Pendiente</span>}
-                                            </TableCell>
-                                            <TableCell>
-                                                <Badge
-                                                    variant={
-                                                        p.validation_status === 'ready'
-                                                            ? 'default'
-                                                            : p.validation_status === 'needs_review'
-                                                                ? 'destructive'
-                                                                : 'secondary'
-                                                    }
-                                                >
-                                                    {p.validation_status === 'incomplete' ? 'Incompleto' :
-                                                        p.validation_status === 'needs_review' ? 'Revisar' : 'Listo'}
-                                                </Badge>
-                                            </TableCell>
-                                            <TableCell>
-                                                {p.designation ? (
-                                                    <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-100 text-[10px] font-medium uppercase">
-                                                        {p.designation}
-                                                    </Badge>
-                                                ) : (
-                                                    <span className="text-red-500 text-[10px] font-bold italic flex items-center gap-1">
-                                                        <AlertTriangle className="w-3 h-3" /> Sin Uso
-                                                    </span>
-                                                )}
-                                            </TableCell>
-                                            <TableCell>
-                                                <Badge
-                                                    variant="outline"
-                                                    className={cn(
-                                                        "text-[10px] font-medium",
-                                                        p.zone_home === 'BAÑO' ? 'bg-blue-50 text-blue-700 border-blue-100' :
-                                                        p.zone_home === 'COCINA' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
-                                                        p.zone_home === 'ZONA DE ROPA' ? 'bg-purple-50 text-purple-700 border-purple-100' :
-                                                        'bg-slate-50 text-slate-600 border-slate-100'
-                                                    )}
-                                                >
-                                                    {p.zone_home || '-'}
-                                                </Badge>
-                                            </TableCell>
-                                            <TableCell className="text-xs font-medium">
-                                                {p.line || '-'}
-                                            </TableCell>
-                                            <TableCell className="text-xs">
-                                                {p.color_code || '-'}
-                                            </TableCell>
-                                            <TableCell className="text-xs whitespace-nowrap">
-                                                {p.width_cm || p.depth_cm || p.height_cm ? `${p.width_cm||'-'} x ${p.depth_cm||'-'} x ${p.height_cm||'-'}` : '-'}
-                                            </TableCell>
-                                            <TableCell className="text-sm">
-                                                <div className="flex flex-col">
-                                                    <span>{p.commercial_measure || '-'}</span>
-                                                    <span className="text-xs text-muted-foreground">{p.ref_code || '-'}</span>
-                                                </div>
-                                            </TableCell>
-                                            <TableCell className="text-center">
-                                                {p.canto_puertas ? <Badge variant="outline" className={cn("text-[10px]", p.canto_puertas === 'CANTO 2 MM' ? "bg-emerald-50 text-emerald-700" : "bg-slate-50 text-slate-700")}>{p.canto_puertas.replace('CANTO ', '')}</Badge> : <span className="text-muted-foreground text-[10px]">-</span>}
-                                            </TableCell>
-                                            <TableCell className="text-center">
-                                                <Badge variant="outline" className={cn("text-[10px] font-bold", p.status === 'ACTIVO' ? "bg-green-50 text-green-700 border-green-100" : "bg-red-50 text-red-700 border-red-100")}>
-                                                    {p.status}
-                                                </Badge>
-                                            </TableCell>
-                                            <TableCell className="text-center">
-                                                <Badge variant="outline" className={cn("text-[10px]", p.special_label && p.special_label !== 'NA' ? "bg-amber-50 text-amber-700 border-amber-100" : "text-slate-400 border-slate-100")}>
-                                                    {p.special_label || 'NA'}
-                                                </Badge>
-                                            </TableCell>
-                                            <TableCell className="text-center">
-                                                {p.rh ? <Badge variant="outline" className={cn("text-[10px]", p.rh === 'RH' ? "bg-blue-50 text-blue-700" : "bg-slate-50 text-slate-700")}>{p.rh}</Badge> : <span className="text-muted-foreground text-[10px]">-</span>}
-                                            </TableCell>
-                                            <TableCell className="text-center">
-                                                {p.assembled_flag ? <Badge variant="outline" className="bg-purple-50 text-purple-700">Sí</Badge> : <span className="text-muted-foreground text-xs">-</span>}
-                                            </TableCell>
-                                            <TableCell className="text-right">
+                                        <TableCell className="text-center">
+                                            <Badge variant="outline" className={cn("text-[10px] font-bold", p.status === 'ACTIVO' ? "bg-green-50 text-green-700 border-green-100" : "bg-red-50 text-red-700 border-red-100")}>
+                                                {p.status}
+                                            </Badge>
+                                        </TableCell>
+                                        <TableCell className="text-center">
+                                            <Badge variant="outline" className={cn("text-[10px]", p.special_label && p.special_label !== 'NA' ? "bg-amber-50 text-amber-700 border-amber-100" : "text-slate-400 border-slate-100")}>
+                                                {p.special_label || 'NA'}
+                                            </Badge>
+                                        </TableCell>
+                                        <TableCell className="text-center">
+                                            {p.rh ? <Badge variant="outline" className={cn("text-[10px]", p.rh === 'RH' ? "bg-blue-50 text-blue-700" : "bg-slate-50 text-slate-700")}>{p.rh}</Badge> : <span className="text-muted-foreground text-[10px]">-</span>}
+                                        </TableCell>
+                                        <TableCell className="text-center">
+                                            {p.assembled_flag ? <Badge variant="outline" className="bg-purple-50 text-purple-700">Sí</Badge> : <span className="text-muted-foreground text-xs">-</span>}
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                            {!readOnly && (
                                                 <Button
                                                     variant="ghost"
                                                     size="icon"
@@ -1051,21 +1064,24 @@ export function MassEditClient({ products: initialProducts, families }: MassEdit
                                                 >
                                                     <Trash2 className="h-4 w-4" />
                                                 </Button>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))
-                                )}
-                            </TableBody>
-                        </Table>
-                    </div>
-                    <div className="p-2 bg-muted/30 border-t text-xs text-muted-foreground text-right">
-                        Mostrando {filteredProducts.length} productos
-                    </div>
+                                            )}
+                                            {readOnly && (
+                                                <span className="text-[10px] text-slate-400 font-medium italic">Bloqueado</span>
+                                            )}
+                                        </TableCell>
+                                    </TableRow>
+                                ))
+                            )}
+                        </TableBody>
+                    </Table>
                 </div>
+                <div className="p-2 bg-muted/30 border-t text-xs text-muted-foreground text-right">
+                    Mostrando {filteredProducts.length} productos
+                </div>
+            </div>
 
 
             <Dialog open={deleteOpen} onOpenChange={(val) => !val && cancelDelete()}>
-                {/* ... existing delete dialog ... */}
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">

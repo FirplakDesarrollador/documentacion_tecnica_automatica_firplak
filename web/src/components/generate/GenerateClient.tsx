@@ -33,6 +33,7 @@ interface GenerateClientProps {
     hasFilter: boolean
     rules: any[]
     isExternalSource?: boolean
+    totalCount?: number
 }
 
 export function GenerateClient({
@@ -44,6 +45,7 @@ export function GenerateClient({
     hasFilter,
     rules,
     isExternalSource = false,
+    totalCount = 0,
 }: GenerateClientProps) {
     const router = useRouter()
     const searchParams = useSearchParams()
@@ -236,15 +238,22 @@ export function GenerateClient({
 
             {/* Selected template info */}
             {selectedTemplate && (
-                <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500 px-1">
-                    <span>Plantilla activa:</span>
-                    <Badge variant="outline" className="font-medium text-indigo-600 border-indigo-200 bg-indigo-50">
-                        {selectedTemplate.name}
-                    </Badge>
-                    <span className="text-slate-400">·</span>
-                    <span>{selectedTemplate.width_mm}×{selectedTemplate.height_mm}mm</span>
-                    <span className="text-slate-400">·</span>
-                    <span className="capitalize">{selectedTemplate.document_type}</span>
+                <div className="flex flex-wrap items-center justify-between gap-4 text-sm px-1">
+                    <div className="flex flex-wrap items-center gap-2 text-slate-500">
+                        <span>Plantilla activa:</span>
+                        <Badge variant="outline" className="font-medium text-indigo-600 border-indigo-200 bg-indigo-50">
+                            {selectedTemplate.name}
+                        </Badge>
+                        <span className="text-slate-400">·</span>
+                        <span>{selectedTemplate.width_mm}×{selectedTemplate.height_mm}mm</span>
+                        <span className="text-slate-400">·</span>
+                        <span className="capitalize">{selectedTemplate.document_type}</span>
+                    </div>
+                    {hasFilter && products.length > 0 && (
+                        <div className="text-slate-600 text-xs font-medium bg-slate-100 px-2 py-1 rounded-md">
+                            Mostrando {products.length} de {totalCount} productos encontrados
+                        </div>
+                    )}
                 </div>
             )}
 

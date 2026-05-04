@@ -20,11 +20,16 @@ export interface ExceptionSummary {
  */
 export async function getFullValidationSweep(): Promise<ExceptionSummary> {
     // 1. Fetch dependencies
-    const products = await dbQuery(`
-        SELECT * FROM public.cabinet_products 
+    const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
+    
+    const rows = await dbQuery(`
+        SELECT *
+        FROM public.v_ui_generate_list 
         WHERE status IS NULL OR status != 'INACTIVO'
-        ORDER BY updated_at DESC
+        ORDER BY sku_complete ASC
     `) || []
+
+    const products = rows.map(mapRowToComposedProduct)
     
     const rules = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true`) || []
     

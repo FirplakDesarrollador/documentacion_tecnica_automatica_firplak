@@ -1,4 +1,5 @@
 import { dbQuery } from '@/lib/supabase'
+import { composeProductBySku } from './product_composer'
 
 export interface ParsedCodeResult {
     familia_code: string | null
@@ -30,6 +31,7 @@ export interface ParsedCodeResult {
     barcode_text: string | null
     status: string | null
     color_name?: string | null
+    isometric_from_different_version?: boolean
 }
 
 export async function parseProductCode(
@@ -83,6 +85,8 @@ export async function parseProductCode(
         result.color_code = parts[3]
         result.sku_base = parts.slice(0, 3).join('-')
 
+        // --- NEW PRODUCT FALLBACK ---
+        // If not found in the new schema, we fallback to hierarchical lookup and family rules.
         let lookupFamilia = result.familia_code
         if (lookupFamilia.toUpperCase().startsWith('V')) {
             lookupFamilia = lookupFamilia.substring(1)
@@ -90,7 +94,7 @@ export async function parseProductCode(
 
         try {
             const rows = await dbQuery(
-                `SELECT code, product_type, use_destination, zone_home, assembled_default, rh_default, allowed_lines FROM public.familias WHERE code = '${lookupFamilia.replace(/'/g, "''")}' LIMIT 1`
+                `SELECT family_code, product_type, use_destination, zone_home, assembled_default, rh_default, allowed_lines FROM public.families WHERE family_code = '${lookupFamilia.replace(/'/g, "''")}' LIMIT 1`
             )
             if (rows && rows.length > 0) {
                 const familia = rows[0]
@@ -102,7 +106,7 @@ export async function parseProductCode(
                 result.allowed_lines = familia.allowed_lines || []
             }
         } catch (e) {
-            console.error('codeParser: error querying familia', e)
+            console.error('codeParser: error querying family fallback', e)
         }
 
         if (result.version_code?.toUpperCase() === 'MRH') {
@@ -112,75 +116,117 @@ export async function parseProductCode(
         // --- Detección de Versión desde Diccionario ---
         if (result.version_code) {
             try {
-                const verRows = await dbQuery(`SELECT code, description, automatic_rules FROM public.versions WHERE code = '${result.version_code.toUpperCase().replace(/'/g, "''")}' LIMIT 1`);
+                const verRows = await dbQuery(`SELECT version_code, version_description, automatic_version_rules FROM public.global_version_rules WHERE version_code = '${result.version_code.toUpperCase().replace(/'/g, "''")}' LIMIT 1`);
                 if (verRows && verRows.length > 0) {
                     const ver = verRows[0];
-                    const rules = ver.automatic_rules || {};
+                    const rules = typeof ver.automatic_version_rules === 'string' ? JSON.parse(ver.automatic_version_rules) : (ver.automatic_version_rules || {});
                     
                     if (rules.rh) result.rh = rules.rh;
-                    if (rules.client_name) result.private_label_client_name = rules.client_name;
+                    if (rules.private_label_client_name) result.private_label_client_name = rules.private_label_client_name;
                     
                     // Guardamos la descripción para usarla en accessory_text si sapDescription existe
-                    (result as any)._version_description = ver.description;
+                    (result as any)._version_description = ver.version_description;
                 }
             } catch (e) {
-                console.error('codeParser: error querying version dictionary', e);
+                console.error('codeParser: error querying version dictionary fallback', e);
             }
         }
 
-        // ─── BÚSQUEDA JERÁRQUICA DE HISTORIAL (SMART LOOKUP V2) ───
+        // ─── BÚSQUEDA JERÁRQUICA DE HISTORIAL (SMART LOOKUP V6.1) ───
         try {
-            // Intentar primero por SKU BASE (Misma Familia-Ref-Version)
-            let historicalProduct = null;
-            const skuBaseRows = await dbQuery(`
-                SELECT * FROM public.cabinet_products 
-                WHERE sku_base = '${result.sku_base.replace(/'/g, "''")}'
-                AND width_cm IS NOT NULL
-                ORDER BY created_at DESC LIMIT 1
+            let foundData: any = null;
+            let source = 'parser';
+
+            // 1. Intentar por SKU COMPLETO (Exacto)
+            const skuCompleteRows = await dbQuery(`
+                SELECT s.*, v.sku_base, v.version_attrs, v.final_base_name_es, v.final_base_name_en,
+                       r.family_code, r.reference_code, r.product_name, r.designation, r.line, 
+                       r.commercial_measure, r.special_label, r.width_cm, r.depth_cm, r.height_cm, 
+                       r.weight_kg, r.stacking_max, r.isometric_path, r.isometric_asset_id, r.ref_attrs,
+                       f.product_type, f.zone_home, f.use_destination, f.assembled_default, f.rh_default
+                FROM public.product_skus s
+                JOIN public.product_versions v ON s.version_id = v.id
+                JOIN public.product_references r ON v.reference_id = r.id
+                JOIN public.families f ON r.family_code = f.family_code
+                WHERE s.sku_complete = '${code.replace(/'/g, "''")}'
+                LIMIT 1
             `);
 
-            if (skuBaseRows && skuBaseRows.length > 0) {
-                historicalProduct = skuBaseRows[0];
+            if (skuCompleteRows && skuCompleteRows.length > 0) {
+                foundData = skuCompleteRows[0];
+                source = 'sku_match';
             } else {
-                // Fallback: Por Familia + Referencia (Mismo mueble, distinta versión)
-                const famRefRows = await dbQuery(`
-                    SELECT * FROM public.cabinet_products 
-                    WHERE familia_code = '${result.familia_code.replace(/'/g, "''")}'
-                    AND ref_code = '${result.ref_code.replace(/'/g, "''")}'
-                    AND width_cm IS NOT NULL
-                    ORDER BY created_at DESC LIMIT 1
+                // 2. Intentar por SKU BASE (Misma Familia-Ref-Version)
+                const skuBaseRows = await dbQuery(`
+                    SELECT v.*, r.family_code, r.reference_code, r.product_name, r.designation, r.line, 
+                           r.commercial_measure, r.special_label, r.width_cm, r.depth_cm, r.height_cm, 
+                           r.weight_kg, r.stacking_max, r.isometric_path, r.isometric_asset_id, r.ref_attrs,
+                           f.product_type, f.zone_home, f.use_destination, f.assembled_default, f.rh_default
+                    FROM public.product_versions v
+                    JOIN public.product_references r ON v.reference_id = r.id
+                    JOIN public.families f ON r.family_code = f.family_code
+                    WHERE v.sku_base = '${result.sku_base.replace(/'/g, "''")}'
+                    LIMIT 1
                 `);
-                if (famRefRows && famRefRows.length > 0) {
-                    historicalProduct = famRefRows[0];
+
+                if (skuBaseRows && skuBaseRows.length > 0) {
+                    foundData = skuBaseRows[0];
+                    source = 'version_match';
+                } else {
+                    // 3. Intentar por FAMILIA + REFERENCIA (Mismo mueble, distinta versión)
+                    const famRefRows = await dbQuery(`
+                        SELECT r.*, f.product_type, f.zone_home, f.use_destination, f.assembled_default, f.rh_default
+                        FROM public.product_references r
+                        JOIN public.families f ON r.family_code = f.family_code
+                        WHERE r.family_code = '${result.familia_code.replace(/'/g, "''")}'
+                          AND r.reference_code = '${result.ref_code.replace(/'/g, "''")}'
+                        LIMIT 1
+                    `);
+                    if (famRefRows && famRefRows.length > 0) {
+                        foundData = famRefRows[0];
+                        source = 'reference_match';
+                        if (foundData.isometric_path) {
+                            result.isometric_from_different_version = true;
+                        }
+                    }
                 }
             }
 
-            if (historicalProduct) {
-                const h = historicalProduct;
-                result.cabinet_name = h.cabinet_name || result.cabinet_name;
-                result.line = h.line || result.line;
-                result.designation = h.designation || result.designation;
-                result.commercial_measure = h.commercial_measure || result.commercial_measure;
-                result.width_cm = h.width_cm ? parseFloat(h.width_cm) : result.width_cm;
-                result.depth_cm = h.depth_cm ? parseFloat(h.depth_cm) : result.depth_cm;
-                result.height_cm = h.height_cm ? parseFloat(h.height_cm) : result.height_cm;
-                result.weight_kg = h.weight_kg ? parseFloat(h.weight_kg) : result.weight_kg;
-                result.product_type = h.product_type || result.product_type;
-                result.use_destination = h.use_destination || result.use_destination;
-                result.zone_home = h.zone_home || result.zone_home;
-                result.accessory_text = h.accessory_text || result.accessory_text;
-                result.bisagras = h.bisagras || result.bisagras;
-                result.carb2 = h.carb2 || result.carb2;
-                result.special_label = h.special_label || result.special_label;
-                result.canto_puertas = h.canto_puertas || result.canto_puertas;
-                result.barcode_text = h.barcode_text || result.barcode_text;
-                result.isometric_path = h.isometric_path || result.isometric_path;
-                result.isometric_asset_id = h.isometric_asset_id || result.isometric_asset_id;
-                result.rh = h.rh || result.rh;
-                result.assembled_flag = h.assembled_flag ?? result.assembled_flag;
+            if (foundData) {
+                const d = foundData;
+                result.cabinet_name = d.product_name || result.cabinet_name;
+                result.line = d.line || result.line;
+                result.designation = d.designation || result.designation;
+                result.commercial_measure = d.commercial_measure || result.commercial_measure;
+                result.width_cm = d.width_cm ? parseFloat(d.width_cm) : result.width_cm;
+                result.depth_cm = d.depth_cm ? parseFloat(d.depth_cm) : result.depth_cm;
+                result.height_cm = d.height_cm ? parseFloat(d.height_cm) : result.height_cm;
+                result.weight_kg = d.weight_kg ? parseFloat(d.weight_kg) : result.weight_kg;
+                result.product_type = d.product_type || result.product_type;
+                result.use_destination = d.use_destination || result.use_destination;
+                result.zone_home = d.zone_home || result.zone_home;
+                result.isometric_path = d.isometric_path || result.isometric_path;
+                result.isometric_asset_id = d.isometric_asset_id || result.isometric_asset_id;
+                result.status = d.status || result.status;
+                
+                // Atributos compuestos
+                const refAttrs = typeof d.ref_attrs === 'string' ? JSON.parse(d.ref_attrs) : (d.ref_attrs || {});
+                const verAttrs = typeof d.version_attrs === 'string' ? JSON.parse(d.version_attrs) : (d.version_attrs || {});
+                
+                const combinedAttrs = { ...refAttrs, ...verAttrs };
+                
+                result.bisagras = combinedAttrs.bisagras || result.bisagras;
+                result.carb2 = combinedAttrs.carb2 || result.carb2;
+                result.special_label = d.special_label || combinedAttrs.special_label || result.special_label;
+                result.canto_puertas = combinedAttrs.canto_puertas || result.canto_puertas;
+                result.accessory_text = combinedAttrs.accessory_text || result.accessory_text;
+                result.rh = combinedAttrs.rh || (d.rh_default ? 'RH' : result.rh);
+                result.assembled_flag = combinedAttrs.assembled_flag !== undefined ? combinedAttrs.assembled_flag : (d.assembled_default ?? result.assembled_flag);
+
+                (result as any)._source = source;
             }
         } catch (e) {
-            console.error('codeParser: error in hierarchical lookup', e);
+            console.error('codeParser: error in hierarchical lookup V6.1', e);
         }
 
         // --- Recuperación automática de nombre de color si no se tiene ---
@@ -210,9 +256,33 @@ export async function parseProductCode(
         }
 
         // Detección de Medida Comercial (Prioridad sobre historial si detectada)
-        const measureMatch = descUpper.match(/\b(\d+X\d+)\b/);
+        // Soporta: 150X55, 150 X 55, 150.5X55, 150,5X55
+        const measureMatch = descUpper.match(/\b(\d+(?:[.,]\d+)?)\s*[Xx]\s*(\d+(?:[.,]\d+)?)\b/);
         if (measureMatch) {
-            result.commercial_measure = measureMatch[1];
+            result.commercial_measure = `${measureMatch[1]}X${measureMatch[2]}`.replace(',', '.');
+        }
+
+        // Detección Genérica de Designación (INF/SUP/ELEV)
+        if (!result.designation) {
+            if (descUpper.includes(' INF ') || descUpper.includes('INFERIOR')) result.designation = 'INFERIOR';
+            else if (descUpper.includes(' SUP ') || descUpper.includes('SUPERIOR')) result.designation = 'SUPERIOR';
+            else if (descUpper.includes(' ELEV ') || descUpper.includes('ELEVADO')) result.designation = 'ELEVADO';
+        }
+
+        let foundAccessories: string[] = [];
+
+        // Detección de Puertas/Cajones (4P, 2C, 4 PUERTAS, 2 CAJONES, etc.)
+        const doorsMatch = descUpper.match(/\b(\d+)\s*(?:[Pp]|PUERTAS?)\b/);
+        const drawersMatch = descUpper.match(/\b(\d+)\s*(?:[Cc]|CAJONES?)\b/);
+        let technicalSpec = '';
+        if (doorsMatch) {
+            technicalSpec += `${doorsMatch[1]}P`;
+        }
+        if (drawersMatch) {
+            technicalSpec += (technicalSpec ? ' ' : '') + `${drawersMatch[1]}C`;
+        }
+        if (technicalSpec) {
+            result.special_label = technicalSpec;
         }
 
         // Detección de Cantos Especiales
@@ -224,12 +294,9 @@ export async function parseProductCode(
                 result.canto_puertas = 'CANTO 2 MM';
             } else {
                 cantoText = `CANTO ${mm} MM`;
+                foundAccessories.push(cantoText);
             }
         }
-
-        // Detección de Accesorios
-        let foundAccessories = []
-        if (cantoText) foundAccessories.push(cantoText)
 
         // Agregar descripción de la versión desde el diccionario si existe
         const versionDesc = (result as any)._version_description;
@@ -342,7 +409,9 @@ export async function parseProductCode(
             result.carb2 = 'SÍ';
         }
         if (descUpper.includes('FRENTES 18MM')) {
-            result.special_label = 'FRENTES 18MM';
+            result.special_label = (result.special_label && result.special_label !== 'NA') 
+                ? `${result.special_label} FRENTES 18MM` 
+                : 'FRENTES 18MM';
         }
     }
 

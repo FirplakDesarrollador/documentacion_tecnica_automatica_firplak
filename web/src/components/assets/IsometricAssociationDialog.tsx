@@ -18,6 +18,7 @@ import {
     getFamiliesAction, 
     getReferencesByFamilyAction, 
     getMeasuresByFamilyAndRefAction,
+    getVersionsByFamilyAndRefAction,
     getAssetsByTypeAction,
     associateIsometricAction 
 } from "@/app/assets/actions"
@@ -33,8 +34,9 @@ interface Props {
     initialFamilies?: string[]
     initialReferences?: string[]
     initialMeasures?: string[]
+    initialVersions?: string[]
     onAssociationComplete?: (asset: any) => void
-    trigger?: React.ReactNode
+    trigger?: React.ReactElement
 }
 
 const EMPTY_ARRAY: string[] = []
@@ -43,6 +45,7 @@ export function IsometricAssociationDialog({
     initialFamilies = EMPTY_ARRAY, 
     initialReferences = EMPTY_ARRAY, 
     initialMeasures = EMPTY_ARRAY,
+    initialVersions = EMPTY_ARRAY,
     onAssociationComplete,
     trigger
 }: Props) {
@@ -54,12 +57,14 @@ export function IsometricAssociationDialog({
     const [families, setFamilies] = React.useState<Option[]>([])
     const [references, setReferences] = React.useState<Option[]>([])
     const [measures, setMeasures] = React.useState<Option[]>([])
+    const [versions, setVersions] = React.useState<Option[]>([])
     const [assets, setAssets] = React.useState<any[]>([])
 
     // Selection state
     const [selectedFamilies, setSelectedFamilies] = React.useState<string[]>([])
     const [selectedReferences, setSelectedReferences] = React.useState<string[]>([])
     const [selectedMeasures, setSelectedMeasures] = React.useState<string[]>([])
+    const [selectedVersions, setSelectedVersions] = React.useState<string[]>([])
     const [selectedAssetId, setSelectedAssetId] = React.useState<string>("")
 
     const loadInitialData = async () => {
@@ -85,14 +90,17 @@ export function IsometricAssociationDialog({
             setSelectedFamilies(initialFamilies)
             setSelectedReferences(initialReferences)
             setSelectedMeasures(initialMeasures)
+            setSelectedVersions(initialVersions)
         } else {
             // Reset state on close
             setSelectedFamilies([])
             setSelectedReferences([])
             setSelectedMeasures([])
+            setSelectedVersions([])
             setSelectedAssetId("")
             setReferences([])
             setMeasures([])
+            setVersions([])
         }
     }, [open, initialFamilies, initialReferences, initialMeasures])
 
@@ -112,16 +120,22 @@ export function IsometricAssociationDialog({
 
     // Load measures when families or references change
     React.useEffect(() => {
-        const loadMeasures = async () => {
+        const loadMeasuresAndVersions = async () => {
             if (selectedFamilies.length > 0 || selectedReferences.length > 0) {
-                const meas = await getMeasuresByFamilyAndRefAction(selectedFamilies, selectedReferences)
+                const [meas, vers] = await Promise.all([
+                    getMeasuresByFamilyAndRefAction(selectedFamilies, selectedReferences),
+                    getVersionsByFamilyAndRefAction(selectedFamilies, selectedReferences)
+                ])
                 setMeasures(meas)
+                setVersions(vers)
             } else {
                 setMeasures([])
                 setSelectedMeasures([])
+                setVersions([])
+                setSelectedVersions([])
             }
         }
-        loadMeasures()
+        loadMeasuresAndVersions()
     }, [selectedFamilies, selectedReferences])
 
     const fileInputRef = React.useRef<HTMLInputElement>(null)
@@ -177,7 +191,8 @@ export function IsometricAssociationDialog({
                 assetId: selectedAssetId,
                 familyCodes: selectedFamilies,
                 referenceCodes: selectedReferences,
-                measureCodes: selectedMeasures
+                measureCodes: selectedMeasures,
+                versionCodes: selectedVersions
             })
             toast.success("Isométrico asociado correctamente")
             
@@ -321,6 +336,18 @@ export function IsometricAssociationDialog({
                                     placeholder="Seleccionar Código, Referencia y Medida"
                                     className="h-11"
                                     emptyMessage="Selecciona familias primero."
+                                />
+                            </div>
+
+                            <div className={cn("space-y-2 transition-opacity", selectedReferences.length === 0 && "opacity-50 pointer-events-none")}>
+                                <Label className="text-slate-700 font-medium">Versión(es) <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">(Opcional: Por defecto aplica a todas)</span></Label>
+                                <MultiSelectSearchField 
+                                    options={versions}
+                                    values={selectedVersions}
+                                    onChange={setSelectedVersions}
+                                    placeholder="Todas las versiones"
+                                    className="h-11"
+                                    emptyMessage="Selecciona referencias primero."
                                 />
                             </div>
                         </div>

@@ -17,7 +17,7 @@ export default async function Home() {
   
   const kpiRows = await dbQuery(`
     SELECT
-      (SELECT COUNT(*) FROM public.cabinet_products) as total_products,
+      (SELECT COUNT(*) FROM public.product_skus) as total_products,
       (SELECT COUNT(*) FROM public.plantillas_doc_tec WHERE active = true) as active_templates
   `)
   
@@ -29,9 +29,10 @@ export default async function Home() {
 
   // Recent activity
   const recentProducts = await dbQuery(`
-    SELECT id, code, final_name_es, validation_status, updated_at
-    FROM public.cabinet_products
-    ORDER BY updated_at DESC
+    SELECT s.id, s.sku_complete as code, s.final_complete_name_es as final_name_es, v.validation_status, s.updated_at
+    FROM public.product_skus s
+    JOIN public.product_versions v ON s.version_id = v.id
+    ORDER BY s.updated_at DESC
     LIMIT 5
   `) || []
 

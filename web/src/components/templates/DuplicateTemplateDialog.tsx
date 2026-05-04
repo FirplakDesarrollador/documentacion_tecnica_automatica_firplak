@@ -22,11 +22,15 @@ export function DuplicateTemplateDialog({
     id, 
     originalName,
     originalDataSource,
+    originalWidth,
+    originalHeight,
     datasets = [] 
 }: { 
     id: string, 
     originalName: string,
     originalDataSource: string,
+    originalWidth: number,
+    originalHeight: number,
     datasets?: {id: string, name: string}[] 
 }) {
     const [open, setOpen] = useState(false)
@@ -40,14 +44,16 @@ export function DuplicateTemplateDialog({
         const formData = new FormData(e.currentTarget)
         const newName = formData.get("name") as string
         const dataSource = formData.get("data_source") as string
+        const width = parseFloat(formData.get("width") as string)
+        const height = parseFloat(formData.get("height") as string)
 
-        if (!newName || !dataSource) {
+        if (!newName || !dataSource || isNaN(width) || isNaN(height)) {
             toast.error("Por favor completa los campos correctamente.")
             setLoading(false)
             return
         }
 
-        const res = await duplicateTemplate(id, newName, dataSource)
+        const res = await duplicateTemplate(id, newName, dataSource, width, height)
         setLoading(false)
 
         if (res.success) {
@@ -104,6 +110,34 @@ export function DuplicateTemplateDialog({
                                     <option key={ds.id} value={ds.id}>{ds.name} (Dataset Externo)</option>
                                 ))}
                             </select>
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <Label htmlFor="width" className="text-right">
+                                Ancho (mm)
+                            </Label>
+                            <Input 
+                                id="width" 
+                                name="width" 
+                                type="number" 
+                                step="0.1" 
+                                defaultValue={originalWidth} 
+                                className="col-span-3" 
+                                required 
+                            />
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <Label htmlFor="height" className="text-right">
+                                Alto (mm)
+                            </Label>
+                            <Input 
+                                id="height" 
+                                name="height" 
+                                type="number" 
+                                step="0.1" 
+                                defaultValue={originalHeight} 
+                                className="col-span-3" 
+                                required 
+                            />
                         </div>
                     </div>
                     <DialogFooter>

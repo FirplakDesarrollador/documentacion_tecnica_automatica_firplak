@@ -1,0 +1,66 @@
+[
+  {
+    "sku": "VBAN05-0114-000-0437",
+    "before": {
+      "sku": "VBAN05-0114-000-0437",
+      "final_complete_name_es": "SODER/MALI",
+      "final_complete_name_en": "LIFE WALL MOUNTED VANITY 31INX19IN SODER/MALI",
+      "final_base_name_es": "",
+      "final_base_name_en": "LIFE WALL MOUNTED VANITY 31INX19IN"
+    },
+    "after": {
+      "sku": "VBAN05-0114-000-0437",
+      "final_complete_name_es": "MUEBLE ELEVADO MISUS LIFE PARA LAVAMANOS 79X48 RFE CANTO 2 MM",
+      "final_complete_name_en": "MISUS LIFE WALL MOUNTED VANITY 31INX19IN SFE 2MM EDGE BAND"
+    },
+    "version_id": "000"
+  },
+  {
+    "sku": "VBAN05-0114-000-0442",
+    "before": {
+      "sku": "VBAN05-0114-000-0442",
+      "final_complete_name_es": "GRACIA/ SIKUANI",
+      "final_complete_name_en": "LIFE WALL MOUNTED VANITY 31INX19IN GRACIA/ SIKUANI",
+      "final_base_name_es": "",
+      "final_base_name_en": "LIFE WALL MOUNTED VANITY 31INX19IN"
+    },
+    "after": {
+      "sku": "VBAN05-0114-000-0442",
+      "final_complete_name_es": "MUEBLE ELEVADO MISUS LIFE PARA LAVAMANOS 79X48 RFE CANTO 2 MM",
+      "final_complete_name_en": "MISUS LIFE WALL MOUNTED VANITY 31INX19IN SFE 2MM EDGE BAND"
+    },
+    "version_id": "000"
+  },
+  {
+    "sku": "VBAN05-0114-151-0442",
+    "before": {
+      "sku": "VBAN05-0114-151-0442",
+      "final_complete_name_es": "GRACIA/ SIKUANI",
+      "final_complete_name_en": "LIFE WALL MOUNTED VANITY 31INX19IN GRACIA/ SIKUANI",
+      "final_base_name_es": "",
+      "final_base_name_en": "LIFE WALL MOUNTED VANITY 31INX19IN"
+    },
+    "after": {
+      "sku": "VBAN05-0114-151-0442",
+      "final_complete_name_es": "MUEBLE ELEVADO MISUS LIFE PARA LAVAMANOS 79X48 RFE + MANIJA NEGRA 520 CANTO 2 MM",
+      "final_complete_name_en": "MISUS LIFE WALL MOUNTED VANITY 31INX19IN SFE + 520 BLACK HANDLE 2MM EDGE BAND"
+    },
+    "version_id": "151"
+  },
+  {
+    "sku": "VBAN05-0114-MRH-0100",
+    "before": {
+      "sku": "VBAN05-0114-MRH-0100",
+      "final_complete_name_es": "BLANCO 100",
+      "final_complete_name_en": "LIFE WALL MOUNTED VANITY 31INX19IN BLANCO 100",
+      "final_base_name_es": "",
+      "final_base_name_en": "LIFE WALL MOUNTED VANITY 31INX19IN"
+    },
+    "after": {
+      "sku": "VBAN05-0114-MRH-0100",
+      "final_complete_name_es": "RH MUEBLE ELEVADO MISUS LIFE PARA LAVAMANOS 79X48 RFE CANTO 2 MM",
+      "final_complete_name_en": "MR MISUS LIFE WALL MOUNTED VANITY 31INX19IN SFE 2MM EDGE BAND"
+    },
+    "version_id": "MRH"
+  }
+]

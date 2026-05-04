@@ -10,7 +10,19 @@ export async function GET(
 
   try {
     const rows = await dbQuery(`
-        SELECT * FROM public.familias WHERE code = '${code.replace(/'/g, "''")}' LIMIT 1
+        SELECT 
+            family_code as code, 
+            family_name as name, 
+            product_type, 
+            use_destination, 
+            zone_home,
+            manufacturing_process,
+            rh_default,
+            assembled_default,
+            allowed_lines
+        FROM public.families 
+        WHERE family_code = '${code.replace(/'/g, "''")}' 
+        LIMIT 1
     `)
 
     if (!rows || rows.length === 0) {

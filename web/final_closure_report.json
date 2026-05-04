@@ -1,0 +1,380 @@
+{
+  "counts": {
+    "legacy_active": 1166,
+    "v6_skus": 1194
+  },
+  "discrepancies": [
+    {
+      "sku": "VBAN05-0137-000-0439",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "44,5X43,5",
+          "v6": "44.5X43.5"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0137"
+    },
+    {
+      "sku": "VBAN05-0001-000-0442",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "48X38",
+          "v6": "48x38"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0001"
+    },
+    {
+      "sku": "VBAN05-0001-000-0437",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "48X38",
+          "v6": "48x38"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0001"
+    },
+    {
+      "sku": "VBAN05-0001-000-0387",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "48X38",
+          "v6": "48x38"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0001"
+    },
+    {
+      "sku": "VBAN05-0001-000-0475",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "48X38",
+          "v6": "48x38"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0001"
+    },
+    {
+      "sku": "VBAN05-0001-000-0493",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "48X38",
+          "v6": "48x38"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0001"
+    },
+    {
+      "sku": "VBAN05-0001-000-0447",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "48X38",
+          "v6": "48x38"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0001"
+    },
+    {
+      "sku": "VBAN05-0138-MRH-0100",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "44,5X43,5",
+          "v6": "44.5X43.5"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0138"
+    },
+    {
+      "sku": "VBAN05-0001-000-0467",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "48X38",
+          "v6": "48x38"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0001"
+    },
+    {
+      "sku": "VBAN22-0082-000-0466",
+      "diffs": [
+        {
+          "field": "product_name",
+          "leg": "THALOS",
+          "v6": "MACAO"
+        },
+        {
+          "field": "commercial_measure",
+          "leg": "79X48",
+          "v6": "63X48"
+        }
+      ],
+      "fam": "BAN22",
+      "ref": "0082"
+    },
+    {
+      "sku": "VBAN05-0001-000-0439",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "48X38",
+          "v6": "48x38"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0001"
+    },
+    {
+      "sku": "VBAN05-0001-000-0458",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "48X38",
+          "v6": "48x38"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0001"
+    },
+    {
+      "sku": "VBAN05-0111-000-0437",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "40X43",
+          "v6": "40X30"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0111"
+    },
+    {
+      "sku": "VBAN05-0137-MRH-0100",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "44,5X43,5",
+          "v6": "44.5X43.5"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0137"
+    },
+    {
+      "sku": "VBAN30-0001-000-1345",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "60X21,5",
+          "v6": "60X21.5"
+        }
+      ],
+      "fam": "BAN30",
+      "ref": "0001"
+    },
+    {
+      "sku": "VBAN30-0001-000-0437",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "60X21,5",
+          "v6": "60X21.5"
+        }
+      ],
+      "fam": "BAN30",
+      "ref": "0001"
+    },
+    {
+      "sku": "VBAN05-0138-000-0493",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "44,5X43,5",
+          "v6": "44.5X43.5"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0138"
+    },
+    {
+      "sku": "VBAN05-0108-000-0439",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "48X38",
+          "v6": "40X30"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0108"
+    },
+    {
+      "sku": "VBAN05-0137-000-0442",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "44,5X43,5",
+          "v6": "44.5X43.5"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0137"
+    },
+    {
+      "sku": "VBAN05-0137-000-0493",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "44,5X43,5",
+          "v6": "44.5X43.5"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0137"
+    },
+    {
+      "sku": "VBAN30-0001-000-0439",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "60X21,5",
+          "v6": "60X21.5"
+        }
+      ],
+      "fam": "BAN30",
+      "ref": "0001"
+    },
+    {
+      "sku": "VBAN30-0001-MRH-0100",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "60X21,5",
+          "v6": "60X21.5"
+        }
+      ],
+      "fam": "BAN30",
+      "ref": "0001"
+    },
+    {
+      "sku": "VBAN30-0001-000-0442",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "60X21,5",
+          "v6": "60X21.5"
+        }
+      ],
+      "fam": "BAN30",
+      "ref": "0001"
+    },
+    {
+      "sku": "VBAN30-0001-000-0447",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "60X21,5",
+          "v6": "60X21.5"
+        }
+      ],
+      "fam": "BAN30",
+      "ref": "0001"
+    },
+    {
+      "sku": "VBAN30-0001-000-0493",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "60X21,5",
+          "v6": "60X21.5"
+        }
+      ],
+      "fam": "BAN30",
+      "ref": "0001"
+    },
+    {
+      "sku": "VBAN05-0137-000-0437",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "44,5X43,5",
+          "v6": "44.5X43.5"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0137"
+    },
+    {
+      "sku": "VBAN05-0138-000-0437",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "44,5X43,5",
+          "v6": "44.5X43.5"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0138"
+    },
+    {
+      "sku": "VBAN05-0138-000-0439",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "44,5X43,5",
+          "v6": "44.5X43.5"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0138"
+    },
+    {
+      "sku": "VBAN05-0138-000-0442",
+      "diffs": [
+        {
+          "field": "commercial_measure",
+          "leg": "44,5X43,5",
+          "v6": "44.5X43.5"
+        }
+      ],
+      "fam": "BAN05",
+      "ref": "0138"
+    }
+  ],
+  "validations": {
+    "BAN05-0114": {
+      "ref_accessory": "RFE",
+      "v151_accessory": "RFE + MANIJA NEGRA 520"
+    },
+    "BAN05-0108": {
+      "accessory": "CON MANIJAS",
+      "measure": "40X30"
+    },
+    "BAN22-0082": {
+      "name": "MACAO",
+      "measure": "63X48",
+      "accessory": "RFE CIERRE LENTO",
+      "no_thalos_es": true,
+      "no_thalos_en": true
+    },
+    "decimal_commas": 0,
+    "legacy_untouched": true
+  }
+}

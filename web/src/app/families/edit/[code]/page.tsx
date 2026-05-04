@@ -29,7 +29,8 @@ export default function EditFamilyPage({ params: paramsPromise }: { params: Prom
         product_type: '',
         use_destination: '',
         rh_default: false,
-        assembled_default: false
+        assembled_default: false,
+        manufacturing_process: 'FABRICADO'
     })
 
     useEffect(() => {
@@ -52,7 +53,8 @@ export default function EditFamilyPage({ params: paramsPromise }: { params: Prom
                             product_type: data.product_type || '',
                             use_destination: data.use_destination || '',
                             rh_default: !!data.rh_default,
-                            assembled_default: !!data.assembled_default
+                            assembled_default: !!data.assembled_default,
+                            manufacturing_process: data.manufacturing_process || 'FABRICADO'
                         })
                     }
                 }
@@ -246,12 +248,27 @@ export default function EditFamilyPage({ params: paramsPromise }: { params: Prom
                                         <Label className="text-xs font-bold text-amber-800 uppercase tracking-widest ml-1">Zona (Ambiente)</Label>
                                         {renderCreatableSelect('zone_home', datalistOptions.zoneHomes || [], 'ZONA', <MapPin className="w-4 h-4" />)}
                                     </div>
-                                    <div className="flex items-end">
-                                        <div className="bg-amber-50 p-3 rounded-xl border border-amber-100 w-full flex items-center gap-2">
-                                            <ShieldCheck className="w-5 h-5 text-amber-500" />
-                                            <span className="text-[10px] text-amber-800 leading-tight font-medium uppercase">
-                                                Información sincronizada con el motor de nomenclatura V2.1
-                                            </span>
+                                    <div className="grid gap-2">
+                                        <Label className="text-xs font-bold text-amber-800 uppercase tracking-widest ml-1">Proceso de Manufactura</Label>
+                                        <div className="relative">
+                                            <Settings2 className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+                                            <select 
+                                                className="flex h-10 w-full rounded-xl border border-slate-200 bg-white pl-10 px-3 py-2 text-sm shadow-sm transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-200 appearance-none"
+                                                value={formData.manufacturing_process}
+                                                onChange={(e) => setFormData(p => ({...p, manufacturing_process: e.target.value}))}
+                                            >
+                                                <option value="MÁRMOL SINTÉTICO">MÁRMOL SINTÉTICO</option>
+                                                <option value="FIBRA DE VIDRIO">FIBRA DE VIDRIO</option>
+                                                <option value="MUEBLES NACIONAL">MUEBLES NACIONAL</option>
+                                                <option value="MUEBLES EXTERIOR">MUEBLES EXTERIOR</option>
+                                                <option value="QUARTZSTONE">QUARTZSTONE</option>
+                                                <option value="RTM">RTM</option>
+                                            </select>
+                                            <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-400">
+                                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                                </svg>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>

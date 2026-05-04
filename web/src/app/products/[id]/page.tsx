@@ -1,6 +1,6 @@
-import { dbQuery } from '@/lib/supabase'
 import { redirect } from 'next/navigation'
 import { ProductForm } from '../ProductForm'
+import { composeProductById } from '@/lib/engine/product_composer'
 
 export default async function EditProductPage({ 
     params, 
@@ -12,11 +12,12 @@ export default async function EditProductPage({
     const { id } = await params
     const searchParams = await searchParamsPromise
 
-    const rows = await dbQuery(`SELECT * FROM public.cabinet_products WHERE id='${id}' LIMIT 1`)
-    const product = rows?.[0]
+    const product = await composeProductById(id)
 
     if (!product) {
-        redirect('/products')
+        // Redirigir al listado con un mensaje si el producto no existe en V6.1
+        // (Sin fallback a cabinet_products como se solicitó)
+        redirect('/products?error=not_found')
     }
 
     // Construct back link with current filters
@@ -32,7 +33,7 @@ export default async function EditProductPage({
 
     return (
         <div className="max-w-5xl mx-auto w-full">
-            <ProductForm initialData={product} backHref={backHref} />
+            <ProductForm initialData={product} backHref={backHref} readOnly={true} />
         </div>
     )
 }

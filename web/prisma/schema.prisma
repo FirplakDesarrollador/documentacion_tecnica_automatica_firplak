@@ -51,9 +51,9 @@ model Product {
   validation_status         String   @default("incomplete")
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
-  private_label_client      Client?  @relation(fields: [private_label_client_id], references: [id])
-  isometric_asset           Asset?   @relation("ProductIsometric", fields: [isometric_asset_id], references: [id])
   color                     Color?   @relation(fields: [color_code], references: [code_4dig])
+  isometric_asset           Asset?   @relation("ProductIsometric", fields: [isometric_asset_id], references: [id])
+  private_label_client      Client?  @relation(fields: [private_label_client_id], references: [id])
 }
 
 model Color {
@@ -72,11 +72,11 @@ model Familia {
   name              String
   product_type      String?
   use_destination   String?
-  zone_home         String?
   assembled_default Boolean  @default(false)
   rh_default        Boolean  @default(false)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+  zone_home         String?
 }
 
 model Client {
@@ -134,7 +134,7 @@ model Template {
 model CustomDataset {
   id          String             @id @default(cuid())
   name        String             @unique
-  schema_json String             @default("{}") // Mapeo de headers
+  schema_json String             @default("{}")
   createdAt   DateTime           @default(now())
   rows        CustomDatasetRow[]
 }
@@ -142,7 +142,7 @@ model CustomDataset {
 model CustomDatasetRow {
   id         String        @id @default(cuid())
   dataset_id String
-  data_json  String        @default("{}") // JSON data real
+  data_json  String        @default("{}")
   createdAt  DateTime      @default(now())
   updatedAt  DateTime      @updatedAt
   dataset    CustomDataset @relation(fields: [dataset_id], references: [id])

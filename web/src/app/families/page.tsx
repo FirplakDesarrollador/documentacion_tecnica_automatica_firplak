@@ -8,7 +8,14 @@ import { DeleteButton } from './DeleteButton'
 
 export default async function FamiliesPage() {
     const families = await dbQuery(`
-        SELECT * FROM public.familias ORDER BY code ASC
+        SELECT 
+            family_code as code, 
+            family_name as name, 
+            product_type, 
+            use_destination, 
+            zone_home 
+        FROM public.families 
+        ORDER BY family_code ASC
     `) || []
 
     return (
@@ -53,7 +60,7 @@ export default async function FamiliesPage() {
                                 </TableRow>
                             ) : (
                                 families.map((family: any) => (
-                                    <TableRow key={family.id} className="hover:bg-slate-50/50 transition-colors">
+                                    <TableRow key={family.code} className="hover:bg-slate-50/50 transition-colors">
                                         <TableCell className="font-mono font-medium text-slate-700">{family.code}</TableCell>
                                         <TableCell className="text-slate-600">{family.name}</TableCell>
                                         <TableCell className="text-slate-600">{family.use_destination}</TableCell>

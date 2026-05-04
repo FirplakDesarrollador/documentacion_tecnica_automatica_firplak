@@ -39,30 +39,42 @@ const normalizeString = (str: string) => {
     return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim()
 }
 
+const PLACEHOLDERS = ['NA', 'N/A', 'NULL', 'VACÍO', 'UNDEFINED']
+
 export const getVariableValue = (context: any, field: string) => {
     if (!context || !field) return ''
     
     // 1. Try exact match
     if (context[field] !== undefined && context[field] !== null) {
-        return String(context[field])
+        const val = String(context[field])
+        return PLACEHOLDERS.includes(val.toUpperCase().trim()) ? '' : val
     }
 
     // 2. Special technical mappings
-    if (field === 'color' || field === 'color_name' || field === 'name_color_sap') {
+    const fieldUpper = field.toUpperCase().trim()
+    if (['COLOR', 'COLOR_NAME', 'NAME_COLOR_SAP', 'DESC_COLOR', 'COLOR_DESC'].includes(fieldUpper)) {
         return context.color_name || context.name_color_sap || ''
     }
-    if (field === 'color_code') return context.color_code || ''
+    if (fieldUpper === 'COLOR_CODE' || fieldUpper === 'CODIGO_COLOR') {
+        return context.color_code || ''
+    }
+    if (fieldUpper === 'SKU' || fieldUpper === 'CODE' || fieldUpper === 'CÓDIGO') {
+        return context.code || ''
+    }
+    if (fieldUpper === 'NOMBRE' || fieldUpper === 'DESCRIPTION' || fieldUpper === 'DESCRIPCION') {
+        return context.final_name_es || context.sap_description || ''
+    }
 
     // 3. Normalized search (case-insensitive, tilde-insensitive)
     const normalizedTarget = normalizeString(field)
     
-    // Cache normalized keys for performance if this is called frequently, 
-    // but for a single product context, a simple find is fine.
     const matchingKey = Object.keys(context).find(key => normalizeString(key) === normalizedTarget)
     
     if (matchingKey) {
         const val = context[matchingKey]
-        return (val === null || val === undefined) ? '' : String(val)
+        if (val === null || val === undefined) return ''
+        const strVal = String(val)
+        return PLACEHOLDERS.includes(strVal.toUpperCase().trim()) ? '' : strVal
     }
 
     return ''
@@ -70,9 +82,17 @@ export const getVariableValue = (context: any, field: string) => {
 
 export const hydrateText = (text: string, context: any) => {
     if (!text) return ''
-    return text.replace(/{([^}]+)}/g, (_: string, field: string) => {
+    const hydrated = text.replace(/{([^}]+)}/g, (_: string, field: string) => {
         return getVariableValue(context, field)
     })
+    // Eliminar "NA" literales y colapsar espacios múltiples (R10)
+    // También elimina guiones huérfanos que puedan quedar al final de un nombre
+    return hydrated
+        .replace(/\s\s+/g, ' ')
+        .replace(/\sNA\s/gi, ' ')
+        .trim()
+        .replace(/-\s*$/, '') // Elimina guión al final si quedó huérfano
+        .trim()
 }
 
 /**

@@ -13,6 +13,7 @@ import Link from 'next/link'
 import { NewTemplateDialog } from '@/components/templates/NewTemplateDialog'
 import { DeleteTemplateButton } from '@/components/templates/DeleteTemplateButton'
 import { DuplicateTemplateDialog } from '@/components/templates/DuplicateTemplateDialog'
+import { EditTemplateDialog } from '@/components/templates/EditTemplateDialog'
 
 export default async function TemplatesPage() {
     const templates = await dbQuery(`SELECT * FROM public.plantillas_doc_tec ORDER BY created_at ASC`) || []
@@ -76,10 +77,18 @@ export default async function TemplatesPage() {
                                             <Link href={`/templates/builder?id=${template.id}`}>
                                                 <Button variant="ghost" size="sm" className="font-semibold text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50">Configurar</Button>
                                             </Link>
+                                            <EditTemplateDialog
+                                                id={template.id}
+                                                currentName={template.name}
+                                                currentWidth={template.width_mm}
+                                                currentHeight={template.height_mm}
+                                            />
                                             <DuplicateTemplateDialog 
                                                 id={template.id} 
                                                 originalName={template.name} 
                                                 originalDataSource={template.data_source} 
+                                                originalWidth={template.width_mm}
+                                                originalHeight={template.height_mm}
                                                 datasets={datasets} 
                                             />
                                             <DeleteTemplateButton id={template.id} />

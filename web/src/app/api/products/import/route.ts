@@ -4,6 +4,12 @@ import { parseProductCode } from '@/lib/engine/codeParser'
 
 export async function POST(req: Request) {
     try {
+        // [Fase 2C] API de importación CSV deshabilitada temporalmente para evitar inserciones en cabinet_products.
+        // La migración de este módulo hacia V6.1 puro (usando el RPC de creación) queda diferida.
+        return NextResponse.json({ 
+            error: 'La importación CSV está temporalmente deshabilitada en Fase 2C. Usar creación manual.' 
+        }, { status: 403 })
+
         const body = await req.json()
         const records = body.data
 
