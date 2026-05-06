@@ -5,11 +5,12 @@ import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Settings } from 'lucide-react'
 
+export const dynamic = 'force-dynamic'
+
 export default async function RulesPage() {
+    
     // Fetch rules from Supabase server-side
     const rules = await dbQuery(`SELECT * FROM public.rules ORDER BY rule_type ASC, priority ASC`) || []
-    
-    // Filter naming rules for the top section
     const namingRules = rules.filter((r: any) => r.rule_type === 'name_component')
 
     return (

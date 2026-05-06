@@ -145,10 +145,10 @@ export async function applyNamesToProductTypeBatchAction(productType: string, of
     // Fetch batch of products
     const products = await dbQuery(`
         SELECT *
-        FROM public.cabinet_products
+        FROM public.v_ui_generate_list
         WHERE product_type = '${safeType}'
-          AND cabinet_name IS NOT NULL
-        ORDER BY code ASC
+          AND product_name IS NOT NULL
+        ORDER BY sku_complete ASC
         LIMIT ${limit} OFFSET ${offset}
     `) || []
 
@@ -301,10 +301,10 @@ export async function applyFullBulkNamingUpdateBatchAction(
     // Fetch batch using dbQuery for RLS bypass (Management API)
     const sql = `
         SELECT *
-        FROM public.cabinet_products
+        FROM public.v_ui_generate_list
         WHERE product_type = '${productType.replace(/'/g, "''")}'
-          AND cabinet_name IS NOT NULL
-        ORDER BY code ASC
+          AND product_name IS NOT NULL
+        ORDER BY sku_complete ASC
         LIMIT ${limit} OFFSET ${offset}
     `
     const products = await dbQuery(sql) as any[]

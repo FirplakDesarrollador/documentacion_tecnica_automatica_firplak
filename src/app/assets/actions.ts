@@ -144,7 +144,7 @@ export async function associateIsometricAction(data: {
 }
 
 export async function deleteAssetAction(assetId: string) {
-    // Protección contra el borrado de activos de sistema
+    // 1. Protección contra el borrado de activos de sistema
     const defaults = await dbQuery(`SELECT id FROM public.assets WHERE name IN (
         'Logo Empresa Pordefecto',
         'Isométrico (Placeholder)',
@@ -163,41 +163,55 @@ export async function deleteAssetAction(assetId: string) {
         throw new Error("No puedes eliminar un recurso del sistema por defecto.")
     }
 
-    // Protección V6.1: Impedir borrado de assets en uso por referencias o versiones
     const safeId = assetId.replace(/'/g, "''")
 
-    const refsUsing = await dbQuery(`
-        SELECT family_code, reference_code 
-        FROM public.product_references 
+    // 2. Obtener metadatos del archivo para borrar del Storage
+    const asset = await dbQuery(`SELECT file_path FROM public.assets WHERE id = '${safeId}' LIMIT 1`)
+    if (!asset || asset.length === 0) return { success: true } // Ya no existe
+    const filePath = asset[0].file_path
+
+    // 3. LIMPIEZA PROFUNDA (Cascada manual)
+    
+    // 3a. Limpiar en Referencias
+    await dbQuery(`
+        UPDATE public.product_references 
+        SET isometric_asset_id = NULL, 
+            isometric_path = NULL,
+            updated_at = now()
         WHERE isometric_asset_id = '${safeId}'
-    `) || []
+    `)
 
-    const versionsUsing = await dbQuery(`
-        SELECT v.version_code, v.sku_base, r.family_code, r.reference_code
-        FROM public.product_versions v
-        JOIN public.product_references r ON v.reference_id = r.id
-        WHERE v.version_attrs->>'isometric_asset_id' = '${safeId}'
-    `) || []
+    // 3b. Limpiar en Versiones (JSONB)
+    // Usamos el operador '-' para eliminar las llaves del objeto JSONB
+    await dbQuery(`
+        UPDATE public.product_versions 
+        SET version_attrs = version_attrs - 'isometric_asset_id' - 'isometric_path',
+            updated_at = now()
+        WHERE version_attrs->>'isometric_asset_id' = '${safeId}'
+    `)
 
-    if (refsUsing.length > 0 || versionsUsing.length > 0) {
-        const details: string[] = []
-        if (refsUsing.length > 0) {
-            const refList = refsUsing.map((r: any) => `${r.family_code}-${r.reference_code}`).join(', ')
-            details.push(`Referencias: ${refList}`)
+    // 4. Borrar archivo físico de Supabase Storage
+    try {
+        // Extraer el nombre del archivo de la URL
+        // Las URLs de Supabase suelen terminar en /assets/nombre-archivo.ext
+        const urlParts = filePath.split('/')
+        const fileName = urlParts[urlParts.length - 1]
+        
+        if (fileName && filePath.includes('supabase')) {
+            const { supabase } = await import('@/lib/supabase')
+            await supabase.storage.from('assets').remove([`assets/${fileName}`])
         }
-        if (versionsUsing.length > 0) {
-            const verList = versionsUsing.map((v: any) => `${v.sku_base} (${v.family_code}-${v.reference_code} v${v.version_code})`).join(', ')
-            details.push(`Versiones (override): ${verList}`)
-        }
-        throw new Error(
-            `Este asset está asociado a referencias o versiones activas. ` +
-            `Desasócialo o reemplázalo antes de eliminarlo.\n\n` +
-            `En uso por:\n${details.join('\n')}`
-        )
+    } catch (storageError) {
+        console.error("Error al borrar archivo de storage:", storageError)
+        // No bloqueamos el flujo si falla el storage físico
     }
 
+    // 5. Borrar registro de la tabla assets
     await dbQuery(`DELETE FROM public.assets WHERE id = '${safeId}'`)
+    
     revalidatePath('/assets')
+    revalidatePath('/products')
+    
     return { success: true }
 }
 

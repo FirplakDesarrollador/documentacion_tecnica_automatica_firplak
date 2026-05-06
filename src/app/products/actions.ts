@@ -298,9 +298,8 @@ export async function updateProductAction(id: string, data: any) {
     
     // Return updated record for UI confirmation
     const rows = await dbQuery(`
-        SELECT p.*, c.name_color_sap as color_name 
-        FROM public.cabinet_products p
-        LEFT JOIN public.colors c ON p.color_code = c.code_4dig
+        SELECT p.*, p.name_color_sap as color_name 
+        FROM public.v_ui_generate_list p
         WHERE p.id = $1
     `, [id])
     return rows?.[0] || null

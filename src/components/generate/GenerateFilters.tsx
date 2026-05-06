@@ -39,7 +39,7 @@ export function GenerateFilters({
                 options={references}
                 values={referenceIds}
                 onChange={handleReferenceChange}
-                placeholder="Referencia · Medida"
+                placeholder="Referencia · Designación · Medida..."
                 className="max-w-[420px]"
             />
         </div>

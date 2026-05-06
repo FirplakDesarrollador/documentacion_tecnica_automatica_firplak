@@ -20,7 +20,8 @@ import {
     getMeasuresByFamilyAndRefAction,
     getVersionsByFamilyAndRefAction,
     getAssetsByTypeAction,
-    associateIsometricAction 
+    associateIsometricAction,
+    deleteAssetAction
 } from "@/app/assets/actions"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
@@ -31,6 +32,8 @@ interface Option {
 }
 
 interface Props {
+    /** 'select' = solo elegir asset (productos nuevos), 'associate' = buscar refs en BD y asociar (default) */
+    mode?: 'select' | 'associate'
     initialFamilies?: string[]
     initialReferences?: string[]
     initialMeasures?: string[]
@@ -42,6 +45,7 @@ interface Props {
 const EMPTY_ARRAY: string[] = []
 
 export function IsometricAssociationDialog({ 
+    mode = 'associate',
     initialFamilies = EMPTY_ARRAY, 
     initialReferences = EMPTY_ARRAY, 
     initialMeasures = EMPTY_ARRAY,
@@ -49,6 +53,7 @@ export function IsometricAssociationDialog({
     onAssociationComplete,
     trigger
 }: Props) {
+    const isSelectOnly = mode === 'select'
     const [open, setOpen] = React.useState(false)
     const [loading, setLoading] = React.useState(false)
     const [submitting, setSubmitting] = React.useState(false)
@@ -83,16 +88,21 @@ export function IsometricAssociationDialog({
         }
     }
 
+    const [uploadedAssetIds, setUploadedAssetIds] = React.useState<string[]>([])
+
     React.useEffect(() => {
         if (open) {
             loadInitialData()
-            // Set initial state from props
             setSelectedFamilies(initialFamilies)
             setSelectedReferences(initialReferences)
             setSelectedMeasures(initialMeasures)
             setSelectedVersions(initialVersions)
+            setUploadedAssetIds([])
         } else {
-            // Reset state on close
+            // Clean up unassociated uploads
+            if (uploadedAssetIds.length > 0 && !submitting) {
+                Promise.all(uploadedAssetIds.map(id => deleteAssetAction(id).catch(e => console.error(e))))
+            }
             setSelectedFamilies([])
             setSelectedReferences([])
             setSelectedMeasures([])
@@ -101,6 +111,7 @@ export function IsometricAssociationDialog({
             setReferences([])
             setMeasures([])
             setVersions([])
+            setUploadedAssetIds([])
         }
     }, [open, initialFamilies, initialReferences, initialMeasures])
 
@@ -163,6 +174,7 @@ export function IsometricAssociationDialog({
             const newAsset = result.asset
             setAssets(prev => [newAsset, ...prev])
             setSelectedAssetId(newAsset.id)
+            setUploadedAssetIds(prev => [...prev, newAsset.id])
         } catch (error: any) {
             toast.error(error.message || 'Error al subir archivo')
         } finally {
@@ -176,6 +188,21 @@ export function IsometricAssociationDialog({
             toast.error("Por favor selecciona o sube un isométrico")
             return
         }
+
+        // Modo 'select': solo devolver el asset seleccionado, sin tocar la BD
+        if (isSelectOnly) {
+            const selectedAsset = assets.find(a => a.id === selectedAssetId)
+            if (onAssociationComplete && selectedAsset) {
+                onAssociationComplete(selectedAsset)
+            }
+            // Limpiar uploadedAssetIds para que no se borren al cerrar
+            setUploadedAssetIds([])
+            setOpen(false)
+            toast.success("Isométrico seleccionado correctamente")
+            return
+        }
+
+        // Modo 'associate': validar filtros y persistir en BD
         if (selectedFamilies.length === 0) {
             toast.error("Selecciona al menos una familia")
             return
@@ -311,7 +338,8 @@ export function IsometricAssociationDialog({
                         )}
                     </div>
 
-                    {/* Step 2: Target Selection */}
+                    {/* Step 2: Target Selection — solo visible en modo 'associate' */}
+                    {!isSelectOnly && (
                     <div className="space-y-4 pt-4 border-t border-slate-100">
                         <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">2. SELECCIÓN DE DESTINO PARA ASOCIACIÓN</Label>
                         
@@ -328,12 +356,12 @@ export function IsometricAssociationDialog({
                             </div>
 
                             <div className={cn("space-y-2 transition-opacity", selectedFamilies.length === 0 && "opacity-50 pointer-events-none")}>
-                                <Label className="text-slate-700 font-medium">Código · Referencia · Medida <span className="text-[10px] text-rose-500 font-bold uppercase tracking-tight">(Obligatorio)</span></Label>
+                                <Label className="text-slate-700 font-medium">Ref · Desig · Medida · Nombre · Accesorio · Marca <span className="text-[10px] text-rose-500 font-bold uppercase tracking-tight">(Obligatorio)</span></Label>
                                 <MultiSelectSearchField 
                                     options={references}
                                     values={selectedReferences}
                                     onChange={setSelectedReferences}
-                                    placeholder="Seleccionar Código, Referencia y Medida"
+                                    placeholder="Seleccionar Referencia..."
                                     className="h-11"
                                     emptyMessage="Selecciona familias primero."
                                 />
@@ -351,13 +379,23 @@ export function IsometricAssociationDialog({
                             </div>
                         </div>
                     </div>
+                    )}
 
+                    {isSelectOnly ? (
+                    <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100">
+                        <p className="text-xs text-emerald-700 flex items-start gap-2">
+                             <span className="font-bold text-emerald-600 block mt-0.5">✅</span>
+                             El isométrico seleccionado se vinculará al producto al momento de guardarlo.
+                        </p>
+                    </div>
+                    ) : (
                     <div className="bg-amber-50 p-4 rounded-xl border border-amber-100">
                         <p className="text-xs text-amber-700 flex items-start gap-2">
                              <span className="font-bold text-amber-600 block mt-0.5">⚠️</span>
                              Esta acción actualizará de forma masiva el campo "isometric_path" de todos los productos que coincidan con los filtros seleccionados.
                         </p>
                     </div>
+                    )}
                 </div>
 
                 <DialogFooter className="p-4 bg-slate-50 border-t border-slate-100 shrink-0">
@@ -365,12 +403,12 @@ export function IsometricAssociationDialog({
                         Cancelar
                     </Button>
                     <Button 
-                        disabled={submitting || uploading || !selectedAssetId || selectedFamilies.length === 0 || selectedReferences.length === 0}
+                        disabled={submitting || uploading || !selectedAssetId || (!isSelectOnly && (selectedFamilies.length === 0 || selectedReferences.length === 0))}
                         onClick={handleSubmit}
                         className="bg-indigo-600 hover:bg-indigo-700 shadow-md h-10 px-6 transition-all"
                     >
                         {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-                        {submitting ? "Actualizando..." : "Asociar Isométrico"}
+                        {submitting ? "Procesando..." : (isSelectOnly ? "Seleccionar Isométrico" : "Asociar Isométrico")}
                     </Button>
                 </DialogFooter>
             </DialogContent>

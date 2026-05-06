@@ -1205,6 +1205,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                                          )}
 
                                                          <IsometricAssociationDialog 
+                                                             mode={isEdit ? "associate" : "select"}
                                                              initialFamilies={formData.familia_code ? [formData.familia_code] : []}
                                                              initialReferences={formData.ref_code ? [`${formData.ref_code}|||${formData.commercial_measure || ''}`] : []}
                                                              initialMeasures={formData.commercial_measure ? [formData.commercial_measure] : []}

@@ -37,32 +37,32 @@ export interface ReferenceFilterOption {
  */
 export async function getFamilyFilters(): Promise<FamilyFilterOption[]> {
     const records = await dbQuery(
-        `SELECT familia_code, MAX(family_name) as family_name
+        `SELECT family_code, MAX(family_name) as family_name
          FROM (
              SELECT
-                 p.familia_code,
+                 p.family_code,
                  COALESCE(
-                     f_exact.name,
-                     f_prefix.name
+                     f_exact.family_name,
+                     f_prefix.family_name
                  ) as family_name
-             FROM public.cabinet_products p
-             LEFT JOIN public.familias f_exact
-                 ON f_exact.code = p.familia_code
-             LEFT JOIN public.familias f_prefix
-                 ON f_prefix.code = SUBSTRING(p.familia_code FROM 2)
-                 AND p.familia_code ~ '^[VCP].+'
-                 AND f_exact.code IS NULL
-             WHERE p.familia_code IS NOT NULL AND p.status = 'ACTIVO'
+             FROM public.product_references p
+             LEFT JOIN public.families f_exact
+                 ON f_exact.family_code = p.family_code
+             LEFT JOIN public.families f_prefix
+                 ON f_prefix.family_code = SUBSTRING(p.family_code FROM 2)
+                 AND p.family_code ~ '^[VCP].+'
+                 AND f_exact.family_code IS NULL
+             WHERE p.family_code IS NOT NULL
          ) sub
-         GROUP BY familia_code
-         ORDER BY familia_code ASC`
+         GROUP BY family_code
+         ORDER BY family_code ASC`
     ) || []
 
     return records.map((fam: any) => ({
-        value: fam.familia_code,
+        value: fam.family_code,
         label: fam.family_name
-            ? `${fam.familia_code} - ${fam.family_name}`
-            : fam.familia_code,
+            ? `${fam.family_code} - ${fam.family_name}`
+            : fam.family_code,
     }))
 }
 
@@ -82,31 +82,33 @@ export async function getReferenceFilters(
 
     const records = await dbQuery(
         `SELECT 
-            ref_code, 
-            commercial_measure, 
-            MAX(designation) as designation,
-            MAX(cabinet_name) as cabinet_name,
-            MAX(special_label) as special_label
-         FROM public.cabinet_products
-         WHERE status = 'ACTIVO'
-           AND ref_code IS NOT NULL
-           AND familia_code IN (${fFilter})
-         GROUP BY ref_code, commercial_measure
-         ORDER BY ref_code, commercial_measure`
+            r.reference_code, 
+            r.commercial_measure, 
+            r.designation,
+            r.product_name,
+            r.special_label,
+            r.ref_attrs->>'accessory_text' as accessory_text
+         FROM public.product_references r
+         LEFT JOIN public.product_versions v ON r.id = v.reference_id
+         LEFT JOIN public.product_skus s ON v.id = s.version_id
+         WHERE r.family_code IN (${fFilter})
+         GROUP BY r.reference_code, r.commercial_measure, r.designation, r.product_name, r.special_label, r.ref_attrs->>'accessory_text'
+         ORDER BY r.reference_code, r.commercial_measure`
     ) || []
 
     return records.map((rec: any) => {
-        // Formato solicitado: Número de referencia, Designación, nombre, medida comercial, special_label
+        // Formato solicitado por el usuario: reference_code · designation · commercial_measure · product_name · accessory_text · special_label
         const parts = [
-            rec.ref_code,
-            rec.designation,
-            rec.cabinet_name,
-            rec.commercial_measure,
-            rec.special_label && rec.special_label.toUpperCase() !== 'NA' ? rec.special_label : null
-        ].filter(Boolean) // Eliminamos nulos o vacíos
+            rec.reference_code || 'NA',
+            rec.designation || 'NA',
+            rec.commercial_measure || 'NA',
+            rec.product_name || 'NA',
+            rec.accessory_text || 'NA',
+            rec.special_label || 'NA'
+        ]
 
         return {
-            value: `${rec.ref_code}|||${rec.commercial_measure || ''}`,
+            value: `${rec.reference_code}|||${rec.commercial_measure || ''}`,
             label: parts.join(' · ')
         }
     })

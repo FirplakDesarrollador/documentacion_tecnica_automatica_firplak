@@ -37,7 +37,7 @@ function getExpectedVarsFromRules(rules: any[]) {
         const fieldsInRule: { field: string; condition: string }[] = [];
 
         // Extraer de payload: {variable}
-        const payloadMatches = rule.action_payload.match(/{([^}]+)}/g);
+        const payloadMatches = (rule.action_payload || '').match(/{([^}]+)}/g);
         if (payloadMatches) {
             payloadMatches.forEach((m: string) => {
                 const f = m.replace(/[{}]/g, '').toLowerCase();
@@ -50,7 +50,7 @@ function getExpectedVarsFromRules(rules: any[]) {
         }
 
         // Extraer de condición: campo!=null, campo==true
-        const condParts = rule.condition_expression.split(/[&|!=\s<>]+/).filter(Boolean);
+        const condParts = (rule.condition_expression || '').split(/[&|!=\s<>]+/).filter(Boolean);
         condParts.forEach((t: string) => {
             const f = t.toLowerCase();
             const meta = ADDABLE_FIELDS.find(af => af.field === f);
@@ -475,7 +475,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
         } else if (tab === 'orden_en' && enConfig.length === 0) {
             setEnConfigLoading(true)
             try {
-                const cfg = await getEnConfigAction('MUEBLE') 
+                const cfg = await getEnConfigAction(productType) 
                 setEnConfig(cfg)
                 const issues = checkSyncIssues(cfg)
                 setSyncIssues(issues)
@@ -500,7 +500,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
 
         setEnConfigSaving(variable_id)
         try {
-            await saveEnConfigAction('MUEBLE', variable_id, { [field]: value })
+            await saveEnConfigAction(productType, variable_id, { [field]: value })
             // Success: state already updated optimistically
             toast.success(`Configuración actualizada`)
         } catch (err: any) {
@@ -508,7 +508,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
             // For now, just toast error. 
             toast.error("Error al guardar: " + err.message)
             // Reload from server to be safe
-            const cfg = await getEnConfigAction('MUEBLE') 
+            const cfg = await getEnConfigAction(productType) 
             setEnConfig(cfg)
         } finally {
             setEnConfigSaving(null)

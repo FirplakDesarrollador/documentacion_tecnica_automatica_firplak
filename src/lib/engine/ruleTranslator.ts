@@ -27,8 +27,8 @@ export function ruleToSpanishDescription(rule: any): string {
 
     let action = ''
     try {
-        const type = rule.action_type
-        const payload = rule.action_payload
+        const type = rule.action_type || ''
+        const payload = rule.action_payload || ''
         
         switch (type) {
             case 'set_field':
@@ -73,6 +73,7 @@ export function ruleToSpanishDescription(rule: any): string {
 function translateField(f: string): string {
     const fields: Record<string, string> = {
         'version_code': 'Versión',
+        'family_code': 'Familia',
         'familia_code': 'Familia',
         'product_type': 'Tipo de Producto',
         'rh': 'RH (Humedad)',

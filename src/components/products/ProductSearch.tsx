@@ -57,7 +57,7 @@ export function ProductSearch({ families, references }: ProductSearchProps) {
                 options={references}
                 values={reference}
                 onChange={handleReferenceChange}
-                placeholder="Referencia · Medida"
+                placeholder="Referencia · Designación · Medida..."
                 className="max-w-[420px]"
             />
         </div>

@@ -139,6 +139,12 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                 toast.error('El nombre de la base de datos es obligatorio')
                 return
             }
+            if (isNew && existingDatasets.some(d => d.name.toLowerCase() === datasetName.trim().toLowerCase())) {
+                toast.error(`Ya existe una base de datos con el nombre "${datasetName}".`, {
+                    description: "Por favor, elige otro nombre o cierra esta ventana y usa la opción 'Actualizar' en la base existente."
+                })
+                return
+            }
             if (csvHeaders.length === 0) {
                 toast.error('Debes seleccionar un archivo CSV')
                 return
@@ -198,7 +204,10 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                     })
                     .select()
                     .single()
-                if (dsErr) throw dsErr
+                if (dsErr) {
+                    if (dsErr.code === '23505') throw new Error(`El nombre "${datasetName}" ya existe. Por favor, elige otro.`)
+                    throw dsErr
+                }
                 workingDatasetId = newDS.id
             }
 
