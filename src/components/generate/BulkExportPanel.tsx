@@ -55,7 +55,7 @@ async function exportOneProduct(
     format: 'pdf' | 'jpg',
     rules: any[],
     directoryHandle: any | null = null
-): Promise<void> {
+): Promise<boolean> {
     let elements: any[] = []
     try {
         elements = JSON.parse(template.elements_json || '[]')
@@ -103,6 +103,9 @@ async function exportOneProduct(
     if (!response.ok) throw new Error(`Error exportando ${product.code}`)
 
     const blob = await response.blob()
+    if (!blob || blob.size <= 0) {
+        throw new Error(`Export generado vacio para ${product.code}`)
+    }
 
     // 6. Guardar: En Carpeta o mediante Descarga Navegador
     if (directoryHandle) {
@@ -125,6 +128,8 @@ async function exportOneProduct(
         window.URL.revokeObjectURL(url)
         document.body.removeChild(a)
     }
+
+    return true
 }
 
 export function BulkExportPanel({ selectedProducts, template, rules, onClose }: BulkExportPanelProps) {
@@ -196,6 +201,8 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
         setIsRunning(true)
         setStarted(true)
         isCancelledRef.current = false
+        let successCount = 0
+        let errorCount = 0
 
         for (const item of items) {
             if (isCancelledRef.current) break
@@ -204,19 +211,22 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
             updateItem(item.product.id, 'exporting')
             try {
                 await exportOneProduct(item.product, template, selectedFormat, rules, directoryHandle)
+                successCount += 1
                 updateItem(item.product.id, 'done')
             } catch (err: any) {
+                errorCount += 1
                 updateItem(item.product.id, 'error', err?.message || 'Error desconocido')
             }
         }
 
         const wasCancelled = isCancelledRef.current
-        const completedCount = items.filter(i => i.status === 'done').length
+        // Count successes from actual export results (response.ok + non-empty blob)
         setIsRunning(false)
         if (wasCancelled) {
-            toast.error('ExportaciÃ³n detenida por el usuario')
+            toast.error('Exportacion detenida por el usuario')
         } else {
-            toast.success(`ExportaciÃ³n completada: ${items.filter(i => i.status === 'done').length} archivo(s) generado(s)`)
+            const baseMsg = 'Exportacion completada: ' + successCount + ' archivo(s) generado(s)'
+            toast.success(errorCount > 0 ? (baseMsg + ', ' + errorCount + ' error(es)') : baseMsg)
         }
     }
 
@@ -384,7 +394,7 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                                 className="flex-1 bg-red-50 text-red-600 hover:bg-red-100 border-none shadow-none font-bold"
                             >
                                 <StopCircle className="w-4 h-4 mr-2" />
-                                Detener ExportaciÃ³n
+                                Detener Exportacion
                             </Button>
                         )}
                         <Button variant="outline" onClick={onClose} className={isRunning ? 'w-24' : 'flex-1'}>
