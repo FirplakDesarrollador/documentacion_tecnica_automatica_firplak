@@ -109,6 +109,26 @@ export async function upsertFamilyAction(data: any) {
     return rows ? rows[0] : null
 }
 
+export async function upsertColorAction(code: string, name: string) {
+    if (!code || !name) throw new Error("Color code and name are required")
+    
+    // El code_4dig siempre tiene 4 dígitos (ej: 0434)
+    // El code_short es el valor numérico sin ceros a la izquierda (ej: 434)
+    const code4dig = code.padStart(4, '0')
+    const codeShort = parseInt(code, 10).toString()
+
+    const query = `
+        INSERT INTO public.colors (code_4dig, code_short, name_color_sap)
+        VALUES ('${code4dig.replace(/'/g, "''")}', '${codeShort.replace(/'/g, "''")}', '${name.replace(/'/g, "''")}')
+        ON CONFLICT (code_4dig) DO UPDATE SET
+            name_color_sap = EXCLUDED.name_color_sap,
+            code_short = EXCLUDED.code_short
+        RETURNING *
+    `
+    const rows = await dbQuery(query)
+    return rows ? rows[0] : null
+}
+
 function buildCreateProductV6Payload(data: any, parsed: any, isPrivate: boolean, clientId: string, clientName: string, sap_description_recommended: string, final_name_es: string, final_name_en: string) {
     const payload: any = {
         reference: {
@@ -251,6 +271,11 @@ export async function createProductAction(data: any) {
 
     const payload = buildCreateProductV6Payload(data, parsed, isPrivate, clientId, clientName, sap_description_recommended, final_name_es, final_name_en)
 
+    if (data._newColor && (data.color_code || parsed.color_code)) {
+        const cCode = data.color_code || parsed.color_code
+        await upsertColorAction(cCode, data._newColor.name)
+    }
+
     const { data: result, error } = await (supabaseServer as any).rpc('create_product_v6_transaction', { payload })
     if (error) throw new Error(`Transaction failed: ${error.message}`)
 
@@ -289,6 +314,12 @@ export async function updateProductAction(id: string, data: any) {
 
     // Prepare V6 payload
     const payload = buildCreateProductV6Payload(data, parsed, !!data.private_label_flag, data.private_label_client_id, data.private_label_client_name, final_name_es.toUpperCase().substring(0, 40), final_name_es, final_name_en)
+
+    // Handle new color if provided
+    if (data._newColor && (data.color_code || parsed.color_code)) {
+        const cCode = data.color_code || parsed.color_code
+        await upsertColorAction(cCode, data._newColor.name)
+    }
 
     // Execute transactional update
     await dbQuery(`SELECT public.update_product_v6_transaction($1, $2)`, [id, JSON.stringify(payload)])

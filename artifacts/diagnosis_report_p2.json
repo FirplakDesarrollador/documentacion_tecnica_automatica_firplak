@@ -1,0 +1,1865 @@
+{
+  "stats": {
+    "total_csv": 466,
+    "unique_csv": 466,
+    "duplicates_csv": 0,
+    "found_in_db": 123,
+    "not_found_in_db": 343
+  },
+  "found_references": [
+    {
+      "reference_code": "0003",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0003-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0009",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0009-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0010",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0010-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0012",
+      "product_name": "MONET",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0012-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0015",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0015-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0019",
+      "product_name": "TIZIANO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0019-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 0.45 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0020",
+      "product_name": "TIZIANO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0020-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 0.45 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0022",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0022-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0025",
+      "product_name": "MONET",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0025-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0029",
+      "product_name": "BASICO",
+      "sku_count": 2,
+      "skus": [
+        "VBAN05-0029-000-0100",
+        "VBAN05-0029-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0033",
+      "product_name": "BASICO",
+      "sku_count": 2,
+      "skus": [
+        "VBAN05-0033-000-0100",
+        "VBAN05-0033-PRO-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0039",
+      "product_name": "VALDEZ",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0039-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 0.45 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0051",
+      "product_name": "VALDEZ",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0051-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 0.45 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0052",
+      "product_name": "VALDEZ",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0052-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 0.45 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0058",
+      "product_name": "VALDEZ",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0058-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 0.45 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0061",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0061-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0063",
+      "product_name": "RAYO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0063-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0065",
+      "product_name": "TIZIANO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0065-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 0.45 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0068",
+      "product_name": "RAYO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0068-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0070",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0070-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0071",
+      "product_name": "RAYO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0071-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0077",
+      "product_name": "MACAO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0077-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0078",
+      "product_name": "MACAO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0078-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0087",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0087-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "SIN MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0088",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0088-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "SIN MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0089",
+      "product_name": "TIZIANO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0089-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 0.45 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0092",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0092-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0093",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0093-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "SIN MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0094",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0094-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "SIN MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0096",
+      "product_name": "MACAO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0096-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0098",
+      "product_name": "TIZIANO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0098-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 0.45 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0099",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0099-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0100",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0100-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "SIN MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0101",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0101-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0102",
+      "product_name": "TIZIANO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0102-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 0.45 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0103",
+      "product_name": "RAYO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0103-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0104",
+      "product_name": "RAYO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0104-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0105",
+      "product_name": "RAYO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0105-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0106",
+      "product_name": "MACAO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0106-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0107",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0107-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "SIN MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0110",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0110-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0111",
+      "product_name": "BASICO",
+      "sku_count": 2,
+      "skus": [
+        "VBAN05-0111-CHT-0100",
+        "VBAN05-0111-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "SIN MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0112",
+      "product_name": "BASICO",
+      "sku_count": 3,
+      "skus": [
+        "VBAN05-0112-CHT-0100",
+        "VBAN05-0112-DAC-0100",
+        "VBAN05-0112-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "SIN MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0113",
+      "product_name": "BASICO",
+      "sku_count": 2,
+      "skus": [
+        "VBAN05-0113-DAC-0100",
+        "VBAN05-0113-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0114",
+      "product_name": "MISUS",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0114-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE",
+        "armado_con_lvm": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0116",
+      "product_name": "VALDEZ",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0116-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 0.45 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0119",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0119-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "SIN MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0125",
+      "product_name": "DA VINCI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0125-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 0.45 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0126",
+      "product_name": "POLOCK",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0126-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "MANIJA NEGRA 96",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0127",
+      "product_name": "MACAO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0127-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0128",
+      "product_name": "POLOCK",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0128-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "MANIJA NEGRA 96",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0130",
+      "product_name": "PICASSO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0130-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE + MANIJA NEGRA 128",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0131",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0131-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "armado_con_lvm": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0132",
+      "product_name": "VEGA",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0132-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0134",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0134-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "SIN MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0135",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0135-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "SIN MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0136",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0136-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "SIN MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0137",
+      "product_name": "EUROCARIBE",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0137-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "SIN MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0138",
+      "product_name": "EUROCARIBE",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0138-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0139",
+      "product_name": "CALDER",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0139-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0140",
+      "product_name": "POLOCK",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0140-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "MANIJA NEGRA 96",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0142",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN05-0142-000-1353"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0009",
+      "product_name": "MACAO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0009-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0010",
+      "product_name": "MACAO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0010-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0014",
+      "product_name": "MISUS",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0014-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "R OCULTO CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0015",
+      "product_name": "GRECO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0015-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 1.5 MM",
+        "accessory_text": "R OCULTO + RFE CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0017",
+      "product_name": "MACAO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0017-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0020",
+      "product_name": "MACAO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0020-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0032",
+      "product_name": "VITELI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0032-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "R OCULTO CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0035",
+      "product_name": "MACAO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0035-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0038",
+      "product_name": "VITELI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0038-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "R OCULTO CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0049",
+      "product_name": "VITELLI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0049-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "R OCULTO CIERRE LENTO",
+        "armado_con_lvm": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0055",
+      "product_name": "VITELI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0055-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "R OCULTO CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0058",
+      "product_name": "MISUS",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0058-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "R OCULTO CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0059",
+      "product_name": "MISUS",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0059-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "R OCULTO CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0060",
+      "product_name": "VITELI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0060-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "R OCULTO CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0063",
+      "product_name": "GRECO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0063-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 1.5 MM",
+        "accessory_text": "R OCULTO + RFE CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0064",
+      "product_name": "GRECO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0064-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 1.5 MM",
+        "accessory_text": "R OCULTO + RFE CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0065",
+      "product_name": "GODAI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0065-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0066",
+      "product_name": "GODAI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0066-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0067",
+      "product_name": "GODAI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0067-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0068",
+      "product_name": "GODAI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0068-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0069",
+      "product_name": "GODAI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0069-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0070",
+      "product_name": "GODAI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0070-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0071",
+      "product_name": "GODAI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0071-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0072",
+      "product_name": "GODAI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0072-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0073",
+      "product_name": "GODAI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0073-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0074",
+      "product_name": "GODAI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0074-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0076",
+      "product_name": "GODAI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0076-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0077",
+      "product_name": "GODAI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0077-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0078",
+      "product_name": "GODAI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0078-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0079",
+      "product_name": "GODAI",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0079-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0080",
+      "product_name": "GRECO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0080-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 1.5 MM",
+        "accessory_text": "R OCULTO + RFE CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0082",
+      "product_name": "THALOS",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0082-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0083",
+      "product_name": "MACAO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0083-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0084",
+      "product_name": "MACAO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0084-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0087",
+      "product_name": "OTUS",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0087-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0091",
+      "product_name": "ZACURA",
+      "sku_count": 1,
+      "skus": [
+        "VBAN12-0091-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 0.45 MM",
+        "accessory_text": "RFE CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0021",
+      "product_name": "MACAO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN22-0021-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0082",
+      "product_name": "MACAO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN22-0082-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE CIERRE LENTO",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0110",
+      "product_name": "MONET",
+      "sku_count": 1,
+      "skus": [
+        "VBAN23-0110-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0112",
+      "product_name": "MONET",
+      "sku_count": 1,
+      "skus": [
+        "VBAN23-0112-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0022",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN24-0022-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0104",
+      "product_name": "RAYO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN24-0104-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0113",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN24-0113-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "SIN MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0001",
+      "product_name": "BASICO",
+      "sku_count": 1,
+      "skus": [
+        "VBAN30-0001-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0001",
+      "product_name": "VESSEL",
+      "sku_count": 1,
+      "skus": [
+        "VBAN31-0001-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0002",
+      "product_name": "VESSEL",
+      "sku_count": 1,
+      "skus": [
+        "VBAN31-0002-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0003",
+      "product_name": "VESSEL",
+      "sku_count": 1,
+      "skus": [
+        "VBAN31-0003-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "NA",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0039",
+      "product_name": "AMBAR",
+      "sku_count": 1,
+      "skus": [
+        "VCOC01-0039-MRH-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "armado_con_lvm": "NA",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0060",
+      "product_name": "AMBAR",
+      "sku_count": 1,
+      "skus": [
+        "VCOC01-0060-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "product_type": "MUEBLE",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS + RFE",
+        "assembled_flag": false
+      }
+    },
+    {
+      "reference_code": "0128",
+      "product_name": "VIVE",
+      "sku_count": 4,
+      "skus": [
+        "VCOC01-0128-000-0321",
+        "VCOC01-0128-000-0322",
+        "VCOC01-0128-000-0323",
+        "VCOC01-0128-000-0324"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "product_type": "MUEBLE",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "CON MANIJAS",
+        "assembled_flag": false
+      }
+    },
+    {
+      "reference_code": "0144",
+      "product_name": "ZAREL",
+      "sku_count": 1,
+      "skus": [
+        "VCOC01-0144-000-1352"
+      ],
+      "current_attrs": {
+        "rh": "RH",
+        "carb2": "NA",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "RFE",
+        "door_color_text": "NA"
+      }
+    },
+    {
+      "reference_code": "0003",
+      "product_name": "NA",
+      "sku_count": 1,
+      "skus": [
+        "VROP03-0003-000-0100"
+      ],
+      "current_attrs": {
+        "rh": "NA",
+        "carb2": "CARB2",
+        "bisagras": "BISAGRAS CIERRE LENTO",
+        "canto_puertas": "CANTO 2 MM",
+        "accessory_text": "NA",
+        "door_color_text": "NA"
+      }
+    }
+  ],
+  "not_found_sample": [
+    "VBAN05-0029-CME-0100",
+    "VBAN05-0059-000-0100",
+    "VBAN05-0060-000-0100",
+    "VBAN05-0081-000-0100",
+    "VBAN05-0082-000-0100",
+    "VBAN05-0083-000-0100",
+    "VBAN05-0084-000-0100",
+    "VCOC01-0037-000-0100",
+    "VCOC01-0041-000-0100",
+    "VCOC01-0041-000-1306"
+  ],
+  "files": {
+    "not_found_csv": "artifacts/skus_not_found_p2.csv"
+  }
+}

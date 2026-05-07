@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { createProductAction, updateProductAction, getUniquePropertiesAction, parseProductCodeAction, translateAction, checkProductExistsAction, getDiagnosticInfoAction, getClientsAction, checkFamilyExistsAction, upsertFamilyAction, saveGlossaryTermsAction } from './actions'
+import { createProductAction, updateProductAction, getUniquePropertiesAction, parseProductCodeAction, translateAction, checkProductExistsAction, getDiagnosticInfoAction, getClientsAction, checkFamilyExistsAction, upsertFamilyAction, saveGlossaryTermsAction, upsertColorAction } from './actions'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { getColorByNameAction, getRulesAction } from '@/app/rules/actions'
@@ -121,6 +121,9 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         manufacturing_process: ''
     })
     const [familySaved, setFamilySaved] = useState(false)
+    const [isNewColor, setIsNewColor] = useState(false)
+    const [colorData, setColorData] = useState({ name: '' })
+    const [colorSaved, setColorSaved] = useState(false)
 
     // Cargar reglas y opciones una vez
     useEffect(() => {
@@ -152,6 +155,10 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
     useEffect(() => {
         setFamilySaved(false);
     }, [familyData.name, familyData.zone_home, familyData.line, familyData.product_type, familyData.use_destination]);
+
+    useEffect(() => {
+        setColorSaved(false);
+    }, [colorData.name]);
 
     const handleCheckDupe = async (onSuccess: () => void) => {
         if (isEdit) {
@@ -295,6 +302,19 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                     }))
                 } else {
                     setIsNewFamily(false)
+                }
+
+                // Verificación de Color
+                if (parsed.color_code) {
+                    const pCode = parsed.color_code.padStart(4, '0')
+                    const colorExists = datalistOptions.colors.some(c => (c.code || '').padStart(4, '0') === pCode) || !!parsed.color_name
+                    
+                    if (!colorExists) {
+                        setIsNewColor(true)
+                        setColorData({ name: parsed.color_name || '' })
+                    } else {
+                        setIsNewColor(false)
+                    }
                 }
 
                 // Verificación de Glosario Adaptativo
@@ -508,6 +528,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
             const payload = { 
                 ...formData, 
                 _newFamily: isNewFamily ? familyData : undefined,
+                _newColor: isNewColor ? colorData : undefined,
                 private_label_flag: isPrivateLabel,
                 private_label_client_id: privateLabelData.client_id,
                 private_label_client_name: privateLabelData.client_id === '__NEW__' ? privateLabelData.client_name : (clients.find(c => c.id === privateLabelData.client_id)?.name || ''),
@@ -629,6 +650,13 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
             }
             if (!familyData.manufacturing_process) {
                 toast.error("Proceso de manufactura de la nueva familia obligatorio")
+                return
+            }
+        }
+
+        if (isNewColor) {
+            if (!colorData.name) {
+                toast.error("Nombre del nuevo color obligatorio")
                 return
             }
         }
@@ -1034,6 +1062,57 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                             className={`${familySaved ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'} text-white font-bold px-8 shadow-md transition-all h-12 rounded-xl`}
                                         >
                                             {familySaved ? 'SOBREESCRIBIR DATOS, APLICAR Y CONTINUAR' : 'APLICAR DATOS AL PRODUCTO Y CONTINUAR'}
+                                        </Button>
+                                    )}
+                                </div>
+                            </CardContent>
+                        </Card>
+                    )}
+
+                    {isAnalyzed && isNewColor && (
+                        <Card className={`${colorSaved ? 'border-emerald-200 bg-emerald-50' : 'border-indigo-200 bg-indigo-50'} border-2 shadow-lg animate-in fade-in zoom-in-95 duration-200 transition-colors`}>
+                            <CardHeader className={`pb-3 border-b ${colorSaved ? 'border-emerald-100' : 'border-indigo-100'}`}>
+                                <CardTitle className={`text-xl font-bold ${colorSaved ? 'text-emerald-900' : 'text-indigo-900'} flex items-center gap-2`}>
+                                    <Sparkles className={`w-5 h-5 ${colorSaved ? 'text-emerald-600' : 'text-indigo-600'}`}/>
+                                    {colorSaved ? 'Configuración de Color Guardada' : 'Nuevo Color Identificado'} ({formData.color_code})
+                                </CardTitle>
+                                <CardDescription className={`${colorSaved ? 'text-emerald-800/80' : 'text-indigo-800/80'} font-medium`}>
+                                    {colorSaved ? 'Los datos del color han sido preparados para el guardado.' : 'Este código de color no existe en el catálogo. Por favor define su nombre.'}
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="p-6 space-y-6">
+                                <div className="grid grid-cols-1 gap-6">
+                                    <div className="grid gap-2">
+                                        <Label className={`text-xs font-extrabold ${colorSaved ? 'text-emerald-800' : 'text-indigo-800'} uppercase tracking-wider`}>Nombre del Color (SAP)</Label>
+                                        <Input 
+                                            placeholder="Ej: NARDO, ROBLE, GRIS PLOMO"
+                                            value={colorData.name}
+                                            onChange={(e) => {
+                                                setColorData(p => ({ ...p, name: e.target.value.toUpperCase() }))
+                                                setColorSaved(false)
+                                            }}
+                                            className={`${colorSaved ? 'border-emerald-200' : 'border-indigo-200'} bg-white h-11 focus:ring-blue-500 font-bold uppercase`}
+                                            disabled={readOnly}
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="pt-4 flex justify-end">
+                                    {!readOnly && (
+                                        <Button 
+                                            type="button"
+                                            onClick={() => {
+                                                if (!colorData.name) {
+                                                    toast.error("Por favor completa el nombre del color.")
+                                                    return
+                                                }
+                                                setFormData(prev => ({ ...prev, color_name: colorData.name }))
+                                                setColorSaved(true)
+                                                toast.success("Color aplicado al producto.")
+                                            }}
+                                            className={`${colorSaved ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-indigo-600 hover:bg-indigo-700'} text-white font-bold px-8 shadow-md transition-all h-12 rounded-xl`}
+                                        >
+                                            {colorSaved ? 'ACTUALIZAR Y CONTINUAR' : 'APLICAR COLOR Y CONTINUAR'}
                                         </Button>
                                     )}
                                 </div>

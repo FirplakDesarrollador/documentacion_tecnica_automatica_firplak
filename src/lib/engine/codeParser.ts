@@ -235,7 +235,8 @@ export async function parseProductCode(
         // --- Recuperación automática de nombre de color si no se tiene ---
         if (result.color_code) {
             try {
-                const colorRows = await dbQuery(`SELECT name_color_sap FROM public.colors WHERE code_4dig = '${result.color_code.replace(/'/g, "''")}' LIMIT 1`);
+                const paddedColorCode = result.color_code.padStart(4, '0');
+                const colorRows = await dbQuery(`SELECT name_color_sap FROM public.colors WHERE code_4dig = '${paddedColorCode.replace(/'/g, "''")}' LIMIT 1`);
                 if (colorRows && colorRows.length > 0) {
                     (result as any).color_name = colorRows[0].name_color_sap;
                 }
