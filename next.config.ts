@@ -1,7 +1,11 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
-  /* config options here */
-};
+  serverExternalPackages: ['@sparticuz/chromium', 'puppeteer-core'],
+  outputFileTracingIncludes: {
+    '/api/export': ['./node_modules/@sparticuz/chromium/bin/**'],
+    '/api/export/route': ['./node_modules/@sparticuz/chromium/bin/**'],
+  },
+}
 
-export default nextConfig;
+export default nextConfig
