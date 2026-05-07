@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import {
     Package,
     Home,
@@ -17,12 +17,14 @@ import {
     ChevronRight,
     PanelLeftClose,
     PanelLeftOpen,
-    Database
+    Database,
+    LogOut
 } from 'lucide-react'
 
 import { useState, useEffect } from 'react'
 
 import pkg from '../../../package.json'
+import { createClient } from '@/utils/supabase/client'
 import { Input } from '@/components/ui/input'
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
 import { Toaster } from '@/components/ui/sonner'
@@ -33,6 +35,9 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
     const [isCollapsed, setIsCollapsed] = useState(false)
     const [mounted, setMounted] = useState(false)
 
+    const router = useRouter()
+    const supabase = createClient()
+
     useEffect(() => {
         setMounted(true)
         const saved = localStorage.getItem('sidebar-collapsed')
@@ -40,6 +45,12 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
             setIsCollapsed(saved === 'true')
         }
     }, [])
+
+    const handleSignOut = async () => {
+        await supabase.auth.signOut()
+        router.push('/login')
+        router.refresh()
+    }
 
     const toggleSidebar = () => {
         const newState = !isCollapsed
@@ -68,10 +79,11 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
         { name: 'Generar', href: '/generate', icon: FileText },
     ]
 
-    // Si estamos en la ruta de exportación headless, NO renderizar Sidebar ni estilos contenedores
-    if (pathname?.startsWith('/export-render')) {
+    // Si estamos en la ruta de exportación headless o en login, NO renderizar Sidebar ni estilos contenedores
+    if (pathname?.startsWith('/export-render') || pathname === '/login') {
         return <>{children}</>
     }
+
 
     return (
         <>
@@ -182,16 +194,30 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
                             </div>
                         </div>
 
-                        <div className={cn("flex items-center bg-slate-900/50 rounded-lg border border-slate-800/40 cursor-default transition-all", isCollapsed ? "p-1.5 justify-center" : "gap-3 p-3")}>
-                            <div className="w-8 h-8 rounded-full bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-bold text-xs ring-1 ring-indigo-500/20 shrink-0">
-                                OR
-                            </div>
-                            {!isCollapsed && (
-                                <div className="flex flex-col flex-1 overflow-hidden">
-                                    <span className="text-sm font-medium text-slate-300 truncate font-sans">Firplak I+D</span>
-                                    <span className="text-[10px] text-slate-500 truncate uppercase tracking-tight">Admin • v{pkg.version}</span>
+                        <div className={cn("flex flex-col gap-1", isCollapsed ? "items-center" : "gap-1.5")}>
+                            <div className={cn("flex items-center bg-slate-900/50 rounded-lg border border-slate-800/40 cursor-default transition-all", isCollapsed ? "p-1.5 justify-center" : "gap-3 p-3")}>
+                                <div className="w-8 h-8 rounded-full bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-bold text-xs ring-1 ring-indigo-500/20 shrink-0">
+                                    OR
                                 </div>
-                            )}
+                                {!isCollapsed && (
+                                    <div className="flex flex-col flex-1 overflow-hidden">
+                                        <span className="text-sm font-medium text-slate-300 truncate font-sans">Firplak I+D</span>
+                                        <span className="text-[10px] text-slate-500 truncate uppercase tracking-tight">Admin • v{pkg.version}</span>
+                                    </div>
+                                )}
+                            </div>
+
+                            <button
+                                onClick={handleSignOut}
+                                className={cn(
+                                    "flex items-center rounded-lg px-3 py-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-all duration-200 group",
+                                    isCollapsed ? "justify-center" : "gap-3"
+                                )}
+                                title={isCollapsed ? "Cerrar Sesión" : undefined}
+                            >
+                                <LogOut className="h-4 w-4 shrink-0 transition-colors" />
+                                {!isCollapsed && <span className="text-sm font-medium">Cerrar Sesión</span>}
+                            </button>
                         </div>
                     </div>
                 </div>
