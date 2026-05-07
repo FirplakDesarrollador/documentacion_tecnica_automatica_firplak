@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server'
-import puppeteer from 'puppeteer'
+import { launchBrowser, resolveExportBrowserMode } from '@/lib/export/launchBrowser'
+
+export const runtime = 'nodejs'
+export const maxDuration = 60
 
 export async function POST(req: Request) {
+    let browser: Awaited<ReturnType<typeof launchBrowser>> | null = null
+
     try {
         const { elements, format = 'pdf', width = 800, height = 400, filename } = await req.json()
 
@@ -9,18 +14,18 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Missing template elements payload' }, { status: 400 })
         }
 
-        // Launch headless browser
-        const browser = await puppeteer.launch({
-            headless: true,
-            args: [
-                '--no-sandbox', 
-                '--disable-setuid-sandbox',
-                '--disable-web-security', 
-                '--disable-features=IsolateOrigins,site-per-process',
-                '--disable-extensions',
-                '--disable-infobars'
-            ]
+        const browserMode = resolveExportBrowserMode()
+        const forcedBrowserMode = process.env.EXPORT_BROWSER?.trim() || 'auto'
+
+        console.info('[export] Starting browser launch', {
+            browserMode,
+            forcedBrowserMode,
+            format,
+            width,
+            height,
         })
+
+        browser = await launchBrowser()
 
         const page = await browser.newPage()
 
@@ -33,7 +38,7 @@ export async function POST(req: Request) {
         const targetUrl = `${baseUrl}/export-render`
 
         // Inyectar datos en el localStorage antes de cargar la página
-        await page.evaluateOnNewDocument((payload) => {
+        await page.evaluateOnNewDocument((payload: string) => {
             window.localStorage.setItem('__EXPORT_DATA__', payload);
         }, JSON.stringify({ elements, width, height }));
 
@@ -68,11 +73,8 @@ export async function POST(req: Request) {
             resultBuffer = await page.screenshot({ type: 'jpeg', quality: 100, fullPage: true }) as Buffer
             contentType = 'image/jpeg'
         } else {
-            await browser.close()
             return NextResponse.json({ error: 'Invalid format requested' }, { status: 400 })
         }
-
-        await browser.close()
 
         const downloadName = filename ? (filename.endsWith(`.${format}`) ? filename : `${filename}.${format}`) : `export.${format}`
 
@@ -88,5 +90,9 @@ export async function POST(req: Request) {
     } catch (error) {
         console.error('Export Error:', error)
         return NextResponse.json({ error: 'Failed to generate document export' }, { status: 500 })
+    } finally {
+        if (browser) {
+            await browser.close()
+        }
     }
 }
