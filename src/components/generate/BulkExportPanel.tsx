@@ -211,11 +211,12 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
         }
 
         const wasCancelled = isCancelledRef.current
+        const completedCount = items.filter(i => i.status === 'done').length
         setIsRunning(false)
         if (wasCancelled) {
-            toast.error('Exportación detenida por el usuario')
+            toast.error('ExportaciÃ³n detenida por el usuario')
         } else {
-            toast.success(`Exportación completada: ${items.filter(i => i.status === 'done').length} archivo(s) guardado(s)`)
+            toast.success(`ExportaciÃ³n completada: ${items.filter(i => i.status === 'done').length} archivo(s) generado(s)`)
         }
     }
 
@@ -244,7 +245,7 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                         Plantilla: <span className="font-medium text-indigo-600">{template?.name || 'Sin plantilla'}</span>
                         {!started && (
                             <span className="ml-2 text-slate-400">
-                                · Est. <Clock className="w-3 h-3 inline" /> ~{estimatedSeconds}s
+                                Â· Est. <Clock className="w-3 h-3 inline" /> ~{estimatedSeconds}s
                             </span>
                         )}
                     </p>
@@ -269,7 +270,7 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                 </div>
             )}
 
-            {/* Lista de productos — scroll independiente */}
+            {/* Lista de productos â€” scroll independiente */}
             <div className="border border-slate-100 rounded-xl overflow-hidden divide-y divide-slate-50 max-h-60 overflow-y-auto">
                 {items.map(item => (
                     <div key={item.product.id} className={`flex items-center gap-3 px-4 py-3 ${item.status === 'exporting' ? 'bg-indigo-50/50' : item.status === 'done' ? 'bg-green-50/30' : item.status === 'error' ? 'bg-red-50/30' : ''}`}>
@@ -295,7 +296,7 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                 <div className="flex flex-col gap-4 p-4 bg-slate-50 border border-slate-200 rounded-xl">
                     <div className="flex flex-col gap-2">
                         <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">
-                            Destino de exportación
+                            Destino de exportaciÃ³n
                         </label>
                         {!directoryHandle ? (
                             <Button 
@@ -328,7 +329,7 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                             </div>
                         )}
                         <p className="text-[10px] text-slate-400 ml-1 italic leading-tight">
-                            * Si no eliges carpeta, los archivos se descargarán por defecto en "Descargas".
+                            * Si no eliges carpeta, los archivos se descargarÃ¡n por defecto en "Descargas".
                         </p>
                     </div>
 
@@ -351,7 +352,7 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                 </div>
             )}
 
-            {/* Acciones — ancla fija al fondo */}
+            {/* Acciones â€” ancla fija al fondo */}
             <div className="flex items-center gap-3 pt-1 border-t border-slate-100">
                 {!started ? (
                     <>
@@ -367,7 +368,7 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                             <Download className="w-4 h-4 mr-2" />
                             {!allowedFormats.includes(selectedFormat) 
                                 ? `Formato ${selectedFormat.toUpperCase()} no permitido`
-                                : `Iniciar Exportación (${total})`
+                                : `Iniciar ExportaciÃ³n (${total})`
                             }
                         </Button>
                         <Button variant="outline" onClick={onClose} className="w-24">
@@ -383,7 +384,7 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                                 className="flex-1 bg-red-50 text-red-600 hover:bg-red-100 border-none shadow-none font-bold"
                             >
                                 <StopCircle className="w-4 h-4 mr-2" />
-                                Detener Exportación
+                                Detener ExportaciÃ³n
                             </Button>
                         )}
                         <Button variant="outline" onClick={onClose} className={isRunning ? 'w-24' : 'flex-1'}>

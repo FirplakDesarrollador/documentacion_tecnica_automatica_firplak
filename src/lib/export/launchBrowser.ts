@@ -4,6 +4,7 @@ export interface ExportBrowser {
         setViewport: (...args: any[]) => Promise<void>
         setExtraHTTPHeaders: (...args: any[]) => Promise<void>
         evaluateOnNewDocument: (...args: any[]) => Promise<void>
+        evaluate: (...args: any[]) => Promise<any>
         goto: (...args: any[]) => Promise<unknown>
         url: () => string
         title: () => Promise<string>

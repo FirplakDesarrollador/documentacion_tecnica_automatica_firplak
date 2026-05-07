@@ -63,7 +63,10 @@ export async function resolveAssetsAction(assetIds: string[]) {
         })
     }
     
-    console.log("==> MAP FETCHED:", map)
-    console.log("==> ASSET MAP GENERATED (SERVER):", map)
+    const shouldDebugAssetMap = process.env.NODE_ENV === 'development' || process.env.EXPORT_DEBUG === '1'
+    if (shouldDebugAssetMap) {
+        console.log("==> MAP FETCHED:", map)
+        console.log("==> ASSET MAP GENERATED (SERVER):", map)
+    }
     return map
 }

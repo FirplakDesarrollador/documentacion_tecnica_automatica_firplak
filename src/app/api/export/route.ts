@@ -64,11 +64,18 @@ export async function POST(req: Request) {
 
         const finalUrl = page.url()
         const pageTitle = await page.title()
+        const finalUrlLower = finalUrl.toLowerCase()
+        const pageTitleLower = pageTitle.toLowerCase()
+        const pageText = (await page.evaluate(() => document.body?.innerText || '')).toLowerCase()
         const looksProtected =
-            finalUrl.toLowerCase().includes('vercel') ||
-            finalUrl.toLowerCase().includes('login') ||
-            pageTitle.toLowerCase().includes('vercel') ||
-            pageTitle.toLowerCase().includes('login')
+            pageTitleLower.includes('log in to vercel') ||
+            pageTitleLower.includes('login to vercel') ||
+            finalUrlLower.includes('/login') ||
+            finalUrlLower.includes('/auth') ||
+            finalUrlLower.includes('/protection') ||
+            finalUrlLower.includes('/sso') ||
+            pageText.includes('log in to vercel') ||
+            pageText.includes('deployment protection')
 
         if (looksProtected) {
             console.warn('Puppeteer parece estar capturando pantalla de protección, no el render de etiqueta', {
