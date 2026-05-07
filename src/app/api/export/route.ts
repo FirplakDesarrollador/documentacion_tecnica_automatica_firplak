@@ -36,14 +36,46 @@ export async function POST(req: Request) {
         const requestUrl = new URL(req.url)
         const baseUrl = `${requestUrl.protocol}//${requestUrl.host}`
         const targetUrl = `${baseUrl}/export-render`
+        const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET
+        const hasBypassSecret = Boolean(bypassSecret)
+
+        console.info('[export] Resolved internal render target', {
+            hasBypassSecret,
+            targetUrl,
+        })
 
         // Inyectar datos en el localStorage antes de cargar la página
         await page.evaluateOnNewDocument((payload: string) => {
             window.localStorage.setItem('__EXPORT_DATA__', payload);
         }, JSON.stringify({ elements, width, height }));
 
+        if (bypassSecret) {
+            await page.setExtraHTTPHeaders({
+                'x-vercel-protection-bypass': bypassSecret,
+            })
+        }
+
+        console.info('[export] Vercel protection bypass header state', {
+            appliedBypassHeader: hasBypassSecret,
+        })
+
         // Navegar al renderer único de React
         await page.goto(targetUrl, { waitUntil: 'domcontentloaded' })
+
+        const finalUrl = page.url()
+        const pageTitle = await page.title()
+        const looksProtected =
+            finalUrl.toLowerCase().includes('vercel') ||
+            finalUrl.toLowerCase().includes('login') ||
+            pageTitle.toLowerCase().includes('vercel') ||
+            pageTitle.toLowerCase().includes('login')
+
+        if (looksProtected) {
+            console.warn('Puppeteer parece estar capturando pantalla de protección, no el render de etiqueta', {
+                finalUrl,
+                pageTitle,
+            })
+        }
 
         // Esperar semáforo estricto de finalización gráfica
         try {

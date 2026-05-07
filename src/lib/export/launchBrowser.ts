@@ -2,8 +2,11 @@ export type ExportBrowserMode = 'local' | 'vercel'
 export interface ExportBrowser {
     newPage(): Promise<{
         setViewport: (...args: any[]) => Promise<void>
+        setExtraHTTPHeaders: (...args: any[]) => Promise<void>
         evaluateOnNewDocument: (...args: any[]) => Promise<void>
         goto: (...args: any[]) => Promise<unknown>
+        url: () => string
+        title: () => Promise<string>
         waitForFunction: (...args: any[]) => Promise<unknown>
         evaluateHandle: (...args: any[]) => Promise<unknown>
         pdf: (...args: any[]) => Promise<Uint8Array>
