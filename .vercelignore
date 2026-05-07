@@ -1,11 +1,15 @@
 execution/
 directives/
-prisma/
 *.ps1
 *.csv
+
+# No subir bases SQLite locales, pero sí conservar el schema de Prisma
+prisma/*.db
+prisma/*.db-journal
+prisma/*.sqlite
+prisma/*.sqlite-journal
 
 !package.json
 !vercel.json
 !.vercelignore
-!web/**
-
+!prisma/schema.prisma
