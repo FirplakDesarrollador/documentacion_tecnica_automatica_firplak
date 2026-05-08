@@ -108,6 +108,7 @@ export async function associateIsometricAction(data: {
     if (refIds.length === 0) throw new Error("No references found for the selection")
 
     // --- 2. Perform Update based on Granularity ---
+    let updatedCount = 0
     if (versionCodes && versionCodes.length > 0) {
         // CASE: Override by Version
         // We update product_versions.version_attrs JSONB field
@@ -123,6 +124,15 @@ export async function associateIsometricAction(data: {
             updated_at = now()
             WHERE reference_id IN ${refsFilter} AND version_code IN ${versionFilter}
         `)
+
+        const verifyRows = await dbQuery(`
+            SELECT COUNT(*)::int as updated_count
+            FROM public.product_versions
+            WHERE reference_id IN ${refsFilter}
+              AND version_code IN ${versionFilter}
+              AND version_attrs->>'isometric_asset_id' = '${assetId.replace(/'/g, "''")}'
+        `) || []
+        updatedCount = Number(verifyRows?.[0]?.updated_count || 0)
     } else {
         // CASE: Default Reference Asset
         // We update product_references directly
@@ -134,13 +144,24 @@ export async function associateIsometricAction(data: {
                 updated_at = now()
             WHERE id IN ${refsFilter}
         `)
+
+        const verifyRows = await dbQuery(`
+            SELECT COUNT(*)::int as updated_count
+            FROM public.product_references
+            WHERE id IN ${refsFilter}
+              AND isometric_asset_id = '${assetId.replace(/'/g, "''")}'
+        `) || []
+        updatedCount = Number(verifyRows?.[0]?.updated_count || 0)
     }
 
+    if (!updatedCount || updatedCount <= 0) {
+        throw new Error("No se actualizo ningun registro con la seleccion actual.")
+    }
 
     revalidatePath('/assets')
     revalidatePath('/products')
     
-    return { success: true }
+    return { success: true, updatedCount }
 }
 
 export async function deleteAssetAction(assetId: string) {

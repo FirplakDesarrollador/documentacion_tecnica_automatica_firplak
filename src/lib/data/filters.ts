@@ -23,6 +23,12 @@ export interface FamilyFilterOption {
 export interface ReferenceFilterOption {
     value: string  // formato: "ref_code|||commercial_measure"
     label: string
+    meta?: {
+        designation?: string
+        product_name?: string
+        commercial_measure?: string
+        accessory_text?: string
+    }
 }
 
 /**
@@ -81,35 +87,38 @@ export async function getReferenceFilters(
         .join(',')
 
     const records = await dbQuery(
-        `SELECT 
-            r.reference_code, 
-            r.commercial_measure, 
-            r.designation,
-            r.product_name,
-            r.special_label,
-            r.ref_attrs->>'accessory_text' as accessory_text
+        // One option per (reference_code, commercial_measure) to avoid duplicate `value`s (React key collisions).
+        `SELECT
+            r.reference_code,
+            r.commercial_measure,
+            MAX(r.designation) as designation,
+            MAX(r.product_name) as product_name,
+            MAX(r.ref_attrs->>'accessory_text') as accessory_text
          FROM public.product_references r
-         LEFT JOIN public.product_versions v ON r.id = v.reference_id
-         LEFT JOIN public.product_skus s ON v.id = s.version_id
          WHERE r.family_code IN (${fFilter})
-         GROUP BY r.reference_code, r.commercial_measure, r.designation, r.product_name, r.special_label, r.ref_attrs->>'accessory_text'
+         GROUP BY r.reference_code, r.commercial_measure
          ORDER BY r.reference_code, r.commercial_measure`
     ) || []
 
     return records.map((rec: any) => {
-        // Formato solicitado por el usuario: reference_code · designation · commercial_measure · product_name · accessory_text · special_label
         const parts = [
             rec.reference_code || 'NA',
             rec.designation || 'NA',
             rec.commercial_measure || 'NA',
             rec.product_name || 'NA',
             rec.accessory_text || 'NA',
-            rec.special_label || 'NA'
         ]
 
         return {
             value: `${rec.reference_code}|||${rec.commercial_measure || ''}`,
-            label: parts.join(' · ')
+            // Use a stable ASCII separator to avoid mojibake and simplify downstream parsing.
+            label: parts.join(' | '),
+            meta: {
+                designation: rec.designation || undefined,
+                product_name: rec.product_name || undefined,
+                commercial_measure: rec.commercial_measure || undefined,
+                accessory_text: rec.accessory_text || undefined,
+            }
         }
     })
 }

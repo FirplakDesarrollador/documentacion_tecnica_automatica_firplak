@@ -29,6 +29,12 @@ import { cn } from "@/lib/utils"
 interface Option {
     value: string
     label: string
+    meta?: {
+        designation?: string
+        product_name?: string
+        commercial_measure?: string
+        accessory_text?: string
+    }
 }
 
 interface Props {
@@ -57,6 +63,7 @@ export function IsometricAssociationDialog({
     const [open, setOpen] = React.useState(false)
     const [loading, setLoading] = React.useState(false)
     const [submitting, setSubmitting] = React.useState(false)
+    const skipCleanupRef = React.useRef(false)
 
     // Data options
     const [families, setFamilies] = React.useState<Option[]>([])
@@ -71,6 +78,9 @@ export function IsometricAssociationDialog({
     const [selectedMeasures, setSelectedMeasures] = React.useState<string[]>([])
     const [selectedVersions, setSelectedVersions] = React.useState<string[]>([])
     const [selectedAssetId, setSelectedAssetId] = React.useState<string>("")
+
+    const [blockingDiffFields, setBlockingDiffFields] = React.useState<string[]>([])
+    const [confirmBlockingDiffs, setConfirmBlockingDiffs] = React.useState(false)
 
     const loadInitialData = async () => {
         setLoading(true)
@@ -92,6 +102,7 @@ export function IsometricAssociationDialog({
 
     React.useEffect(() => {
         if (open) {
+            skipCleanupRef.current = false
             loadInitialData()
             setSelectedFamilies(initialFamilies)
             setSelectedReferences(initialReferences)
@@ -100,7 +111,8 @@ export function IsometricAssociationDialog({
             setUploadedAssetIds([])
         } else {
             // Clean up unassociated uploads
-            if (uploadedAssetIds.length > 0 && !submitting) {
+            // Avoid undoing a successful association: deleteAssetAction performs deep cascade cleanup.
+            if (uploadedAssetIds.length > 0 && !skipCleanupRef.current) {
                 Promise.all(uploadedAssetIds.map(id => deleteAssetAction(id).catch(e => console.error(e))))
             }
             setSelectedFamilies([])
@@ -112,8 +124,57 @@ export function IsometricAssociationDialog({
             setMeasures([])
             setVersions([])
             setUploadedAssetIds([])
+            setBlockingDiffFields([])
+            setConfirmBlockingDiffs(false)
         }
     }, [open, initialFamilies, initialReferences, initialMeasures])
+
+    React.useEffect(() => {
+        if (selectedReferences.length === 0) {
+            setBlockingDiffFields([])
+            setConfirmBlockingDiffs(false)
+            return
+        }
+
+        const normalize = (value: unknown) => {
+            const s = String(value ?? '').trim()
+            return s === '' || s.toUpperCase() === 'NA' ? 'NA' : s
+        }
+
+        const selectedOptions = selectedReferences
+            .map(v => references.find(o => o.value === v))
+            .filter(Boolean) as Option[]
+
+        const valuesByField = {
+            medida: new Set<string>(),
+            designacion: new Set<string>(),
+            nombre: new Set<string>(),
+            accesorio: new Set<string>(),
+        }
+
+        for (const opt of selectedOptions) {
+            const measureFromValue = (opt.value.split('|||')[1] || '').trim()
+
+            const designation = opt.meta?.designation
+            const commercialMeasure = opt.meta?.commercial_measure ?? (measureFromValue || undefined)
+            const productName = opt.meta?.product_name
+            const accessoryText = opt.meta?.accessory_text
+
+            valuesByField.medida.add(normalize(commercialMeasure))
+            valuesByField.designacion.add(normalize(designation))
+            valuesByField.nombre.add(normalize(productName))
+            valuesByField.accesorio.add(normalize(accessoryText))
+        }
+
+        const diffs: string[] = []
+        if (valuesByField.medida.size > 1) diffs.push('medida')
+        if (valuesByField.nombre.size > 1) diffs.push('nombre')
+        if (valuesByField.designacion.size > 1) diffs.push('designacion')
+        if (valuesByField.accesorio.size > 1) diffs.push('accesorio')
+
+        setBlockingDiffFields(diffs)
+        setConfirmBlockingDiffs(false)
+    }, [selectedReferences, references])
 
     // Load references when families change
     React.useEffect(() => {
@@ -196,6 +257,7 @@ export function IsometricAssociationDialog({
                 onAssociationComplete(selectedAsset)
             }
             // Limpiar uploadedAssetIds para que no se borren al cerrar
+            skipCleanupRef.current = true
             setUploadedAssetIds([])
             setOpen(false)
             toast.success("Isométrico seleccionado correctamente")
@@ -211,23 +273,31 @@ export function IsometricAssociationDialog({
             toast.error("Debes seleccionar al menos una referencia específica. No se permite asociar a nivel de familia completa.")
             return
         }
+        if (blockingDiffFields.length > 0 && !confirmBlockingDiffs) {
+            toast.error("Confirma las diferencias antes de asociar.")
+            return
+        }
 
         setSubmitting(true)
         try {
-            await associateIsometricAction({
+            const result = await associateIsometricAction({
                 assetId: selectedAssetId,
                 familyCodes: selectedFamilies,
                 referenceCodes: selectedReferences,
                 measureCodes: selectedMeasures,
                 versionCodes: selectedVersions
             })
-            toast.success("Isométrico asociado correctamente")
+            const count = (result as any)?.updatedCount
+            toast.success(typeof count === 'number' ? `Isométrico asociado a ${count} registro(s)` : "Isométrico asociado correctamente")
             
             if (onAssociationComplete) {
                 const selectedAsset = assets.find(a => a.id === selectedAssetId)
                 onAssociationComplete(selectedAsset)
             }
 
+            // Prevent deleteAssetAction cleanup after a successful association (it would undo the link).
+            skipCleanupRef.current = true
+            setUploadedAssetIds([])
             setOpen(false)
         } catch (error: any) {
             toast.error(error.message || "Error al asociar isométrico")
@@ -396,6 +466,23 @@ export function IsometricAssociationDialog({
                         </p>
                     </div>
                     )}
+
+                    {!isSelectOnly && blockingDiffFields.length > 0 && (
+                    <div className="bg-rose-50 p-4 rounded-xl border border-rose-100 space-y-3">
+                        <p className="text-xs text-rose-800 font-semibold">
+                            Cuidado: las referencias seleccionadas tienen diferencias en {blockingDiffFields.join(', ')}.
+                        </p>
+                        <label className="flex items-start gap-2 text-xs text-rose-800">
+                            <input
+                                type="checkbox"
+                                className="mt-0.5"
+                                checked={confirmBlockingDiffs}
+                                onChange={(e) => setConfirmBlockingDiffs(e.target.checked)}
+                            />
+                            <span>Entiendo y deseo asociar el mismo isométrico igualmente.</span>
+                        </label>
+                    </div>
+                    )}
                 </div>
 
                 <DialogFooter className="p-4 bg-slate-50 border-t border-slate-100 shrink-0">
@@ -403,7 +490,13 @@ export function IsometricAssociationDialog({
                         Cancelar
                     </Button>
                     <Button 
-                        disabled={submitting || uploading || !selectedAssetId || (!isSelectOnly && (selectedFamilies.length === 0 || selectedReferences.length === 0))}
+                        disabled={
+                            submitting ||
+                            uploading ||
+                            !selectedAssetId ||
+                            (!isSelectOnly && (selectedFamilies.length === 0 || selectedReferences.length === 0)) ||
+                            (!isSelectOnly && blockingDiffFields.length > 0 && !confirmBlockingDiffs)
+                        }
                         onClick={handleSubmit}
                         className="bg-indigo-600 hover:bg-indigo-700 shadow-md h-10 px-6 transition-all"
                     >

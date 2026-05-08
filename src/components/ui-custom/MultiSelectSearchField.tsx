@@ -102,7 +102,27 @@ export function MultiSelectSearchField({
         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50 text-slate-400" />
       </PopoverTrigger>
       <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-1 rounded-xl border-slate-200 shadow-premium" align="start">
-        <Command filter={(value, search) => value.toLowerCase().includes(search.toLowerCase()) ? 1 : 0}>
+        <Command
+          filter={(value, search) => {
+            const normalizedSearch = search
+              .toLowerCase()
+              .trim()
+              .replace(/[\u00b7\u00fa\u00b4\u00c2]+/g, " ") // common mojibake separators: ·, ú, ´, Â
+              .replace(/[|/\\-]+/g, " ")
+              .replace(/\s+/g, " ")
+
+            if (!normalizedSearch) return 1
+
+            const tokens = normalizedSearch.split(" ").filter(Boolean)
+            const haystack = value
+              .toLowerCase()
+              .replace(/[\u00b7\u00fa\u00b4\u00c2]+/g, " ")
+              .replace(/[|/\\-]+/g, " ")
+              .replace(/\s+/g, " ")
+
+            return tokens.every(t => haystack.includes(t)) ? 1 : 0
+          }}
+        >
           <CommandInput placeholder={`Buscar ${placeholder.toLowerCase()}...`} />
           <CommandList>
             <CommandEmpty>{emptyMessage}</CommandEmpty>
