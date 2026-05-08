@@ -689,3 +689,16 @@ export async function getDiagnosticInfoAction() {
         envKeys: Object.keys(process.env).filter(k => k.includes('SUPABASE')) 
     };
 }
+
+
+export async function executeMassImportAction(payload: any[]) {
+    try {
+        const query = `SELECT bulk_import_products('${JSON.stringify(payload).replace(/'/g, "''")}'::jsonb)`;
+        const res = await dbQuery(query);
+        return { success: true, data: res };
+    } catch (error: any) {
+        console.error('Error in executeMassImportAction:', error);
+        return { success: false, error: error.message };
+    }
+}
+

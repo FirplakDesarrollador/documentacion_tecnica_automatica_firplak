@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { PlusCircle, DatabaseZap, Search } from 'lucide-react'
+import { PlusCircle, DatabaseZap, Search, Upload } from 'lucide-react'
 import Link from 'next/link'
 import { ImportCsvButton } from '@/components/products/ImportCsvButton'
 import { ProductSearch } from '@/components/products/ProductSearch'
@@ -116,6 +116,12 @@ export default async function ProductsPage({
                         <Button variant="secondary" className="w-full sm:w-auto">
                             <DatabaseZap className="mr-2 h-4 w-4 text-indigo-500" />
                             Cambios masivos
+                        </Button>
+                    </Link>
+                    <Link href="/products/mass-import">
+                        <Button variant="outline" className="w-full sm:w-auto border-indigo-200 text-indigo-600 hover:bg-indigo-50">
+                            <Upload className="mr-2 h-4 w-4" />
+                            Carga masiva
                         </Button>
                     </Link>
                     <Link href={`/products/new${filterQuery}`}>
