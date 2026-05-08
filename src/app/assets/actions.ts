@@ -1,8 +1,32 @@
 'use server'
 
 import { dbQuery } from '@/lib/supabase'
-import { revalidatePath } from 'next/cache'
+import { revalidatePath, revalidateTag } from 'next/cache'
 import { getFamilyFilters, getReferenceFilters } from '@/lib/data/filters'
+
+async function revalidateValidationSweepEverywhere() {
+    // Local (same server) cache invalidation.
+    revalidateTag('validation-sweep', { expire: 0 })
+
+    // Optional remote invalidation (Vercel) when this action runs on localhost.
+    const remoteUrl = process.env.REVALIDATE_REMOTE_URL
+    const secret = process.env.REVALIDATE_SECRET
+    if (!remoteUrl || !secret) return
+
+    try {
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 5000)
+        await fetch(remoteUrl, {
+            method: 'POST',
+            headers: { 'x-revalidate-secret': secret },
+            signal: controller.signal,
+        })
+        clearTimeout(timeout)
+    } catch (e) {
+        // Non-blocking: the DB write already happened; this only affects freshness in Vercel UI.
+        console.warn('Remote revalidate failed:', e)
+    }
+}
 
 export async function getFamiliesAction() {
     return await getFamilyFilters()
@@ -160,6 +184,7 @@ export async function associateIsometricAction(data: {
 
     revalidatePath('/assets')
     revalidatePath('/products')
+    await revalidateValidationSweepEverywhere()
     
     return { success: true, updatedCount }
 }

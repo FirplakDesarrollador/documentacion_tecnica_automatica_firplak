@@ -13,10 +13,10 @@ import { buttonVariants } from '@/components/ui/button-variants'
 import { cn } from '@/lib/utils'
 import { AlertCircle, ArrowRight } from 'lucide-react'
 import Link from 'next/link'
-import { getFullValidationSweep } from '@/lib/engine/validationActions'
+import { getFullValidationSweepCached } from '@/lib/engine/validationActions'
 
 export default async function ExceptionsPage() {
-    const validationSummary = await getFullValidationSweep()
+    const validationSummary = await getFullValidationSweepCached()
     const exceptionalProducts = validationSummary.details
 
     return (

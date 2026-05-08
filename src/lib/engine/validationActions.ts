@@ -1,6 +1,7 @@
 import { dbQuery } from '@/lib/supabase'
 import { validateProductReadiness, ValidationIssues } from './validator'
 import { TemplateElement } from '@/components/templates/TemplateCanvas'
+import { unstable_cache } from 'next/cache'
 
 export interface ExceptionSummary {
     totalActiveProducts: number
@@ -83,6 +84,13 @@ export async function getFullValidationSweep(): Promise<ExceptionSummary> {
         details
     }
 }
+
+// Cached variant for production (Vercel). Use revalidateTag('validation-sweep') after mutations.
+export const getFullValidationSweepCached = unstable_cache(
+    async () => getFullValidationSweep(),
+    ['full-validation-sweep'],
+    { tags: ['validation-sweep'] }
+)
 
 /**
  * Persists the validation status to the database for all active products.

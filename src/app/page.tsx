@@ -9,11 +9,11 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-import { getFullValidationSweep } from '@/lib/engine/validationActions'
+import { getFullValidationSweepCached } from '@/lib/engine/validationActions'
 
 export default async function Home() {
   // Fetch real KPIs and validation state
-  const validationSummary = await getFullValidationSweep()
+  const validationSummary = await getFullValidationSweepCached()
   
   const kpiRows = await dbQuery(`
     SELECT
