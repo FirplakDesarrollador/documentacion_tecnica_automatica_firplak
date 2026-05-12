@@ -2,6 +2,7 @@
 
 import { supabase } from '@/lib/supabase'
 import { translateProductToEnglish, ProductPayload } from '@/lib/engine/translator'
+import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
 
 export interface TranslationBatchResult {
     processed: number
@@ -44,6 +45,15 @@ export async function translateEnglishBatchAction(
 
         const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
         const products = rows.map(mapRowToComposedProduct)
+
+        const { data: rules, error: rulesError } = await supabase
+            .from('rules')
+            .select('*')
+            .eq('enabled', true)
+            .order('priority', { ascending: true })
+
+        if (rulesError) throw new Error(`Fetch Rules Error: ${rulesError.message}`)
+
         const result = createEmptyResult()
         const missingTermsTracker = new Map<string, Set<string>>()
         const updatesToApply: { id: string, final_name_en: string, validation_status: string }[] = []
@@ -51,7 +61,12 @@ export async function translateEnglishBatchAction(
         for (const product of products) {
             result.processed++
             try {
-                const translation = await translateProductToEnglish(product as ProductPayload, product.product_type || 'MUEBLE')
+                const evalResult = evaluateProductRules(product as any, (rules || []) as any)
+                const translation = await translateProductToEnglish(
+                    ({ ...evalResult.transformedProduct, final_name_es: evalResult.finalNameEs } as any) as ProductPayload,
+                    product.product_type || 'MUEBLE',
+                    evalResult.activeVariableIds
+                )
                 const { translatedName, missingTerms } = translation
 
                 // Tracking de términos faltantes por producto

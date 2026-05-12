@@ -36,10 +36,14 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
     const [showExportModal, setShowExportModal] = useState(false)
     const [customValues, setCustomValues] = useState({ line: '', designation: '', product_type: '', use_destination: '', zone_home: '', bisagras: '', carb2: '', rh: '', special_label: '', canto_puertas: '' })
     const [clients, setClients] = useState<{id: string, name: string, logo_asset_id?: string}[]>([])
-    const [isPrivateLabel, setIsPrivateLabel] = useState(initialData?.private_label_flag || false)
+    const initialPrivateName = (initialData?.private_label_client_name && String(initialData.private_label_client_name).trim() !== '' && String(initialData.private_label_client_name).toUpperCase() !== 'NA')
+        ? String(initialData.private_label_client_name).trim()
+        : ''
+    const [overridePrivateLabel, setOverridePrivateLabel] = useState(false)
+    const [versionPrivateLabelName, setVersionPrivateLabelName] = useState(initialPrivateName)
     const [privateLabelData, setPrivateLabelData] = useState({
-        client_id: initialData?.private_label_client_id || '',
-        client_name: initialData?.private_label_client_name || '',
+        client_key: initialPrivateName || '',
+        client_name: '',
         logo_id: initialData?.private_label_logo_id || ''
     })
     const [missingZoneTranslation, setMissingZoneTranslation] = useState<string | null>(null)
@@ -137,17 +141,6 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
 
         getClientsAction().then(c => {
             setClients(c);
-            // If editing and has client ID, try to find it in the list
-            if (isEdit && initialData.private_label_client_id) {
-                const found = c.find(cl => cl.id === initialData.private_label_client_id);
-                if (found) {
-                    setPrivateLabelData({
-                        client_id: found.id,
-                        client_name: found.name,
-                        logo_id: found.logo_asset_id || ''
-                    });
-                }
-            }
         })
     }, [isEdit, initialData])
     
@@ -216,7 +209,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                 toast.error("Código inválido", { description: formatError + ' Formato requerido: FAM-REF-VER-COL' });
                 return;
             }
-            const parsed = await parseProductCodeAction(formData.code, formData.sap_description, formData.rh === 'RH')
+                const parsed = await parseProductCodeAction(formData.code, formData.sap_description, formData.rh === 'RH')
                 
                 let colorName = formData.color_name
                 if (parsed.color_code && parsed.color_code !== formData.color_code) {
@@ -267,6 +260,19 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                     armado_con_lvm: parsed.armado_con_lvm || prev.armado_con_lvm || '',
                     assembled_flag: (parsed.assembled_flag !== undefined) ? parsed.assembled_flag : prev.assembled_flag
                 }))
+
+                // Marca propia calculada por versión (si existe en global_version_rules)
+                const parsedPrivate = parsed.private_label_client_name && String(parsed.private_label_client_name).trim().toUpperCase() !== 'NA'
+                    ? String(parsed.private_label_client_name).trim()
+                    : ''
+                setVersionPrivateLabelName(parsedPrivate)
+                if (!overridePrivateLabel) {
+                    setPrivateLabelData(p => ({
+                        ...p,
+                        client_key: parsedPrivate || '',
+                        client_name: ''
+                    }))
+                }
 
                 if (parsed.barcode_text) setHasBarcode(true)
                 if (!isAnalyzed) setIsAnalyzed(true)
@@ -525,13 +531,21 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
 
     const onActualSubmit = async () => {
         try {
+            const effectivePrivateName = (() => {
+                const versionName = String(versionPrivateLabelName || '').trim()
+                if (versionName && !overridePrivateLabel) return versionName
+
+                const key = String(privateLabelData.client_key || '').trim()
+                if (key === '__NEW__') return String(privateLabelData.client_name || '').trim()
+                return key
+            })()
+
             const payload = { 
                 ...formData, 
                 _newFamily: isNewFamily ? familyData : undefined,
                 _newColor: isNewColor ? colorData : undefined,
-                private_label_flag: isPrivateLabel,
-                private_label_client_id: privateLabelData.client_id,
-                private_label_client_name: privateLabelData.client_id === '__NEW__' ? privateLabelData.client_name : (clients.find(c => c.id === privateLabelData.client_id)?.name || ''),
+                private_label_client_id: '',
+                private_label_client_name: effectivePrivateName,
                 private_label_logo_id: privateLabelData.logo_id
             };
 
@@ -786,43 +800,56 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                 />
                             </div>
 
-                            {/* Marca Propia Section */}
+                            {/* Marca Propia Section (sin flag; derivado por nombre) */}
                             <div className="mt-4 p-4 bg-indigo-50/50 rounded-xl border border-indigo-100 space-y-4">
-                                <div className="flex items-center justify-between">
+                                <div className="flex items-center justify-between gap-4">
                                     <div className="flex items-center gap-2">
                                         <Building2 className="w-5 h-5 text-indigo-600" />
                                         <div>
-                                            <p className="text-sm font-bold text-indigo-900">¿Es Marca Propia?</p>
-                                            <p className="text-[10px] text-indigo-700/70">Marca personalizada para el cliente (ej: CHILEMAT)</p>
+                                            <p className="text-sm font-bold text-indigo-900">Marca propia</p>
+                                            <p className="text-[10px] text-indigo-700/70">Se activa si hay un cliente (por versión o por override).</p>
                                         </div>
                                     </div>
-                                    <Checkbox 
-                                        checked={isPrivateLabel} 
-                                        onCheckedChange={(c) => setIsPrivateLabel(!!c)}
-                                        disabled={readOnly}
-                                        className="h-6 w-6 border-indigo-300 data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600"
-                                    />
+                                    {versionPrivateLabelName ? (
+                                        <div className="flex items-center gap-2">
+                                            <Label htmlFor="overridePrivateLabel" className="text-[11px] font-semibold text-indigo-800">Override</Label>
+                                            <Checkbox
+                                                id="overridePrivateLabel"
+                                                checked={overridePrivateLabel}
+                                                onCheckedChange={(c) => setOverridePrivateLabel(!!c)}
+                                                disabled={readOnly}
+                                                className="h-6 w-6 border-indigo-300 data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600"
+                                            />
+                                        </div>
+                                    ) : null}
                                 </div>
 
-                                {isPrivateLabel && (
+                                {versionPrivateLabelName && !overridePrivateLabel && (
+                                    <div className="text-xs text-indigo-900 bg-white/70 border border-indigo-100 rounded-md px-3 py-2">
+                                        Detectado por versión: <span className="font-bold">{versionPrivateLabelName}</span>
+                                    </div>
+                                )}
+
+                                {(!versionPrivateLabelName || overridePrivateLabel) && (
                                     <div className="grid gap-4 animate-in fade-in slide-in-from-top-2 duration-200">
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-indigo-700 uppercase">Cliente / Marca</Label>
                                             <select 
                                                 className="flex h-10 w-full rounded-md border border-indigo-200 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none disabled:opacity-50"
-                                                value={privateLabelData.client_id}
+                                                value={privateLabelData.client_key}
                                                 disabled={readOnly}
-                                                onChange={(e) => setPrivateLabelData(p => ({ ...p, client_id: e.target.value }))}
+                                                onChange={(e) => setPrivateLabelData(p => ({ ...p, client_key: e.target.value, client_name: e.target.value === '__NEW__' ? '' : p.client_name }))}
                                             >
-                                                <option value="" disabled>Seleccionar marca...</option>
-                                                <option value="__NEW__" className="font-bold text-indigo-600 bg-indigo-50">➕ Agregar nueva marca...</option>
+                                                <option value="">(Vacío / No aplica)</option>
+                                                <option value="NA">NA</option>
                                                 {clients.map(c => (
-                                                    <option key={c.id} value={c.id}>{c.name}</option>
+                                                    <option key={c.id} value={c.name}>{c.name}</option>
                                                 ))}
+                                                {!readOnly && <option value="__NEW__" className="font-bold text-indigo-600 bg-indigo-50">➕ Agregar nueva marca...</option>}
                                             </select>
                                         </div>
 
-                                        {privateLabelData.client_id === '__NEW__' && (
+                                        {privateLabelData.client_key === '__NEW__' && (
                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-white rounded-lg border border-indigo-100 shadow-sm animate-in zoom-in-95 duration-200">
                                                 <div className="grid gap-2">
                                                     <Label className="text-xs font-bold text-slate-500 uppercase">Nombre de la Marca</Label>

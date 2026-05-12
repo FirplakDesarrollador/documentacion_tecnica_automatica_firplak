@@ -109,10 +109,30 @@ export function mapRowToComposedProduct(row: any): ComposedProduct {
     // Level 3 & 4: Merge overrides
     const versionOverrides = { ...globalVerRules, ...verAttrs };
 
+    // Prefer DB-computed attrs if present (v_ui_generate_list exposes it)
+    const effectiveVerAttrs = (() => {
+        if (row.effective_version_attrs === undefined || row.effective_version_attrs === null) return versionOverrides;
+        return typeof row.effective_version_attrs === 'string'
+            ? JSON.parse(row.effective_version_attrs)
+            : (row.effective_version_attrs || {});
+    })();
+
     // Function to resolve attribute with precedence: Version Override > Reference Base > Default
     const resolveAttr = (key: string, defaultValue: string = 'NA') => {
-        return versionOverrides[key] !== undefined ? versionOverrides[key] : (refAttrs[key] || defaultValue);
+        return effectiveVerAttrs[key] !== undefined ? effectiveVerAttrs[key] : (refAttrs[key] || defaultValue);
     };
+
+    const normalizePrivateLabelName = (val: any): string | null => {
+        if (val === null || val === undefined) return null;
+        const name = String(val).trim();
+        if (!name) return null;
+        if (name.toUpperCase() === 'NA') return null;
+        return name;
+    };
+
+    const privateLabelName =
+        normalizePrivateLabelName(row.private_label_client_name) ??
+        normalizePrivateLabelName(effectiveVerAttrs.private_label_client_name);
 
     return {
         // === Identity ===
@@ -142,8 +162,8 @@ export function mapRowToComposedProduct(row: any): ComposedProduct {
         height_cm: row.height_cm !== null ? parseFloat(row.height_cm) : null,
         weight_kg: row.weight_kg !== null ? parseFloat(row.weight_kg) : null,
         stacking_max: row.stacking_max !== null ? parseInt(row.stacking_max, 10) : null,
-        isometric_path: versionOverrides.isometric_path || row.isometric_path,
-        isometric_asset_id: versionOverrides.isometric_asset_id || row.isometric_asset_id,
+        isometric_path: effectiveVerAttrs.isometric_path || row.isometric_path,
+        isometric_asset_id: effectiveVerAttrs.isometric_asset_id || row.isometric_asset_id,
 
         // === Composed attributes ===
         rh: resolveAttr('rh'),
@@ -169,8 +189,8 @@ export function mapRowToComposedProduct(row: any): ComposedProduct {
         status: row.status || 'ACTIVO',
 
         // === Private label ===
-        private_label_flag: !!versionOverrides.private_label_flag,
-        private_label_client_name: versionOverrides.private_label_client_name || 'NA',
+        private_label_flag: privateLabelName !== null,
+        private_label_client_name: privateLabelName,
 
         // === Color ===
         color_name: row.name_color_sap,

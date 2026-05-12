@@ -10,6 +10,7 @@ const sb = createClient(
 (async () => {
     // 1. Drop old view
     const sqlDrop = `DROP VIEW IF EXISTS public.v_product_composition;`;
+    const sqlDropUi = `DROP VIEW IF EXISTS public.v_ui_generate_list;`;
     
     // 2. Create new restricted view
     const sqlCreate = `
@@ -35,7 +36,11 @@ SELECT
     
     gvr.automatic_version_rules,
     
-    c.name_color_sap
+    c.name_color_sap,
+
+    -- Added columns must be appended (CREATE OR REPLACE VIEW limitation)
+    public.compute_effective_version_attrs(v.version_code, v.version_attrs) AS effective_version_attrs,
+    public.compute_private_label_client_name(v.version_code, v.version_attrs) AS private_label_client_name
 FROM public.product_skus s
 JOIN public.product_versions v ON s.version_id = v.id
 JOIN public.product_references r ON v.reference_id = r.id
@@ -48,11 +53,12 @@ COMMENT ON VIEW public.v_ui_generate_list IS 'READ-ONLY UI MODEL: Vista exclusiv
     
     console.log('Dropping old view...');
     await (sb.rpc as any)('exec_sql', { query_text: sqlDrop });
+    await (sb.rpc as any)('exec_sql', { query_text: sqlDropUi });
     
     console.log('Creating v_ui_generate_list...');
     const { error } = await (sb.rpc as any)('exec_sql', { query_text: sqlCreate });
     console.log(error ? 'Error creating view: ' + error.message : 'View created and commented successfully');
     
-    await (sb.rpc as any)('exec_sql', { query_text: 'NOTIFY pgrst, reload schema;' });
+    await (sb.rpc as any)('exec_sql', { query_text: "NOTIFY pgrst, 'reload schema';" });
     console.log('Schema reloaded');
 })();

@@ -23,3 +23,10 @@ Eliminar la dependencia de traducciones estáticas (bugs de "Bathroom" forzado) 
 ## 🚀 Próximos Pasos
 - **Configurabilidad de Technical Description**: Mover la lógica de construcción de este string desde `productUtils.ts` hacia el motor de reglas o una configuración de plantilla para que el usuario defina su estructura.
 - **Optimización de Caché de Glosario**: Evaluar el impacto en exportaciones de más de 500 registros para asegurar que las llamadas concurrentes a `resolveZoneHomeEnAction` no afecten el rendimiento.
+
+---
+
+## 🔁 Consistencia ES/EN por Reglas (activeVariableIds) — 2026-05-12
+- **Problema observado**: El nombre EN podía incluir variables (ej. `private_label_client_name`) aunque ES no las hubiese emitido en nomenclatura, por llamadas al traductor sin restricción de variables activas.
+- **Directiva**: La traducción EN debe recibir `activeVariableIds` producidos por `evaluateProductRules(...)` para que EN solo emita lo que ES realmente “usó”.
+- **Nota**: En formularios/acciones de UI, evitar pasar parámetros incorrectos al traductor (ej. no pasar el string ES como `targetEntity`).

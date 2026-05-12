@@ -33,7 +33,15 @@ export async function translateAction(nameEs: string, ctx?: any, force: boolean 
     if (ctx) {
         // Fallback to 'MUEBLE' if product_type is missing or empty
         const targetEntity = ctx.product_type && ctx.product_type.trim() !== '' ? ctx.product_type : 'MUEBLE'
-        return await translateProductToEnglish(ctx, targetEntity, undefined, force)
+        // Keep EN aligned with the variables actually used by ES naming rules
+        const rules = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true ORDER BY priority ASC`) || []
+        const evalResult = evaluateProductRules(ctx as any, rules)
+        return await translateProductToEnglish(
+            { ...evalResult.transformedProduct, final_name_es: nameEs } as any,
+            targetEntity,
+            evalResult.activeVariableIds,
+            force
+        )
     }
     return { translatedName: '', missingTerms: [], isValid: false, errorReason: 'Motor adaptativo requiere el objeto producto completo.', warnings: [], fieldTranslations: {} }
 }
@@ -130,6 +138,10 @@ export async function upsertColorAction(code: string, name: string) {
 }
 
 function buildCreateProductV6Payload(data: any, parsed: any, isPrivate: boolean, clientId: string, clientName: string, sap_description_recommended: string, final_name_es: string, final_name_en: string) {
+    const normalizedPrivateName = (clientName && String(clientName).trim() !== '' && String(clientName).toUpperCase() !== 'NA')
+        ? String(clientName).trim()
+        : null
+
     const payload: any = {
         reference: {
             reference_code: parsed.ref_code,
@@ -163,9 +175,7 @@ function buildCreateProductV6Payload(data: any, parsed: any, isPrivate: boolean,
             final_base_name_es: final_name_es,
             final_base_name_en: final_name_en,
             version_attrs: {
-                private_label_flag: isPrivate,
-                private_label_client_name: clientName,
-                private_label_client_id: clientId || null,
+                private_label_client_name: isPrivate ? normalizedPrivateName : null,
             }
         },
         sku: {
@@ -239,7 +249,11 @@ export async function createProductAction(data: any) {
     const final_name_es = evalResult.finalNameEs
     const sap_description_recommended = final_name_es.toUpperCase().substring(0, 40)
 
-    const translateResult = await translateProductToEnglish({...workingProduct, final_name_es}, workingProduct.product_type || 'MUEBLE')
+    const translateResult = await translateProductToEnglish(
+        { ...evalResult.transformedProduct, final_name_es } as any,
+        workingProduct.product_type || 'MUEBLE',
+        evalResult.activeVariableIds
+    )
     const final_name_en = translateResult.isValid ? translateResult.translatedName : ''
     if (data._newGlossaryTerms && Array.isArray(data._newGlossaryTerms)) {
         for (const term of data._newGlossaryTerms) {
@@ -260,14 +274,20 @@ export async function createProductAction(data: any) {
         }
     }
 
-    // Private Label Client
-    let clientId = data.private_label_client_id
-    if (data.private_label_flag && (!clientId || clientId === '__NEW__') && data.private_label_client_name) {
-        const newClient = await createClientAction(data.private_label_client_name, data.private_label_logo_id)
-        clientId = newClient.id
+    // Private label is derived from the presence of a client name (no flag)
+    const clientNameRaw = data.private_label_client_name ? String(data.private_label_client_name).trim() : ''
+    const isPrivate = clientNameRaw !== '' && clientNameRaw.toUpperCase() !== 'NA'
+    const clientName = isPrivate ? clientNameRaw : 'NA'
+    const clientId = ''
+
+    // Optional: store logo association for the client name (does not affect private-label logic)
+    if (isPrivate && data.private_label_logo_id) {
+        try {
+            await createClientAction(clientNameRaw, String(data.private_label_logo_id))
+        } catch {
+            // Non-blocking; private label still works without storing logo metadata
+        }
     }
-    const isPrivate = !!data.private_label_flag
-    const clientName = isPrivate ? (data.private_label_client_name || 'NA') : 'NA'
 
     const payload = buildCreateProductV6Payload(data, parsed, isPrivate, clientId, clientName, sap_description_recommended, final_name_es, final_name_en)
 
@@ -309,11 +329,36 @@ export async function updateProductAction(id: string, data: any) {
     }
     const evalResult = evaluateProductRules(workingProduct as any, rules)
     const final_name_es = evalResult.finalNameEs
-    const translateResult = await translateProductToEnglish({...workingProduct, final_name_es}, workingProduct.product_type || 'MUEBLE')
+    const translateResult = await translateProductToEnglish(
+        { ...evalResult.transformedProduct, final_name_es } as any,
+        workingProduct.product_type || 'MUEBLE',
+        evalResult.activeVariableIds
+    )
     const final_name_en = translateResult.isValid ? translateResult.translatedName : ''
 
     // Prepare V6 payload
-    const payload = buildCreateProductV6Payload(data, parsed, !!data.private_label_flag, data.private_label_client_id, data.private_label_client_name, final_name_es.toUpperCase().substring(0, 40), final_name_es, final_name_en)
+    const clientNameRaw = data.private_label_client_name ? String(data.private_label_client_name).trim() : ''
+    const isPrivate = clientNameRaw !== '' && clientNameRaw.toUpperCase() !== 'NA'
+
+    // Optional: store logo association for the client name
+    if (isPrivate && data.private_label_logo_id) {
+        try {
+            await createClientAction(clientNameRaw, String(data.private_label_logo_id))
+        } catch {
+            // Non-blocking
+        }
+    }
+
+    const payload = buildCreateProductV6Payload(
+        data,
+        parsed,
+        isPrivate,
+        '',
+        clientNameRaw,
+        final_name_es.toUpperCase().substring(0, 40),
+        final_name_es,
+        final_name_en
+    )
 
     // Handle new color if provided
     if (data._newColor && (data.color_code || parsed.color_code)) {
@@ -480,8 +525,15 @@ export async function translateProductsAction(ids?: string[], mode: 'missing' | 
         let totalMissingTerms: string[] = []
         const updatedProducts: { id: string, final_name_en: string }[] = []
 
+        const rules = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true ORDER BY priority ASC`) || []
+
         for (const product of toTranslate) {
-            const result = await translateProductToEnglish(product, product.product_type || 'MUEBLE')
+            const evalResult = evaluateProductRules(product as any, rules)
+            const result = await translateProductToEnglish(
+                { ...evalResult.transformedProduct, final_name_es: evalResult.finalNameEs } as any,
+                product.product_type || 'MUEBLE',
+                evalResult.activeVariableIds
+            )
             const { translatedName, missingTerms, isValid } = result
 
             if (missingTerms.length > 0) {

@@ -20,6 +20,10 @@ import { Badge } from '@/components/ui/badge'
 import { AlertCircle, CheckCircle2, Languages, Sparkles } from 'lucide-react'
 
 export function EditProductForm({ initialData }: { initialData: any }) {
+    const initialPrivateName = (initialData.private_label_client_name && String(initialData.private_label_client_name).trim() !== '' && String(initialData.private_label_client_name).toUpperCase() !== 'NA')
+        ? String(initialData.private_label_client_name).trim()
+        : 'NA'
+
     const [formData, setFormData] = useState({
         code: initialData.code || '',
         sap_description: initialData.sap_description || '',
@@ -41,8 +45,8 @@ export function EditProductForm({ initialData }: { initialData: any }) {
         final_name_es: initialData.final_name_es || '',
         final_name_en: initialData.final_name_en || '',
         door_color_text: initialData.door_color_text || 'NA',
-        private_label_flag: initialData.private_label_flag || false,
-        private_label_client_name: initialData.private_label_client_name || 'NA',
+        private_label_flag: initialPrivateName !== 'NA',
+        private_label_client_name: initialPrivateName,
         private_label_client_id: initialData.private_label_client_id || '',
         isometric_path: initialData.isometric_path || '',
         isometric_asset_id: initialData.isometric_asset_id || '',
@@ -63,7 +67,15 @@ export function EditProductForm({ initialData }: { initialData: any }) {
             const evalResult = evaluateProductRules(currentData as any as Product, rules)
             const namingEs = evalResult.finalNameEs
             
-            const transResult = await translateProductToEnglish(currentData as any as Product, namingEs)
+            const targetEntity = (currentData.product_type && String(currentData.product_type).trim() !== '')
+                ? String(currentData.product_type)
+                : 'MUEBLE'
+
+            const transResult = await translateProductToEnglish(
+                { ...evalResult.transformedProduct, final_name_es: namingEs } as any,
+                targetEntity,
+                evalResult.activeVariableIds
+            )
             const namingEn = transResult.translatedName
 
             setFormData(prev => ({
