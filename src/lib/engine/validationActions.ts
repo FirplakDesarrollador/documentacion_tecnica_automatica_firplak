@@ -26,7 +26,8 @@ export async function getFullValidationSweep(): Promise<ExceptionSummary> {
     const rows = await dbQuery(`
         SELECT *
         FROM public.v_ui_generate_list 
-        WHERE status IS NULL OR status != 'INACTIVO'
+        WHERE (status IS NULL OR status != 'INACTIVO')
+        AND (ref_status IS NULL OR ref_status != 'INACTIVO')
         ORDER BY sku_complete ASC
     `) || []
 

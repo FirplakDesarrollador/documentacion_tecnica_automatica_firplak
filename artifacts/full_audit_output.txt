@@ -1,0 +1,453 @@
+=== PUBLIC FUNCTIONS ===
+bulk_direct_update_names
+bulk_import_products
+bulk_update_product_names
+bulk_update_product_translations
+compute_effective_version_attrs
+compute_private_label_client_name
+create_product_v6_transaction
+enforce_version_code_exists
+exec_sql
+get_version_automatic_rules
+rpc_add_attr_to_families
+rpc_mass_update_references
+rpc_preview_add_attr_to_families
+rpc_preview_mass_update
+rpc_preview_remove_attr_from_families
+rpc_remove_attr_from_families
+sync_product_to_v6
+update_product_v6_transaction
+
+=== PUBLIC VIEWS ===
+v_ui_generate_list
+
+=== PUBLIC TRIGGERS ===
+cabinet_products.trg_sync_product_v6 (AFTER INSERT)
+cabinet_products.trg_sync_product_v6 (AFTER UPDATE)
+product_versions.trg_enforce_version_code_exists (BEFORE INSERT)
+product_versions.trg_enforce_version_code_exists (BEFORE UPDATE)
+
+=== FOREIGN KEYS ===
+product_references.family_code -> families.family_code
+product_skus.color_code -> colors.code_4dig
+product_skus.version_id -> product_versions.id
+product_versions.reference_id -> product_references.id
+product_versions.version_code -> global_version_rules.version_code
+
+=== UNIQUE CONSTRAINTS ===
+colors: UNIQUE on code_4dig (colors_code_4dig_key)
+colors: PRIMARY KEY on id (colors_pkey)
+families: PRIMARY KEY on family_code (families_pkey)
+product_references: UNIQUE on family_code (product_references_family_code_reference_code_key)
+product_references: UNIQUE on reference_code (product_references_family_code_reference_code_key)
+product_references: PRIMARY KEY on id (product_references_pkey)
+product_skus: PRIMARY KEY on id (product_skus_pkey)
+product_skus: UNIQUE on sku_complete (product_skus_sku_complete_key)
+product_versions: PRIMARY KEY on id (product_versions_pkey)
+product_versions: UNIQUE on reference_id (product_versions_reference_id_version_code_key)
+product_versions: UNIQUE on version_code (product_versions_reference_id_version_code_key)
+product_versions: UNIQUE on sku_base (product_versions_sku_base_key)
+
+=== ALL REF_ATTRS KEYS ===
+accessory_text
+armado_con_lvm
+assembled_flag
+bisagras
+canto_puertas
+carb2
+door_color_text
+product_type
+rh
+
+=== ALL VERSION_ATTRS KEYS ===
+accessory_text
+isometric_asset_id
+isometric_path
+private_label_client_id
+private_label_client_name
+private_label_flag
+
+=== COLORS TABLE ===
+0000 | 0 | SIN COLOR
+0001 | 1 | GRIS POLAR OSCURO
+0024 | 24 | CROMADO
+0025 | 25 | ACCESORIOS GRISES
+0056 | 56 | DESDREN BLUE
+0100 | 100 | BLANCO 100
+0101 | 101 | PERLA
+0102 | 102 | HUESO 102
+0103 | 103 | MARFIL 103
+0107 | 107 | BEIGE 107
+0108 | 108 | BEIGE
+0109 | 109 | TRIGO 109
+0110 | 110 | AZUL 110
+0111 | 111 | AZUL 111
+0112 | 112 | ORO
+0113 | 113 | ORO ROSA
+0114 | 114 | AZUL 114
+0115 | 115 | AZUL 115
+0116 | 116 | AZUL 116
+0117 | 117 | SAGANO FOREST-BLANCO NEVADO
+0118 | 118 | AZUL OSCURO 118
+0123 | 123 | LILA 123
+0125 | 125 | ROSA BAHAMA
+0129 | 129 | VINOTINTO 129
+0133 | 133 | AMARILLO 133
+0141 | 141 | VERDE 141
+0147 | 147 | VERDE 147
+0148 | 148 | VERDE 148
+0149 | 149 | VERDE OSCURO 149
+0150 | 150 | GRIS 150
+0155 | 155 | GRIS 155
+0160 | 160 | NEGRO 160
+0180 | 180 | CURUBA 180
+0181 | 181 | NATURAL SATINADO
+0182 | 182 | BLANCO SATINADO
+0300 | 300 | NATURAL
+0311 | 311 | AZUL PISCINA 311
+0312 | 312 | AMARILLO
+0313 | 313 | GRIS Z1
+0314 | 314 | BLANCO RH/AMBAR SOFT
+0315 | 315 | BLANCO RH/POLAR RUSTIK
+0320 | 320 | ROJO MARLBORO
+0321 | 321 | BLANCO RH/SODER-MALI
+0322 | 322 | BLANCO CARB2/NOLA-GRACIA
+0323 | 323 | BLANCO CARB2/NARDO
+0324 | 324 | BLANCO CARB2/MITTE-TAMBO
+0325 | 325 | CANDELARIA AMAZONAS-POLAR SOFT
+0326 | 326 | BLANCO RH/FLORMORADO
+0327 | 327 | CANDELARIA AMAZONAS-POLAR RUSTIK
+0341 | 341 | BLANCO/KRAFT
+0347 | 347 | VERDE GRANITO
+0348 | 348 | GREEN STONE
+0350 | 350 | LADRILLO 350
+0351 | 351 | CINZA-AUSTRAL
+0360 | 360 | BLACK STONE
+0361 | 361 | MACANA
+0362 | 362 | OKUME
+0363 | 363 | VOLCANO
+0364 | 364 | HUMO
+0365 | 365 | WENGUE - BLANCO POLAR
+0366 | 366 | WENGUE - LINO LATTE
+0367 | 367 | GLACIAL
+0368 | 368 | TABACO CHIC
+0369 | 369 | OCASO
+0370 | 370 | NIEVE
+0371 | 371 | ARENA
+0372 | 372 | SALVAJE
+0373 | 373 | BLANCO BRILLANTE
+0380 | 380 | WHITE AND PEPPER
+0381 | 381 | WHITE STONE 381
+0382 | 382 | BONE AND PEPPER
+0383 | 383 | SAND STONE 383
+0386 | 386 | CRISTALO
+0387 | 387 | CHANTILLI
+0388 | 388 | CAPUCCINO
+0389 | 389 | ROBLE OSCURO
+0390 | 390 | CEDRO
+0391 | 391 | MANZANO
+0392 | 392 | WENGUE
+0393 | 393 | CAOBA
+0394 | 394 | ROBLE MALLADO
+0395 | 395 | LATTE-NUEZ
+0396 | 396 | SERENA
+0397 | 397 | NUEZ
+0398 | 398 | LINO LATTE
+0400 | 400 | MACANA-ROBLE
+0401 | 401 | OLIVO MATE
+0402 | 402 | BRIXTON
+0403 | 403 | ROBLE MALLADO INTERIOR BLANCO
+0404 | 404 | AVELLANA
+0405 | 405 | SODER (DESOCNTINUADO)
+0406 | 406 | AMARETTO
+0407 | 407 | BLANCO POLAR TABACO CHIC
+0408 | 408 | BLANCO POLAR
+0409 | 409 | NATURAL CLARO
+0410 | 410 | DOLOMITA
+0411 | 411 | LATTE - SODER
+0412 | 412 | VIENES
+0413 | 413 | PIGNETTO
+0414 | 414 | KROMO
+0415 | 415 | CALA
+0416 | 416 | NOLA
+0417 | 417 | BLANCO TERMOLAMINADO
+0418 | 418 | BRIXTON-SODER
+0419 | 419 | FENDO
+0420 | 420 | ROVERE
+0421 | 421 | CARAMELO
+0422 | 422 | PORTOBELO
+0423 | 423 | ROVERE/BALANCE
+0424 | 424 | MIEL
+0425 | 425 | CENIZA
+0426 | 426 | SIENA
+0427 | 427 | HABANO
+0428 | 428 | PLOMO/ GRAFFO
+0429 | 429 | BLANCO RUSTIK
+0430 | 430 | CENIZA/ BALANCE
+0431 | 431 | NIEBLA
+0432 | 432 | TAUPE MATE
+0433 | 433 | CACAO
+0434 | 434 | ARTIKO
+0435 | 435 | MITTE (DESCONTINUADO)
+0436 | 436 | DUNA
+0437 | 437 | SODER/MALI
+0438 | 438 | ROBLE CENIZO
+0439 | 439 | MITTE/ TAMBO
+0440 | 440 | RUSTICK SAND
+0441 | 441 | RUSTIC TABACCO
+0442 | 442 | GRACIA/NOLA
+0443 | 443 | LONDON QUADRATO
+0444 | 444 | PARMA
+0445 | 445 | TAROA
+0446 | 446 | BROOKLYN OAK
+0447 | 447 | CARBONO/ BAUDO
+0448 | 448 | COLOR PLANO KAKI/CRETA
+0449 | 449 | PROVENCE MAPLE
+0450 | 450 | GLAZE
+0451 | 451 | BOSCUS ESCANDINAVO
+0452 | 452 | LONDON
+0453 | 453 | MAJUY
+0454 | 454 | GRACIA
+0455 | 455 | CARBONO
+0456 | 456 | BLANCO NEVADO PROVISIONAL
+0457 | 457 | COCUY
+0458 | 458 | TRIBECA
+0459 | 459 | TAUSA
+0460 | 460 | LARICE
+0461 | 461 | MALI (N)
+0462 | 462 | TAMBO (N)
+0463 | 463 | SIKUANI (N)
+0464 | 464 | BAUDO (N)
+0465 | 465 | MACULA
+0466 | 466 | AMBAR
+0467 | 467 | CINZA COBALTO
+0468 | 468 | MARKINA
+0469 | 469 | RUBIK
+0470 | 470 | FERRATA
+0471 | 471 | ION
+0472 | 472 | TRAMATO
+0473 | 473 | LANA
+0474 | 474 | GRIZZO
+0475 | 475 | LUNAR
+0476 | 476 | LENNO
+0477 | 477 | CHALETT
+0478 | 478 | HEURA
+0479 | 479 | SENDA
+0480 | 480 | KALLIO
+0481 | 481 | MINERAL
+0482 | 482 | KALA WHITE
+0483 | 483 | PYROS
+0484 | 484 | SAGANO
+0485 | 485 | TRIBECA - CINZA
+0486 | 486 | MITTE - BLANCO
+0487 | 487 | GRACIA BALANC POLAR
+0488 | 488 | GRACIA/POLAR RUSTIK
+0489 | 489 | GLACIAL BALANC POLAR
+0490 | 490 | CINZA BALANCE VARIOS
+0491 | 491 | BLANCO POLAR RUSTIK
+0492 | 492 | GLACIAL/POLAR RUSTIK
+0493 | 493 | AUSTRAL
+0494 | 494 | SAGANO BALANCE POLAR
+0495 | 495 | KALLIO BALANCE POLAR
+0496 | 496 | SAGANO/POLAR RUSTIK
+0497 | 497 | KALLIO/POLAR RUSTIK
+0498 | 498 | AMBAR RUSTIK
+0499 | 499 | SODER RUSTIK
+0500 | 500 | GRIS NIEBLA
+0501 | 501 | GRIS BRUMA
+0502 | 502 | CHAMPA?A F.V.
+0503 | 503 | GRIS SOMBRA
+0504 | 504 | ARENA F.V
+0505 | 505 | MITTE/POLAR RUSTIK
+0506 | 506 | TAB MIT/POL RUSTIK/FOND SOFT
+0507 | 507 | TAB SAGANO/POL RUSTIK/FOND SOFT
+0508 | 508 | BLANCO COCINAS
+0509 | 509 | NIEBLA COCINAS
+0510 | 510 | AZUL CIELO FV
+0511 | 511 | SOFT BLUE
+0512 | 512 | AZUL CELESTE
+0529 | 529 | VINO F.V.
+0530 | 530 | SAGANO RUSTIK-AMBAR RUSTIK
+0541 | 541 | VERDE PRIMAVERA FV
+0550 | 550 | GRIS FV
+0561 | 561 | CIPRES FV
+0590 | 590 | CARIBE SHELL
+0647 | 647 | ALMOND
+0685 | 685 | MERLOT 685
+0696 | 696 | BISCUIT 696
+0721 | 721 | BONE 021 A.S
+0725 | 725 | DAYDREAM 225 A.S
+0727 | 727 | SPRING-VERDE MENTA 2
+0763 | 763 | DRESDEN BLUE 163 A.S
+0773 | 773 | SHELL WHISPER 173 AS
+0775 | 775 | SILVER SWHISPER 165
+0900 | 900 | GRANITO BLANCO
+0901 | 901 | GRANITO PERLA
+0902 | 902 | GRANITO MARFIL
+0904 | 904 | GRANITO CHAMPAÑA
+0916 | 916 | AZUL 916
+0943 | 943 | VERDE UVATUBA
+0947 | 947 | GRANITO VERDE
+0948 | 948 | VERDE 948
+0950 | 950 | GRANITO GRIS
+0960 | 960 | GRANITO NEGRO
+0961 | 961 | GALAXIA
+1060 | 1060 | BLANCO-NEGRO
+1300 | 1300 | AZUL ULTRAMAR
+1301 | 1301 | VERDE OLIVO
+1302 | 1302 | BLANCO POLAR SOFT CANTO BRILLANTE
+1303 | 1303 | MITTE BALANCE POLAR RUSTIK
+1304 | 1304 | AMBAR
+1305 | 1305 | SODER BALANCE POLAR RUSTIK
+1306 | 1306 | CARBONO - BLANCO RH
+1307 | 1307 | CINZA/TRIBECA
+1309 | 1309 | BOREAL RUSTIK
+1310 | 1310 | BOREAL BALANCE POLAR RUSTIK
+1311 | 1311 | CINZA RUSTIK
+1312 | 1312 | CINZA BALANCE POLAR RUSTIK
+1313 | 1313 | CARBONO BALANCE POLAR RUSTIK
+1314 | 1314 | MITTE FOREST
+1315 | 1315 | MITTE BALANCE FOREST
+1316 | 1316 | BAHIA FOREST
+1317 | 1317 | RIVIERA FOREST
+1318 | 1318 | OASIS FOREST
+1319 | 1319 | TERRANTA FOREST
+1320 | 1320 | BOREAL FOREST
+1321 | 1321 | KOA FOREST
+1322 | 1322 | MARMORO SOFT
+1323 | 1323 | FERRATA SOFT
+1324 | 1324 | AGATHA SOFT
+1325 | 1325 | ETNA TEXSTONE
+1326 | 1326 | MERIL TEXSTONE
+1327 | 1327 | AURO SOFT
+1328 | 1328 | BLANCO POLAR FOREST
+1329 | 1329 | LANA BALANCE POLAR
+1330 | 1330 | CAPUCCINO BALANCE POLAR
+1331 | 1331 | DOVE GRAY
+1332 | 1332 | JAYKA AMAZONAS
+1333 | 1333 | FLORMORADO
+1334 | 1334 | PERLA DURATEX
+1335 | 1335 | VIENNA
+1336 | 1336 | BOSCO
+1337 | 1337 | SAGANO/NEVADO SOFT
+1338 | 1338 | CAPUCCINO RUSTIK
+1339 | 1339 | POLAR SOFT/POLAR RUSTIK
+1340 | 1340 | VIENNA MATE
+1341 | 1341 | HUMO PRIMADERA
+1342 | 1342 | CANDELARIA TEXTURA AMAZONAS
+1343 | 1343 | TIHUA
+1344 | 1344 | BACATA
+1345 | 1345 | VOLCANICO AMAZONAS
+1346 | 1346 | RIVIERA
+1347 | 1347 | ANDINO
+1348 | 1348 | NUEZ RUSTIK
+1349 | 1349 | CASTAÑO
+1350 | 1350 | ARLINGTON RELIEVE
+1351 | 1351 | YALAA AMAZONAS
+1352 | 1352 | SUKTA MATE
+1353 | 1353 | BLANCO RH/GRACIA-SIKUANI
+1354 | 1354 | IROKO
+1355 | 1355 | CANDELARIA/AUSTRAL
+1356 | 1356 | CANDELARIA/SIKUANI
+1357 | 1357 | CANDELARIA MATE
+1358 | 1358 | POLAR/CANDERLARIA AMAZONAS
+1359 | 1359 | GRIS TITAN
+1360 | 1360 | TULA
+1361 | 1361 | BLANCO RH/JAYKA
+1362 | 1362 | YALAA MATE
+1363 | 1363 | JAYKA MATE
+1364 | 1364 | MAKU AMAZONAS
+1365 | 1365 | MAKU MATE
+1366 | null | CRETA LUNA
+1371 | 1371 | NARDO
+9999 | 9999 | VARIOS COLORES
+
+=== bulk_import_products DEFINITION ===
+CREATE OR REPLACE FUNCTION public.bulk_import_products(payload jsonb)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    item record;
+    v_ref_id uuid;
+    v_ver_id uuid;
+    v_sku_id uuid;
+    v_color_exists boolean;
+    v_ver_rule_exists boolean;
+    v_sku_base text;
+    v_created_refs integer := 0;
+    v_created_vers integer := 0;
+    v_created_skus integer := 0;
+BEGIN
+    FOR item IN SELECT * FROM jsonb_to_recordset(payload) AS x(
+        sku_complete text,
+        family_code text,
+        reference_code text,
+        version_code text,
+        color_code text,
+        sap_description_original text,
+        product_name text,
+        designation text,
+        product_type text,
+        width_cm numeric,
+        depth_cm numeric,
+        height_cm numeric,
+        weight_kg numeric,
+        ref_attrs jsonb,
+        version_attrs jsonb
+    ) LOOP
+        -- check color exists
+        SELECT EXISTS(SELECT 1 FROM colors WHERE code_4dig = item.color_code) INTO v_color_exists;
+        IF NOT v_color_exists THEN
+             RAISE EXCEPTION 'El color % no existe en la base de datos (SKU: %)', item.color_code, item.sku_complete;
+        END IF;
+
+        -- We assume family_code exists or we can insert it if there's a familia table.
+        -- BUT the Prisma schema might not enforce foreign keys on family_code for product_references,
+        -- Wait, product_references has family_code, does it have FK? Let's assume it doesn't strictly break if the table 'Familia' is independent, 
+        -- but if it does, the user said "Crear familia si no existe". In Supabase, the user didn't mention a Familia table in the constraints check. 
+        -- Constraint check: no FK for family_code on product_references.
+
+        -- handle product_references
+        SELECT id INTO v_ref_id FROM product_references WHERE family_code = item.family_code AND reference_code = item.reference_code;
+        IF v_ref_id IS NULL THEN
+            INSERT INTO product_references (family_code, reference_code, product_name, designation, product_type, width_cm, depth_cm, height_cm, weight_kg, ref_attrs)
+            VALUES (item.family_code, item.reference_code, item.product_name, item.designation, item.product_type, item.width_cm, item.depth_cm, item.height_cm, item.weight_kg, COALESCE(item.ref_attrs, '{}'::jsonb))
+            RETURNING id INTO v_ref_id;
+            v_created_refs := v_created_refs + 1;
+        END IF;
+
+        -- calculate sku_base from sku_complete (e.g. VBAN05-0010-000)
+        v_sku_base := substring(item.sku_complete from 1 for length(item.sku_complete) - 5);
+
+        -- handle product_versions
+        SELECT id INTO v_ver_id FROM product_versions WHERE reference_id = v_ref_id AND version_code = item.version_code;
+        IF v_ver_id IS NULL THEN
+            INSERT INTO product_versions (reference_id, version_code, sku_base, version_attrs)
+            VALUES (v_ref_id, item.version_code, v_sku_base, COALESCE(item.version_attrs, '{}'::jsonb))
+            RETURNING id INTO v_ver_id;
+            v_created_vers := v_created_vers + 1;
+        END IF;
+
+        -- handle product_skus
+        SELECT id INTO v_sku_id FROM product_skus WHERE sku_complete = item.sku_complete;
+        IF v_sku_id IS NULL THEN
+            INSERT INTO product_skus (version_id, sku_complete, sap_description_original, color_code)
+            VALUES (v_ver_id, item.sku_complete, item.sap_description_original, item.color_code)
+            RETURNING id INTO v_sku_id;
+            v_created_skus := v_created_skus + 1;
+        ELSE
+            RAISE EXCEPTION 'El SKU % ya existe en product_skus.', item.sku_complete;
+        END IF;
+
+    END LOOP;
+
+    RETURN jsonb_build_object(
+        'success', true, 
+        'message', 'Importación completada',
+        'created_references', v_created_refs,
+        'created_versions', v_created_vers,
+        'created_skus', v_created_skus
+    );
+END;
+$function$

@@ -13,10 +13,10 @@ import { buttonVariants } from '@/components/ui/button-variants'
 import { cn } from '@/lib/utils'
 import { AlertCircle, ArrowRight } from 'lucide-react'
 import Link from 'next/link'
-import { getFullValidationSweepCached } from '@/lib/engine/validationActions'
+import { getFullValidationSweep } from '@/lib/engine/validationActions'
 
 export default async function ExceptionsPage() {
-    const validationSummary = await getFullValidationSweepCached()
+    const validationSummary = await getFullValidationSweep()
     const exceptionalProducts = validationSummary.details
 
     return (
@@ -58,7 +58,7 @@ export default async function ExceptionsPage() {
                                     <TableCell>
                                         <div className="flex flex-col">
                                             <span className="font-semibold text-slate-900">{productCode}</span>
-                                            <span className="text-[10px] text-slate-500 truncate max-w-[200px]">{productName}</span>
+                                            <span className="text-[10px] text-slate-500">{productName}</span>
                                         </div>
                                     </TableCell>
                                     <TableCell>

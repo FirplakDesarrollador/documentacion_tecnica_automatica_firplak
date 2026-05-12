@@ -1,0 +1,7 @@
+﻿SELECT COUNT(*)::int AS missing_isometric_count
+FROM public.v_ui_generate_list
+WHERE (status IS NULL OR status != 'INACTIVO')
+  AND (COALESCE(effective_version_attrs->>'isometric_path','') = '')
+  AND (COALESCE(effective_version_attrs->>'isometric_asset_id','') = '')
+  AND (isometric_path IS NULL OR isometric_path = '')
+  AND (isometric_asset_id IS NULL OR isometric_asset_id = '');

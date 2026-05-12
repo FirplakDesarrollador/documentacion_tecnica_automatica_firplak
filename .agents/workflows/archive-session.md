@@ -13,7 +13,9 @@ Este flujo asegura que el aprendizaje de **toda la sesión** persista en la memo
    - **Negocio/Diseño**: (Reglas Firplak, Resoluciones estéticas)
    - **Pregunta**: "¿Son estos los hitos que debo memorizar a largo plazo o falta algún aprendizaje vital?"
 
-3. **Sincronización de Knowledge Items (KIs) y AI_README**: Solo tras la validación, actualiza los KIs en `.gemini/antigravity/knowledge/` y el `AI_README.md`. Incluye sugerencias para la próxima sesión.
+3. **Sincronización de Knowledge Items (KIs) y AI_README**: Solo tras la validación, actualiza los KIs en `.gemini/antigravity/knowledge/` y el `AI_README.md`. 
+   - **Regla de Oro**: NO borrar ni modificar información de los KIs que no esté relacionada con el tema actual. Las actualizaciones deben ser quirúrgicas. Si la información es nueva, agregar nuevos puntos o párrafos según la estructura del KI en lugar de reescribir contenido existente no relacionado.
+   - Incluye sugerencias para la próxima sesión.
 
 4. **Confirmación**: Reporta qué KIs fueron actualizados y el cierre exitoso del aprendizaje.
 

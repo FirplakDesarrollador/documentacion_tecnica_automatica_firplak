@@ -1,0 +1,7 @@
+file_full_path,file_base_name,parsed_designation,parsed_product_name,parsed_commercial_measure,parsed_accessory_text,match_count,matched_reference_id,matched_family_code,matched_reference_code,existing_isometric_asset_id,existing_isometric_path,action,notes
+.env,.env,,,,,0,,,,,,SKIP,parse_failed: expected at least 3 parts (designation/name/measure).
+.gitignore,.gitignore,,,,,0,,,,,,SKIP,parse_failed: expected at least 3 parts (designation/name/measure).
+.vercelignore,.vercelignore,,,,,0,,,,,,SKIP,parse_failed: expected at least 3 parts (designation/name/measure).
+next-env.d.ts,next-env.d,,,,,0,,,,,,SKIP,parse_failed: expected at least 3 parts (designation/name/measure).
+next.config.ts,next.config,,,,,0,,,,,,SKIP,parse_failed: expected at least 3 parts (designation/name/measure).
+test_cols.ts,test_cols,,,,,0,,,,,,SKIP,parse_failed: expected at least 3 parts (designation/name/measure).

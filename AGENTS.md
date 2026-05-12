@@ -35,6 +35,7 @@ You operate within a 3-layer architecture that separates concerns to maximize re
 - **Think Before Acting:** Analyze the task before writing code. Break problems into smaller steps.
 - **Self-anneal when things break:** Fix scripts, test them, and update directives with what you learned (API limits, edge cases).
 - **Project Awareness:** Read existing files and respect current architecture. DO NOT rewrite entire codebases unnecessarily or introduce breaking changes without reason.
+- **🚫 Prohibición de Tabla Legacy (Firplak):** Está **estrictamente prohibido** utilizar la tabla `cabinet_products` para alimentar lógica de negocio, construir vistas o realizar parches, a menos que se especifique literalmente lo contrario. Priorizar siempre el Catálogo Maestro (`product_skus`, `product_versions`, `product_references`).
 
 ### 2. Code Quality Standards (DRY & Senior level)
 - Write clean, readable, and modular code with meaningful names.
@@ -46,6 +47,7 @@ You operate within a 3-layer architecture that separates concerns to maximize re
 - **Frontend:** Component-based architecture. Keep components small, reusable, and separate UI from logic.
 - **Backend:** Follow MVC or modular structure. Keep business logic separate from routes.
 - **Default Tech Stack:** React, Node.js (Express), PostgreSQL, Tailwind CSS (unless specified otherwise).
+- **Database-Centric Logic (DB-First):** Prioritize the use of **Triggers, Functions (RPC), Views, and Edge Functions** in Supabase/PostgreSQL for complex business logic and data consistency. Avoid performing massive data updates or multi-table patches directly from the application layer if they can be handled transactionally and reliably within the database.
 
 ---
 

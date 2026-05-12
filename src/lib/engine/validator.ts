@@ -28,7 +28,7 @@ export function validateProductReadiness(
     }
 
     // 0. Filter by Status: Inactive products are not evaluated as exceptions
-    if (product.status === 'INACTIVO') {
+    if (product.status === 'INACTIVO' || product.ref_status === 'INACTIVO') {
         return issues
     }
 

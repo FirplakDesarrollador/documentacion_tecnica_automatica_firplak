@@ -112,6 +112,12 @@ export default async function ProductsPage({
                             Familias
                         </Button>
                     </Link>
+                    <Link href="/products/reference-editor">
+                        <Button variant="secondary" className="w-full sm:w-auto">
+                            <DatabaseZap className="mr-2 h-4 w-4 text-indigo-500" />
+                            Editor de Referencias
+                        </Button>
+                    </Link>
                     <Link href="/products/mass-edit">
                         <Button variant="secondary" className="w-full sm:w-auto">
                             <DatabaseZap className="mr-2 h-4 w-4 text-indigo-500" />

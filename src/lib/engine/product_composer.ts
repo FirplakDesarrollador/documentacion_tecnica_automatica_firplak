@@ -57,6 +57,10 @@ export interface ComposedProduct {
     barcode_text: string | null;
     barcode_path: string | null;
     status: string;
+    ref_status: string;
+
+    // === Private label (from version rules or version_attrs) ===
+    ref_status: string;
 
     // === Private label (from version rules or version_attrs) ===
     private_label_flag: boolean;
@@ -67,6 +71,7 @@ export interface ComposedProduct {
 
     // === Metadata ===
     _source: 'composed';
+    dynamic_attrs: Record<string, string>;
 }
 
 const BASE_QUERY = `
@@ -79,7 +84,7 @@ const BASE_QUERY = `
         v.final_base_name_en, v.validation_status,
         v.version_label, v.version_attrs,
         
-        r.reference_code, r.product_name,
+        r.reference_code, r.product_name, r.status AS ref_status,
         r.designation, r.line, r.commercial_measure,
         r.special_label, r.width_cm, r.depth_cm, r.height_cm,
         r.weight_kg, r.stacking_max, r.isometric_path,
@@ -134,6 +139,9 @@ export function mapRowToComposedProduct(row: any): ComposedProduct {
         normalizePrivateLabelName(row.private_label_client_name) ??
         normalizePrivateLabelName(effectiveVerAttrs.private_label_client_name);
 
+    const skuAttrs = typeof row.sku_attrs === 'string' ? JSON.parse(row.sku_attrs) : (row.sku_attrs || {});
+    const dynamic_attrs = { ...refAttrs, ...effectiveVerAttrs, ...skuAttrs };
+
     return {
         // === Identity ===
         id: row.id,
@@ -187,6 +195,7 @@ export function mapRowToComposedProduct(row: any): ComposedProduct {
         barcode_text: row.barcode_text,
         barcode_path: row.barcode_path,
         status: row.status || 'ACTIVO',
+        ref_status: row.ref_status || 'ACTIVO',
 
         // === Private label ===
         private_label_flag: privateLabelName !== null,
@@ -196,7 +205,8 @@ export function mapRowToComposedProduct(row: any): ComposedProduct {
         color_name: row.name_color_sap,
 
         // === Metadata ===
-        _source: 'composed'
+        _source: 'composed',
+        dynamic_attrs
     };
 }
 

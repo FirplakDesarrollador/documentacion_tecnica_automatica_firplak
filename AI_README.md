@@ -7,7 +7,8 @@
 Evolución Relacional V6.1 y Gobernanza de Activos: Se ha consolidado el motor de isométricos con el patrón **"Select-then-Persist"**, permitiendo asociar recursos a productos nuevos sin errores de base de datos. Se implementó una **Limpieza Profunda en Cascada** (manual) para asegurar que la eliminación de assets no deje rastro en las tablas relacionales ni en el Storage físico. La lógica de filtros se centralizó en `filters.ts` para garantizar coherencia en toda la aplicación.
 Gobernanza de Memoria: Se estableció una separación estricta entre Memoria Operativa (Git) y Memoria Técnica (KIs). Se resolvió el **Bucle de Hidratación en /rules** mediante la directiva `force-dynamic`, un patrón vital para páginas con fetching asíncrono en Next.js 15.
 - **Migración a Raíz Única**: Se consolidó el repositorio eliminando la subcarpeta `web/`. El aplicativo ahora es compatible con el despliegue automático en Vercel, gestionando correctamente el schema de Prisma en el pipeline de build.
-- **Registro Dinámico de Colores (NUEVO)**: Se eliminó el bloqueo por error de llave foránea (`fk_skus_color_code`) al permitir la creación de nuevos registros en la tabla `public.colors` directamente desde el `ProductForm.tsx`. El sistema detecta códigos inexistentes y solicita el nombre al usuario antes de proceder con el guardado transaccional.
+- **Estabilización de Excepciones y Gobernanza (NUEVO)**: Se optimizó la Bandeja de Excepciones eliminando el truncamiento de nombres y filtrando automáticamente SKUs de referencias inactivas. Se identificó que inconsistencias de nomenclatura (ej. "VITELI" vs "VITELLI") impedían la asociación correcta de isométricos. Se estableció una prohibición crítica sobre el uso de la tabla legacy `cabinet_products` para proteger la integridad del Catálogo Maestro.
+- **Registro Dinámico de Colores**: Se eliminó el bloqueo por error de llave foránea (`fk_skus_color_code`) al permitir la creación de nuevos registros en la tabla `public.colors` directamente desde el `ProductForm.tsx`.
 
 ## 🏗️ Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
@@ -21,7 +22,7 @@ Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
 - **Renderizado de Exportación**: Puppeteer (Backend) con inyección de HTML sincronizado. Soporte para **File System Access API** en el cliente para guardado directo en disco.
 - **Base de Datos**: Prisma ORM con SQLite (local) y Supabase (Cloud).
 - **Glosario (Caché)**: Patrón `forceRefresh` para invalidación de caché bajo demanda tras aprendizaje manual.
-- **Gobernanza de Supabase MCP**: Se detectaron fallos de conexión (`EOF`) en el servidor MCP posiblemente por restricciones de herramientas o expiración de tokens. **Se recomienda priorizar `exec_sql` (RPC)** para operaciones de datos por su alta fiabilidad y velocidad.
+- **Gobernanza de Supabase MCP**: Se detectaron fallos de conexión (`EOF`) en el servidor MCP. **Se prioriza la lógica DB-First**: Usar Triggers, Funciones RPC, Views y Edge Functions para centralizar la lógica de negocio en la base de datos, evitando parches masivos desde el aplicativo que puedan generar inconsistencias.
 - **Despliegue en Vercel**: El entorno serverless de Vercel requiere que la carpeta `prisma/` NO esté en `.vercelignore` para que el `postinstall` genere el cliente. SQLite y Puppeteer local son incompatibles con la arquitectura serverless de larga duración en Vercel.
 - **Gestión de Access Tokens**: El `SUPABASE_ACCESS_TOKEN` es un PAT global obtenido en Account Settings > Access Tokens. Es vital para que el MCP descubra proyectos.
 - **Proxy Architecture (NUEVO)**: En Next.js 16.1.6, el archivo `middleware.ts` es reemplazado por `src/proxy.ts` (export `proxy`). Gestiona el refresco de sesión de Supabase Auth.
@@ -38,12 +39,14 @@ Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
 - **⚠️ Limitación de exec_sql**: No utilices cláusulas `WITH` (CTE) en consultas enviadas a `dbQuery` ya que rompe el retorno de datos. Usa `INSERT/UPDATE ... RETURNING *`.
 - **Estructura de Layout**: Preferir **Flexbox** sobre CSS Grid para contenedores de alto nivel (Sidebar/Main) para evitar bugs de interceptación de eventos producidos por elementos portales o overlays.
 - **Normalización de Códigos SAP (NUEVO)**: Todos los códigos de color deben normalizarse a 4 dígitos (`0434`) en la columna `code_4dig` y a su valor numérico sin ceros (`434`) en `code_short`. La lógica de padding debe aplicarse antes de cualquier consulta a `public.colors` tanto en el parser como en la UI.
+- **🚫 Prohibición de Tabla Legacy (CRÍTICO)**: Está **estrictamente prohibido** utilizar la tabla `cabinet_products` para construir nuevas funcionalidades, realizar consultas de respaldo o alimentar el motor de validación. Todo el desarrollo debe basarse exclusivamente en las tablas del Catálogo Maestro (`product_skus`, `product_versions`, `product_references`, `families`). Solo se permite el uso de la tabla legacy si el usuario lo especifica explícitamente por escrito para una tarea puntual.
 
 ## 🚀 Próximos Pasos (Sugerencia)
 1.  **Migración de Base de Datos**: Mover los modelos de Prisma de SQLite a PostgreSQL (Supabase) para asegurar persistencia en Vercel.
 2.  **Dashboard de Auditoría**: Crear una vista para que el administrador vea los usuarios activos de Supabase Auth desde la interfaz.
 3.  **Refactor de Filtros**: Validar que todas las consultas SQL crudas en `filters.ts` se ejecuten sin errores en el nuevo entorno unificado.
-4.  **Optimización de Búsqueda de Colores**: Considerar una pre-carga inteligente de colores en `datalistOptions` para reducir latencia en el despliegue de opciones en tiempo real.
+4.  **Migración de Lógica a DB**: Identificar parches de datos en el frontend y migrarlos a Triggers o Funciones en Supabase para asegurar integridad transaccional.
+5.  **Optimización de Búsqueda de Colores**: Considerar una pre-carga inteligente de colores en `datalistOptions` para reducir latencia en el despliegue de opciones en tiempo real.
 
 ---
 *Este archivo es mantenido autónomamente por los agentes de IA que colaboran en el proyecto.*
