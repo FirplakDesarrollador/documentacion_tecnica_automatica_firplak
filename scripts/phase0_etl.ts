@@ -41,8 +41,8 @@ async function runETL() {
         try {
             await dbQuery(`
                 INSERT INTO public.product_references 
-                (family_code, reference_code, product_name, product_type, width_cm, depth_cm, height_cm, weight_kg, isometric_path, isometric_asset_id, ref_attrs, status)
-                VALUES ($1, $2, $3, 'MUEBLE', $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
+                (family_code, reference_code, product_name, width_cm, depth_cm, height_cm, weight_kg, isometric_path, isometric_asset_id, ref_attrs, status)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
                 ON CONFLICT (family_code, reference_code) DO UPDATE SET
                     product_name = EXCLUDED.product_name,
                     ref_attrs = EXCLUDED.ref_attrs

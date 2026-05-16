@@ -1,7 +1,7 @@
 import json
 import os
 
-PACKAGE_PATH = r"c:\Users\oswaldo.rivera\Desktop\Proyecto IA - Documentacion tecnica automatica\web\package.json"
+PACKAGE_PATH = r"c:\Users\oswaldo.rivera\Desktop\Proyecto IA - Documentacion tecnica automatica\package.json"
 
 def bump_version():
     if not os.path.exists(PACKAGE_PATH):

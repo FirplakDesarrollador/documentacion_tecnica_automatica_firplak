@@ -28,7 +28,7 @@ export function EditProductForm({ initialData }: { initialData: any }) {
         code: initialData.code || '',
         sap_description: initialData.sap_description || '',
         product_type: initialData.product_type || '',
-        cabinet_name: initialData.cabinet_name || '',
+        product_name: initialData.product_name || '',
         color_code: initialData.color_code || '',
         rh: initialData.rh || 'NA',
         assembled_flag: initialData.assembled_flag || false,
@@ -93,13 +93,13 @@ export function EditProductForm({ initialData }: { initialData: any }) {
     // Auto-generación reactiva
     useEffect(() => {
         const timer = setTimeout(() => {
-            if (formData.cabinet_name && rules.length > 0) {
+            if (formData.product_name && rules.length > 0) {
                 handleGenerateNames(formData);
             }
         }, 800)
         return () => clearTimeout(timer)
     }, [
-        formData.cabinet_name, formData.color_code, formData.line, 
+        formData.product_name, formData.color_code, formData.line, 
         formData.designation, formData.commercial_measure, formData.accessory_text,
         formData.rh, formData.assembled_flag, formData.canto_puertas,
         formData.door_color_text, rules
@@ -113,7 +113,7 @@ export function EditProductForm({ initialData }: { initialData: any }) {
         setFormData(prev => ({
             ...prev,
             product_type: suggestions.product_type || prev.product_type,
-            cabinet_name: suggestions.cabinet_name || prev.cabinet_name,
+            product_name: suggestions.product_name || prev.product_name,
             color_code: suggestions.color_code || prev.color_code,
             line: suggestions.line || prev.line,
             designation: suggestions.designation || prev.designation,
@@ -170,10 +170,10 @@ export function EditProductForm({ initialData }: { initialData: any }) {
                                     />
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label htmlFor="cabinet_name">Nombre de Gabinete</Label>
+                                    <Label htmlFor="product_name">Nombre de Gabinete</Label>
                                     <Input
-                                        id="cabinet_name" name="cabinet_name"
-                                        value={formData.cabinet_name} onChange={handleChange}
+                                        id="product_name" name="product_name"
+                                        value={formData.product_name} onChange={handleChange}
                                     />
                                 </div>
                             </div>

@@ -146,7 +146,7 @@ function buildCreateProductV6Payload(data: any, parsed: any, isPrivate: boolean,
         reference: {
             reference_code: parsed.ref_code,
             family_code: parsed.familia_code,
-            product_name: data.cabinet_name || null,
+            product_name: data.product_name || null,
             designation: data.designation || null,
             line: data.line || parsed.line || null,
             commercial_measure: data.commercial_measure || null,
@@ -227,7 +227,7 @@ export async function createProductAction(data: any) {
         code: data.code,
         sap_description: data.sap_description,
         product_type: data.product_type || parsed.product_type,
-        cabinet_name: data.cabinet_name,
+        product_name: data.product_name,
         color_code: data.color_code || parsed.color_code,
         rh_flag: data.rh === 'RH' || parsed.rh === 'RH',
         rh: data.rh || parsed.rh || 'NA',
@@ -381,36 +381,7 @@ export async function updateProductAction(id: string, data: any) {
     return rows?.[0] || null
 }
 
-export async function massUpdateProducts(ids: string[], updateData: any) {
-    if (!ids || ids.length === 0) return
 
-    const setClauses: string[] = []
-    if (updateData.canto_puertas !== undefined) setClauses.push(`canto_puertas='${String(normalizeCanto(updateData.canto_puertas)).replace(/'/g, "''")}'`)
-    if (updateData.carb2 !== undefined) setClauses.push(`carb2='${String(updateData.carb2).replace(/'/g, "''")}'`)
-    if (updateData.rh !== undefined) {
-        setClauses.push(`rh='${String(updateData.rh).replace(/'/g, "''")}'`)
-        setClauses.push(`rh_flag=${updateData.rh === 'RH' ? 'true' : 'false'}`)
-    }
-    if (updateData.assembled_flag !== undefined) setClauses.push(`assembled_flag=${updateData.assembled_flag ? 'true' : 'false'}`)
-    if (updateData.commercial_measure !== undefined) setClauses.push(`commercial_measure='${String(updateData.commercial_measure).replace(/'/g, "''")}'`)
-    if (updateData.accessory_text !== undefined) setClauses.push(`accessory_text='${String(updateData.accessory_text).replace(/'/g, "''")}'`)
-    if (updateData.validation_status !== undefined) setClauses.push(`validation_status='${updateData.validation_status}'`)
-    if (updateData.zone_home !== undefined) setClauses.push(`zone_home='${String(updateData.zone_home).replace(/'/g, "''")}'`)
-    if (updateData.designation !== undefined) setClauses.push(`designation='${String(updateData.designation).replace(/'/g, "''")}'`)
-    if (updateData.status !== undefined) setClauses.push(`status='${String(updateData.status).replace(/'/g, "''")}'`)
-    if (updateData.special_label !== undefined) setClauses.push(`special_label='${String(updateData.special_label).replace(/'/g, "''")}'`)
-
-    if (setClauses.length === 0) return
-
-    const idList = ids.map(id => `'${id}'`).join(',')
-    await dbQuery(`UPDATE public.cabinet_products SET ${setClauses.join(', ')}, updated_at=now() WHERE id IN (${idList})`)
-}
-
-export async function deleteProducts(ids: string[]) {
-    if (!ids || ids.length === 0) return
-    const idList = ids.map(id => `'${id}'`).join(',')
-    await dbQuery(`DELETE FROM public.cabinet_products WHERE id IN (${idList})`)
-}
 
 export async function updateFamilyAction(code: string, data: any) {
     if (!code) throw new Error("Family code is required")
@@ -551,11 +522,21 @@ export async function translateProductsAction(ids?: string[], mode: 'missing' | 
             const safeTranslated = translatedName.replace(/'/g, "''")
 
             await dbQuery(`
-                UPDATE public.cabinet_products 
-                SET final_name_en='${safeTranslated}', 
-                    validation_status='${status}', 
-                    updated_at=now() 
-                WHERE id='${product.id}'
+                WITH sku AS (
+                    SELECT version_id FROM public.product_skus WHERE id = '${product.id}'
+                ),
+                upd_version AS (
+                    UPDATE public.product_versions v
+                    SET final_base_name_en = '${safeTranslated}',
+                        validation_status = '${status}',
+                        updated_at = now()
+                    FROM sku
+                    WHERE v.id = sku.version_id
+                )
+                UPDATE public.product_skus
+                SET final_complete_name_en = '${safeTranslated}',
+                    updated_at = now()
+                WHERE id = '${product.id}'
             `)
 
             updatedCount++
@@ -603,7 +584,7 @@ export async function getUniquePropertiesAction() {
     const useDestinations = await dbQuery(`SELECT DISTINCT use_destination FROM public.families WHERE use_destination IS NOT NULL AND use_destination != '' ORDER BY use_destination ASC`) || []
     
     // Nuevas variables unicas
-    const cabinetNames = await dbQuery(`SELECT DISTINCT product_name as cabinet_name FROM public.product_references WHERE product_name IS NOT NULL AND product_name != '' ORDER BY product_name ASC`) || []
+    const productNames = await dbQuery(`SELECT DISTINCT product_name as product_name FROM public.product_references WHERE product_name IS NOT NULL AND product_name != '' ORDER BY product_name ASC`) || []
     const commercialMeasures = await dbQuery(`SELECT DISTINCT commercial_measure FROM public.product_references WHERE commercial_measure IS NOT NULL AND commercial_measure != '' ORDER BY commercial_measure ASC`) || []
     const accessoryTexts = await dbQuery(`SELECT DISTINCT ref_attrs->>'accessory_text' as accessory_text FROM public.product_references WHERE ref_attrs->>'accessory_text' IS NOT NULL AND ref_attrs->>'accessory_text' != '' ORDER BY ref_attrs->>'accessory_text' ASC`) || []
     const bisagrasValues = await dbQuery(`SELECT DISTINCT ref_attrs->>'bisagras' as bisagras FROM public.product_references WHERE ref_attrs->>'bisagras' IS NOT NULL AND ref_attrs->>'bisagras' != '' ORDER BY ref_attrs->>'bisagras' ASC`) || []
@@ -620,7 +601,7 @@ export async function getUniquePropertiesAction() {
         designations: designations.map((r: any) => r.designation),
         productTypes: productTypes.map((r: any) => r.product_type),
         useDestinations: useDestinations.map((r: any) => r.use_destination),
-        cabinetNames: cabinetNames.map((r: any) => r.cabinet_name),
+        productNames: productNames.map((r: any) => r.product_name),
         commercialMeasures: commercialMeasures.map((r: any) => r.commercial_measure),
         accessoryTexts: accessoryTexts.map((r: any) => r.accessory_text),
         bisagras: ['NA', ...bisagrasValues.map((r: any) => r.bisagras).filter((v: string) => v !== 'NA')],

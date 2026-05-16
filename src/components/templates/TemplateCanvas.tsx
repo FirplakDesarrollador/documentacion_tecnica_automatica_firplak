@@ -1697,7 +1697,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         ]},
         { group: 'Producto/Atributos', options: [
             { key: 'product_type', label: 'Tipo de Producto' },
-            { key: 'cabinet_name', label: 'Nombre Mueble' },
+            { key: 'product_name', label: 'Nombre Mueble' },
             { key: 'designation', label: 'Uso (Designación)' },
             { key: 'commercial_measure', label: 'Medida Comercial' },
             { key: 'accessory_text', label: 'Accesorios/Riel' },

@@ -107,12 +107,12 @@ export async function syncValidationStatus(): Promise<{ updated: number }> {
     // Or better, iterate through sweep results
     
     // Get all product IDs to handle 'ready' state
-    const allProducts = await dbQuery(`SELECT id FROM public.cabinet_products WHERE status IS NULL OR status != 'INACTIVO'`) || []
+    const allSkus = await dbQuery(`SELECT id, version_id FROM public.product_skus WHERE status IS NULL OR status != 'INACTIVO'`) || []
     
     // Create a map of exceptions for fast lookup
     const exceptionMap = new Map(sweep.details.map(d => [d.productId, d.issues]))
     
-    for (const p of allProducts) {
+    for (const p of allSkus) {
         const issues = exceptionMap.get(p.id)
         let newStatus = 'ready'
         
@@ -121,9 +121,9 @@ export async function syncValidationStatus(): Promise<{ updated: number }> {
         }
         
         await dbQuery(`
-            UPDATE public.cabinet_products 
+            UPDATE public.product_versions 
             SET validation_status = '${newStatus}', updated_at = now()
-            WHERE id = '${p.id}'
+            WHERE id = '${p.version_id}'
         `)
         updated++
     }

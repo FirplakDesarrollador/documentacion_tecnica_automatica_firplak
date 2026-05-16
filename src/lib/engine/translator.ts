@@ -25,7 +25,7 @@ export interface ProductPayload {
     code?: string
     product_type?: string | null
     designation?: string | null
-    cabinet_name?: string | null
+    product_name?: string | null
     line?: string | null
     use_destination?: string | null
     commercial_measure?: string | null
@@ -506,7 +506,7 @@ export async function translateProductToEnglish(
             'rh': ['rh_flag', 'rh'],
             'canto_puertas': ['edge_2mm_flag', 'canto_puertas'],
             'carb2': ['carb2'],
-            'cabinet_name': ['cabinet_name'],
+            'product_name': ['product_name'],
             'line': ['line'],
             'commercial_measure': ['commercial_measure'],
             'accessory_text': ['accessory_text'],

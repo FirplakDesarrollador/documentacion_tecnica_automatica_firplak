@@ -35,7 +35,6 @@ async function runDDL() {
         family_code text REFERENCES public.families(code) ON DELETE RESTRICT,
         reference_code text NOT NULL,
         product_name text NOT NULL,
-        product_type text,
         use_destination text,
         designation text,
         line text,

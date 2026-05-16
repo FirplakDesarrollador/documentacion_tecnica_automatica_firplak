@@ -155,7 +155,7 @@ export function evaluateProductRules(product: Product, rules: Rule[]): RuleEngin
                     traceRecord.actionTaken = 'appended_name_component'
                     traceRecord.payload = textToAppend.trim()
 
-                    // Extract variable IDs from action_payload (e.g., {cabinet_name})
+                    // Extract variable IDs from action_payload (e.g., {product_name})
                     const matches = rule.action_payload.match(/{([^}]+)}/g)
                     if (matches) {
                         matches.forEach(m => {

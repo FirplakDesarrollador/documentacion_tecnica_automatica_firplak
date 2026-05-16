@@ -13,7 +13,7 @@ export interface ParsedCodeResult {
     assembled_flag: boolean
     sku_base: string | null
     accessory_text: string | null
-    cabinet_name: string | null
+    product_name: string | null
     line: string | null
     designation: string | null
     isometric_path: string | null
@@ -73,7 +73,7 @@ export async function parseProductCode(
         assembled_flag: false,
         sku_base: null,
         accessory_text: null,
-        cabinet_name: null,
+        product_name: null,
         line: null,
         designation: null,
         isometric_path: null,
@@ -216,7 +216,7 @@ export async function parseProductCode(
 
             if (foundData) {
                 const d = foundData;
-                result.cabinet_name = d.product_name || result.cabinet_name;
+                result.product_name = d.product_name || result.product_name;
                 result.line = d.line || result.line;
                 result.designation = d.designation || result.designation;
                 result.commercial_measure = d.commercial_measure || result.commercial_measure;
@@ -297,9 +297,9 @@ export async function parseProductCode(
                 dbQuery(`SELECT DISTINCT name_color_sap FROM public.colors WHERE name_color_sap IS NOT NULL AND name_color_sap != ''`)
             ]);
 
-            if (!result.cabinet_name) {
+            if (!result.product_name) {
                 const names = nameRows.map((r: any) => r.product_name);
-                result.cabinet_name = findBestMatch(descUpper, names);
+                result.product_name = findBestMatch(descUpper, names);
             }
             if (!result.designation) {
                 const desigs = desigRows.map((r: any) => r.designation);
@@ -374,11 +374,11 @@ export async function parseProductCode(
         }
 
         // Fallback de Nombre de Mueble para marcas específicas si el smart matching falló
-        if (!result.cabinet_name) {
+        if (!result.product_name) {
             const hardcodedFallbacks = ['POLOCK', 'VALDEZ', 'GODAI', 'TIZIANO', 'DA VINCI', 'BASICO', 'BÁSICO'];
             for (const name of hardcodedFallbacks) {
                 if (descUpper.includes(name)) {
-                    result.cabinet_name = name;
+                    result.product_name = name;
                     break;
                 }
             }

@@ -295,7 +295,7 @@ export async function POST(req: Request) {
         code: composed.code,
         sap_description: composed.sap_description,
         product_type: composed.product_type,
-        cabinet_name: composed.cabinet_name,
+        product_name: composed.product_name,
         color_code: composed.color_code,
         rh_flag: String(composed.rh || '').toUpperCase() === 'RH',
         rh: composed.rh,

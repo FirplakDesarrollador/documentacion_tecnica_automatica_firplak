@@ -83,7 +83,7 @@ function getExpectedVarsFromRules(rules: any[]) {
 const ADDABLE_FIELDS = [
     { field: 'product_type', label: 'Tipo de producto', type: 'text' },
     { field: 'designation', label: 'Designación', type: 'text' },
-    { field: 'cabinet_name', label: 'Nombre del gabinete', type: 'text' },
+    { field: 'product_name', label: 'Nombre del gabinete', type: 'text' },
     { field: 'line', label: 'Línea', type: 'text' },
     { field: 'zone_home', label: 'Zona (BAÑO/COCINA/etc)', type: 'text' },
     { field: 'special_label', label: 'Marca Especial (OBRA/etc)', type: 'text' },

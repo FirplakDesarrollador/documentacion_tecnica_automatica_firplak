@@ -52,7 +52,7 @@ export function ConfirmOverwriteModal({
     code: 'Código',
     sap_description: 'Descripción SAP',
     product_type: 'Tipo de Producto',
-    cabinet_name: 'Nombre Cabinet',
+    product_name: 'Nombre Cabinet',
     color_code: 'Código Color',
     color_name: 'Nombre Color',
     rh: 'RH',

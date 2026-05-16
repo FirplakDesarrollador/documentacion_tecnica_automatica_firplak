@@ -19,9 +19,9 @@ async function runTriggerDDL() {
 
         -- 1. Upsert Reference
         INSERT INTO public.product_references 
-            (family_code, reference_code, product_name, product_type, width_cm, depth_cm, height_cm, weight_kg, isometric_path, isometric_asset_id, status, ref_attrs)
+            (family_code, reference_code, product_name, width_cm, depth_cm, height_cm, weight_kg, isometric_path, isometric_asset_id, status, ref_attrs)
         VALUES 
-            (NEW.familia_code, NEW.ref_code, COALESCE(NEW.cabinet_name, ''), 'MUEBLE', 
+            (NEW.familia_code, NEW.ref_code, COALESCE(NEW.cabinet_name, ''),
             COALESCE(NEW.width_cm, 0), COALESCE(NEW.depth_cm, 0), COALESCE(NEW.height_cm, 0), COALESCE(NEW.weight_kg, 0),
             NEW.isometric_path, NEW.isometric_asset_id, COALESCE(NEW.status, 'ACTIVO'),
             jsonb_build_object(

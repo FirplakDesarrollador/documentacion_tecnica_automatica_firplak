@@ -12,7 +12,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { PlusCircle, DatabaseZap, Search, Upload, BookOpen } from 'lucide-react'
 import Link from 'next/link'
-import { ImportCsvButton } from '@/components/products/ImportCsvButton'
 import { ProductSearch } from '@/components/products/ProductSearch'
 import { cn } from '@/lib/utils'
 
@@ -105,7 +104,6 @@ export default async function ProductsPage({
                     </p>
                 </div>
                 <div className="flex flex-col sm:flex-row flex-wrap items-start sm:items-center gap-3">
-                    <ImportCsvButton />
                     <Link href="/families">
                         <Button variant="outline" className="w-full sm:w-auto border-slate-200 text-slate-600 hover:bg-slate-50">
                             <PlusCircle className="mr-2 h-4 w-4" />
@@ -116,12 +114,6 @@ export default async function ProductsPage({
                         <Button variant="secondary" className="w-full sm:w-auto">
                             <DatabaseZap className="mr-2 h-4 w-4 text-indigo-500" />
                             Editor de Referencias
-                        </Button>
-                    </Link>
-                    <Link href="/products/mass-edit">
-                        <Button variant="secondary" className="w-full sm:w-auto">
-                            <DatabaseZap className="mr-2 h-4 w-4 text-indigo-500" />
-                            Cambios masivos
                         </Button>
                     </Link>
                     <Link href="/products/glossary">

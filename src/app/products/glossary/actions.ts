@@ -26,7 +26,6 @@ export async function upsertGlossaryTermAction(data: { id?: string, term_es: str
         `)
     }
     revalidatePath('/products/glossary')
-    revalidatePath('/products/mass-edit')
 }
 
 export async function deleteGlossaryTermAction(id: string) {

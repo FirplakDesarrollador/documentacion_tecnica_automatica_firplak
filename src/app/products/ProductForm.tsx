@@ -60,7 +60,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         code: initialData?.code || '',
         sap_description: initialData?.sap_description || '',
         product_type: initialData?.product_type || '',
-        cabinet_name: initialData?.cabinet_name || '',
+        product_name: initialData?.product_name || '',
         color_code: initialData?.color_code || '',
         color_name: initialData?.color_name || '',
         rh: initialData?.rh || 'NA',
@@ -99,7 +99,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         designations: [] as string[], 
         productTypes: [] as string[], 
         useDestinations: [] as string[], 
-        cabinetNames: [] as string[], 
+        productNames: [] as string[], 
         commercialMeasures: [] as string[], 
         accessoryTexts: [] as string[], 
         colors: [] as {code: string, name: string}[], 
@@ -238,7 +238,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                     version_code: parsed.version_code || prev.version_code || '',
                     color_code: parsed.color_code || prev.color_code || '',
                     color_name: colorName || parsed.color_name || prev.color_name || '',
-                    cabinet_name: parsed.cabinet_name || prev.cabinet_name || '',
+                    product_name: parsed.product_name || prev.product_name || '',
                     line: parsed.line || prev.line || '',
                     designation: parsed.designation || prev.designation || '',
                     commercial_measure: parsed.commercial_measure || prev.commercial_measure || '',
@@ -349,7 +349,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                 })
                 setGlossaryDefinitions(newDefs)
 
-                if (!parsed.cabinet_name && !parsed.width_cm) {
+                if (!parsed.product_name && !parsed.width_cm) {
                     toast.warning("Completar campo de nombre.", {
                         description: "No se encontraron hermanos históricos para este código."
                     })
@@ -436,13 +436,13 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
 
     useEffect(() => {
         const timer = setTimeout(() => {
-            if (formData.cabinet_name && rules.length > 0) {
+            if (formData.product_name && rules.length > 0) {
                 handleGenerateNames();
             }
         }, 800);
         return () => clearTimeout(timer);
     }, [
-        formData.cabinet_name, formData.color_code, formData.line, 
+        formData.product_name, formData.color_code, formData.line, 
         formData.designation, formData.commercial_measure, formData.accessory_text,
         formData.rh, formData.assembled_flag, formData.canto_puertas,
         formData.carb2, formData.bisagras, formData.special_label, formData.door_color_text,
@@ -610,8 +610,8 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
             toast.error("Descripción SAP obligatoria", { description: "Para un producto nuevo sin herencia, la descripción SAP es requerida." })
             return
         }
-        if (!formData.cabinet_name) {
-            toast.error("Nombre del producto (cabinet_name) obligatorio")
+        if (!formData.product_name) {
+            toast.error("Nombre del producto (product_name) obligatorio")
             return
         }
         if (!formData.product_type) {
@@ -1163,7 +1163,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                         </div>
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Nombre del Producto</Label>
-                                            {renderCreatableSelect('cabinet_name', datalistOptions.cabinetNames || [], 'NOMBRE DEL PRODUCTO')}
+                                            {renderCreatableSelect('product_name', datalistOptions.productNames || [], 'NOMBRE DEL PRODUCTO')}
                                         </div>
                                     </div>
 

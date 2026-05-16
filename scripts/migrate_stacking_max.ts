@@ -44,9 +44,9 @@ async function migrateStackingMax() {
 
             -- 1. Upsert Reference
             INSERT INTO public.product_references 
-                (family_code, reference_code, product_name, product_type, designation, line, commercial_measure, special_label, width_cm, depth_cm, height_cm, weight_kg, stacking_max, isometric_path, isometric_asset_id, status, ref_attrs)
+                (family_code, reference_code, product_name, designation, line, commercial_measure, special_label, width_cm, depth_cm, height_cm, weight_kg, stacking_max, isometric_path, isometric_asset_id, status, ref_attrs)
             VALUES 
-                (NEW.familia_code, NEW.ref_code, COALESCE(NEW.cabinet_name, ''), 'MUEBLE', 
+                (NEW.familia_code, NEW.ref_code, COALESCE(NEW.cabinet_name, ''),
                 NEW.designation, NEW.line, NEW.commercial_measure, 
                 CASE WHEN NEW.version_code = '000' THEN NEW.special_label ELSE NULL END,
                 COALESCE(NEW.width_cm, 0), COALESCE(NEW.depth_cm, 0), COALESCE(NEW.height_cm, 0), COALESCE(NEW.weight_kg, 0), NEW.stacking_max,

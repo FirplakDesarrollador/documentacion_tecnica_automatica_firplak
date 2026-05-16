@@ -44,7 +44,7 @@ You operate within a 3-layer architecture that separates concerns to maximize re
 ### 2. Code Quality Standards (DRY & Senior level)
 - Write clean, readable, and modular code with meaningful names.
 - Avoid duplication and follow consistent formatting.
-- **Security:** Never expose API keys or secrets. Use environment variables. Validate and sanitize all inputs.
+- **Security:** Never expose API keys or secrets in source code, configuration files (like `mcp_config.json` hardcoded), or public commits. Always use environment variables via `.env`. Use synchronization scripts if external tools require these keys in their own config files.
 - **Performance:** Avoid unnecessary re-renders or loops. Optimize database queries and use caching when appropriate.
 
 ### 3. Architecture Guidelines

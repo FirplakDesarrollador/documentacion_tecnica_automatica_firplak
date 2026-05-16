@@ -28,7 +28,6 @@ BEGIN
         sap_description_original text,
         product_name text,
         designation text,
-        product_type text,
         width_cm numeric,
         depth_cm numeric,
         height_cm numeric,
@@ -51,8 +50,8 @@ BEGIN
         -- handle product_references
         SELECT id INTO v_ref_id FROM product_references WHERE family_code = item.family_code AND reference_code = item.reference_code;
         IF v_ref_id IS NULL THEN
-            INSERT INTO product_references (family_code, reference_code, product_name, designation, product_type, width_cm, depth_cm, height_cm, weight_kg, ref_attrs)
-            VALUES (item.family_code, item.reference_code, item.product_name, item.designation, item.product_type, item.width_cm, item.depth_cm, item.height_cm, item.weight_kg, COALESCE(item.ref_attrs, '{}'::jsonb))
+            INSERT INTO product_references (family_code, reference_code, product_name, designation, width_cm, depth_cm, height_cm, weight_kg, ref_attrs)
+            VALUES (item.family_code, item.reference_code, item.product_name, item.designation, item.width_cm, item.depth_cm, item.height_cm, item.weight_kg, COALESCE(item.ref_attrs, '{}'::jsonb))
             RETURNING id INTO v_ref_id;
             v_created_refs := v_created_refs + 1;
         END IF;

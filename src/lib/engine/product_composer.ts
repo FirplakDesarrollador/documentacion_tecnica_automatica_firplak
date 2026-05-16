@@ -22,7 +22,7 @@ export interface ComposedProduct {
     allowed_lines: string[];
 
     // === Reference-level ===
-    cabinet_name: string | null;
+    product_name: string | null;
     designation: string | null;
     line: string | null;
     commercial_measure: string | null;
@@ -157,7 +157,7 @@ export function mapRowToComposedProduct(row: any): ComposedProduct {
         allowed_lines: Array.isArray(row.allowed_lines) ? row.allowed_lines : [],
 
         // === Reference-level ===
-        cabinet_name: row.product_name,
+        product_name: row.product_name,
         designation: row.designation,
         line: row.line,
         commercial_measure: row.commercial_measure,

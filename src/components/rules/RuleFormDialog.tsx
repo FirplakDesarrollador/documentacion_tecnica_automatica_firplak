@@ -57,7 +57,7 @@ const FIELD_OPTIONS = [
     { value: 'barcode_text', label: 'Código de Barras' },
     { value: 'zone_home', label: 'Zona Firplak' },
     { value: 'designation', label: 'Designación' },
-    { value: 'cabinet_name', label: 'Nombre Mueble' },
+    { value: 'product_name', label: 'Nombre Mueble' },
     { value: 'commercial_measure', label: 'Medida Comercial' },
     { value: 'accessory_text', label: 'Accesorios/Riel' },
 ]

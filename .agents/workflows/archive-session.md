@@ -8,9 +8,9 @@ Este flujo asegura que el aprendizaje de **toda la sesión** persista en la memo
 
 1. **Fase de Auditoría de Inteligencia (Obligatorio)**: Ejecuta `git diff --name-only` para identificar el rastro real del código de hoy. Cruza esto con los artefactos y acuerdos iniciales.
 
-2. **Propuesta de Sinapsis (Validar con Humano)**: Antes de archivar, presenta al usuario los **Pilares de Aprendizaje** identificados:
-   - **Técnico**: (Patrones, APIs, Lógica nueva)
-   - **Negocio/Diseño**: (Reglas Firplak, Resoluciones estéticas)
+2. **Propuesta de Sinapsis (Validar con Humano)**: Antes de archivar, presenta al usuario los **Pilares de Aprendizaje** identificados, especificando para cada uno el **KI (existente o nuevo)** donde se planea almacenar:
+   - **Técnico**: (Patrones, APIs, Lógica nueva) -> KI: [ruta]
+   - **Negocio/Diseño**: (Reglas Firplak, Resoluciones estéticas) -> KI: [ruta]
    - **Pregunta**: "¿Son estos los hitos que debo memorizar a largo plazo o falta algún aprendizaje vital?"
 
 3. **Sincronización de Knowledge Items (KIs) y AI_README**: Solo tras la validación, actualiza los KIs en `.gemini/antigravity/knowledge/` y el `AI_README.md`. 
