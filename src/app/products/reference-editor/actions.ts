@@ -23,7 +23,7 @@ export async function getFamiliesWithSchema(productTypeFilter?: string) {
 }
 
 export async function previewAddAttrToFamilies(familyCodes: string[], attrKey: string) {
-  const { data, error } = await supabaseServer.rpc('rpc_preview_add_attr_to_families', {
+  const { data, error } = await (supabaseServer as any).rpc('rpc_preview_add_attr_to_families', {
     p_family_codes: familyCodes,
     p_attr_key: attrKey
   });
@@ -36,7 +36,7 @@ export async function previewAddAttrToFamilies(familyCodes: string[], attrKey: s
 }
 
 export async function executeAddAttrToFamilies(familyCodes: string[], attrKey: string, attrDef: any, defaultValue: string) {
-  const { error } = await supabaseServer.rpc('rpc_add_attr_to_families', {
+  const { error } = await (supabaseServer as any).rpc('rpc_add_attr_to_families', {
     p_family_codes: familyCodes,
     p_attr_key: attrKey,
     p_attr_def: attrDef,
@@ -52,7 +52,7 @@ export async function executeAddAttrToFamilies(familyCodes: string[], attrKey: s
 }
 
 export async function previewRemoveAttrFromFamilies(familyCodes: string[], attrKey: string) {
-  const { data, error } = await supabaseServer.rpc('rpc_preview_remove_attr_from_families', {
+  const { data, error } = await (supabaseServer as any).rpc('rpc_preview_remove_attr_from_families', {
     p_family_codes: familyCodes,
     p_attr_key: attrKey
   });
@@ -65,7 +65,7 @@ export async function previewRemoveAttrFromFamilies(familyCodes: string[], attrK
 }
 
 export async function executeRemoveAttrFromFamilies(familyCodes: string[], attrKey: string) {
-  const { error } = await supabaseServer.rpc('rpc_remove_attr_from_families', {
+  const { error } = await (supabaseServer as any).rpc('rpc_remove_attr_from_families', {
     p_family_codes: familyCodes,
     p_attr_key: attrKey
   });
@@ -93,6 +93,8 @@ export async function searchReferences(filters: any) {
     depth_cm, 
     height_cm, 
     weight_kg,
+    special_label,
+    designation,
     ref_attrs,
     families!inner(product_type)
   `);
@@ -122,7 +124,7 @@ export async function searchReferences(filters: any) {
 }
 
 export async function previewMassUpdateReferences(referenceIds: string[], normalUpdates: any, refAttrsUpdates: any) {
-  const { data, error } = await supabaseServer.rpc('rpc_preview_mass_update', {
+  const { data, error } = await (supabaseServer as any).rpc('rpc_preview_mass_update', {
     p_reference_ids: referenceIds,
     p_normal_updates: normalUpdates,
     p_ref_attrs_updates: refAttrsUpdates
@@ -133,7 +135,7 @@ export async function previewMassUpdateReferences(referenceIds: string[], normal
 }
 
 export async function executeMassUpdateReferences(referenceIds: string[], normalUpdates: any, refAttrsUpdates: any) {
-  const { data, error } = await supabaseServer.rpc('rpc_mass_update_references', {
+  const { data, error } = await (supabaseServer as any).rpc('rpc_mass_update_references', {
     p_reference_ids: referenceIds,
     p_normal_updates: normalUpdates,
     p_ref_attrs_updates: refAttrsUpdates
@@ -146,21 +148,24 @@ export async function executeMassUpdateReferences(referenceIds: string[], normal
 
 export async function getFilterOptions() {
   // Fetch distinct product_type from families
-  const { data: fams } = await supabaseServer.from('families').select('product_type, family_code');
+  const { data: famsRaw } = await supabaseServer.from('families').select('product_type, family_code');
   // Fetch distinct reference_code, product_name from product_references
-  const { data: refs } = await supabaseServer.from('product_references').select('reference_code, product_name, family_code, ref_attrs');
+  const { data: refsRaw } = await supabaseServer.from('product_references').select('reference_code, product_name, family_code, ref_attrs');
 
-  const productTypes = Array.from(new Set(fams?.map(f => f.product_type).filter(Boolean))).sort();
-  const familyCodes = Array.from(new Set(fams?.map(f => f.family_code).filter(Boolean))).sort();
+  const fams = (famsRaw || []) as any[];
+  const refs = (refsRaw || []) as any[];
+
+  const productTypes = Array.from(new Set(fams.map(f => f.product_type).filter(Boolean))).sort();
+  const familyCodes = Array.from(new Set(fams.map(f => f.family_code).filter(Boolean))).sort();
   
-  const referenceCodes = Array.from(new Set(refs?.map(r => r.reference_code).filter(Boolean))).sort();
-  const productNames = Array.from(new Set(refs?.map(r => r.product_name).filter(Boolean))).sort();
+  const referenceCodes = Array.from(new Set(refs.map(r => r.reference_code).filter(Boolean))).sort();
+  const productNames = Array.from(new Set(refs.map(r => r.product_name).filter(Boolean))).sort();
 
   // Extract all unique JSONB keys and values
   const jsonKeys = new Set<string>();
   const jsonValuesByKey: Record<string, Set<string>> = {};
 
-  refs?.forEach(r => {
+  refs.forEach(r => {
     if (r.ref_attrs && typeof r.ref_attrs === 'object') {
       Object.entries(r.ref_attrs).forEach(([k, v]) => {
         jsonKeys.add(k);
@@ -180,7 +185,7 @@ export async function getFilterOptions() {
 
   // To support relational filtering, we can return the raw list of refs to the client so the client can compute dependent dropdowns, 
   // since there are only ~1100 references, sending a lightweight array is extremely fast.
-  const rawData = refs?.map(r => ({
+  const rawData = refs.map(r => ({
     fc: r.family_code,
     rc: r.reference_code,
     pn: r.product_name,

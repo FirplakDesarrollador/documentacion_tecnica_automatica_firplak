@@ -5,7 +5,7 @@ description: Mantiene un registro centralizado de comandos de terminal seguros p
 
 # 🤖 Habilidad: project-security-vault
 
-Esta habilidad permite a los agentes de IA gestionar, proponer y documentar qué comandos de terminal son seguros para ser ejecutados de forma automática (`SafeToAutoRun: true`) en el repositorio **Firplak DocGen**.
+Esta habilidad permite a los agentes de IA gestionar, proponer y documentar qué comandos de terminal son seguros para ser ejecutados de forma automática (`SafeToAutoRun: true`) en el repositorio **SamiGen**.
 
 ## 🛡️ Propósito
 1.  **Seguridad**: Evitar que el agente ejecute comandos destructivos sin supervisión humana (ej: `git push --force`, `DELETE FROM tables`, `rm -rf`).

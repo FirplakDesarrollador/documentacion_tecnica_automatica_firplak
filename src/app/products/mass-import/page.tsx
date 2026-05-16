@@ -2,7 +2,7 @@ import { MassImportClient } from './MassImportClient'
 
 export const dynamic = 'force-dynamic'
 
-export default function MassImportPage() {
+export default async function MassImportPage() {
     return (
         <div className="p-8 max-w-[1200px] mx-auto space-y-6">
             <div className="flex flex-col gap-2">
@@ -12,7 +12,7 @@ export default function MassImportPage() {
                 </p>
             </div>
             
-            <MassImportClient />
+            <MassImportClient families={[]} />
         </div>
     )
 }

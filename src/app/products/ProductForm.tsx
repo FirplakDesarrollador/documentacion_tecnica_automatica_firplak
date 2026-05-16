@@ -19,6 +19,7 @@ import { UploadAssetButton } from '@/components/assets/UploadAssetButton'
 import { ConfirmOverwriteModal } from '@/components/products/ConfirmOverwriteModal'
 import { IsometricAssociationDialog } from '@/components/assets/IsometricAssociationDialog'
 import { PostSaveExportModal } from '@/components/products/PostSaveExportModal'
+import { MultiColorCreationModal } from '@/components/products/MultiColorCreationModal'
 import { cn } from '@/lib/utils'
 
 interface ProductFormProps {
@@ -34,6 +35,8 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
     const [isConfirmingSave, setIsConfirmingSave] = useState(false)
     const [savedProduct, setSavedProduct] = useState<any>(null)
     const [showExportModal, setShowExportModal] = useState(false)
+    const [showMultiColorModal, setShowMultiColorModal] = useState(false)
+    const [allCreatedProducts, setAllCreatedProducts] = useState<any[]>([])
     const [customValues, setCustomValues] = useState({ line: '', designation: '', product_type: '', use_destination: '', zone_home: '', bisagras: '', carb2: '', rh: '', special_label: '', canto_puertas: '' })
     const [clients, setClients] = useState<{id: string, name: string, logo_asset_id?: string}[]>([])
     const initialPrivateName = (initialData?.private_label_client_name && String(initialData.private_label_client_name).trim() !== '' && String(initialData.private_label_client_name).toUpperCase() !== 'NA')
@@ -580,7 +583,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                 const res = await createProductAction(payloadWithGlossary);
                 if (res) {
                     setSavedProduct(res);
-                    setShowExportModal(true);
+                    setShowMultiColorModal(true);
                     toast.success("Producto guardado correctamente");
                 } else {
                     toast.error("Error al guardar: No se pudo crear el registro.");
@@ -697,11 +700,8 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
 
     return (
         <div className="flex flex-col gap-8 w-full pb-20">
-            <PostSaveExportModal 
-                isOpen={showExportModal}
-                product={savedProduct}
-                onClose={() => router.push('/products')}
-            />
+            <MultiColorCreationModal isOpen={showMultiColorModal} originalProduct={savedProduct} availableColors={datalistOptions.colors} onComplete={(products) => { setAllCreatedProducts(products); setShowMultiColorModal(false); setShowExportModal(true); }} onSkip={() => { setAllCreatedProducts([savedProduct]); setShowMultiColorModal(false); setShowExportModal(true); }} />
+            <PostSaveExportModal isOpen={showExportModal} product={allCreatedProducts.length > 0 ? allCreatedProducts : savedProduct} onClose={() => router.push(backHref || '/products')} />
             {dupeAlertModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
                     <Card className="max-w-md w-full shadow-2xl animate-in fade-in zoom-in-95 duration-200">

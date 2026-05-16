@@ -21,6 +21,7 @@ function buildMissingIsometricWhere() {
     // If neither exist, the product is considered missing isometric.
     return `
         (status IS NULL OR status <> 'INACTIVO')
+        AND (ref_status IS NULL OR ref_status <> 'INACTIVO')
         AND COALESCE(effective_version_attrs->>'isometric_path','') = ''
         AND COALESCE(effective_version_attrs->>'isometric_asset_id','') = ''
         AND (isometric_path IS NULL OR isometric_path = '')

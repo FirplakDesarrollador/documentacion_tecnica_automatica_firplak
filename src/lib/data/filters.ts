@@ -21,7 +21,7 @@ export interface FamilyFilterOption {
 }
 
 export interface ReferenceFilterOption {
-    value: string  // formato: "ref_code|||commercial_measure"
+    value: string  // formato: "family_code|||reference_code|||commercial_measure"
     label: string
     meta?: {
         designation?: string
@@ -87,31 +87,36 @@ export async function getReferenceFilters(
         .join(',')
 
     const records = await dbQuery(
-        // One option per (reference_code, commercial_measure) to avoid duplicate `value`s (React key collisions).
+        // One option per (family, reference, measure) to avoid cross-family leaks.
         `SELECT
+            r.family_code,
+            f.family_name,
             r.reference_code,
             r.commercial_measure,
             MAX(r.designation) as designation,
             MAX(r.product_name) as product_name,
-            MAX(r.ref_attrs->>'accessory_text') as accessory_text
+            MAX(r.ref_attrs->>'accessory_text') as accessory_text,
+            MAX(r.special_label) as special_label
          FROM public.product_references r
+         JOIN public.families f ON r.family_code = f.family_code
          WHERE r.family_code IN (${fFilter})
-         GROUP BY r.reference_code, r.commercial_measure
-         ORDER BY r.reference_code, r.commercial_measure`
+         GROUP BY r.family_code, f.family_name, r.reference_code, r.commercial_measure
+         ORDER BY f.family_name, r.reference_code, r.commercial_measure`
     ) || []
 
     return records.map((rec: any) => {
         const parts = [
+            rec.family_code || 'N/A',
             rec.reference_code || 'NA',
             rec.designation || 'NA',
             rec.commercial_measure || 'NA',
             rec.product_name || 'NA',
             rec.accessory_text || 'NA',
+            rec.special_label || 'NA',
         ]
 
         return {
-            value: `${rec.reference_code}|||${rec.commercial_measure || ''}`,
-            // Use a stable ASCII separator to avoid mojibake and simplify downstream parsing.
+            value: `${rec.family_code}|||${rec.reference_code}|||${rec.commercial_measure || ''}`,
             label: parts.join(' | '),
             meta: {
                 designation: rec.designation || undefined,

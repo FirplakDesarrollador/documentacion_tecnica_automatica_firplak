@@ -8,6 +8,8 @@ import { Loader2, Search, CheckSquare, Edit, AlertTriangle, Info, Check, X } fro
 const NORMAL_COLS = [
   { key: 'product_name', label: 'Nombre' },
   { key: 'commercial_measure', label: 'Medida Comercial' },
+  { key: 'special_label', label: 'Etiqueta Especial' },
+  { key: 'designation', label: 'Designación' },
   { key: 'width_cm', label: 'Ancho (cm)' },
   { key: 'depth_cm', label: 'Fondo (cm)' },
   { key: 'height_cm', label: 'Alto (cm)' },
@@ -59,8 +61,8 @@ export default function MassEditClient() {
         toast.error('Error cargando filtros relacionales');
       }
 
-      if (schemaRes.success && schemaRes.data) {
-        setSchemasData(schemaRes.data);
+      if (schemaRes.success) {
+        setSchemasData((schemaRes.data as any[]) || []);
       }
       setLoadingOpts(false);
     }
@@ -183,7 +185,7 @@ export default function MassEditClient() {
       handleSearch();
       // To keep schemas updated in case we bypassed validation (not possible directly, but good to refresh)
       const schemaRes = await getFamiliesWithSchema();
-      if (schemaRes.success) setSchemasData(schemaRes.data);
+      if (schemaRes.success) setSchemasData((schemaRes.data as any[]) || []);
     } else {
       toast.error('Error ejecutando actualización: ' + res.error);
     }
@@ -280,35 +282,52 @@ export default function MassEditClient() {
                   <th className="p-2 border-b font-semibold text-slate-700">Fam/Ref</th>
                   <th className="p-2 border-b font-semibold text-slate-700">Nombre</th>
                   <th className="p-2 border-b font-semibold text-slate-700 w-full">Atributos (ref_attrs)</th>
+                  {editField && <th className="p-2 border-b font-semibold text-slate-700 bg-indigo-50 text-indigo-800 rounded-tr-md">Valor Actual ({editField})</th>}
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {references.length === 0 && !loading && (
-                  <tr><td colSpan={4} className="p-8 text-center text-slate-500">Haz clic en Buscar para cargar resultados</td></tr>
+                  <tr><td colSpan={editField ? 5 : 4} className="p-8 text-center text-slate-500">Haz clic en Buscar para cargar resultados</td></tr>
                 )}
-                {references.map((r) => (
-                  <tr key={r.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="p-2 text-center">
-                      <input 
-                        type="checkbox" 
-                        checked={selectedIds.includes(r.id)}
-                        onChange={(e) => handleSelectRef(r.id, e.target.checked)}
-                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                      />
-                    </td>
-                    <td className="p-2 font-medium text-slate-800">{r.family_code}-{r.reference_code}</td>
-                    <td className="p-2 text-slate-600 max-w-[200px] truncate" title={r.product_name}>{r.product_name}</td>
-                    <td className="p-2">
-                      <div className="flex flex-wrap gap-1">
-                        {r.ref_attrs && Object.entries(r.ref_attrs).map(([k, v]) => (
-                          <span key={k} className="px-1.5 py-0.5 bg-slate-100 text-slate-700 rounded-md text-[11px] border" title={`${k}: ${v}`}>
-                            <span className="font-semibold text-slate-500">{k}:</span> {String(v)}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {references.map((r) => {
+                  let currentValue = '';
+                  if (editField) {
+                    currentValue = editType === 'normal' ? String(r[editField] ?? '') : String(r.ref_attrs?.[editField] ?? '');
+                  }
+                  
+                  return (
+                    <tr key={r.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="p-2 text-center">
+                        <input 
+                          type="checkbox" 
+                          checked={selectedIds.includes(r.id)}
+                          onChange={(e) => handleSelectRef(r.id, e.target.checked)}
+                          className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                        />
+                      </td>
+                      <td className="p-2 font-medium text-slate-800">{r.family_code}-{r.reference_code}</td>
+                      <td className="p-2 text-slate-600 max-w-[200px] truncate" title={r.product_name}>{r.product_name}</td>
+                      <td className="p-2">
+                        <div className="flex flex-wrap gap-1">
+                          {r.ref_attrs && Object.entries(r.ref_attrs).map(([k, v]) => (
+                            <span key={k} className="px-1.5 py-0.5 bg-slate-100 text-slate-700 rounded-md text-[11px] border" title={`${k}: ${v}`}>
+                              <span className="font-semibold text-slate-500">{k}:</span> {String(v)}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      {editField && (
+                        <td className="p-2 bg-indigo-50/30 text-slate-800 font-medium">
+                          {currentValue ? (
+                            <span className="bg-white px-2 py-1 rounded border shadow-sm text-xs">{currentValue}</span>
+                          ) : (
+                            <span className="text-slate-400 italic text-xs">Vacio</span>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

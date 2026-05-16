@@ -37,6 +37,25 @@ export interface ParsedCodeResult {
     final_name_es?: string | null
 }
 
+// Helper for smart matching against a list of options
+function findBestMatch(text: string, options: string[]) {
+    if (!text || !options || options.length === 0) return null;
+    const upperText = text.toUpperCase();
+    
+    // Filtramos opciones nulas/vacías y ordenamos por longitud descendente
+    // para que coincida primero la más específica (ej: 'DOS CONSTRUCTORES' antes que 'CONSTRUCTOR')
+    const sortedOptions = options
+        .filter(o => !!o && o !== 'NA')
+        .sort((a, b) => b.length - a.length);
+
+    for (const opt of sortedOptions) {
+        if (upperText.includes(opt.toUpperCase())) {
+            return opt;
+        }
+    }
+    return null;
+}
+
 export async function parseProductCode(
     code: string,
     sapDescription?: string | null,
@@ -266,7 +285,48 @@ export async function parseProductCode(
             result.commercial_measure = `${measureMatch[1]}X${measureMatch[2]}`.replace(',', '.');
         }
 
-        // Detección Genérica de Designación (INF/SUP/ELEV)
+        // --- SMART MATCHING FROM CATALOG (V6.2) ---
+        // Si el historial falló o es producto nuevo, buscamos coincidencias con opciones existentes del catálogo maestro
+        try {
+            const [nameRows, desigRows, lineRows, destRows, zoneRows, colorRows] = await Promise.all([
+                dbQuery(`SELECT DISTINCT product_name FROM public.product_references WHERE product_name IS NOT NULL AND product_name != ''`),
+                dbQuery(`SELECT DISTINCT designation FROM public.product_references WHERE designation IS NOT NULL AND designation != ''`),
+                dbQuery(`SELECT DISTINCT line FROM public.product_references WHERE line IS NOT NULL AND line != ''`),
+                dbQuery(`SELECT DISTINCT use_destination FROM public.families WHERE use_destination IS NOT NULL AND use_destination != ''`),
+                dbQuery(`SELECT DISTINCT zone_home FROM public.families WHERE zone_home IS NOT NULL AND zone_home != ''`),
+                dbQuery(`SELECT DISTINCT name_color_sap FROM public.colors WHERE name_color_sap IS NOT NULL AND name_color_sap != ''`)
+            ]);
+
+            if (!result.cabinet_name) {
+                const names = nameRows.map((r: any) => r.product_name);
+                result.cabinet_name = findBestMatch(descUpper, names);
+            }
+            if (!result.designation) {
+                const desigs = desigRows.map((r: any) => r.designation);
+                result.designation = findBestMatch(descUpper, desigs);
+            }
+            if (!result.line) {
+                const lines = lineRows.map((r: any) => r.line);
+                result.line = findBestMatch(descUpper, lines);
+            }
+            if (!result.use_destination) {
+                const dests = destRows.map((r: any) => r.use_destination);
+                result.use_destination = findBestMatch(descUpper, dests);
+            }
+            if (!result.zone_home) {
+                const zones = zoneRows.map((r: any) => r.zone_home);
+                result.zone_home = findBestMatch(descUpper, zones);
+            }
+            if (!(result as any).color_name) {
+                const colorNames = colorRows.map((r: any) => r.name_color_sap);
+                const matchedColor = findBestMatch(descUpper, colorNames);
+                if (matchedColor) (result as any).color_name = matchedColor;
+            }
+        } catch (e) {
+            console.error('codeParser: smart matching catalog error', e);
+        }
+
+        // Detección Genérica de Designación (Fallback si no hay coincidencia exacta ni en catálogo)
         if (!result.designation) {
             if (descUpper.includes(' INF ') || descUpper.includes('INFERIOR')) result.designation = 'INFERIOR';
             else if (descUpper.includes(' SUP ') || descUpper.includes('SUPERIOR')) result.designation = 'SUPERIOR';
@@ -313,29 +373,10 @@ export async function parseProductCode(
             foundAccessories.push('CIERRE LENTO');
         }
 
-        // --- Lógicas Especiales de Muebles y Designación ---
-        if (descUpper.includes('GODAI')) {
-            if (descUpper.includes('ENTREPA')) result.designation = 'SOPORTE Y ESTRUCTURA CON ENTREPAÑO';
-            else if (descUpper.includes('SOPORTE Y ESTRUCTURA')) result.designation = 'SOPORTE Y ESTRUCTURA';
-            else if (descUpper.includes('SOPORTE')) result.designation = 'SOPORTE';
-            else if (descUpper.includes('CUBO-CAJON') || descUpper.includes('CUBO CAJON')) result.designation = 'CUBO-CAJON';
-            else if (descUpper.includes('CUBO')) result.designation = 'CUBO';
-        }
-
-        if (descUpper.includes('VALDEZ') || descUpper.includes('BASICO') || descUpper.includes('BÁSICO') || descUpper.includes('POLOCK')) {
-            if (descUpper.includes('PISO')) result.designation = 'A PISO';
-            else if (descUpper.includes('ELEVADO')) result.designation = 'ELEVADO';
-            
-            if (descUpper.includes('BASICO') || descUpper.includes('BÁSICO')) {
-                if (descUpper.includes('SIN MANIJA')) foundAccessories.push('SIN MANIJAS');
-                else foundAccessories.push('CON MANIJAS');
-            }
-        }
-
-        // --- Detección de Nombre de Mueble (Fallback si no hay historial) ---
+        // Fallback de Nombre de Mueble para marcas específicas si el smart matching falló
         if (!result.cabinet_name) {
-            const commonNames = ['POLOCK', 'VALDEZ', 'GODAI', 'TIZIANO', 'DA VINCI', 'BASICO', 'BÁSICO'];
-            for (const name of commonNames) {
+            const hardcodedFallbacks = ['POLOCK', 'VALDEZ', 'GODAI', 'TIZIANO', 'DA VINCI', 'BASICO', 'BÁSICO'];
+            for (const name of hardcodedFallbacks) {
                 if (descUpper.includes(name)) {
                     result.cabinet_name = name;
                     break;
@@ -393,19 +434,12 @@ export async function parseProductCode(
             }
         }
 
-        // --- Detección de Destino de Uso por Siglas ---
+        // Fallbacks por siglas si falló el smart matching
         if (!result.use_destination) {
             if (descUpper.includes('LVM')) result.use_destination = 'LAVAMANOS';
             else if (descUpper.includes('LVR')) result.use_destination = 'LAVARROPAS';
             else if (descUpper.includes('LVP')) result.use_destination = 'LAVAPLATOS';
             else if (descUpper.includes('COC')) result.use_destination = 'COCINA';
-        }
-
-        // --- Detección de Línea ---
-        if (!result.line) {
-            if (descUpper.includes('LIFE')) result.line = 'LIFE';
-            else if (descUpper.includes('ESSENTIAL')) result.line = 'ESSENTIAL';
-            else if (descUpper.includes('CLASS')) result.line = 'CLASS';
         }
 
         if (descUpper.includes('CARB 2') || descUpper.includes('CARB2')) {
@@ -420,3 +454,4 @@ export async function parseProductCode(
 
     return result
 }
+

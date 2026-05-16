@@ -715,15 +715,8 @@ export function MassEditClient({ products: initialProducts, families, readOnly =
                                 <Label className="text-[10px] uppercase font-bold text-blue-800">Motor de Traducción (Glosario)</Label>
                             </div>
 
-                            {/* Fila 2: Acciones secundarias (Botón Glosario) */}
-                            <div className="h-6 flex items-center">
-                                <Link href="/products/glossary">
-                                    <Button variant="ghost" size="sm" className="h-6 text-[9px] text-blue-600 hover:text-blue-700 font-bold uppercase p-0 px-1">
-                                        <PlusCircle className="h-3 w-3 mr-1" />
-                                        Glosario Técnico
-                                    </Button>
-                                </Link>
-                            </div>
+                            {/* Fila 2: Spacer para alinear */}
+                            <div className="h-6 flex items-center" aria-hidden="true" />
 
                             {/* Fila 3: Botón Principal (Alineado con el de la izquierda) */}
                             <Button

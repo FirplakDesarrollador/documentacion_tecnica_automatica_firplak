@@ -60,9 +60,6 @@ export interface ComposedProduct {
     ref_status: string;
 
     // === Private label (from version rules or version_attrs) ===
-    ref_status: string;
-
-    // === Private label (from version rules or version_attrs) ===
     private_label_flag: boolean;
     private_label_client_name: string | null;
 

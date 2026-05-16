@@ -101,7 +101,7 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
                             <div className="bg-indigo-500/20 p-2 rounded-lg text-indigo-400 ring-1 ring-indigo-500/30 shrink-0">
                                 <Package className="h-5 w-5" />
                             </div>
-                            {!isCollapsed && <span className="text-lg truncate">DocGen MVP</span>}
+                            {!isCollapsed && <span className="text-lg truncate">SamiGen</span>}
                         </Link>
                         
                         {!isCollapsed && (
@@ -240,7 +240,7 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
                                     <div className="bg-indigo-500/20 p-2 rounded-lg text-indigo-400 ring-1 ring-indigo-500/30">
                                         <Package className="h-5 w-5" />
                                     </div>
-                                    <span className="text-lg">DocGen MVP</span>
+                                    <span className="text-lg">SamiGen</span>
                                 </Link>
                             </div>
                             <nav className="grid gap-1 px-3 py-6 text-sm font-medium">

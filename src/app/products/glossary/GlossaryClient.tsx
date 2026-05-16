@@ -5,9 +5,11 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
-import { PlusCircle, Trash2, Search, ArrowLeft, Loader2, Save } from 'lucide-react'
+import { PlusCircle, Trash2, Search, ArrowLeft, Loader2, Save, ScanSearch, X } from 'lucide-react'
 import Link from 'next/link'
 import { upsertGlossaryTermAction, deleteGlossaryTermAction } from './actions'
+import { scanMissingGlossaryTermsAction } from '../translation-actions'
+import { saveGlossaryTermsAction } from '../actions'
 import { toast } from 'sonner'
 import {
     Dialog,
@@ -17,7 +19,23 @@ import {
     DialogFooter,
     DialogDescription
 } from '@/components/ui/dialog'
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select"
 import { Label } from '@/components/ui/label'
+
+const STANDARD_CATEGORIES = [
+    { value: 'TECNICO', label: 'Técnico' },
+    { value: 'GENERAL', label: 'General' },
+    { value: 'RESOLVED_TYPE', label: 'Tipo Resuelto (Prioridad)' },
+    { value: 'MATERIAL', label: 'Material' },
+    { value: 'ACCESORIO', label: 'Accesorio' },
+    { value: 'DIMENSION', label: 'Dimensión' },
+]
 
 interface GlossaryEntry {
     id: string
@@ -29,17 +47,29 @@ interface GlossaryEntry {
 
 interface GlossaryClientProps {
     initialData: GlossaryEntry[]
+    initialCategories: string[]
 }
 
-export default function GlossaryClient({ initialData }: GlossaryClientProps) {
+export default function GlossaryClient({ initialData, initialCategories }: GlossaryClientProps) {
     const [data, setData] = useState<GlossaryEntry[]>(initialData)
+    const [categories, setCategories] = useState<string[]>(() => {
+        const defaults = ['TECNICO', 'GENERAL', 'RESOLVED_TYPE', 'MATERIAL', 'ACCESORIO', 'DIMENSION']
+        const combined = Array.from(new Set([...defaults, ...initialCategories]))
+        return combined.sort()
+    })
     const [searchTerm, setSearchTerm] = useState('')
     const [isSaving, setIsSaving] = useState(false)
     const [isDeleting, setIsDeleting] = useState<string | null>(null)
     
     // Modal state for Add/Edit
     const [modalOpen, setModalOpen] = useState(false)
-    const [editingTerm, setEditingTerm] = useState<Partial<GlossaryEntry> | null>(null)
+    const [editingTerm, setEditingTerm] = useState<Partial<GlossaryEntry> & { isNewCategory?: boolean }>({ term_es: '', term_en: '', category: 'GENERAL' })
+
+    // Scanner State
+    const [isScanning, setIsScanning] = useState(false)
+    const [scannerModalOpen, setScannerModalOpen] = useState(false)
+    const [missingTerms, setMissingTerms] = useState<{ term: string, count: number, translation: string, category: string, isNewCategory: boolean }[]>([])
+    const [isSavingScan, setIsSavingScan] = useState(false)
 
     const filteredData = data.filter(item => 
         item.term_es.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -47,7 +77,7 @@ export default function GlossaryClient({ initialData }: GlossaryClientProps) {
     )
 
     const handleOpenModal = (term: Partial<GlossaryEntry> | null = null) => {
-        setEditingTerm(term || { term_es: '', term_en: '', category: 'GENERAL' })
+        setEditingTerm(term || { term_es: '', term_en: '', category: 'GENERAL', isNewCategory: false })
         setModalOpen(true)
     }
 
@@ -89,11 +119,64 @@ export default function GlossaryClient({ initialData }: GlossaryClientProps) {
         }
     }
 
+    const handleScanMissingTerms = async () => {
+        setIsScanning(true)
+        try {
+            const res = await scanMissingGlossaryTermsAction()
+            if (res.success && res.missingTerms) {
+                if (res.missingTerms.length === 0) {
+                    toast.success("¡Excelente! No se encontraron términos faltantes en el catálogo.")
+                } else {
+                    setMissingTerms(res.missingTerms.map(m => ({ ...m, translation: '', category: 'GENERAL', isNewCategory: false })))
+                    setScannerModalOpen(true)
+                }
+            } else {
+                toast.error(res.error || "Error al escanear conflictos")
+            }
+        } catch (error) {
+            console.error(error)
+            toast.error("Error al escanear conflictos")
+        } finally {
+            setIsScanning(false)
+        }
+    }
+
+    const handleSaveScan = async () => {
+        const termsToSave = missingTerms.filter(t => t.translation.trim() !== '')
+        if (termsToSave.length === 0) {
+            toast.error("Ingresa al menos una traducción para guardar")
+            return
+        }
+
+        setIsSavingScan(true)
+        try {
+            const payload = termsToSave.map(t => ({
+                term_es: t.term,
+                term_en: t.translation.toUpperCase(),
+                category: t.category,
+                priority: 10
+            }))
+            const res = await saveGlossaryTermsAction(payload)
+            if (res.success) {
+                toast.success(res.message)
+                setScannerModalOpen(false)
+                window.location.reload()
+            } else {
+                toast.error(res.message)
+            }
+        } catch (error) {
+            console.error(error)
+            toast.error("Error al guardar términos")
+        } finally {
+            setIsSavingScan(false)
+        }
+    }
+
     return (
         <div className="flex flex-col gap-6 p-2">
             <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-4">
-                    <Link href="/products/mass-edit">
+                    <Link href="/products">
                         <Button variant="outline" size="icon">
                             <ArrowLeft className="h-4 w-4" />
                         </Button>
@@ -105,10 +188,16 @@ export default function GlossaryClient({ initialData }: GlossaryClientProps) {
                         </p>
                     </div>
                 </div>
-                <Button onClick={() => handleOpenModal()} className="bg-blue-600 hover:bg-blue-700">
-                    <PlusCircle className="mr-2 h-4 w-4" />
-                    Nuevo Término
-                </Button>
+                <div className="flex gap-2">
+                    <Button onClick={handleScanMissingTerms} disabled={isScanning} variant="outline" className="text-amber-700 border-amber-200 bg-amber-50 hover:bg-amber-100 shadow-sm">
+                        {isScanning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ScanSearch className="mr-2 h-4 w-4" />}
+                        Escanear Conflictos
+                    </Button>
+                    <Button onClick={() => handleOpenModal()} className="bg-blue-600 hover:bg-blue-700 shadow-sm">
+                        <PlusCircle className="mr-2 h-4 w-4" />
+                        Nuevo Término
+                    </Button>
+                </div>
             </div>
 
             <div className="flex items-center gap-2 p-1 bg-white border rounded-lg shadow-sm">
@@ -207,12 +296,51 @@ export default function GlossaryClient({ initialData }: GlossaryClientProps) {
                         </div>
                         <div className="grid gap-2">
                             <Label htmlFor="category">Categoría</Label>
-                            <Input 
-                                id="category" 
-                                value={editingTerm?.category || ''} 
-                                onChange={(e) => setEditingTerm(prev => ({ ...prev!, category: e.target.value.toUpperCase() }))}
-                                placeholder="E.g. GENERAL, MUEBLES, ACCESORIOS"
-                            />
+                            {editingTerm?.isNewCategory ? (
+                                <div className="flex gap-2">
+                                    <Input 
+                                        placeholder="Nombre de nueva categoría..."
+                                        value={editingTerm?.category || ''}
+                                        onChange={(e) => setEditingTerm(prev => ({ ...prev!, category: e.target.value.toUpperCase() }))}
+                                        className="flex-1"
+                                        autoFocus
+                                    />
+                                    <Button 
+                                        type="button" 
+                                        variant="ghost" 
+                                        size="sm"
+                                        onClick={() => setEditingTerm(prev => ({ ...prev!, isNewCategory: false, category: 'GENERAL' }))}
+                                    >
+                                        Cancelar
+                                    </Button>
+                                </div>
+                            ) : (
+                                <Select
+                                    value={editingTerm?.category || 'GENERAL'}
+                                    onValueChange={(val) => {
+                                        if (val === 'ADD_NEW') {
+                                            setEditingTerm(prev => ({ ...prev!, isNewCategory: true, category: '' }))
+                                        } else {
+                                            setEditingTerm(prev => ({ ...prev!, category: val }))
+                                        }
+                                    }}
+                                >
+                                    <SelectTrigger className="w-full">
+                                        <SelectValue placeholder="Selecciona una categoría" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {categories.map(cat => (
+                                            <SelectItem key={cat} value={cat}>
+                                                {cat}
+                                            </SelectItem>
+                                        ))}
+                                        <div className="border-t my-1" />
+                                        <SelectItem value="ADD_NEW" className="text-blue-600 font-bold">
+                                            + AGREGAR NUEVA...
+                                        </SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            )}
                         </div>
                         <DialogFooter className="mt-4">
                             <Button type="button" variant="outline" onClick={() => setModalOpen(false)}>Cancelar</Button>
@@ -222,6 +350,119 @@ export default function GlossaryClient({ initialData }: GlossaryClientProps) {
                             </Button>
                         </DialogFooter>
                     </form>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={scannerModalOpen} onOpenChange={setScannerModalOpen}>
+                <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
+                    <DialogHeader>
+                        <DialogTitle>Conflictos de Traducción Encontrados</DialogTitle>
+                        <DialogDescription>
+                            Se encontraron {missingTerms.length} términos en el catálogo que no tienen traducción en el glosario.
+                            Ingresa su traducción al inglés para resolver los conflictos.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="flex-1 overflow-auto border rounded-md my-4">
+                        <Table>
+                            <TableHeader className="bg-slate-50 sticky top-0 z-10 shadow-sm">
+                                <TableRow>
+                                    <TableHead className="w-[300px] font-bold text-xs uppercase">Término en Español</TableHead>
+                                    <TableHead className="w-[80px] font-bold text-xs uppercase text-center">Frecuencia</TableHead>
+                                    <TableHead className="font-bold text-xs uppercase">Traducción (EN)</TableHead>
+                                    <TableHead className="w-[150px] font-bold text-xs uppercase">Categoría</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {missingTerms.map((item, index) => (
+                                    <TableRow key={index} className="hover:bg-slate-50/50">
+                                        <TableCell className="font-bold text-sm text-slate-800">{item.term}</TableCell>
+                                        <TableCell className="text-center text-slate-500 font-medium">
+                                            <Badge variant="outline">{item.count}</Badge>
+                                        </TableCell>
+                                        <TableCell>
+                                            <Input 
+                                                value={item.translation}
+                                                onChange={(e) => {
+                                                    const newTerms = [...missingTerms]
+                                                    newTerms[index].translation = e.target.value.toUpperCase()
+                                                    setMissingTerms(newTerms)
+                                                }}
+                                                placeholder="Ej: BASIC CABINET"
+                                                className="h-8 text-xs font-mono"
+                                            />
+                                        </TableCell>
+                                        <TableCell>
+                                            {item.isNewCategory ? (
+                                                <div className="flex gap-1">
+                                                    <Input 
+                                                        value={item.category}
+                                                        onChange={(e) => {
+                                                            const newTerms = [...missingTerms]
+                                                            newTerms[index].category = e.target.value.toUpperCase()
+                                                            setMissingTerms(newTerms)
+                                                        }}
+                                                        placeholder="NUEVA CAT..."
+                                                        className="h-8 text-xs"
+                                                        autoFocus
+                                                    />
+                                                    <Button 
+                                                        variant="ghost" 
+                                                        size="sm" 
+                                                        className="h-8 px-1"
+                                                        onClick={() => {
+                                                            const newTerms = [...missingTerms]
+                                                            newTerms[index].isNewCategory = false
+                                                            newTerms[index].category = 'GENERAL'
+                                                            setMissingTerms(newTerms)
+                                                        }}
+                                                    >
+                                                        <X className="h-3 w-3" />
+                                                    </Button>
+                                                </div>
+                                            ) : (
+                                                <Select
+                                                    value={item.category}
+                                                    onValueChange={(val) => {
+                                                        if (!val) return
+                                                        const newTerms = [...missingTerms]
+                                                        if (val === 'ADD_NEW') {
+                                                            newTerms[index].isNewCategory = true
+                                                            newTerms[index].category = ''
+                                                        } else {
+                                                            newTerms[index].category = val
+                                                        }
+                                                        setMissingTerms(newTerms)
+                                                    }}
+                                                >
+                                                    <SelectTrigger className="h-8 text-xs">
+                                                        <SelectValue placeholder="Categoría" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        {categories.map(cat => (
+                                                            <SelectItem key={cat} value={cat}>
+                                                                {cat}
+                                                            </SelectItem>
+                                                        ))}
+                                                        <div className="border-t my-1" />
+                                                        <SelectItem value="ADD_NEW" className="text-blue-600 font-bold text-[10px]">
+                                                            + NUEVA...
+                                                        </SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            )}
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </div>
+                    <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => setScannerModalOpen(false)}>Cancelar</Button>
+                        <Button onClick={handleSaveScan} className="bg-amber-600 hover:bg-amber-700 text-white" disabled={isSavingScan}>
+                            {isSavingScan ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                            Guardar Traducciones ({missingTerms.filter(t => t.translation.trim()).length})
+                        </Button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
         </div>

@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
+import { Badge } from "@/components/ui/badge"
 import { MultiSelectSearchField } from "@/components/ui-custom/MultiSelectSearchField"
 import { Box, Image as ImageIcon, Loader2, CheckCircle2 } from "lucide-react"
 import { 
@@ -153,7 +154,7 @@ export function IsometricAssociationDialog({
         }
 
         for (const opt of selectedOptions) {
-            const measureFromValue = (opt.value.split('|||')[1] || '').trim()
+            const measureFromValue = (opt.value.split('|||')[2] || '').trim()
 
             const designation = opt.meta?.designation
             const commercialMeasure = opt.meta?.commercial_measure ?? (measureFromValue || undefined)
@@ -398,8 +399,13 @@ export function IsometricAssociationDialog({
                                             )}
                                         </div>
                                         <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-medium text-slate-900 truncate">{asset.name}</p>
-                                            <p className="text-[10px] text-slate-500 truncate">{asset.file_path}</p>
+                                            <div className="flex items-center gap-2">
+                                                <p className="text-sm font-bold text-slate-900 truncate uppercase">{asset.name}</p>
+                                                {asset.relation_count === 0 && (
+                                                    <Badge className="bg-rose-500 text-white border-none text-[8px] h-4 font-bold animate-pulse">HUÉRFANO</Badge>
+                                                )}
+                                            </div>
+                                            <p className="text-[9px] text-slate-400 truncate mt-0.5">{asset.file_path}</p>
                                         </div>
                                         {selectedAssetId === asset.id && <CheckCircle2 className="h-5 w-5 text-indigo-500" />}
                                     </div>

@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Catálogo de Documentación Técnica',
+  title: 'SamiGen - Catálogo de Documentación Técnica',
   description: 'Sistema automático de generación de etiquetas',
 };
 

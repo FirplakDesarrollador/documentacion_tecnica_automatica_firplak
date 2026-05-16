@@ -40,17 +40,20 @@ export async function getMeasuresByFamilyAndRefAction(familyCodes: string[], ref
     if ((!familyCodes || familyCodes.length === 0) && (!referenceCodes || referenceCodes.length === 0)) return []
     
     let whereParts = []
-    if (familyCodes && familyCodes.length > 0) {
-        whereParts.push(`family_code IN (${familyCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
-    }
     if (referenceCodes && referenceCodes.length > 0) {
-        whereParts.push(`reference_code IN (${referenceCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
+        const specificPairs = referenceCodes.map(v => {
+            const [fc, rc] = v.split('|||')
+            return `(family_code = '${fc.replace(/'/g, "''")}' AND reference_code = '${rc.replace(/'/g, "''")}')`
+        })
+        whereParts.push(`(${specificPairs.join(' OR ')})`)
+    } else if (familyCodes && familyCodes.length > 0) {
+        whereParts.push(`family_code IN (${familyCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
     }
 
     const measureRecords = await dbQuery(`
         SELECT DISTINCT commercial_measure 
         FROM public.v_ui_generate_list 
-        WHERE commercial_measure IS NOT NULL AND (${whereParts.join(' OR ')})
+        WHERE commercial_measure IS NOT NULL AND ${whereParts.join(' AND ')}
         ORDER BY commercial_measure ASC
     `) || []
     
@@ -64,19 +67,20 @@ export async function getVersionsByFamilyAndRefAction(familyCodes: string[], ref
     if ((!familyCodes || familyCodes.length === 0) && (!referenceCodes || referenceCodes.length === 0)) return []
     
     let whereParts = []
-    if (familyCodes && familyCodes.length > 0) {
-        whereParts.push(`family_code IN (${familyCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
-    }
     if (referenceCodes && referenceCodes.length > 0) {
-        // Handle combined ref_code|||measure
-        const refs = referenceCodes.map(v => v.split('|||')[0])
-        whereParts.push(`reference_code IN (${refs.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
+        const specificPairs = referenceCodes.map(v => {
+            const [fc, rc] = v.split('|||')
+            return `(family_code = '${fc.replace(/'/g, "''")}' AND reference_code = '${rc.replace(/'/g, "''")}')`
+        })
+        whereParts.push(`(${specificPairs.join(' OR ')})`)
+    } else if (familyCodes && familyCodes.length > 0) {
+        whereParts.push(`family_code IN (${familyCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
     }
 
     const versionRecords = await dbQuery(`
         SELECT DISTINCT version_code 
         FROM public.v_ui_generate_list 
-        WHERE version_code IS NOT NULL AND (${whereParts.join(' OR ')})
+        WHERE version_code IS NOT NULL AND ${whereParts.join(' AND ')}
         ORDER BY version_code ASC
     `) || []
     
@@ -87,7 +91,28 @@ export async function getVersionsByFamilyAndRefAction(familyCodes: string[], ref
 }
 
 export async function getAssetsByTypeAction(type: string) {
-    return await dbQuery(`SELECT * FROM public.assets WHERE type = '${type}' ORDER BY created_at DESC`) || []
+    const safeType = type.replace(/'/g, "''")
+    return await dbQuery(`
+        WITH asset_counts AS (
+            SELECT 
+                a.id,
+                (
+                    (SELECT COUNT(*) FROM public.product_references r WHERE r.isometric_asset_id::text = a.id::text) + 
+                    (SELECT COUNT(*) FROM public.product_versions v WHERE v.version_attrs->>'isometric_asset_id' = a.id::text)
+                ) as total_relations
+            FROM public.assets a
+            WHERE a.type = '${safeType}'
+        )
+        SELECT 
+            a.*, 
+            ac.total_relations as relation_count
+        FROM public.assets a
+        JOIN asset_counts ac ON a.id = ac.id
+        WHERE a.type = '${safeType}'
+        ORDER BY 
+            (CASE WHEN ac.total_relations = 0 AND UPPER(a.type) = 'ISOMETRIC' THEN 0 ELSE 1 END) ASC,
+            a.created_at DESC
+    `) || []
 }
 
 export async function associateIsometricAction(data: {
@@ -110,11 +135,12 @@ export async function associateIsometricAction(data: {
     
     if (referenceCodes.length > 0) {
         const specificPairs = referenceCodes.map(v => {
-            const [rc, cm] = v.split('|||')
+            const [fc, rc, cm] = v.split('|||')
+            let condition = `(family_code = '${fc.replace(/'/g, "''")}' AND reference_code = '${rc.replace(/'/g, "''")}')`
             if (cm) {
-                return `(reference_code = '${rc.replace(/'/g, "''")}' AND commercial_measure = '${cm.replace(/'/g, "''")}')`
+                condition = `(family_code = '${fc.replace(/'/g, "''")}' AND reference_code = '${rc.replace(/'/g, "''")}' AND commercial_measure = '${cm.replace(/'/g, "''")}')`
             }
-            return `reference_code = '${rc.replace(/'/g, "''")}'`
+            return condition
         })
         const refs = await dbQuery(`SELECT id FROM public.product_references WHERE ${specificPairs.join(' OR ')}`)
         refIds = refs.map((r: any) => r.id)
@@ -301,3 +327,87 @@ export async function updateAssetAction(assetId: string, data: { name?: string, 
     return { success: true }
 }
 
+export async function getAssetRelationshipsAction(assetId: string) {
+    const safeId = assetId.replace(/'/g, "''")
+    
+    // 1. Fetch references
+    const refs = await dbQuery(`
+        SELECT 
+            r.id, r.reference_code, r.product_name, r.commercial_measure,
+            r.designation, r.ref_attrs->>'accessory_text' as accessory_text, r.special_label,
+            f.family_name as line_name
+        FROM public.product_references r
+        JOIN public.families f ON r.family_code = f.family_code
+        WHERE r.isometric_asset_id::text = '${safeId}'
+        ORDER BY r.reference_code ASC
+    `) || []
+
+    // 2. Fetch version overrides
+    const versions = await dbQuery(`
+        SELECT 
+            v.id, v.version_code, v.reference_id,
+            r.reference_code, r.product_name, r.commercial_measure,
+            r.designation, r.ref_attrs->>'accessory_text' as accessory_text, r.special_label,
+            f.family_name as line_name
+        FROM public.product_versions v
+        JOIN public.product_references r ON v.reference_id = r.id
+        JOIN public.families f ON r.family_code = f.family_code
+        WHERE v.version_attrs->>'isometric_asset_id' = '${safeId}'
+        ORDER BY r.reference_code ASC, v.version_code ASC
+    `) || []
+
+    return { references: refs, versions }
+}
+
+export async function unlinkReferenceAction(referenceId: string) {
+    await dbQuery(`
+        UPDATE public.product_references
+        SET isometric_asset_id = NULL,
+            isometric_path = NULL,
+            updated_at = now()
+        WHERE id = '${referenceId}'
+    `)
+    revalidatePath('/assets')
+    revalidatePath('/products')
+    await revalidateValidationSweepEverywhere()
+    return { success: true }
+}
+
+export async function unlinkVersionAction(versionId: string) {
+    await dbQuery(`
+        UPDATE public.product_versions
+        SET version_attrs = version_attrs - 'isometric_asset_id' - 'isometric_path',
+            updated_at = now()
+        WHERE id = '${versionId}'
+    `)
+    revalidatePath('/assets')
+    revalidatePath('/products')
+    await revalidateValidationSweepEverywhere()
+    return { success: true }
+}
+
+export async function unlinkAllAssetRelationshipsAction(assetId: string) {
+    const safeId = assetId.replace(/'/g, "''")
+    
+    // Unlink references
+    await dbQuery(`
+        UPDATE public.product_references
+        SET isometric_asset_id = NULL,
+            isometric_path = NULL,
+            updated_at = now()
+        WHERE isometric_asset_id = '${safeId}'
+    `)
+
+    // Unlink versions
+    await dbQuery(`
+        UPDATE public.product_versions
+        SET version_attrs = version_attrs - 'isometric_asset_id' - 'isometric_path',
+            updated_at = now()
+        WHERE version_attrs->>'isometric_asset_id' = '${safeId}'
+    `)
+
+    revalidatePath('/assets')
+    revalidatePath('/products')
+    await revalidateValidationSweepEverywhere()
+    return { success: true }
+}

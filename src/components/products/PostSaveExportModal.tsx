@@ -65,15 +65,19 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
         }
     }, [selectedTemplateId])
 
+    const isArray = Array.isArray(product)
+    const singleProduct = isArray ? product[0] : product
+    const productCount = isArray ? product.length : 1
+
     const handleExport = async () => {
-        if (!selectedTemplate || !product) return
+        if (!selectedTemplate || !singleProduct) return
 
         setIsExporting(true)
         try {
             // 1. Obtener los iconos del sistema y activos específicos (isométrico, logo marca propia)
             const assetsToResolve = []
-            if (product.isometric_asset_id) assetsToResolve.push(product.isometric_asset_id)
-            if (product.private_label_logo_id) assetsToResolve.push(product.private_label_logo_id)
+            if (singleProduct.isometric_asset_id) assetsToResolve.push(singleProduct.isometric_asset_id)
+            if (singleProduct.private_label_logo_id) assetsToResolve.push(singleProduct.private_label_logo_id)
             
             const assetMap = await resolveAssetsAction(assetsToResolve)
 
@@ -83,11 +87,11 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
                 : selectedTemplate.elements_json
 
             // 3. Hidratar con el mapa de activos (Crucial para iconos técnicos)
-            const hydratedData = await hydrateTemplateElements(elements, product, assetMap)
+            const hydratedData = await hydrateTemplateElements(elements, singleProduct, assetMap)
             
             // 4. Preparar nombre de archivo dinámico
-            const zoneEn = await resolveZoneHomeEnAction(product.zone_home)
-            const productWithZone = zoneEn ? { ...product, zone_home_en: zoneEn } : product
+            const zoneEn = await resolveZoneHomeEnAction(singleProduct.zone_home)
+            const productWithZone = zoneEn ? { ...singleProduct, zone_home_en: zoneEn } : singleProduct
             const enrichedProduct = enrichProductDataWithIcons(productWithZone, assetMap)
             const downloadName = hydrateText((selectedTemplate as any).export_filename_format || '{sku_base}_{final_name_es}', enrichedProduct)
 
@@ -143,9 +147,15 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
                                 <CheckCircle2 className="h-10 w-10 text-green-600" />
                             </div>
                             <DialogHeader>
-                                <DialogTitle className="text-2xl font-bold text-slate-900">¡Producto Guardado!</DialogTitle>
+                                <DialogTitle className="text-2xl font-bold text-slate-900">
+                                    {productCount > 1 ? '¡Productos Guardados!' : '¡Producto Guardado!'}
+                                </DialogTitle>
                                 <DialogDescription className="text-slate-500 text-base mt-2">
-                                    El producto <b>{product?.code}</b> ha sido registrado correctamente en la base de datos.
+                                    {productCount > 1 ? (
+                                        <>Se crearon <b>{productCount} productos</b> correctamente en la base de datos.</>
+                                    ) : (
+                                        <>El producto <b>{singleProduct?.code}</b> ha sido registrado correctamente en la base de datos.</>
+                                    )}
                                 </DialogDescription>
                             </DialogHeader>
                             
@@ -177,7 +187,7 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
                                 Configuración de Exportación
                             </DialogTitle>
                             <DialogDescription>
-                                Seleccione la plantilla y el formato para la etiqueta de {product?.code}.
+                                Seleccione la plantilla y el formato para la etiqueta de {singleProduct?.code}.
                             </DialogDescription>
                         </DialogHeader>
 

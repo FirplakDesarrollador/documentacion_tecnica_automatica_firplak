@@ -754,3 +754,90 @@ export async function executeMassImportAction(payload: any[]) {
     }
 }
 
+export async function batchCreateColorVariantsAction(
+    originalProduct: any,
+    colors: { code: string, name: string, isNew: boolean }[]
+) {
+    const results = []
+    
+    const rules = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true ORDER BY priority ASC`) || []
+    
+    for (const color of colors) {
+        try {
+            if (color.isNew) {
+                await upsertColorAction(color.code, color.name)
+            }
+            
+            const skuParts = originalProduct.code.split('-')
+            skuParts[skuParts.length - 1] = color.code.padStart(4, '0')
+            const newSkuCode = skuParts.join('-')
+            
+            const exists = await checkProductExistsAction(newSkuCode)
+            if (exists) {
+                results.push({ color_code: color.code, color_name: color.name, sku: newSkuCode, success: false, error: 'SKU ya existe en el catálogo.' })
+                continue
+            }
+            
+            const originalColorName = originalProduct.color_name || ''
+            let newSapDesc = originalProduct.sap_description || ''
+            if (originalColorName && newSapDesc) {
+                newSapDesc = newSapDesc.replace(new RegExp(originalColorName, 'gi'), color.name)
+            } else {
+                newSapDesc = newSapDesc + ' ' + color.name
+            }
+
+            const workingProduct = {
+                ...originalProduct,
+                code: newSkuCode,
+                color_code: color.code,
+                color_name: color.name,
+                sap_description: newSapDesc.trim().toUpperCase()
+            }
+            
+            const parsed = await parseProductCode(newSkuCode, workingProduct.sap_description, workingProduct.rh === 'RH')
+            const evalResult = evaluateProductRules(workingProduct as any, rules)
+            const final_name_es = evalResult.finalNameEs
+            const sap_description_recommended = final_name_es.toUpperCase().substring(0, 40)
+            
+            const translateResult = await translateProductToEnglish(
+                { ...evalResult.transformedProduct, final_name_es } as any,
+                workingProduct.product_type || 'MUEBLE',
+                evalResult.activeVariableIds
+            )
+            const final_name_en = translateResult.isValid ? translateResult.translatedName : ''
+            
+            const clientNameRaw = originalProduct.private_label_client_name ? String(originalProduct.private_label_client_name).trim() : ''
+            const isPrivate = clientNameRaw !== '' && clientNameRaw.toUpperCase() !== 'NA'
+            
+            const payload = buildCreateProductV6Payload(
+                workingProduct, 
+                parsed, 
+                isPrivate, 
+                '', 
+                clientNameRaw, 
+                sap_description_recommended, 
+                final_name_es, 
+                final_name_en
+            )
+            
+            payload.sku.barcode_text = null
+            
+            const { data: result, error } = await (supabaseServer as any).rpc('create_product_v6_transaction', { payload })
+            if (error) throw new Error(`Transaction failed: ${error.message}`)
+            
+            results.push({ 
+                color_code: color.code, 
+                color_name: color.name, 
+                sku: newSkuCode, 
+                success: true,
+                product: { ...workingProduct, final_name_es, final_name_en, id: result?.sku_id }
+            })
+            
+        } catch (error: any) {
+            results.push({ color_code: color.code, color_name: color.name, sku: '', success: false, error: error.message })
+        }
+    }
+    
+    return { results }
+}
+

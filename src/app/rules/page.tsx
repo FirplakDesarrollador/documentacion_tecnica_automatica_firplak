@@ -1,6 +1,7 @@
 import { dbQuery } from '@/lib/supabase'
 import { RulesTable } from '@/components/rules/RulesTable'
 import { NomenclaturesSection } from '@/components/rules/NomenclaturesSection'
+import { MassImportSettingsSection } from '@/components/rules/MassImportSettingsSection'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Settings } from 'lucide-react'
@@ -12,6 +13,17 @@ export default async function RulesPage() {
     // Fetch rules from Supabase server-side
     const rules = await dbQuery(`SELECT * FROM public.rules ORDER BY rule_type ASC, priority ASC`) || []
     const namingRules = rules.filter((r: any) => r.rule_type === 'name_component')
+
+    const settingsRows =
+        (await dbQuery(`
+            SELECT key, value
+            FROM public.app_settings
+            WHERE key IN ('mass_import_execute_enabled', 'mass_import_safe_max_rows')
+        `)) || []
+    const sByKey = new Map<string, any>()
+    for (const r of settingsRows) sByKey.set(String(r.key), r.value)
+    const initialExecuteEnabled = !!sByKey.get('mass_import_execute_enabled')
+    const initialSafeMaxRows = Number(sByKey.get('mass_import_safe_max_rows') ?? 15)
 
     return (
         <div className="container mx-auto py-6">
@@ -33,6 +45,21 @@ export default async function RulesPage() {
             </div>
 
             <NomenclaturesSection namingRules={namingRules} />
+
+            <div className="my-10 border-t border-slate-200 w-full" />
+
+            <div className="flex flex-col gap-4 mb-12">
+                <div>
+                    <h2 className="text-2xl font-bold tracking-tight text-slate-800">Configuración del Sistema</h2>
+                    <p className="text-muted-foreground text-sm">
+                        Flags y límites operativos que controlan módulos críticos.
+                    </p>
+                </div>
+                <MassImportSettingsSection
+                    initialExecuteEnabled={initialExecuteEnabled}
+                    initialSafeMaxRows={Number.isFinite(initialSafeMaxRows) ? initialSafeMaxRows : 15}
+                />
+            </div>
             
             <div className="my-10 border-t border-slate-200 w-full" />
 

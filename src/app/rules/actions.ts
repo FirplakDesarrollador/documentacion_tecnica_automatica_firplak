@@ -291,6 +291,24 @@ export async function saveGlossaryTermsAction(terms: { es: string, en: string }[
     return { success: true }
 }
 
+export async function saveMassImportSettingsAction(input: { executeEnabled: boolean; safeMaxRows: number }) {
+    const executeEnabled = !!input.executeEnabled
+    const safeMaxRows = Number(input.safeMaxRows)
+    if (!Number.isFinite(safeMaxRows) || safeMaxRows <= 0) throw new Error('safeMaxRows debe ser un número mayor a 0')
+
+    await dbQuery(`
+        INSERT INTO public.app_settings (key, value, updated_at)
+        VALUES
+            ('mass_import_execute_enabled', to_jsonb(${executeEnabled ? 'true' : 'false'}), now()),
+            ('mass_import_safe_max_rows', to_jsonb(${safeMaxRows}), now())
+        ON CONFLICT (key) DO UPDATE
+        SET value = EXCLUDED.value,
+            updated_at = now()
+    `)
+
+    revalidatePath('/rules')
+}
+
 export async function applyFullBulkNamingUpdateBatchAction(
     productType: string, 
     offset: number, 

@@ -21,10 +21,28 @@ export default async function GeneratePage({
     const m = toArray(searchParams?.m)
     const templateId = typeof searchParams?.template_id === 'string' ? searchParams.template_id : null
 
-    // Para filtrar productos: extraer ref_code y commercial_measure de los valores compuestos
-    // Formato del valor: "ref_code|||commercial_measure" (permite filtrar ambos de un click)
-    const rDecoded = r.map(v => v.split('|||')[0]).filter(Boolean)
-    const mDecoded = r.map(v => v.split('|||')[1]).filter(Boolean)
+    // Para filtrar productos: extraer reference_code y commercial_measure desde valores compuestos.
+    // Formatos soportados (compat):
+    // - "family_code|||reference_code|||commercial_measure" (formato actual, evita cruces entre familias)
+    // - "reference_code|||commercial_measure" (formato legacy)
+    const parsedR = r.map((v) => {
+        const parts = v.split('|||')
+        if (parts.length >= 3) {
+            const [family_code, reference_code, commercial_measure] = parts
+            return { family_code, reference_code, commercial_measure }
+        }
+        if (parts.length === 2) {
+            const [reference_code, commercial_measure] = parts
+            return { family_code: undefined, reference_code, commercial_measure }
+        }
+        const [reference_code] = parts
+        return { family_code: undefined, reference_code, commercial_measure: undefined }
+    })
+
+    const isNonEmptyString = (v: unknown): v is string => typeof v === 'string' && v.length > 0
+    const rDecoded = parsedR.map(p => p.reference_code).filter(isNonEmptyString)
+    const mDecoded = parsedR.map(p => p.commercial_measure).filter(isNonEmptyString)
+    const familiesFromR = parsedR.map(p => p.family_code).filter(isNonEmptyString)
 
     const hasFilter = f.length > 0 || r.length > 0 || m.length > 0
 
@@ -32,8 +50,10 @@ export default async function GeneratePage({
     let products: any[] = []
     let totalCount = 0
     if (hasFilter) {
+        // Si no viene `f`, intentamos derivar la familia desde `r` (cuando viene en formato triple).
+        const effectiveFamilies = f.length > 0 ? f : familiesFromR
         const filtersObj = {
-            families: f,
+            families: effectiveFamilies,
             references: rDecoded,
             measures: mDecoded.length > 0 ? mDecoded : m
         }

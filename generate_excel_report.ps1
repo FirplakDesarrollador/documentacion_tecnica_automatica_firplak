@@ -1,5 +1,5 @@
 
-# Script para generar el reporte optimizado para Excel (Firplak DocGen)
+# Script para generar el reporte optimizado para Excel (SamiGen)
 # Genera un archivo CSV con delimitador punto y coma y codificación UTF8-BOM
 
 $envFile = Get-Content 'web\.env' -Raw

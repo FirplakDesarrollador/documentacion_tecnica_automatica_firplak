@@ -88,13 +88,11 @@ export async function translateEnglishBatchAction(
                     continue
                 }
 
-                // Collect update
                 updatesToApply.push({
                     id: product.id,
                     final_name_en: translatedName,
                     validation_status: status
                 })
-
             } catch (err: any) {
                 console.error(`Error translating product ${product.code}:`, err)
                 result.failedCount++
@@ -113,7 +111,6 @@ export async function translateEnglishBatchAction(
             })
 
             if (rpcError) {
-                // If RPC fails, all collected updates in this batch are considered failed
                 console.error("RPC Update Error:", rpcError)
                 updatesToApply.forEach(up => {
                     const prod = products.find(p => p.id === up.id)
@@ -141,7 +138,6 @@ export async function translateEnglishBatchAction(
         result.missingTermsCount = result.uniqueMissingTerms.length
 
         return { success: true, data: result }
-
     } catch (error: any) {
         console.error("Batch Translation Action Error:", error)
         return { success: false, error: error.message || 'Error crítico en el lote' }
@@ -165,3 +161,67 @@ function createEmptyResult(): TranslationBatchResult {
         updatedProducts: []
     }
 }
+
+/**
+ * Escanea el catálogo en busca de términos faltantes en las traducciones
+ * sin realizar modificaciones en la base de datos.
+ * Retorna una lista de términos y su frecuencia.
+ */
+export async function scanMissingGlossaryTermsAction(): Promise<{ success: boolean; missingTerms?: { term: string, count: number }[]; error?: string }> {
+    try {
+        const { data: rows, error: fetchError } = await supabase
+            .from('v_ui_generate_list')
+            .select('*')
+            .eq('status', 'ACTIVO')
+            // Limitar a productos incompletos o sin traducción (usando OR)
+            .or('validation_status.eq.incomplete,validation_status.eq.needs_review,final_complete_name_en.is.null,final_complete_name_en.eq.')
+
+        if (fetchError) throw new Error(`Fetch Error: ${fetchError.message}`)
+        if (!rows || rows.length === 0) {
+            return { success: true, missingTerms: [] }
+        }
+
+        const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
+        const products = rows.map(mapRowToComposedProduct)
+
+        const { data: rules, error: rulesError } = await supabase
+            .from('rules')
+            .select('*')
+            .eq('enabled', true)
+            .order('priority', { ascending: true })
+
+        if (rulesError) throw new Error(`Fetch Rules Error: ${rulesError.message}`)
+
+        const termFrequency: Record<string, number> = {}
+
+        for (const product of products) {
+            try {
+                const evalResult = evaluateProductRules(product as any, (rules || []) as any)
+                const translation = await translateProductToEnglish(
+                    ({ ...evalResult.transformedProduct, final_name_es: evalResult.finalNameEs } as any) as ProductPayload,
+                    product.product_type || 'MUEBLE',
+                    evalResult.activeVariableIds
+                )
+
+                const { missingTerms } = translation
+                if (missingTerms.length > 0) {
+                    missingTerms.forEach(t => {
+                        termFrequency[t] = (termFrequency[t] || 0) + 1
+                    })
+                }
+            } catch {
+                // Ignore errors for individual products during scan
+            }
+        }
+
+        const missingTermsArray = Object.entries(termFrequency)
+            .map(([term, count]) => ({ term, count }))
+            .sort((a, b) => b.count - a.count)
+
+        return { success: true, missingTerms: missingTermsArray }
+    } catch (error: any) {
+        console.error("Scan Missing Terms Error:", error)
+        return { success: false, error: error.message || 'Error al escanear conflictos' }
+    }
+}
+

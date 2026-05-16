@@ -1,13 +1,14 @@
-# 🤖 README - AI Agent Context (Firplak DocGen)
+# 🤖 README - AI Agent Context (SamiGen)
 
 > [!IMPORTANT]
 > **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estratégico y operativo necesario para navegar y construir eficientemente en este proyecto.
 
 ## 📌 Visión General
-Evolución Relacional V6.1 y Gobernanza de Activos: Se ha consolidado el motor de isométricos con el patrón **"Select-then-Persist"**, permitiendo asociar recursos a productos nuevos sin errores de base de datos. Se implementó una **Limpieza Profunda en Cascada** (manual) para asegurar que la eliminación de assets no deje rastro en las tablas relacionales ni en el Storage físico. La lógica de filtros se centralizó en `filters.ts` para garantizar coherencia en toda la aplicación.
-Gobernanza de Memoria: Se estableció una separación estricta entre Memoria Operativa (Git) y Memoria Técnica (KIs). Se resolvió el **Bucle de Hidratación en /rules** mediante la directiva `force-dynamic`, un patrón vital para páginas con fetching asíncrono en Next.js 15.
-- **Migración a Raíz Única**: Se consolidó el repositorio eliminando la subcarpeta `web/`. El aplicativo ahora es compatible con el despliegue automático en Vercel, gestionando correctamente el schema de Prisma en el pipeline de build.
-- **Estabilización de Excepciones y Gobernanza (NUEVO)**: Se optimizó la Bandeja de Excepciones eliminando el truncamiento de nombres y filtrando automáticamente SKUs de referencias inactivas. Se identificó que inconsistencias de nomenclatura (ej. "VITELI" vs "VITELLI") impedían la asociación correcta de isométricos. Se estableció una prohibición crítica sobre el uso de la tabla legacy `cabinet_products` para proteger la integridad del Catálogo Maestro.
+**Lanzamiento de SamiGen & Estabilización de Build**: Se completó el rebranding estratégico del aplicativo, renombrado de "DocGen MVP" a **SamiGen** en toda la interfaz, metadatos y documentación técnica. Se resolvió de forma definitiva el error de compilación en Vercel relacionado con el tipado de TypeScript en `MassEditClient.tsx` mediante el patrón de aserción segura de arrays.
+**Importación Masiva v6 & Gobernanza DB-First**: Se consolidó la infraestructura de carga masiva relacional (familias -> referencias -> versiones -> SKUs) con integridad transaccional reforzada. La lógica de negocio crítica se migró a funciones RPC en Supabase para garantizar consistencia de datos.
+**Gestión de Activos e Isométricos**: Se implementó el motor de detección de productos huérfanos y asociación inteligente de isométricos. Se saneó el repositorio eliminando más de 20 artefactos basura (Excel/CSV/JSON) y scripts temporales de desarrollo para mantener la higiene del código antes del despliegue.
+**Gobernanza de Memoria**: Se estableció una separación estricta entre Memoria Operativa (Git) y Memoria Técnica (KIs). Se resolvió el **Bucle de Hidratación en /rules** mediante la directiva `force-dynamic`, un patrón vital para páginas con fetching asíncrono en Next.js 15.
+- **Migración a Raíz Única**: Se consolidó el repositorio eliminando la subcarpeta `web/`. El aplicativo ahora es compatible con el despliegue automático en Vercel.
 - **Registro Dinámico de Colores**: Se eliminó el bloqueo por error de llave foránea (`fk_skus_color_code`) al permitir la creación de nuevos registros en la tabla `public.colors` directamente desde el `ProductForm.tsx`.
 
 ## 🏗️ Arquitectura de 3 Capas

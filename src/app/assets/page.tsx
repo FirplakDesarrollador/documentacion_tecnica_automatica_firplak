@@ -16,6 +16,9 @@ import { EditAssetDialog } from '@/components/assets/EditAssetDialog'
 import { DeleteAssetDialog } from '@/components/assets/DeleteAssetDialog'
 import { ViewAssetDialog } from '@/components/assets/ViewAssetDialog'
 import { IsometricAssociationDialog } from '@/components/assets/IsometricAssociationDialog'
+import { SmartIsometricSuggestionsDialog } from '@/components/assets/SmartIsometricSuggestionsDialog'
+import { SmartIsometricNormalizationDialog } from '@/components/assets/SmartIsometricNormalizationDialog'
+import { OrphanProductsDialog } from '@/components/assets/OrphanProductsDialog'
 
 import { ResourceSearch } from '@/components/assets/ResourceSearch'
 
@@ -33,7 +36,26 @@ export default async function AssetsPage({
         whereClause = `WHERE name ILIKE '%${safeQuery}%' OR type ILIKE '%${safeQuery}%' OR file_path ILIKE '%${safeQuery}%'`
     }
 
-    const assets = await dbQuery(`SELECT * FROM public.assets ${whereClause} ORDER BY created_at DESC`) || []
+    const assets = await dbQuery(`
+        WITH asset_counts AS (
+            SELECT 
+                a.id,
+                (
+                    (SELECT COUNT(*) FROM public.product_references r WHERE r.isometric_asset_id::text = a.id::text) + 
+                    (SELECT COUNT(*) FROM public.product_versions v WHERE v.version_attrs->>'isometric_asset_id' = a.id::text)
+                ) as total_relations
+            FROM public.assets a
+        )
+        SELECT 
+            a.*, 
+            ac.total_relations as relation_count
+        FROM public.assets a 
+        JOIN asset_counts ac ON a.id = ac.id
+        ${whereClause} 
+        ORDER BY 
+            (CASE WHEN ac.total_relations = 0 AND UPPER(a.type) = 'ISOMETRIC' THEN 0 ELSE 1 END) ASC,
+            a.created_at DESC
+    `) || []
 
     const defaultNames = [
         'Logo Empresa Pordefecto',
@@ -59,6 +81,9 @@ export default async function AssetsPage({
                     </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
+                    <SmartIsometricSuggestionsDialog />
+                    <SmartIsometricNormalizationDialog />
+                    <OrphanProductsDialog />
                     <IsometricAssociationDialog />
                     <UploadAssetButton 
                         className="h-10 px-6 font-bold shadow-sm bg-slate-900 hover:bg-slate-800 text-white transition-all"
@@ -112,8 +137,13 @@ export default async function AssetsPage({
                                             </Badge>
                                         </TableCell>
                                         <TableCell className="font-medium text-slate-800">
-                                            {asset.name}
-                                            {isDefault && <Badge variant="secondary" className="ml-2 text-[8px] h-4">Sistema</Badge>}
+                                            <div className="flex items-center gap-2">
+                                                {asset.name}
+                                                {isDefault && <Badge variant="secondary" className="text-[8px] h-4">Sistema</Badge>}
+                                                {asset.type?.toUpperCase() === 'ISOMETRIC' && asset.relation_count === 0 && (
+                                                    <Badge className="bg-rose-500 text-white border-none text-[8px] h-4 font-bold animate-pulse">HUÉRFANO</Badge>
+                                                )}
+                                            </div>
                                         </TableCell>
                                         <TableCell className="text-right flex items-center justify-end gap-1">
                                             <EditAssetDialog 
