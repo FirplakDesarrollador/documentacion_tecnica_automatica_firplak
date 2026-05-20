@@ -223,6 +223,17 @@ export function OrphanProductsDialog() {
     const expectedToGroup = excel.expected_filename_to_group || {}
     const groupByCode = new Map(excel.groups.map(g => [g.similarity_code, g] as const))
 
+    // Invert expected_filename_to_group so a similarity_code can accept multiple expected filenames
+    // (useful when user intentionally merges multiple rows under the same similarity_code).
+    const expectedBasesBySim = new Map<string, string[]>()
+    for (const [expectedBaseNorm, sim] of Object.entries(expectedToGroup)) {
+      const code = String(sim || '').trim()
+      if (!code) continue
+      const list = expectedBasesBySim.get(code) || []
+      list.push(String(expectedBaseNorm || '').trim())
+      expectedBasesBySim.set(code, list)
+    }
+
     // Map expected base name => occurrences in folder
     const matchedByExpected = new Map<string, WizardItem[]>()
     const previewItems: WizardItem[] = []
@@ -276,8 +287,12 @@ export function OrphanProductsDialog() {
 
     const missing: string[] = []
     for (const g of excel.groups) {
-      const expectedBase = normalizeText(String(g.expected_svg_filename || '').replace(/\.svg$/i, ''))
-      const hasAny = matchedByExpected.has(expectedBase)
+      const sim = String(g.similarity_code || '').trim()
+      const expectedBases =
+        (sim && expectedBasesBySim.get(sim)?.filter(Boolean)) ||
+        [normalizeText(String(g.expected_svg_filename || '').replace(/\.svg$/i, ''))]
+
+      const hasAny = expectedBases.some(b => matchedByExpected.has(normalizeText(b)))
       if (!hasAny) missing.push(`${g.similarity_code} (${g.expected_svg_filename})`)
     }
 

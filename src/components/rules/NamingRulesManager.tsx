@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
     Dialog,
     DialogContent,
@@ -84,6 +84,7 @@ const ADDABLE_FIELDS = [
     { field: 'product_type', label: 'Tipo de producto', type: 'text' },
     { field: 'designation', label: 'Designación', type: 'text' },
     { field: 'product_name', label: 'Nombre del gabinete', type: 'text' },
+    { field: 'version_label', label: 'Etiqueta de versión', type: 'text' },
     { field: 'line', label: 'Línea', type: 'text' },
     { field: 'zone_home', label: 'Zona (BAÑO/COCINA/etc)', type: 'text' },
     { field: 'special_label', label: 'Marca Especial (OBRA/etc)', type: 'text' },
@@ -93,6 +94,7 @@ const ADDABLE_FIELDS = [
     { field: 'commercial_measure', label: 'Medida comercial', type: 'text' },
     { field: 'canto_puertas', label: 'Canto puertas', type: 'text' },
     { field: 'rh', label: 'RH', type: 'text' },
+    { field: 'pur', label: 'PUR', type: 'text' },
     { field: 'assembled_flag', label: 'Armado', type: 'boolean' },
     { field: 'armado_con_lvm', label: 'Kit Lavamanos', type: 'text' },
     { field: 'carb2', label: 'Certificación CARB2', type: 'text' },
@@ -180,7 +182,10 @@ interface PreviewResult {
 type MassApplyResult = { code: string; newName: string; newNameEn?: string; oldName: string; error?: string; status?: string }
 
 export function NamingRulesManager({ open, productType, onClose, initialRules }: NamingRulesManagerProps) {
-    const [rules, setRules] = useState<any[]>([])
+    const [rules, setRules] = useState<any[]>(() => {
+        const sorted = [...initialRules].sort((a: any, b: any) => a.priority - b.priority)
+        return sorted.map((r, idx) => ({ ...r, priority: idx * 10 }))
+    })
     const [loading, setLoading] = useState(false)
     const [activeTab, setActiveTab] = useState<'orden_es' | 'orden_en' | 'vista_previa'>('orden_es')
 
@@ -224,9 +229,15 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
         }))
     }
 
+    const prevProductType = useRef(productType)
+    const prevOpen = useRef<boolean | null>(null)
+
     useEffect(() => {
-        // Only sync if we haven't just saved (to avoid resetting the "Mass Apply" UI)
-        if (!savedSuccessfully) {
+        const hasOpened = open && (prevOpen.current === null || prevOpen.current === false)
+        const hasTypeChanged = productType !== prevProductType.current
+
+        // Solo pisar el estado local si el diálogo se abrió de nuevo o si cambió el tipo de producto
+        if (!savedSuccessfully && (hasOpened || hasTypeChanged)) {
             const sorted = [...initialRules].sort((a: any, b: any) => a.priority - b.priority)
             setRules(reindexRules(sorted))
             setPreviewGenerated(false)
@@ -235,7 +246,10 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
             setMassResults([])
             setDeletedIds([])
         }
-    }, [initialRules])
+
+        prevProductType.current = productType
+        prevOpen.current = open
+    }, [initialRules, open, productType, savedSuccessfully])
 
     const markDirty = () => {
         setPreviewGenerated(false)

@@ -38,6 +38,7 @@ export interface ProductPayload {
     special_label?: string | null
     private_label_client_name?: string | null
     armado_con_lvm?: string | null
+    version_label?: string | null
     // Legacy fields (for backwards compat)
     final_name_es?: string | null
     color_name?: string | null

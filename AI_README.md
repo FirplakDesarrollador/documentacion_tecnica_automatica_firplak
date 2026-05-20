@@ -8,6 +8,9 @@
 **Estandarización Global ({product_name})**: Se unificó la identidad de los productos reemplazando `cabinet_name` por `product_name` en toda la UI, lógica de negocio y motores de validación, garantizando consistencia en el Catálogo Maestro.
 **Gobernanza de Secretos (MCP Security)**: Implementación de sincronización automática de credenciales para el servidor MCP, eliminando tokens hardcoded y priorizando el uso de variables de entorno seguras.
 **Evolución Operativa (AI Agent Skills)**: Integración de un sistema de habilidades autónomas (`skills/`) y workflows refinados para la gestión del ciclo de vida del desarrollo (release, audit, archive).
+**Soporte de Variable `version_label`**: Integración de la variable `version_label` (de la tabla `product_versions`) en el constructor de reglas de nomenclatura en español, inglés (constructor de orden) y en el motor de traducción y parseo de código SKU SAP, permitiendo personalizar los nombres dinámicamente con la etiqueta de versión.
+**Traducción Adaptativa al Inglés Corregida**: Se solucionó la omisión del nombre del producto en las traducciones al inglés al corregir la variable desactualizada `cabinet_name` a `product_name` en la tabla de configuración `public.naming_config_en` de Supabase.
+**Filtro de Búsqueda Persistente en Generar**: Implementación de un filtro de texto por nombre/color en `/generate` que persiste al cambiar familia o referencia, con búsqueda híbrida cliente+servidor y límite dinámico de consulta (200→1000) para garantizar resultados de todas las familias seleccionadas.
 
 ## 🏗️ Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
@@ -36,10 +39,11 @@ Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
 - **🛡️ Gobernanza de Contexto (REGLA)**: El Agente debe avisar proactivamente al usuario de archivar la sesión (`/archive-session`) tras hitos importantes.
 
 ## 🚀 Próximos Pasos (Sugerencia)
-1.  **Saneamiento Masivo**: Utilizar el nuevo Editor de Referencias para normalizar los campos `special_label` y `designation` en todo el catálogo.
-2.  **Integración de Atributos en Plantillas**: Configurar las plantillas de etiquetas para consumir los nuevos `dynamic_attrs` (ej. mostrar el sello PUR si existe).
-3.  **Migración de Base de Datos**: Mover los modelos de Prisma de SQLite a PostgreSQL (Supabase) para asegurar persistencia en Vercel.
-4.  **Mantenimiento de Secretos MCP**: Usar `node execution/sync_mcp_config.js` para mantener las claves de Antigravity sincronizadas con el `.env` del proyecto.
+1.  **Validar Nombres en Inglés**: Confirmar con el usuario la correcta generación de nombres en inglés en las plantillas PDF/JPG en caliente.
+2.  **Saneamiento Masivo**: Utilizar el nuevo Editor de Referencias para normalizar los campos `special_label` y `designation` en todo el catálogo.
+3.  **Integración de Atributos en Plantillas**: Configurar las plantillas de etiquetas para consumir los nuevos `dynamic_attrs` (ej. mostrar el sello PUR si existe).
+4.  **Migración de Base de Datos**: Mover los modelos de Prisma de SQLite a PostgreSQL (Supabase) para asegurar persistencia en Vercel.
+5.  **Mantenimiento de Secretos MCP**: Usar `node execution/sync_mcp_config.js` para mantener las claves de Antigravity sincronizadas con el `.env` del proyecto.
 
 ---
 *Este archivo es mantenido autónomamente por los agentes de IA que colaboran en el proyecto.*

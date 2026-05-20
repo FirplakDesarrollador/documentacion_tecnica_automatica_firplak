@@ -22,6 +22,7 @@ interface PreviewClientProps {
     initialTemplateId: string | null
     engineResult: {
         finalNameEs: string
+        finalNameEn?: string
         activeIcons: string[]
         trace: { passed: boolean; condition: string; actionTaken?: string; payload?: string }[]
     }
@@ -46,7 +47,8 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
         const base = { ...rawProduct }
         return {
             ...base,
-            final_name_es: engineResult.finalNameEs || base.final_name_es
+            final_name_es: engineResult.finalNameEs || base.final_name_es,
+            final_name_en: engineResult.finalNameEn || base.final_name_en
         } as any
     }, [rawProduct, engineResult])
 
@@ -201,6 +203,14 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
 
     const handleExport = async () => {
         if (!selectedTemplate) return
+        if (product.is_exportable === false) {
+            toast.error(
+                product.inactive_reasons?.length
+                    ? `Producto inactivo: ${product.inactive_reasons.join(', ')}`
+                    : 'Producto inactivo para exportacion'
+            )
+            return
+        }
         setIsExporting(true)
 
         try {
@@ -224,6 +234,8 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
+                    productId: product.id,
+                    isExternalSource: product.is_external === true,
                     elements: hydrated, 
                     format: exportFormat, 
                     width: widthPx, 
@@ -365,6 +377,15 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                     </div>
                 )}
 
+                {product.is_exportable === false && (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                        <p className="font-semibold">Producto inactivo para exportacion.</p>
+                        {product.inactive_reasons?.length > 0 && (
+                            <p className="mt-1 text-xs">{product.inactive_reasons.join(', ')}</p>
+                        )}
+                    </div>
+                )}
+
                 {/* Datos del producto */}
                 <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col gap-3">
                     <h3 className="font-semibold text-slate-800 text-sm">Datos del Producto</h3>
@@ -403,14 +424,14 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
 
                             <Button 
                                 className={`w-full h-12 text-sm font-bold transition-all duration-300 ${
-                                    (preflightReport.criticalErrors.length > 0 || missingFields.length > 0)
+                                    (preflightReport.criticalErrors.length > 0 || missingFields.length > 0 || product.is_exportable === false)
                                         ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300' 
                                         : (preflightReport.missingVariables.length > 0 || preflightReport.missingAssets.length > 0)
                                             ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-lg shadow-amber-200'
                                             : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-200'
                                 }`}
                                 onClick={handleExport}
-                                disabled={isExporting || preflightReport.criticalErrors.length > 0 || missingFields.length > 0}
+                                disabled={isExporting || preflightReport.criticalErrors.length > 0 || missingFields.length > 0 || product.is_exportable === false}
                             >
                                 {isExporting ? (
                                     <>
@@ -421,7 +442,7 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                                     <>
                                         <Download className="mr-2 h-4 w-4" />
                                         <span>
-                                            {(preflightReport.criticalErrors.length > 0 || missingFields.length > 0)
+                                            {(preflightReport.criticalErrors.length > 0 || missingFields.length > 0 || product.is_exportable === false)
                                                 ? 'Exportación Bloqueada'
                                                 : (preflightReport.missingVariables.length > 0 || preflightReport.missingAssets.length > 0)
                                                     ? `Exportar con Avisos (${exportFormat.toUpperCase()})`

@@ -15,6 +15,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Eye, AlertTriangle } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { cn } from '@/lib/utils'
 
 export interface GenerateProduct {
     id: string
@@ -32,6 +33,9 @@ export interface GenerateProduct {
     height_cm: number | null
     color_code: string | null
     color_name: string | null
+    effective_status?: string
+    is_exportable?: boolean
+    inactive_reasons?: string[]
     ref_code: string | null
     [key: string]: any
 }
@@ -53,7 +57,8 @@ export function GenerateProductTable({
     templateId,
     isExternalSource = false,
 }: GenerateProductTableProps) {
-    const allSelected = products.length > 0 && products.every(p => selectedIds.includes(p.id))
+    const exportableProducts = products.filter(p => p.is_exportable !== false)
+    const allSelected = exportableProducts.length > 0 && exportableProducts.every(p => selectedIds.includes(p.id))
     const someSelected = products.some(p => selectedIds.includes(p.id))
 
     const dynamicColumns = useMemo(() => {
@@ -78,11 +83,11 @@ export function GenerateProductTable({
 
     const toggleAll = useCallback(() => {
         if (allSelected) {
-            onSelectionChange([])
+            onSelectionChange(selectedIds.filter(id => !exportableProducts.some(p => p.id === id)))
         } else {
-            onSelectionChange(products.map(p => p.id))
+            onSelectionChange(Array.from(new Set([...selectedIds, ...exportableProducts.map(p => p.id)])))
         }
-    }, [allSelected, products, onSelectionChange])
+    }, [allSelected, exportableProducts, onSelectionChange, selectedIds])
 
     const toggleOne = useCallback((id: string) => {
         if (selectedIds.includes(id)) {
@@ -151,16 +156,27 @@ export function GenerateProductTable({
                     const missing = missingFieldsByProduct[product.id] || []
                     const hasMissing = missing.length > 0
                     const isSelected = selectedIds.includes(product.id)
+                    const isInactive = product.is_exportable === false
+                    const inactiveReasons = product.inactive_reasons || []
 
                     return (
                         <TableRow
                             key={product.id}
-                            className={`transition-colors ${isSelected ? 'bg-indigo-50/60 hover:bg-indigo-50' : 'hover:bg-slate-50/60'}`}
+                            className={cn(
+                                'transition-colors',
+                                isInactive
+                                    ? 'bg-rose-50/60 text-slate-500 opacity-75 hover:bg-rose-50'
+                                    : isSelected
+                                        ? 'bg-indigo-50/60 hover:bg-indigo-50'
+                                        : 'hover:bg-slate-50/60'
+                            )}
+                            title={inactiveReasons.join(', ') || undefined}
                         >
                             <TableCell>
                                 <Checkbox
                                     checked={isSelected}
                                     onCheckedChange={() => toggleOne(product.id)}
+                                    disabled={isInactive}
                                     aria-label={`Seleccionar ${product.code}`}
                                 />
                             </TableCell>
@@ -185,13 +201,28 @@ export function GenerateProductTable({
                             )}
 
                             <TableCell>
-                                <Badge variant={statusVariant(product.validation_status)} className="text-xs">
-                                    {statusLabel(product.validation_status)}
-                                </Badge>
+                                <div className="flex flex-col gap-1">
+                                    <Badge
+                                        variant={isInactive ? 'destructive' : statusVariant(product.validation_status)}
+                                        className="text-xs w-fit"
+                                    >
+                                        {isInactive ? 'Inactivo' : statusLabel(product.validation_status)}
+                                    </Badge>
+                                    {isInactive && inactiveReasons.length > 0 && (
+                                        <span className="text-[10px] text-rose-600 leading-tight">
+                                            {inactiveReasons.join(', ')}
+                                        </span>
+                                    )}
+                                </div>
                             </TableCell>
                             {templateId && (
                                 <TableCell>
-                                    {hasMissing ? (
+                                    {isInactive ? (
+                                        <div className="flex items-center gap-1 text-rose-600 text-xs bg-rose-50 border border-rose-200 rounded-full px-2 py-0.5 w-fit">
+                                            <AlertTriangle className="w-3 h-3 shrink-0" />
+                                            <span>Bloqueado</span>
+                                        </div>
+                                    ) : hasMissing ? (
                                         <div className="flex items-center gap-1 text-amber-600 text-xs bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 w-fit">
                                             <AlertTriangle className="w-3 h-3 shrink-0" />
                                             <span>{missing.length} campo(s)</span>

@@ -374,7 +374,7 @@ export async function updateProductAction(id: string, data: any) {
     
     // Return updated record for UI confirmation
     const rows = await dbQuery(`
-        SELECT p.*, p.name_color_sap as color_name 
+        SELECT p.*, COALESCE(p.resolved_color_name, p.name_color_sap) as color_name 
         FROM public.v_ui_generate_list p
         WHERE p.id = $1
     `, [id])
@@ -480,7 +480,7 @@ export async function translateProductsAction(ids?: string[], mode: 'missing' | 
         if (!rows || rows.length === 0) return { success: true, count: 0, message: "No se encontraron productos para procesar." }
 
         const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
-        const allProducts = rows.map(mapRowToComposedProduct)
+        const allProducts = rows.map((row: any) => mapRowToComposedProduct(row))
 
         // Filter products based on mode
         const toTranslate = allProducts.filter((p: any) => {

@@ -1,5 +1,6 @@
 import { dbQuery } from '@/lib/supabase'
 import { composeProductBySku } from './product_composer'
+import { buildEffectiveProductContext } from './effectiveProduct'
 
 export interface ParsedCodeResult {
     familia_code: string | null
@@ -35,6 +36,7 @@ export interface ParsedCodeResult {
     allowed_lines?: string[]
     isometric_asset_id?: string | null
     final_name_es?: string | null
+    version_label?: string | null
 }
 
 // Helper for smart matching against a list of options
@@ -89,7 +91,8 @@ export async function parseProductCode(
         special_label: 'NA',
         bisagras: 'NA',
         barcode_text: null,
-        status: 'ACTIVO'
+        status: 'ACTIVO',
+        version_label: null
     }
 
     if (!code) return result
@@ -138,13 +141,14 @@ export async function parseProductCode(
         // --- Detección de Versión desde Diccionario ---
         if (result.version_code) {
             try {
-                const verRows = await dbQuery(`SELECT version_code, version_description, automatic_version_rules FROM public.global_version_rules WHERE version_code = '${result.version_code.toUpperCase().replace(/'/g, "''")}' LIMIT 1`);
+                const verRows = await dbQuery(`SELECT version_code, version_description, automatic_version_rules FROM public.global_version_rules WHERE version_code = '${result.version_code.toUpperCase().replace(/'/g, "''")}' AND COALESCE(status, 'ACTIVO') <> 'INACTIVO' LIMIT 1`);
                 if (verRows && verRows.length > 0) {
                     const ver = verRows[0];
                     const rules = typeof ver.automatic_version_rules === 'string' ? JSON.parse(ver.automatic_version_rules) : (ver.automatic_version_rules || {});
                     
                     if (rules.rh) result.rh = rules.rh;
                     if (rules.private_label_client_name) result.private_label_client_name = rules.private_label_client_name;
+                    if (rules.version_label) result.version_label = rules.version_label;
                     
                     // Guardamos la descripción para usarla en accessory_text si sapDescription existe
                     (result as any)._version_description = ver.version_description;
@@ -160,33 +164,50 @@ export async function parseProductCode(
             let source = 'parser';
 
             // 1. Intentar por SKU COMPLETO (Exacto)
-            const skuCompleteRows = await dbQuery(`
-                SELECT s.*, v.sku_base, v.version_attrs, v.final_base_name_es, v.final_base_name_en,
-                       r.family_code, r.reference_code, r.product_name, r.designation, r.line, 
-                       r.commercial_measure, r.special_label, r.width_cm, r.depth_cm, r.height_cm, 
-                       r.weight_kg, r.stacking_max, r.isometric_path, r.isometric_asset_id, r.ref_attrs,
-                       f.product_type, f.zone_home, f.use_destination, f.assembled_default, f.rh_default
-                FROM public.product_skus s
-                JOIN public.product_versions v ON s.version_id = v.id
-                JOIN public.product_references r ON v.reference_id = r.id
-                JOIN public.families f ON r.family_code = f.family_code
-                WHERE s.sku_complete = '${code.replace(/'/g, "''")}'
-                LIMIT 1
-            `);
-
-            if (skuCompleteRows && skuCompleteRows.length > 0) {
-                foundData = skuCompleteRows[0];
+            const exactProduct = await composeProductBySku(code)
+            if (exactProduct) {
                 source = 'sku_match';
+                result.product_name = exactProduct.product_name || result.product_name
+                result.line = exactProduct.line || result.line
+                result.designation = exactProduct.designation || result.designation
+                result.commercial_measure = exactProduct.commercial_measure || result.commercial_measure
+                result.special_label = exactProduct.special_label || result.special_label
+                result.width_cm = exactProduct.width_cm ?? result.width_cm
+                result.depth_cm = exactProduct.depth_cm ?? result.depth_cm
+                result.height_cm = exactProduct.height_cm ?? result.height_cm
+                result.weight_kg = exactProduct.weight_kg ?? result.weight_kg
+                result.product_type = exactProduct.product_type || result.product_type
+                result.use_destination = exactProduct.use_destination || result.use_destination
+                result.zone_home = exactProduct.zone_home || result.zone_home
+                result.isometric_path = exactProduct.isometric_path || result.isometric_path
+                result.isometric_asset_id = exactProduct.isometric_asset_id || result.isometric_asset_id
+                result.status = exactProduct.status || result.status
+                result.version_label = exactProduct.version_label || result.version_label
+                result.bisagras = exactProduct.bisagras || result.bisagras
+                result.carb2 = exactProduct.carb2 || result.carb2
+                result.canto_puertas = exactProduct.canto_puertas || result.canto_puertas
+                result.accessory_text = exactProduct.accessory_text || result.accessory_text
+                result.rh = exactProduct.rh || result.rh
+                result.assembled_flag = exactProduct.assembled_flag
+                result.armado_con_lvm = exactProduct.armado_con_lvm || result.armado_con_lvm
+                result.private_label_client_name = exactProduct.private_label_client_name || result.private_label_client_name
+                ;(result as any).color_name = exactProduct.color_name || (result as any).color_name
             } else {
                 // 2. Intentar por SKU BASE (Misma Familia-Ref-Version)
                 const skuBaseRows = await dbQuery(`
                     SELECT v.*, r.family_code, r.reference_code, r.product_name, r.designation, r.line, 
                            r.commercial_measure, r.special_label, r.width_cm, r.depth_cm, r.height_cm, 
                            r.weight_kg, r.stacking_max, r.isometric_path, r.isometric_asset_id, r.ref_attrs,
-                           f.product_type, f.zone_home, f.use_destination, f.assembled_default, f.rh_default
+                           f.product_type, f.zone_home, f.use_destination, f.assembled_default, f.rh_default,
+                           r.status AS ref_status,
+                           v.status AS version_status,
+                           'ACTIVO'::text AS family_status,
+                           gvr.status AS global_version_rule_status,
+                           gvr.automatic_version_rules
                     FROM public.product_versions v
                     JOIN public.product_references r ON v.reference_id = r.id
                     JOIN public.families f ON r.family_code = f.family_code
+                    LEFT JOIN public.global_version_rules gvr ON v.version_code = gvr.version_code
                     WHERE v.sku_base = '${result.sku_base.replace(/'/g, "''")}'
                     LIMIT 1
                 `);
@@ -197,7 +218,9 @@ export async function parseProductCode(
                 } else {
                     // 3. Intentar por FAMILIA + REFERENCIA (Mismo mueble, distinta versión)
                     const famRefRows = await dbQuery(`
-                        SELECT r.*, f.product_type, f.zone_home, f.use_destination, f.assembled_default, f.rh_default
+                        SELECT r.*, f.product_type, f.zone_home, f.use_destination, f.assembled_default, f.rh_default,
+                               r.status AS ref_status,
+                               'ACTIVO'::text AS family_status
                         FROM public.product_references r
                         JOIN public.families f ON r.family_code = f.family_code
                         WHERE r.family_code = '${result.familia_code.replace(/'/g, "''")}'
@@ -216,43 +239,46 @@ export async function parseProductCode(
 
             if (foundData) {
                 const d = foundData;
+                const effectiveContext = buildEffectiveProductContext(d, { includeSkuOverrides: source === 'sku_match' });
+                const effectiveAttrs = effectiveContext.effective_attrs;
                 result.product_name = d.product_name || result.product_name;
                 result.line = d.line || result.line;
                 result.designation = d.designation || result.designation;
                 result.commercial_measure = d.commercial_measure || result.commercial_measure;
-                result.width_cm = d.width_cm ? parseFloat(d.width_cm) : result.width_cm;
-                result.depth_cm = d.depth_cm ? parseFloat(d.depth_cm) : result.depth_cm;
-                result.height_cm = d.height_cm ? parseFloat(d.height_cm) : result.height_cm;
-                result.weight_kg = d.weight_kg ? parseFloat(d.weight_kg) : result.weight_kg;
+                result.special_label = effectiveContext.resolved_special_label || result.special_label;
+                result.width_cm = effectiveContext.resolved_width_cm ?? result.width_cm;
+                result.depth_cm = effectiveContext.resolved_depth_cm ?? result.depth_cm;
+                result.height_cm = effectiveContext.resolved_height_cm ?? result.height_cm;
+                result.weight_kg = effectiveContext.resolved_weight_kg ?? result.weight_kg;
                 result.product_type = d.product_type || result.product_type;
                 result.use_destination = d.use_destination || result.use_destination;
                 result.zone_home = d.zone_home || result.zone_home;
                 result.isometric_path = d.isometric_path || result.isometric_path;
                 result.isometric_asset_id = d.isometric_asset_id || result.isometric_asset_id;
                 result.status = d.status || result.status;
+                result.version_label = result.version_label || d.version_label;
                 
-                // Atributos compuestos
-                const refAttrs = typeof d.ref_attrs === 'string' ? JSON.parse(d.ref_attrs) : (d.ref_attrs || {});
-                const verAttrs = typeof d.version_attrs === 'string' ? JSON.parse(d.version_attrs) : (d.version_attrs || {});
-                
-                const combinedAttrs = { ...refAttrs, ...verAttrs };
-                
-                result.bisagras = combinedAttrs.bisagras || result.bisagras;
-                result.carb2 = combinedAttrs.carb2 || result.carb2;
-                result.special_label = d.special_label || combinedAttrs.special_label || result.special_label;
-                result.canto_puertas = combinedAttrs.canto_puertas || result.canto_puertas;
-                result.accessory_text = combinedAttrs.accessory_text || result.accessory_text;
-                result.rh = combinedAttrs.rh || (d.rh_default ? 'RH' : result.rh);
-                result.assembled_flag = combinedAttrs.assembled_flag !== undefined ? combinedAttrs.assembled_flag : (d.assembled_default ?? result.assembled_flag);
+                result.bisagras = effectiveAttrs.bisagras || result.bisagras;
+                result.carb2 = effectiveAttrs.carb2 || result.carb2;
+                result.canto_puertas = effectiveAttrs.canto_puertas || result.canto_puertas;
+                result.accessory_text = effectiveAttrs.accessory_text || result.accessory_text;
+                result.rh = effectiveAttrs.rh || result.rh;
+                result.assembled_flag = effectiveAttrs.assembled_flag !== undefined
+                    ? effectiveAttrs.assembled_flag
+                    : result.assembled_flag;
+                result.armado_con_lvm = effectiveAttrs.armado_con_lvm || result.armado_con_lvm;
+                result.private_label_client_name =
+                    effectiveContext.resolved_private_label_client_name || result.private_label_client_name;
+                ;(result as any).color_name = effectiveContext.resolved_color_name || (result as any).color_name
 
-                (result as any)._source = source;
+                ;(result as any)._source = source;
             }
         } catch (e) {
             console.error('codeParser: error in hierarchical lookup V6.1', e);
         }
 
         // --- Recuperación automática de nombre de color si no se tiene ---
-        if (result.color_code) {
+        if (result.color_code && !(result as any).color_name) {
             try {
                 const paddedColorCode = result.color_code.padStart(4, '0');
                 const colorRows = await dbQuery(`SELECT name_color_sap FROM public.colors WHERE code_4dig = '${paddedColorCode.replace(/'/g, "''")}' LIMIT 1`);

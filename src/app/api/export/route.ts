@@ -8,10 +8,34 @@ export async function POST(req: Request) {
     let browser: Awaited<ReturnType<typeof launchBrowser>> | null = null
 
     try {
-        const { elements, format = 'pdf', width = 800, height = 400, filename } = await req.json()
+        const {
+            productId,
+            isExternalSource = false,
+            elements,
+            format = 'pdf',
+            width = 800,
+            height = 400,
+            filename
+        } = await req.json()
 
         if (!elements) {
             return NextResponse.json({ error: 'Missing template elements payload' }, { status: 400 })
+        }
+
+        if (productId) {
+            const { composeProductById } = await import('@/lib/engine/product_composer')
+            const exportProduct = await composeProductById(productId)
+
+            if (exportProduct) {
+                if (exportProduct.is_exportable === false) {
+                    return NextResponse.json({
+                        error: 'Product is inactive for export',
+                        inactive_reasons: exportProduct.inactive_reasons,
+                    }, { status: 409 })
+                }
+            } else if (!isExternalSource) {
+                return NextResponse.json({ error: 'Product not found for export validation' }, { status: 404 })
+            }
         }
 
         const browserMode = resolveExportBrowserMode()

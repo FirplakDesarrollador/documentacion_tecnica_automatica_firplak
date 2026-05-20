@@ -47,6 +47,7 @@ model Product {
   private_label_client_id   String?
   final_name_es             String?
   final_name_en             String?
+  version_label             String?
   stacking_max              Int?
   validation_status         String   @default("incomplete")
   createdAt                 DateTime @default(now())

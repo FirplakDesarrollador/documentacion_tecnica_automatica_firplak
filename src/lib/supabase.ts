@@ -6,7 +6,7 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 // ============================================================
 // Cliente Supabase estándar (operaciones server-side con anon key)
 // Las lecturas van por PostgREST REST API — sin límites del Management API
-// Las escrituras masivas van por RPC (bulk_update_product_names)
+// Las escrituras masivas y recálculos usan RPCs/vistas del Catálogo Maestro
 // ============================================================
 
 // Singleton para server-side (evita múltiples instancias en HMR)
@@ -24,7 +24,7 @@ if (process.env.NODE_ENV !== 'production') globalForSupabase._supabaseServer = s
 
 /**
  * Ejecuta SQL crudo vía el endpoint correcto de la Management API de Supabase.
- * Para operaciones masivas de escritura usar supabase.rpc('bulk_update_product_names').
+ * Para operaciones masivas usar RPCs/vistas del Catálogo Maestro, no flujos legacy.
  */
 export async function dbQuery(sql: string, values?: (string | number | boolean | null)[]): Promise<any> {
     let finalSql = sql

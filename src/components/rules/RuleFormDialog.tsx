@@ -45,6 +45,7 @@ interface RuleFormData {
 // Opciones para el constructor
 const FIELD_OPTIONS = [
     { value: 'version_code', label: 'Versión' },
+    { value: 'version_label', label: 'Etiqueta de versión' },
     { value: 'familia_code', label: 'Familia' },
     { value: 'product_type', label: 'Tipo de Producto' },
     { value: 'rh_flag', label: 'RH (Humedad)' },

@@ -5,6 +5,7 @@ import { Search, Download, AlertTriangle, X } from 'lucide-react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import {
     Dialog,
     DialogContent,
@@ -57,6 +58,7 @@ export function GenerateClient({
     // --- Estados de Filtros ---
     const [familyIds, setFamilyIds] = useState<string[]>(() => searchParams.getAll('f'))
     const [referenceIds, setReferenceIds] = useState<string[]>(() => searchParams.getAll('r'))
+    const [textFilter, setTextFilter] = useState(() => searchParams.get('q') || '')
 
     // --- Estado de Plantilla ---
     const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
@@ -111,6 +113,11 @@ export function GenerateClient({
             familyIds.forEach(id => params.append('f', id))
             referenceIds.forEach(id => params.append('r', id))
             
+            // Filtro de búsqueda
+            if (textFilter.trim()) {
+                params.set('q', textFilter.trim())
+            }
+            
             // Plantilla
             if (selectedTemplateId) {
                 params.set('template_id', selectedTemplateId)
@@ -129,11 +136,18 @@ export function GenerateClient({
 
             if (current !== next) {
                 router.push(`/generate?${next}`)
+                router.refresh()
             }
         }, 300)
 
         return () => clearTimeout(timeout)
-    }, [familyIds, referenceIds, selectedTemplateId, selectedIds, isLoaded, router, searchParams])
+    }, [familyIds, referenceIds, selectedTemplateId, selectedIds, textFilter, isLoaded, router, searchParams])
+
+    useEffect(() => {
+        setSelectedIds(prev =>
+            prev.filter(id => products.some(product => product.id === id && product.is_exportable !== false))
+        )
+    }, [products])
 
     // 3. Sincronizar selección de plantilla con cambios en la URL (Navegación externa/atrás)
     // Usamos este patrón para evitar que el estado local "pelee" con la prop inicial durante el re-renderizado
@@ -183,10 +197,29 @@ export function GenerateClient({
 
     const hasWarnings = warnings.some(w => w.missingFields.length > 0)
 
+    // --- Filtrado local por texto ---
+    const filteredProducts = useMemo(() => {
+        if (!textFilter.trim()) return products
+        const query = textFilter.toLowerCase().trim()
+        return products.filter(p => {
+            const name = (p.final_name_es || '').toLowerCase()
+            const colorCode = (p.color_code || '').toLowerCase()
+            const colorName = (p.color_name || '').toLowerCase()
+            const code = (p.code || '').toLowerCase()
+            const refCode = (p.ref_code || '').toLowerCase()
+            return name.includes(query) || 
+                   colorCode.includes(query) || 
+                   colorName.includes(query) ||
+                   code.includes(query) ||
+                   refCode.includes(query)
+        })
+    }, [products, textFilter])
+
     // --- Handlers ---
     const handleFilterChange = (families: string[], references: string[]) => {
         setFamilyIds(families)
         setReferenceIds(references)
+        // No limpiamos el filtro de texto para que persista al cambiar familias/referencias
     }
 
     const handleTemplateChange = (id: string) => {
@@ -220,10 +253,30 @@ export function GenerateClient({
                             familyIds={familyIds}
                             referenceIds={referenceIds}
                             onChange={handleFilterChange}
+                            textFilter={textFilter}
+                            onTextFilterChange={setTextFilter}
                         />
                     ) : (
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-3 flex-wrap">
                             <span className="text-sm text-slate-500 font-medium px-2 py-1 bg-indigo-50 text-indigo-700 rounded-md ring-1 ring-indigo-200">Dataset Externo (No aplica filtros de Familia)</span>
+                            <div className="relative flex items-center max-w-[280px] w-full">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                                <Input
+                                    type="text"
+                                    placeholder="Buscar por nombre o color..."
+                                    value={textFilter}
+                                    onChange={(e) => setTextFilter(e.target.value)}
+                                    className="pl-9 pr-8 h-10 w-full"
+                                />
+                                {textFilter && (
+                                    <button
+                                        onClick={() => setTextFilter('')}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 focus:outline-none"
+                                    >
+                                        <X className="w-4 h-4" />
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     )}
                 </div>
@@ -251,7 +304,11 @@ export function GenerateClient({
                     </div>
                     {hasFilter && products.length > 0 && (
                         <div className="text-slate-600 text-xs font-medium bg-slate-100 px-2 py-1 rounded-md">
-                            Mostrando {products.length} de {totalCount} productos encontrados
+                            {textFilter ? (
+                                `Filtrados: ${filteredProducts.length} de ${products.length} cargados (Total: ${totalCount})`
+                            ) : (
+                                `Mostrando ${products.length} de ${totalCount} productos encontrados`
+                            )}
                         </div>
                     )}
                 </div>
@@ -272,20 +329,15 @@ export function GenerateClient({
                     </div>
                 ) : (
                     <GenerateProductTable
-                        products={products}
+                        products={filteredProducts}
                         missingFieldsByProduct={missingFieldsByProduct}
                         selectedIds={selectedIds}
                         onSelectionChange={setSelectedIds}
                         templateId={selectedTemplateId}
+                        isExternalSource={isExternalSource}
                     />
                 )}
             </div>
-
-            {/* Advertencias para la selección actual */}
-            {selectedIds.length > 0 && hasWarnings && (
-                <ValidationWarnings warnings={warnings} />
-            )}
-
             {/* Footer sticky con exportación masiva */}
             {selectedIds.length > 0 && (
                 <div className="sticky bottom-4 z-20">
@@ -320,7 +372,7 @@ export function GenerateClient({
                             </Button>
                             <Button
                                 onClick={() => setShowBulkExport(true)}
-                                disabled={!selectedTemplate}
+                                disabled={!selectedTemplate || selectedProducts.length === 0}
                                 className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
                             >
                                 <Download className="w-4 h-4 mr-2" />

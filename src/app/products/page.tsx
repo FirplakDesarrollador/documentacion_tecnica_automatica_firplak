@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { PlusCircle, DatabaseZap, Search, Upload, BookOpen } from 'lucide-react'
+import { PlusCircle, DatabaseZap, Search, Upload, BookOpen, Layers } from 'lucide-react'
 import Link from 'next/link'
 import { ProductSearch } from '@/components/products/ProductSearch'
 import { cn } from '@/lib/utils'
@@ -47,10 +47,10 @@ export default async function ProductsPage({
         if (f.length > 0) conditions.push(`family_code IN (${f.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
         if (r.length > 0) conditions.push(`reference_code IN (${r.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
         if (m.length > 0) conditions.push(`commercial_measure IN (${m.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
-        const where = conditions.length > 0 ? `WHERE status = 'ACTIVO' AND ${conditions.join(' AND ')}` : "WHERE status = 'ACTIVO'"
+        const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
         const rawProducts = await dbQuery(
             `SELECT * FROM public.v_ui_generate_list
-             ${where} ORDER BY sku_complete ASC LIMIT 100`
+             ${where} ORDER BY is_exportable DESC, sku_complete ASC LIMIT 100`
         ) || []
         
         products = rawProducts.map((p: any) => ({
@@ -60,8 +60,11 @@ export default async function ProductsPage({
             final_name_es: p.final_complete_name_es,
             final_name_en: p.final_complete_name_en,
             color_code: p.color_code,
-            color_name: p.name_color_sap,
-            validation_status: p.validation_status
+            color_name: p.resolved_color_name || p.name_color_sap,
+            validation_status: p.validation_status,
+            effective_status: p.effective_status || p.status || 'ACTIVO',
+            is_exportable: p.is_exportable !== false,
+            inactive_reasons: Array.isArray(p.inactive_reasons) ? p.inactive_reasons : []
         }))
     }
 
@@ -116,6 +119,18 @@ export default async function ProductsPage({
                             Editor de Referencias
                         </Button>
                     </Link>
+                    <Link href="/products/version-editor">
+                        <Button variant="secondary" className="w-full sm:w-auto">
+                            <Layers className="mr-2 h-4 w-4 text-orange-500" />
+                            Editor de Versionamiento
+                        </Button>
+                    </Link>
+                    <Link href="/products/sku-editor">
+                        <Button variant="secondary" className="w-full sm:w-auto">
+                            <DatabaseZap className="mr-2 h-4 w-4 text-emerald-500" />
+                            Editor de SKUs
+                        </Button>
+                    </Link>
                     <Link href="/products/glossary">
                         <Button variant="outline" className="w-full sm:w-auto border-blue-200 text-blue-600 hover:bg-blue-50">
                             <BookOpen className="mr-2 h-4 w-4" />
@@ -161,7 +176,12 @@ export default async function ProductsPage({
                         </TableHeader>
                         <TableBody>
                             {hasFilterMsg || products.map((product) => (
-                                <TableRow key={product.id}>
+                                <TableRow
+                                    key={product.id}
+                                    className={cn(
+                                        !product.is_exportable && 'bg-rose-50/50 opacity-75 hover:bg-rose-50'
+                                    )}
+                                >
                                     <TableCell className="font-medium text-slate-900">{product.code}</TableCell>
                                     <TableCell className="text-slate-500 text-xs truncate max-w-[200px]" title={product.sap_description || ''}>
                                         {product.sap_description || '-'}
@@ -174,19 +194,34 @@ export default async function ProductsPage({
                                         {product.color_name || product.color_code || '-'}
                                     </TableCell>
                                     <TableCell>
-                                        <Badge
-                                            className={cn(
-                                                "text-[10px] px-2 py-0.5 font-semibold uppercase tracking-tight ring-1 ring-inset",
-                                                product.validation_status === 'ready'
-                                                    ? "bg-indigo-50 text-indigo-700 ring-indigo-700/10 hover:bg-indigo-50"
-                                                    : product.validation_status === 'needs_review'
+                                        <div className="flex flex-col gap-1">
+                                            <Badge
+                                                className={cn(
+                                                    "text-[10px] px-2 py-0.5 font-semibold uppercase tracking-tight ring-1 ring-inset w-fit",
+                                                    !product.is_exportable
                                                         ? "bg-rose-50 text-rose-700 ring-rose-700/10 hover:bg-rose-50"
-                                                        : "bg-slate-50 text-slate-600 ring-slate-600/10 hover:bg-slate-50"
+                                                        : product.validation_status === 'ready'
+                                                            ? "bg-indigo-50 text-indigo-700 ring-indigo-700/10 hover:bg-indigo-50"
+                                                            : product.validation_status === 'needs_review'
+                                                                ? "bg-rose-50 text-rose-700 ring-rose-700/10 hover:bg-rose-50"
+                                                                : "bg-slate-50 text-slate-600 ring-slate-600/10 hover:bg-slate-50"
+                                                )}
+                                                title={product.inactive_reasons.join(', ') || undefined}
+                                            >
+                                                {!product.is_exportable
+                                                    ? 'Inactivo'
+                                                    : product.validation_status === 'incomplete'
+                                                        ? 'Incompleto'
+                                                        : product.validation_status === 'needs_review'
+                                                            ? 'Revisar'
+                                                            : 'Listo'}
+                                            </Badge>
+                                            {!product.is_exportable && product.inactive_reasons.length > 0 && (
+                                                <span className="text-[10px] text-rose-600 leading-tight">
+                                                    {product.inactive_reasons.join(', ')}
+                                                </span>
                                             )}
-                                        >
-                                            {product.validation_status === 'incomplete' ? 'Incompleto' :
-                                                product.validation_status === 'needs_review' ? 'Revisar' : 'Listo'}
-                                        </Badge>
+                                        </div>
                                     </TableCell>
                                     <TableCell className="text-right">
                                         <Link href={`/products/${product.id}${filterQuery}`}>

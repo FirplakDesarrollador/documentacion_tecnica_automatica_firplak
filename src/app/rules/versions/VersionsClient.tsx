@@ -20,12 +20,13 @@ import {
 import { Label } from '@/components/ui/label'
 
 interface VersionEntry {
-    id: string
-    code: string
-    description: string
-    automatic_rules: any
-    notes: string | null
+    version_code: string
+    version_description: string
+    automatic_version_rules: any
+    product_types: string[] | any
+    status: string | null
     created_at: string
+    updated_at: string
 }
 
 interface VersionsClientProps {
@@ -40,40 +41,48 @@ export default function VersionsClient({ initialData }: VersionsClientProps) {
     
     // Modal state for Add/Edit
     const [modalOpen, setModalOpen] = useState(false)
-    const [editingVersion, setEditingVersion] = useState<Partial<VersionEntry> | null>(null)
+    const [editingVersion, setEditingVersion] = useState<Partial<VersionEntry> & { isNew?: boolean } | null>(null)
 
     const filteredData = data.filter(item => 
-        item.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.description.toLowerCase().includes(searchTerm.toLowerCase())
+        item.version_code.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        item.version_description.toLowerCase().includes(searchTerm.toLowerCase())
     )
 
     const handleOpenModal = (version: Partial<VersionEntry> | null = null) => {
-        setEditingVersion(version || { code: '', description: '', automatic_rules: {}, notes: '' })
+        if (version) {
+            setEditingVersion({ ...version, isNew: false })
+        } else {
+            setEditingVersion({ version_code: '', version_description: '', automatic_version_rules: {}, product_types: [], status: 'ACTIVO', isNew: true })
+        }
         setModalOpen(true)
     }
 
     const handleSave = async (e: React.FormEvent) => {
         e.preventDefault()
-        if (!editingVersion?.code || !editingVersion?.description) {
+        if (!editingVersion?.version_code || !editingVersion?.version_description) {
             toast.error("El código y la descripción son obligatorios")
             return
         }
 
         setIsSaving(true)
         try {
-            const saved = await upsertVersionAction(editingVersion as any)
+            const saved = await upsertVersionAction({
+                version_code: editingVersion.version_code,
+                version_description: editingVersion.version_description,
+                automatic_version_rules: editingVersion.automatic_version_rules,
+                status: editingVersion.status || 'ACTIVO',
+                product_types: editingVersion.product_types || [],
+                isNew: editingVersion.isNew,
+            })
             toast.success("Versión guardada correctamente")
             setModalOpen(false)
             
             // Refrescar localmente
-            if (editingVersion.id) {
-                setData(prev => prev.map(v => v.id === editingVersion.id ? saved : v))
+            if (!editingVersion.isNew) {
+                setData(prev => prev.map(v => v.version_code === editingVersion.version_code ? saved : v))
             } else {
                 setData(prev => [saved, ...prev])
             }
-            
-            // Opcionalmente recargar para asegurar consistencia del server
-            // window.location.reload() 
         } catch (error) {
             console.error(error)
             toast.error("Error al guardar")
@@ -82,12 +91,12 @@ export default function VersionsClient({ initialData }: VersionsClientProps) {
         }
     }
 
-    const handleDelete = async (id: string) => {
+    const handleDelete = async (version_code: string) => {
         if (!confirm("¿Seguro que deseas eliminar esta regla de versión?")) return
-        setIsDeleting(id)
+        setIsDeleting(version_code)
         try {
-            await deleteVersionAction(id)
-            setData(prev => prev.filter(t => t.id !== id))
+            await deleteVersionAction(version_code)
+            setData(prev => prev.filter(t => t.version_code !== version_code))
             toast.success("Versión eliminada")
         } catch (error) {
             console.error(error)
@@ -136,41 +145,49 @@ export default function VersionsClient({ initialData }: VersionsClientProps) {
                             <TableHead className="font-bold uppercase text-[10px] w-24">Código</TableHead>
                             <TableHead className="font-bold uppercase text-[10px]">Descripción / Accesorios</TableHead>
                             <TableHead className="font-bold uppercase text-[10px]">Reglas Automáticas</TableHead>
+                            <TableHead className="font-bold uppercase text-[10px] w-20">Estado</TableHead>
                             <TableHead className="text-right font-bold uppercase text-[10px]">Acciones</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
                         {filteredData.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={4} className="h-32 text-center text-muted-foreground italic">
+                                <TableCell colSpan={5} className="h-32 text-center text-muted-foreground italic">
                                     No se encontraron versiones.
                                 </TableCell>
                             </TableRow>
                         ) : (
                             filteredData.map((item) => {
-                                const hasRules = Object.keys(item.automatic_rules || {}).length > 0;
+                                const rules = item.automatic_version_rules || {};
+                                const hasRules = Object.keys(rules).length > 0;
                                 return (
-                                    <TableRow key={item.id} className="hover:bg-indigo-50/30 transition-colors">
+                                    <TableRow key={item.version_code} className="hover:bg-indigo-50/30 transition-colors">
                                         <TableCell className="font-bold text-slate-900 border-r border-slate-100">
                                             <Badge variant="outline" className="bg-slate-50 text-indigo-700 border-indigo-100 uppercase">
-                                                {item.code}
+                                                {item.version_code}
                                             </Badge>
                                         </TableCell>
-                                        <TableCell className="text-slate-700 font-medium italic">{item.description}</TableCell>
+                                        <TableCell className="text-slate-700 font-medium italic">{item.version_description}</TableCell>
                                         <TableCell>
                                             <div className="flex flex-wrap gap-1">
-                                                {item.automatic_rules?.rh && (
+                                                {rules?.rh && (
                                                     <Badge variant="secondary" className="text-[9px] bg-amber-50 text-amber-700 border-amber-100">
-                                                        RH: {item.automatic_rules.rh}
+                                                        RH: {rules.rh}
                                                     </Badge>
                                                 )}
-                                                {item.automatic_rules?.client_name && (
+                                                {rules?.client_name && (
                                                     <Badge variant="secondary" className="text-[9px] bg-blue-50 text-blue-700 border-blue-100">
-                                                        CLIENTE: {item.automatic_rules.client_name}
+                                                        CLIENTE: {rules.client_name}
                                                     </Badge>
                                                 )}
                                                 {!hasRules && <span className="text-[10px] text-slate-400 italic">Sin reglas</span>}
                                             </div>
+                                        </TableCell>
+                                        <TableCell>
+                                            <Badge variant={item.status === 'ACTIVO' ? 'default' : 'secondary'}
+                                                className={item.status === 'ACTIVO' ? 'bg-emerald-100 text-emerald-700 border-emerald-200 text-[9px]' : 'text-[9px]'}>
+                                                {item.status || 'ACTIVO'}
+                                            </Badge>
                                         </TableCell>
                                         <TableCell className="text-right">
                                             <div className="flex justify-end gap-1">
@@ -185,11 +202,11 @@ export default function VersionsClient({ initialData }: VersionsClientProps) {
                                                 <Button 
                                                     variant="ghost" 
                                                     size="icon" 
-                                                    onClick={() => handleDelete(item.id)}
-                                                    disabled={isDeleting === item.id}
+                                                    onClick={() => handleDelete(item.version_code)}
+                                                    disabled={isDeleting === item.version_code}
                                                     className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50"
                                                 >
-                                                    {isDeleting === item.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                                    {isDeleting === item.version_code ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                                                 </Button>
                                             </div>
                                         </TableCell>
@@ -204,7 +221,7 @@ export default function VersionsClient({ initialData }: VersionsClientProps) {
             <Dialog open={modalOpen} onOpenChange={setModalOpen}>
                 <DialogContent>
                     <DialogHeader>
-                        <DialogTitle>{editingVersion?.id ? 'Editar Versión' : 'Nueva Versión'}</DialogTitle>
+                        <DialogTitle>{editingVersion?.isNew ? 'Nueva Versión' : 'Editar Versión'}</DialogTitle>
                         <DialogDescription>
                             Configura el comportamiento automático para este código de versión.
                         </DialogDescription>
@@ -215,10 +232,11 @@ export default function VersionsClient({ initialData }: VersionsClientProps) {
                             <Input 
                                 id="code" 
                                 className="col-span-3"
-                                value={editingVersion?.code || ''} 
-                                onChange={(e) => setEditingVersion(prev => ({ ...prev!, code: e.target.value.toUpperCase() }))}
+                                value={editingVersion?.version_code || ''} 
+                                onChange={(e) => setEditingVersion(prev => ({ ...prev!, version_code: e.target.value.toUpperCase() }))}
                                 placeholder="E.g. CHT, MRH, 001"
                                 required
+                                disabled={!editingVersion?.isNew}
                             />
                         </div>
                         <div className="grid grid-cols-4 items-center gap-4">
@@ -226,8 +244,8 @@ export default function VersionsClient({ initialData }: VersionsClientProps) {
                             <Input 
                                 id="description" 
                                 className="col-span-3"
-                                value={editingVersion?.description || ''} 
-                                onChange={(e) => setEditingVersion(prev => ({ ...prev!, description: e.target.value.toUpperCase() }))}
+                                value={editingVersion?.version_description || ''} 
+                                onChange={(e) => setEditingVersion(prev => ({ ...prev!, version_description: e.target.value.toUpperCase() }))}
                                 placeholder="E.g. CHILEMAT, CROMO 2 LUCES"
                                 required
                             />
@@ -243,10 +261,10 @@ export default function VersionsClient({ initialData }: VersionsClientProps) {
                                 <Label className="text-right text-xs">Forzar RH</Label>
                                 <select 
                                     className="col-span-3 h-9 px-3 py-1 text-sm border rounded-md"
-                                    value={editingVersion?.automatic_rules?.rh || ''}
+                                    value={editingVersion?.automatic_version_rules?.rh || ''}
                                     onChange={(e) => setEditingVersion(prev => ({
                                         ...prev!,
-                                        automatic_rules: { ...prev!.automatic_rules, rh: e.target.value || undefined }
+                                        automatic_version_rules: { ...prev!.automatic_version_rules, rh: e.target.value || undefined }
                                     }))}
                                 >
                                     <option value="">No aplicar</option>
@@ -259,10 +277,10 @@ export default function VersionsClient({ initialData }: VersionsClientProps) {
                                 <Label className="text-right text-xs">Forzar Cliente</Label>
                                 <Input 
                                     className="col-span-3 h-9"
-                                    value={editingVersion?.automatic_rules?.client_name || ''}
+                                    value={editingVersion?.automatic_version_rules?.client_name || ''}
                                     onChange={(e) => setEditingVersion(prev => ({
                                         ...prev!,
-                                        automatic_rules: { ...prev!.automatic_rules, client_name: e.target.value.toUpperCase() || undefined }
+                                        automatic_version_rules: { ...prev!.automatic_version_rules, client_name: e.target.value.toUpperCase() || undefined }
                                     }))}
                                     placeholder="Nombre del cliente"
                                 />

@@ -72,6 +72,15 @@ export default async function GeneratePreviewPage({
     const rules = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true`) || []
     const engineResult = await evaluateProductRules(product, rules)
 
+    // Traducir a inglés en caliente usando el motor adaptativo
+    const { translateProductToEnglish } = await import('@/lib/engine/translator')
+    const productType = (product.product_type || 'MUEBLE').toUpperCase()
+    const translationResult = await translateProductToEnglish(product, productType, engineResult.activeVariableIds)
+    const fullEngineResult = {
+        ...engineResult,
+        finalNameEn: translationResult.translatedName || product.final_name_en || ''
+    }
+
     // Construir el link de regreso
     const urlParams = new URLSearchParams()
     Object.entries(searchParams).forEach(([key, value]) => {
@@ -108,7 +117,7 @@ export default async function GeneratePreviewPage({
                 product={product}
                 templates={templates}
                 initialTemplateId={initialTemplateId}
-                engineResult={engineResult}
+                engineResult={fullEngineResult as any}
             />
         </div>
     )

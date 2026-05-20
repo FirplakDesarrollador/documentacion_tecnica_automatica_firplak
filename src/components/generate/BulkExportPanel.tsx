@@ -56,6 +56,14 @@ async function exportOneProduct(
     rules: any[],
     directoryHandle: any | null = null
 ): Promise<boolean> {
+    if (product.is_exportable === false) {
+        throw new Error(
+            product.inactive_reasons?.length
+                ? `Producto bloqueado: ${product.inactive_reasons.join(', ')}`
+                : `Producto ${product.code} inactivo para exportacion`
+        )
+    }
+
     let elements: any[] = []
     try {
         elements = JSON.parse(template.elements_json || '[]')
@@ -69,15 +77,29 @@ async function exportOneProduct(
     // 2. Resolver assets
     const assetMap = await resolveAssetsAction(assetIds)
 
-    // 3. Hidratar
-    const hydrated = await hydrateTemplateElements(elements, product, assetMap)
-
-    // 4. Preparar nombre y contexto
+    // 3. Preparar nombres derivados usando el motor de reglas en caliente (español + inglés)
     const engineResult = evaluateProductRules(product as any, rules)
     const final_name_es = engineResult.finalNameEs || product.final_name_es || ''
+    
+    // Traducir a inglés en caliente usando el motor adaptativo
+    const { translateProductToEnglish } = await import('@/lib/engine/translator')
+    const productType = (product.product_type || 'MUEBLE').toUpperCase()
+    const translationResult = await translateProductToEnglish(product as any, productType, engineResult.activeVariableIds)
+    const final_name_en = translationResult.translatedName || product.final_name_en || ''
+    
     const zoneEn = await resolveZoneHomeEnAction(product.zone_home)
-    const contextWithDerivedName = { ...product, final_name_es, zone_home_en: zoneEn || undefined }
-    const enriched = enrichProductDataWithIcons(contextWithDerivedName, assetMap)
+    
+    // Crear el producto actualizado con los nombres calculados en caliente
+    const updatedProduct = { 
+        ...product, 
+        final_name_es, 
+        final_name_en, 
+        zone_home_en: zoneEn || undefined 
+    }
+    
+    // 4. Hidratar la plantilla con los textos resueltos en tiempo real
+    const hydrated = await hydrateTemplateElements(elements, updatedProduct, assetMap)
+    const enriched = enrichProductDataWithIcons(updatedProduct, assetMap)
     
     // Obtenemos el nombre base y lo sanitizamos para evitar errores de sistema de archivos
     const rawDownloadName = hydrateText((template as any).export_filename_format || '{sku_base}_{final_name_es}', enriched)
@@ -92,6 +114,8 @@ async function exportOneProduct(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
+            productId: product.id,
+            isExternalSource: product.is_external === true,
             elements: hydrated, 
             format, 
             width: widthPx, 
@@ -100,7 +124,11 @@ async function exportOneProduct(
         }),
     })
 
-    if (!response.ok) throw new Error(`Error exportando ${product.code}`)
+    if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        const reasonText = Array.isArray(payload?.inactive_reasons) ? `: ${payload.inactive_reasons.join(', ')}` : ''
+        throw new Error(payload?.error ? `${payload.error}${reasonText}` : `Error exportando ${product.code}`)
+    }
 
     const blob = await response.blob()
     if (!blob || blob.size <= 0) {
@@ -164,6 +192,11 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
             missingFields: getMissingFields(p, requiredFields),
         })),
         [selectedProducts, requiredFields]
+    )
+
+    const blockedProducts = useMemo(
+        () => selectedProducts.filter(product => product.is_exportable === false),
+        [selectedProducts]
     )
 
     const hasWarnings = warnings.some(w => w.missingFields.length > 0)
@@ -267,6 +300,15 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                 <ValidationWarnings warnings={warnings} />
             )}
 
+            {blockedProducts.length > 0 && (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                    <p className="font-semibold">Hay productos inactivos bloqueados para exportacion.</p>
+                    <p className="mt-1 text-xs">
+                        {blockedProducts.map(product => `${product.code}: ${(product.inactive_reasons || []).join(', ') || 'Inactivo'}`).join(' | ')}
+                    </p>
+                </div>
+            )}
+
             {/* Progreso */}
             {started && (
                 <div className="flex flex-col gap-2">
@@ -368,9 +410,9 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                     <>
                         <Button
                             onClick={startExport}
-                            disabled={!template || isRunning || !allowedFormats.includes(selectedFormat)}
+                            disabled={!template || isRunning || !allowedFormats.includes(selectedFormat) || blockedProducts.length > 0}
                             className={`flex-1 ${
-                                !allowedFormats.includes(selectedFormat)
+                                !allowedFormats.includes(selectedFormat) || blockedProducts.length > 0
                                     ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300'
                                     : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-100'
                             }`}

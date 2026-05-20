@@ -26,12 +26,11 @@ export async function getFullValidationSweep(): Promise<ExceptionSummary> {
     const rows = await dbQuery(`
         SELECT *
         FROM public.v_ui_generate_list 
-        WHERE (status IS NULL OR status != 'INACTIVO')
-        AND (ref_status IS NULL OR ref_status != 'INACTIVO')
+        WHERE COALESCE(is_exportable, true) = true
         ORDER BY sku_complete ASC
     `) || []
 
-    const products = rows.map(mapRowToComposedProduct)
+    const products = rows.map((row: any) => mapRowToComposedProduct(row))
     
     const rules = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true`) || []
     
@@ -107,7 +106,11 @@ export async function syncValidationStatus(): Promise<{ updated: number }> {
     // Or better, iterate through sweep results
     
     // Get all product IDs to handle 'ready' state
-    const allSkus = await dbQuery(`SELECT id, version_id FROM public.product_skus WHERE status IS NULL OR status != 'INACTIVO'`) || []
+    const allSkus = await dbQuery(`
+        SELECT id, version_id
+        FROM public.v_ui_generate_list
+        WHERE COALESCE(is_exportable, true) = true
+    `) || []
     
     // Create a map of exceptions for fast lookup
     const exceptionMap = new Map(sweep.details.map(d => [d.productId, d.issues]))

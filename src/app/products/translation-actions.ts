@@ -44,7 +44,7 @@ export async function translateEnglishBatchAction(
         }
 
         const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
-        const products = rows.map(mapRowToComposedProduct)
+        const products = rows.map((row: any) => mapRowToComposedProduct(row))
 
         const { data: rules, error: rulesError } = await supabase
             .from('rules')
@@ -182,7 +182,7 @@ export async function scanMissingGlossaryTermsAction(): Promise<{ success: boole
         }
 
         const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
-        const products = rows.map(mapRowToComposedProduct)
+        const products = rows.map((row: any) => mapRowToComposedProduct(row))
 
         const { data: rules, error: rulesError } = await supabase
             .from('rules')
@@ -224,4 +224,3 @@ export async function scanMissingGlossaryTermsAction(): Promise<{ success: boole
         return { success: false, error: error.message || 'Error al escanear conflictos' }
     }
 }
-

@@ -82,7 +82,7 @@ async function main() {
             { rule_type: 'name_component', target_entity: 'product', condition_expression: 'rh_flag == true', action_type: 'append_text', action_payload: 'RH', priority: 10 },
             { rule_type: 'name_component', target_entity: 'product', condition_expression: 'product_type != null', action_type: 'append_text', action_payload: '{product_type}', priority: 20 },
             { rule_type: 'name_component', target_entity: 'product', condition_expression: 'assembled_flag == true', action_type: 'append_text', action_payload: 'ARMADO', priority: 30 },
-            { rule_type: 'name_component', target_entity: 'product', condition_expression: 'cabinet_name != null', action_type: 'append_text', action_payload: '{cabinet_name}', priority: 40 },
+            { rule_type: 'name_component', target_entity: 'product', condition_expression: 'product_name != null', action_type: 'append_text', action_payload: '{product_name}', priority: 40 },
             { rule_type: 'name_component', target_entity: 'product', condition_expression: 'designation != null', action_type: 'append_text', action_payload: '{designation}', priority: 50 },
             { rule_type: 'name_component', target_entity: 'product', condition_expression: 'line != null', action_type: 'append_text', action_payload: '{line}', priority: 60 },
             { rule_type: 'name_component', target_entity: 'product', condition_expression: 'accessory_text != null', action_type: 'append_text', action_payload: '{accessory_text}', priority: 70 },

@@ -19,6 +19,7 @@ export default async function GeneratePage({
     const f = toArray(searchParams?.f)
     const r = toArray(searchParams?.r)
     const m = toArray(searchParams?.m)
+    const q = typeof searchParams?.q === 'string' ? searchParams.q : null
     const templateId = typeof searchParams?.template_id === 'string' ? searchParams.template_id : null
 
     // Para filtrar productos: extraer reference_code y commercial_measure desde valores compuestos.
@@ -44,7 +45,7 @@ export default async function GeneratePage({
     const mDecoded = parsedR.map(p => p.commercial_measure).filter(isNonEmptyString)
     const familiesFromR = parsedR.map(p => p.family_code).filter(isNonEmptyString)
 
-    const hasFilter = f.length > 0 || r.length > 0 || m.length > 0
+    const hasFilter = f.length > 0 || r.length > 0 || m.length > 0 || (typeof q === 'string' && q.trim().length > 0)
 
     // --- Cargar productos filtrados ---
     let products: any[] = []
@@ -55,11 +56,13 @@ export default async function GeneratePage({
         const filtersObj = {
             families: effectiveFamilies,
             references: rDecoded,
-            measures: mDecoded.length > 0 ? mDecoded : m
+            measures: mDecoded.length > 0 ? mDecoded : m,
+            search: q || undefined
         }
         
         const { composeProductsByFilters } = await import('@/lib/engine/product_composer')
-        const result = await composeProductsByFilters(filtersObj, 200)
+        const limitVal = q ? 1000 : 200
+        const result = await composeProductsByFilters(filtersObj, limitVal)
         products = result.products
         totalCount = result.totalCount
     }

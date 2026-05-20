@@ -149,7 +149,7 @@ export async function getPreviewProduct(dataSource: string = 'core_firplak') {
         }
 
         const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
-        const products = rows.map(mapRowToComposedProduct)
+        const products = rows.map((row: any) => mapRowToComposedProduct(row))
 
         let longest = products[0]
         for (const p of products) {
@@ -283,7 +283,7 @@ export async function validateExportFilenameLength(pattern: string, dataSource: 
                 WHERE status != 'INACTIVO'
             `)
             const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
-            products = rows.map(mapRowToComposedProduct)
+            products = rows.map((row: any) => mapRowToComposedProduct(row))
         }
 
         if (!products || products.length === 0) return { success: true, count: 0 }
