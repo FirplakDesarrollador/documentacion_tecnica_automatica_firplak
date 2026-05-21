@@ -298,10 +298,11 @@ export async function createProductAction(data: any) {
     const clientName = isPrivate ? clientNameRaw : 'NA'
     const clientId = ''
 
-    // Optional: store logo association for the client name (does not affect private-label logic)
-    if (isPrivate && data.private_label_logo_id) {
+    // Store client metadata whenever we have a valid private-label client name
+    // (logo association is optional and does not affect private-label logic).
+    if (isPrivate) {
         try {
-            await createClientAction(clientNameRaw, String(data.private_label_logo_id))
+            await createClientAction(clientNameRaw, data.private_label_logo_id ? String(data.private_label_logo_id) : undefined)
         } catch {
             // Non-blocking; private label still works without storing logo metadata
         }
@@ -358,10 +359,11 @@ export async function updateProductAction(id: string, data: any) {
     const clientNameRaw = data.private_label_client_name ? String(data.private_label_client_name).trim() : ''
     const isPrivate = clientNameRaw !== '' && clientNameRaw.toUpperCase() !== 'NA'
 
-    // Optional: store logo association for the client name
-    if (isPrivate && data.private_label_logo_id) {
+    // Store client metadata whenever we have a valid private-label client name
+    // (logo association is optional and does not affect private-label logic).
+    if (isPrivate) {
         try {
-            await createClientAction(clientNameRaw, String(data.private_label_logo_id))
+            await createClientAction(clientNameRaw, data.private_label_logo_id ? String(data.private_label_logo_id) : undefined)
         } catch {
             // Non-blocking
         }
@@ -686,16 +688,33 @@ export async function getClientsAction() {
 
 export async function createClientAction(name: string, logoAssetId?: string) {
     if (!name) throw new Error("Nombre del cliente requerido")
-    
-    // Check if client exists
-    const existing = await dbQuery(`SELECT id FROM public.clients WHERE name = '${name.replace(/'/g, "''")}' LIMIT 1`)
-    if (existing && existing.length > 0) return existing[0]
+
+    const nameNorm = String(name).trim().toUpperCase()
+    if (!nameNorm || nameNorm === 'NA') throw new Error("Nombre del cliente requerido")
+
+    // Check if client exists (case-insensitive)
+    const existing = await dbQuery(
+        `SELECT id, name, logo_asset_id FROM public.clients WHERE UPPER(name) = $1 LIMIT 1`,
+        [nameNorm]
+    )
+    if (existing && existing.length > 0) {
+        const row = existing[0]
+        // If a logo was provided and we don't have one stored yet, store it (best-effort)
+        if (logoAssetId && !row.logo_asset_id) {
+            try {
+                await dbQuery(`UPDATE public.clients SET logo_asset_id = $1 WHERE id = $2`, [logoAssetId, row.id])
+            } catch {
+                // ignore
+            }
+        }
+        return row
+    }
 
     const res = await dbQuery(`
         INSERT INTO public.clients (id, name, logo_asset_id, created_at)
-        VALUES (gen_random_uuid(), '${name.replace(/'/g, "''")}', ${logoAssetId ? `'${logoAssetId}'` : 'NULL'}, now())
+        VALUES (gen_random_uuid(), $1, $2, now())
         RETURNING id, name
-    `)
+    `, [nameNorm, logoAssetId || null])
     
     if (!res || res.length === 0) throw new Error("No se pudo crear el cliente")
     return res[0]

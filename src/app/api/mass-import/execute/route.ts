@@ -76,6 +76,30 @@ function toNumberOrNull(val: any): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+async function ensureClientsExist(clientNames: string[]) {
+  const unique: string[] = [];
+  for (const n of clientNames) {
+    const trimmed = String(n || '').trim();
+    if (!trimmed) continue;
+    const up = trimmed.toUpperCase();
+    if (up === 'NA' || up === 'N/A' || up === 'NULL' || up === 'NONE') continue;
+    if (!unique.find((x) => x.toUpperCase() === up)) unique.push(up);
+  }
+
+  for (const nameUpper of unique) {
+    await dbQuery(
+      `
+      INSERT INTO public.clients (id, name, logo_asset_id, created_at)
+      SELECT gen_random_uuid(), $1, NULL, now()
+      WHERE NOT EXISTS (
+        SELECT 1 FROM public.clients c WHERE UPPER(BTRIM(c.name)) = $1
+      )
+    `,
+      [nameUpper]
+    );
+  }
+}
+
 function normalizeOptionalText(val: any): string | null {
   if (val === null || val === undefined) return null;
   const s = String(val).trim();
@@ -287,9 +311,13 @@ export async function POST(req: Request) {
     const rules = (await dbQuery(`SELECT * FROM public.rules WHERE enabled = true ORDER BY priority ASC`)) || [];
 
     const updates: any[] = [];
+    const clientNamesToEnsure = new Set<string>();
     for (const skuId of createdSkuIds) {
       const composed = await composeProductById(skuId);
       if (!composed) continue;
+
+      const plc = composed.private_label_client_name ? String(composed.private_label_client_name).trim() : '';
+      if (plc && plc.toUpperCase() !== 'NA') clientNamesToEnsure.add(plc);
 
       const working: any = {
         code: composed.code,
@@ -337,6 +365,10 @@ export async function POST(req: Request) {
         final_complete_name_en: finalNameEn,
         validation_status: finalNameEs && finalNameEn ? 'ready' : 'needs_review',
       });
+    }
+
+    if (!safeMode && clientNamesToEnsure.size > 0) {
+      await ensureClientsExist(Array.from(clientNamesToEnsure));
     }
 
     const { data: nameRes, error: nameErr } = await (supabaseServer as any).rpc('bulk_apply_names_v6', {

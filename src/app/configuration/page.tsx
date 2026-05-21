@@ -4,7 +4,7 @@ import { NomenclaturesSection } from '@/components/rules/NomenclaturesSection';
 import { MassImportSettingsSection } from '@/components/rules/MassImportSettingsSection';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { Settings, Palette, PlusCircle, DatabaseZap, Layers, BookOpen } from 'lucide-react';
+import { Settings, Palette, PlusCircle, DatabaseZap, Layers, BookOpen, Users } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -71,6 +71,12 @@ export default async function ConfigurationPage() {
             <Button variant="secondary" className="w-full sm:w-auto">
               <Palette className="mr-2 h-4 w-4 text-green-600" />
               Editor de colores
+            </Button>
+          </Link>
+          <Link href="/configuration/clients">
+            <Button variant="secondary" className="w-full sm:w-auto">
+              <Users className="mr-2 h-4 w-4 text-slate-700" />
+              Editor de clientes
             </Button>
           </Link>
           <Link href="/products/glossary">
