@@ -8,13 +8,43 @@ export async function createTemplate(data: {
     width_mm: number
     height_mm: number
     data_source: string
+    brand_scope?: 'firplak' | 'private_label'
+    private_label_client_name?: string | null
 }) {
     try {
         const orientation = data.width_mm >= data.height_mm ? 'horizontal' : 'vertical'
+        const brandScope = data.data_source === 'core_firplak' && data.brand_scope === 'private_label' ? 'private_label' : 'firplak'
+        const plc = data.private_label_client_name ? String(data.private_label_client_name).trim() : ''
+
+        if (brandScope === 'private_label' && !plc) {
+            return { success: false, error: 'Cliente marca propia requerido' }
+        }
 
         const rows = await dbQuery(`
-            INSERT INTO public.plantillas_doc_tec (name, width_mm, height_mm, orientation, document_type, elements_json, active, data_source)
-            VALUES ('${data.name.replace(/'/g, "''")}', ${data.width_mm}, ${data.height_mm}, '${orientation}', 'label', '[]', true, '${data.data_source.replace(/'/g, "''")}')
+            INSERT INTO public.plantillas_doc_tec (
+                name,
+                width_mm,
+                height_mm,
+                orientation,
+                document_type,
+                elements_json,
+                active,
+                data_source,
+                brand_scope,
+                private_label_client_name
+            )
+            VALUES (
+                '${data.name.replace(/'/g, "''")}',
+                ${data.width_mm},
+                ${data.height_mm},
+                '${orientation}',
+                'label',
+                '[]',
+                true,
+                '${data.data_source.replace(/'/g, "''")}',
+                '${brandScope}',
+                ${brandScope === 'private_label' ? `'${plc.replace(/'/g, "''")}'` : 'NULL'}
+            )
             RETURNING id
         `)
 
@@ -31,6 +61,11 @@ export async function duplicateTemplate(id: string, newName: string, dataSource:
         if (!rows || rows.length === 0) return { success: false, error: 'Plantilla original no encontrada' }
 
         const original = rows[0]
+        const originalBrandScope = original?.brand_scope === 'private_label' ? 'private_label' : 'firplak'
+        const originalPrivateLabelClientName =
+            originalBrandScope === 'private_label' && original?.private_label_client_name
+                ? String(original.private_label_client_name)
+                : null
         
         // Escape elements_json safely. Original is already a stringified JSON.
         const safeJson = original.elements_json ? original.elements_json.replace(/'/g, "''") : '[]'
@@ -40,7 +75,18 @@ export async function duplicateTemplate(id: string, newName: string, dataSource:
 
         const inserted = await dbQuery(`
             INSERT INTO public.plantillas_doc_tec (
-                name, width_mm, height_mm, orientation, document_type, elements_json, active, data_source, export_formats, export_filename_format
+                name,
+                width_mm,
+                height_mm,
+                orientation,
+                document_type,
+                elements_json,
+                active,
+                data_source,
+                export_formats,
+                export_filename_format,
+                brand_scope,
+                private_label_client_name
             )
             VALUES (
                 '${newName.replace(/'/g, "''")}', 
@@ -53,7 +99,9 @@ export async function duplicateTemplate(id: string, newName: string, dataSource:
                 true, 
                 '${dataSource.replace(/'/g, "''")}',
                 ${original.export_formats ? `'${original.export_formats.replace(/'/g, "''")}'` : 'NULL'},
-                ${original.export_filename_format ? `'${original.export_filename_format.replace(/'/g, "''")}'` : 'NULL'}
+                ${original.export_filename_format ? `'${original.export_filename_format.replace(/'/g, "''")}'` : 'NULL'},
+                '${originalBrandScope}',
+                ${originalPrivateLabelClientName ? `'${originalPrivateLabelClientName.replace(/'/g, "''")}'` : 'NULL'}
             )
             RETURNING id
         `)
@@ -73,6 +121,8 @@ export async function updateTemplate(id: string, data: {
     export_formats?: string
     export_filename_format?: string
     data_source?: string
+    brand_scope?: 'firplak' | 'private_label'
+    private_label_client_name?: string | null
 }) {
     try {
         const nameClause = data.name ? `, name='${data.name.replace(/'/g, "''")}' ` : ''
@@ -81,6 +131,17 @@ export async function updateTemplate(id: string, data: {
         const sourceClause = data.data_source ? `, data_source='${data.data_source.replace(/'/g, "''")}' ` : ''
         const widthClause = data.width_mm ? `, width_mm=${data.width_mm} ` : ''
         const heightClause = data.height_mm ? `, height_mm=${data.height_mm} ` : ''
+        const brandScopeClause = data.brand_scope ? `, brand_scope='${data.brand_scope}' ` : ''
+
+        const plcNormalized =
+            data.private_label_client_name !== undefined && data.private_label_client_name !== null
+                ? String(data.private_label_client_name).trim()
+                : null
+
+        const plcClause =
+            data.private_label_client_name !== undefined
+                ? (plcNormalized ? `, private_label_client_name='${plcNormalized.replace(/'/g, "''")}' ` : `, private_label_client_name=NULL `)
+                : ''
         
         let orientationClause = ''
         if (data.width_mm && data.height_mm) {
@@ -88,6 +149,12 @@ export async function updateTemplate(id: string, data: {
         }
 
         const elementsClause = data.elements_json ? `elements_json='${data.elements_json.replace(/'/g, "''")}', ` : ''
+
+        // If switching to Firplak scope, force private_label_client_name to NULL to satisfy DB checks.
+        const forcePlcNullClause =
+            data.brand_scope === 'firplak'
+                ? `, private_label_client_name=NULL `
+                : ''
 
         await dbQuery(`
             UPDATE public.plantillas_doc_tec SET
@@ -100,6 +167,8 @@ export async function updateTemplate(id: string, data: {
                 ${formatsClause} 
                 ${filenameClause} 
                 ${sourceClause}
+                ${brandScopeClause}
+                ${data.brand_scope === 'firplak' ? forcePlcNullClause : plcClause}
             WHERE id='${id}'
         `)
 

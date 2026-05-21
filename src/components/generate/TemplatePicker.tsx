@@ -27,6 +27,8 @@ export interface TemplateOption {
     export_formats?: string
     export_filename_format?: string
     data_source?: string
+    brand_scope?: 'firplak' | 'private_label'
+    private_label_client_name?: string | null
 }
 
 interface TemplatePickerProps {

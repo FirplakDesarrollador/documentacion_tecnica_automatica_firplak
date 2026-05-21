@@ -35,6 +35,7 @@ interface GenerateClientProps {
     rules: any[]
     isExternalSource?: boolean
     totalCount?: number
+    templateBrandWarning?: string | null
 }
 
 export function GenerateClient({
@@ -47,6 +48,7 @@ export function GenerateClient({
     rules,
     isExternalSource = false,
     totalCount = 0,
+    templateBrandWarning = null,
 }: GenerateClientProps) {
     const router = useRouter()
     const searchParams = useSearchParams()
@@ -311,6 +313,13 @@ export function GenerateClient({
                             )}
                         </div>
                     )}
+                </div>
+            )}
+
+            {templateBrandWarning && (
+                <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <div className="leading-snug">{templateBrandWarning}</div>
                 </div>
             )}
 

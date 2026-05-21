@@ -174,9 +174,9 @@ function buildCreateProductV6Payload(data: any, parsed: any, isPrivate: boolean,
             validation_status: final_name_es && final_name_en ? 'ready' : 'needs_review',
             final_base_name_es: final_name_es,
             final_base_name_en: final_name_en,
-            version_attrs: {
-                private_label_client_name: isPrivate ? normalizedPrivateName : null,
-            }
+            version_attrs: (isPrivate && normalizedPrivateName)
+                ? { private_label_client_name: normalizedPrivateName }
+                : {}
         },
         sku: {
             sku_complete: data.code,

@@ -50,22 +50,7 @@ export default async function GeneratePage({
     // --- Cargar productos filtrados ---
     let products: any[] = []
     let totalCount = 0
-    if (hasFilter) {
-        // Si no viene `f`, intentamos derivar la familia desde `r` (cuando viene en formato triple).
-        const effectiveFamilies = f.length > 0 ? f : familiesFromR
-        const filtersObj = {
-            families: effectiveFamilies,
-            references: rDecoded,
-            measures: mDecoded.length > 0 ? mDecoded : m,
-            search: q || undefined
-        }
-        
-        const { composeProductsByFilters } = await import('@/lib/engine/product_composer')
-        const limitVal = q ? 1000 : 200
-        const result = await composeProductsByFilters(filtersObj, limitVal)
-        products = result.products
-        totalCount = result.totalCount
-    }
+    // Se cargan después de determinar la plantilla seleccionada (para aplicar discriminación de marca).
 
     // --- Filtros centralizados (src/lib/data/filters.ts) ---
     // Para modificar cómo se obtienen familias o referencias, edita ese módulo.
@@ -76,7 +61,7 @@ export default async function GeneratePage({
 
     // --- Cargar plantillas activas ---
     const templates = await dbQuery(
-        `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json, export_formats, export_filename_format, data_source
+        `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json, export_formats, export_filename_format, data_source, brand_scope, private_label_client_name
          FROM public.plantillas_doc_tec WHERE active = true ORDER BY created_at ASC`
     ) || []
 
@@ -87,6 +72,14 @@ export default async function GeneratePage({
     const currentDataSource = selectedTemplateInfo?.data_source || 'core_firplak'
     const isDataSourceExternal = currentDataSource !== 'core_firplak'
 
+    const brandScope = selectedTemplateInfo?.brand_scope === 'private_label' ? 'private_label' : 'firplak'
+    const plc = selectedTemplateInfo?.private_label_client_name ? String(selectedTemplateInfo.private_label_client_name).trim() : ''
+    const brandFilter =
+        brandScope === 'firplak'
+            ? { scope: 'firplak' as const }
+            : { scope: 'private_label' as const, clientName: plc }
+
+    let templateBrandWarning: string | null = null
     let effectiveHasFilter = hasFilter
     
     // Si la plantilla es de un dataset externo, sobreescribimos los productos con todo el dataset
@@ -110,6 +103,29 @@ export default async function GeneratePage({
                 status: 'ACTIVO'
             }
         })
+        totalCount = products.length
+    } else if (brandScope === 'private_label' && !plc) {
+        // Private label template without client configured: block listing/export safely.
+        effectiveHasFilter = true
+        products = []
+        totalCount = 0
+        templateBrandWarning = 'La plantilla seleccionada es Marca Propia pero no tiene cliente configurado. Ve a Plantillas → Configurar y selecciona el cliente.'
+    } else if (hasFilter) {
+        // Si no viene `f`, intentamos derivar la familia desde `r` (cuando viene en formato triple).
+        const effectiveFamilies = f.length > 0 ? f : familiesFromR
+        const filtersObj = {
+            families: effectiveFamilies,
+            references: rDecoded,
+            measures: mDecoded.length > 0 ? mDecoded : m,
+            search: q || undefined,
+            brandFilter,
+        }
+        
+        const { composeProductsByFilters } = await import('@/lib/engine/product_composer')
+        const limitVal = q ? 1000 : 200
+        const result = await composeProductsByFilters(filtersObj, limitVal)
+        products = result.products
+        totalCount = result.totalCount
     }
 
     return (
@@ -149,6 +165,7 @@ export default async function GeneratePage({
                 hasFilter={effectiveHasFilter}
                 isExternalSource={isDataSourceExternal}
                 totalCount={totalCount}
+                templateBrandWarning={templateBrandWarning}
             />
         </div>
     )

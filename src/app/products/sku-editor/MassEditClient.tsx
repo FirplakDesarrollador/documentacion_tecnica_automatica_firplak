@@ -72,6 +72,7 @@ export default function MassEditClient() {
   const [showPreview, setShowPreview] = useState(false);
   const [previewData, setPreviewData] = useState<any>(null);
   const [isExecuting, setIsExecuting] = useState(false);
+  const [executionProgress, setExecutionProgress] = useState<{ processed: number; total: number } | null>(null);
 
   useEffect(() => {
     async function loadInitial() {
@@ -302,27 +303,39 @@ export default function MassEditClient() {
   const handleExecute = async () => {
     if (!previewData?.is_valid) return toast.error('Corrige los errores de validación');
     setIsExecuting(true);
+    setExecutionProgress({ processed: 0, total: selectedIds.length });
     
     let parsedValue: any;
     try {
       parsedValue = parseEditValue();
     } catch (e: any) {
       setIsExecuting(false);
+      setExecutionProgress(null);
       return toast.warning(e.message);
     }
 
     const normalUpdates = editType === 'normal' ? { [editField.trim()]: parsedValue } : {};
     const skuAttrsUpdates = editType === 'sku_attr' ? { [editField.trim()]: parsedValue } : {};
 
-    const res = await executeMassUpdateSkus(selectedIds, normalUpdates, skuAttrsUpdates);
-    setIsExecuting(false);
+    const total = selectedIds.length;
+    const batchSize = 100;
 
-    if (res.success) {
+    try {
+      for (let start = 0; start < total; start += batchSize) {
+        const batchIds = selectedIds.slice(start, start + batchSize);
+        const res = await executeMassUpdateSkus(batchIds, normalUpdates, skuAttrsUpdates);
+        if (!res.success) throw new Error((res as any).error || 'Error desconocido');
+        setExecutionProgress({ processed: Math.min(start + batchIds.length, total), total });
+      }
+
       toast.success('SKUs actualizados con éxito');
       setShowPreview(false);
       handleSearch();
-    } else {
-      toast.error('Error ejecutando actualización: ' + (res as any).error);
+    } catch (e: any) {
+      toast.error('Error ejecutando actualización: ' + (e?.message || 'Error desconocido'));
+    } finally {
+      setIsExecuting(false);
+      setExecutionProgress(null);
     }
   };
 
@@ -671,9 +684,30 @@ export default function MassEditClient() {
                 Cerrar
               </button>
               {previewData.is_valid && (
-                <button onClick={handleExecute} disabled={isExecuting} className="px-8 py-2.5 text-white rounded-md font-bold flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700">
-                  {isExecuting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />} Confirmar
-                </button>
+                <div className="flex flex-col items-end gap-2">
+                  <button onClick={handleExecute} disabled={isExecuting} className="px-8 py-2.5 text-white rounded-md font-bold flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 min-w-[220px] justify-center">
+                    {isExecuting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
+                    {isExecuting ? (
+                      <span>
+                        Procesando {executionProgress?.processed ?? 0}/{executionProgress?.total ?? selectedIds.length}
+                      </span>
+                    ) : (
+                      'Confirmar'
+                    )}
+                  </button>
+                  {isExecuting && (
+                    <div className="w-full max-w-[280px] h-2 bg-slate-100 rounded overflow-hidden">
+                      <div
+                        className="h-full bg-emerald-600 transition-all"
+                        style={{
+                          width: `${Math.round(
+                            ((executionProgress?.processed ?? 0) / Math.max(1, executionProgress?.total ?? selectedIds.length)) * 100
+                          )}%`
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>

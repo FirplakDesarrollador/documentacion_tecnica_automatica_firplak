@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
     Dialog,
@@ -17,11 +17,23 @@ import { Label } from "@/components/ui/label"
 import { PlusCircle, Loader2 } from "lucide-react"
 import { createTemplate } from "@/app/templates/actions"
 import { toast } from "sonner"
+import { getClientsAction } from "@/app/products/actions"
 
 export function NewTemplateDialog({ datasets = [] }: { datasets?: {id: string, name: string}[] }) {
     const [open, setOpen] = useState(false)
     const [loading, setLoading] = useState(false)
+    const [clients, setClients] = useState<any[]>([])
+    const [dataSource, setDataSource] = useState<string>('core_firplak')
+    const [brandScope, setBrandScope] = useState<'firplak' | 'private_label'>('firplak')
+    const [privateLabelClientName, setPrivateLabelClientName] = useState<string>('')
     const router = useRouter()
+
+    useEffect(() => {
+        if (!open) return
+        getClientsAction()
+            .then((res: any) => setClients(Array.isArray(res) ? res : []))
+            .catch(() => setClients([]))
+    }, [open])
 
     async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault()
@@ -31,7 +43,8 @@ export function NewTemplateDialog({ datasets = [] }: { datasets?: {id: string, n
         const name = formData.get("name") as string
         const width = parseFloat(formData.get("width") as string)
         const height = parseFloat(formData.get("height") as string)
-        const dataSource = formData.get("data_source") as string
+        const scope = (formData.get("brand_scope") as string) || 'firplak'
+        const plc = (formData.get("private_label_client_name") as string) || ''
 
         if (!name || isNaN(width) || isNaN(height) || !dataSource) {
             toast.error("Por favor completa todos los campos correctamente.")
@@ -39,7 +52,14 @@ export function NewTemplateDialog({ datasets = [] }: { datasets?: {id: string, n
             return
         }
 
-        const res = await createTemplate({ name, width_mm: width, height_mm: height, data_source: dataSource })
+        const res = await createTemplate({
+            name,
+            width_mm: width,
+            height_mm: height,
+            data_source: dataSource,
+            brand_scope: scope === 'private_label' ? 'private_label' : 'firplak',
+            private_label_client_name: scope === 'private_label' ? plc : null,
+        })
         setLoading(false)
 
         if (res.success) {
@@ -80,6 +100,15 @@ export function NewTemplateDialog({ datasets = [] }: { datasets?: {id: string, n
                             </Label>
                             <select
                                 id="data_source" name="data_source" required
+                                value={dataSource}
+                                onChange={(e) => {
+                                    const next = e.target.value
+                                    setDataSource(next)
+                                    if (next !== 'core_firplak') {
+                                        setBrandScope('firplak')
+                                        setPrivateLabelClientName('')
+                                    }
+                                }}
                                 className="col-span-3 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
                             >
                                 <option value="core_firplak">Catálogo Core: Productos Firplak</option>
@@ -88,6 +117,46 @@ export function NewTemplateDialog({ datasets = [] }: { datasets?: {id: string, n
                                 ))}
                             </select>
                         </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <Label htmlFor="brand_scope" className="text-right leading-tight">
+                                Alcance de Marca
+                            </Label>
+                            <select
+                                id="brand_scope"
+                                name="brand_scope"
+                                value={dataSource === 'core_firplak' ? brandScope : 'firplak'}
+                                onChange={(e) => {
+                                    const next = (e.target.value as any) || 'firplak'
+                                    setBrandScope(next)
+                                    if (next === 'firplak') setPrivateLabelClientName('')
+                                }}
+                                disabled={dataSource !== 'core_firplak'}
+                                className="col-span-3 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-60"
+                            >
+                                <option value="firplak">Firplak</option>
+                                <option value="private_label">Marca Propia (Cliente)</option>
+                            </select>
+                        </div>
+                        {dataSource === 'core_firplak' && brandScope === 'private_label' && (
+                            <div className="grid grid-cols-4 items-center gap-4">
+                                <Label htmlFor="private_label_client_name" className="text-right leading-tight">
+                                    Cliente
+                                </Label>
+                                <select
+                                    id="private_label_client_name"
+                                    name="private_label_client_name"
+                                    value={privateLabelClientName}
+                                    onChange={(e) => setPrivateLabelClientName(e.target.value)}
+                                    className="col-span-3 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                                    required
+                                >
+                                    <option value="" disabled>-- Selecciona un cliente --</option>
+                                    {clients.map((c: any) => (
+                                        <option key={c.id || c.name} value={c.name}>{c.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
                         <div className="grid grid-cols-4 items-center gap-4">
                             <Label htmlFor="width" className="text-right">
                                 Ancho (mm)

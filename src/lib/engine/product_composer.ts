@@ -193,6 +193,9 @@ export interface ProductFilters {
     references?: string[];
     measures?: string[];
     search?: string;
+    brandFilter?:
+        | { scope: 'firplak' }
+        | { scope: 'private_label'; clientName: string };
 }
 
 export async function composeProductsByFilters(
@@ -213,6 +216,21 @@ export async function composeProductsByFilters(
     if (filters.search) {
         const searchVal = filters.search.toLowerCase().trim()
         query = query.or(`sku_complete.ilike.%${searchVal}%,final_base_name_es.ilike.%${searchVal}%,color_code.ilike.%${searchVal}%,resolved_color_name.ilike.%${searchVal}%,name_color_sap.ilike.%${searchVal}%,reference_code.ilike.%${searchVal}%`)
+    }
+
+    if (filters.brandFilter) {
+        if (filters.brandFilter.scope === 'firplak') {
+            query = query.is('resolved_private_label_client_name', null)
+        } else if (filters.brandFilter.scope === 'private_label') {
+            const clientName = String(filters.brandFilter.clientName || '').trim()
+            if (clientName) {
+                // Exact match, case-insensitive (ILIKE without wildcards).
+                query = query.ilike('resolved_private_label_client_name', clientName)
+            } else {
+                // Defensive: force empty result.
+                query = query.eq('id', '00000000-0000-0000-0000-000000000000')
+            }
+        }
     }
     
     query = query

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { 
   Package, AlertCircle, LayoutTemplate, GitMerge, FileImage, 
-  FileText, PlusCircle, Upload, ArrowRight, Settings2, DatabaseZap
+  FileText, PlusCircle, ArrowRight, Settings2, DatabaseZap
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -96,18 +96,6 @@ export default async function Home() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <Link href="/products">
-            <Button variant="outline" className="h-12 px-6 shadow-sm border-slate-200 hover:bg-slate-50 text-slate-600 font-semibold">
-              <Upload className="mr-2 h-4 w-4 text-slate-400" />
-              Importar CSV
-            </Button>
-          </Link>
-          <Link href="/templates/new">
-            <Button variant="secondary" className="h-12 px-6 shadow-sm font-semibold">
-              <LayoutTemplate className="mr-2 h-4 w-4 text-indigo-500" />
-              Crear plantilla
-            </Button>
-          </Link>
           <Link href="/products/new">
             <Button className="h-12 px-6 shadow-md font-semibold bg-indigo-600 hover:bg-indigo-700 transition-all">
               <PlusCircle className="mr-2 h-4 w-4" />

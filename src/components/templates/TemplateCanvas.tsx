@@ -17,9 +17,10 @@ import { cn } from '@/lib/utils'
 import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { PIXELS_PER_MM } from '@/lib/constants'
 import { hydrateText } from '@/lib/export/exportUtils'
-import { resolveZoneHomeEnAction } from '@/app/products/actions'
+import { resolveZoneHomeEnAction, getClientsAction } from '@/app/products/actions'
 
 export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'box' | 'dashed_line' | 'dynamic_image' | 'icon_group'
+type TemplateBrandScope = 'firplak' | 'private_label'
 
 export interface TemplateElement {
     id: string
@@ -1592,6 +1593,14 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     const [datasetSchema, setDatasetSchema] = useState(initialSchema)
     const [availableDatasets, setAvailableDatasets] = useState<any[]>([])
 
+    const [brandScope, setBrandScope] = useState<TemplateBrandScope>(
+        template?.brand_scope === 'private_label' ? 'private_label' : 'firplak'
+    )
+    const [privateLabelClientName, setPrivateLabelClientName] = useState<string>(
+        template?.private_label_client_name ? String(template.private_label_client_name) : ''
+    )
+    const [availableClients, setAvailableClients] = useState<any[]>([])
+
     const setIsModified = useCallback((val: boolean) => {
         isModifiedRef.current = val
         setIsModifiedState(val)
@@ -1654,9 +1663,22 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         getDatasetsAction().then(res => setAvailableDatasets(res))
     }, [])
 
+    // Fetch clients for private label templates
+    useEffect(() => {
+        getClientsAction()
+            .then((res: any) => setAvailableClients(Array.isArray(res) ? res : []))
+            .catch(() => setAvailableClients([]))
+    }, [])
+
     const handleDataSourceChange = async (newSource: string) => {
         setDataSource(newSource)
         setIsModified(true)
+
+        // Brand scoping only applies to Firplak Core.
+        if (newSource !== 'core_firplak') {
+            setBrandScope('firplak')
+            setPrivateLabelClientName('')
+        }
         
         // Update schema locally
         if (newSource === 'core_firplak') {
@@ -2057,13 +2079,26 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     }, [undo, redo, selectedIds, elements, commitHistory, removeSelectedElements, duplicateSelectedElements])
 
     const handleSave = async () => {
+        if (dataSource === 'core_firplak' && brandScope === 'private_label') {
+            const plc = String(privateLabelClientName || '').trim()
+            if (!plc) {
+                toast.error('Selecciona un cliente para "Marca Propia" antes de guardar.')
+                return
+            }
+        }
+
         setIsSaving(true)
         const res = await updateTemplate(template.id, {
             name: templateName,
             data_source: dataSource,
             elements_json: JSON.stringify(elements),
             export_formats: exportFormats.join(','),
-            export_filename_format: exportFilenameFormat
+            export_filename_format: exportFilenameFormat,
+            brand_scope: dataSource === 'core_firplak' ? brandScope : 'firplak',
+            private_label_client_name:
+                dataSource === 'core_firplak' && brandScope === 'private_label'
+                    ? String(privateLabelClientName || '').trim() || null
+                    : null,
         })
         setIsSaving(false)
 
@@ -3323,6 +3358,46 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                             ))}
                                         </optgroup>
                                     </select>
+                                    <div className="mt-4">
+                                        <Label className="text-[11px] font-bold text-slate-500 mb-1.5 block uppercase">Alcance de Marca</Label>
+                                        <select
+                                            className="flex h-9 w-full rounded-md border border-indigo-50 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus:border-indigo-200 disabled:opacity-60"
+                                            value={dataSource === 'core_firplak' ? brandScope : 'firplak'}
+                                            onChange={(e) => {
+                                                const next = (e.target.value as TemplateBrandScope) || 'firplak'
+                                                setBrandScope(next)
+                                                if (next === 'firplak') setPrivateLabelClientName('')
+                                                setIsModified(true)
+                                            }}
+                                            disabled={dataSource !== 'core_firplak'}
+                                        >
+                                            <option value="firplak">Firplak</option>
+                                            <option value="private_label">Marca Propia (Cliente)</option>
+                                        </select>
+                                    </div>
+
+                                    {dataSource === 'core_firplak' && brandScope === 'private_label' && (
+                                        <div className="mt-4">
+                                            <Label className="text-[11px] font-bold text-slate-500 mb-1.5 block uppercase">Cliente Marca Propia</Label>
+                                            <select
+                                                className="flex h-9 w-full rounded-md border border-indigo-50 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus:border-indigo-200"
+                                                value={privateLabelClientName}
+                                                onChange={(e) => {
+                                                    setPrivateLabelClientName(e.target.value)
+                                                    setIsModified(true)
+                                                }}
+                                            >
+                                                <option value="" disabled>-- Selecciona un cliente --</option>
+                                                {availableClients.map((c: any) => (
+                                                    <option key={c.id || c.name} value={c.name}>{c.name}</option>
+                                                ))}
+                                            </select>
+                                            <p className="text-[10px] text-slate-400 mt-1.5 leading-tight">
+                                                Solo se mostrarán productos cuyo <code className="font-mono">resolved_private_label_client_name</code> coincida exactamente (sin importar mayúsculas).
+                                            </p>
+                                        </div>
+                                    )}
+
                                     <p className="text-[10px] text-slate-400 mt-1.5 leading-tight">
                                         Cambiar la fuente actualizará las variables disponibles y la previsualización.
                                     </p>
