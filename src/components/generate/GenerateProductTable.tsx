@@ -9,7 +9,6 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Eye, AlertTriangle } from 'lucide-react'
@@ -97,18 +96,6 @@ export function GenerateProductTable({
         }
     }, [selectedIds, onSelectionChange])
 
-    const statusLabel = (status: string) => {
-        if (status === 'ready') return 'Listo'
-        if (status === 'needs_review') return 'Revisar'
-        return isExternalSource ? 'Listo' : 'Incompleto'
-    }
-
-    const statusVariant = (status: string): 'default' | 'destructive' | 'secondary' => {
-        if (status === 'ready') return 'default'
-        if (status === 'needs_review') return 'destructive'
-        return isExternalSource ? 'default' : 'secondary'
-    }
-
     const searchParams = useSearchParams()
 
     if (products.length === 0) {
@@ -146,7 +133,6 @@ export function GenerateProductTable({
                         <TableHead className="w-[120px]">Color</TableHead>
                     )}
 
-                    <TableHead className="w-[130px]">Estado</TableHead>
                     {templateId && <TableHead className="w-[120px]">Plantilla</TableHead>}
                     <TableHead className="text-right w-[120px]">Acción</TableHead>
                 </TableRow>
@@ -200,21 +186,6 @@ export function GenerateProductTable({
                                 </TableCell>
                             )}
 
-                            <TableCell>
-                                <div className="flex flex-col gap-1">
-                                    <Badge
-                                        variant={isInactive ? 'destructive' : statusVariant(product.validation_status)}
-                                        className="text-xs w-fit"
-                                    >
-                                        {isInactive ? 'Inactivo' : statusLabel(product.validation_status)}
-                                    </Badge>
-                                    {isInactive && inactiveReasons.length > 0 && (
-                                        <span className="text-[10px] text-rose-600 leading-tight">
-                                            {inactiveReasons.join(', ')}
-                                        </span>
-                                    )}
-                                </div>
-                            </TableCell>
                             {templateId && (
                                 <TableCell>
                                     {isInactive ? (

@@ -393,12 +393,6 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                         <div className="flex justify-between"><span className="text-slate-500">Código:</span><span className="font-mono font-semibold">{product.code}</span></div>
                         <div className="flex justify-between"><span className="text-slate-500">Familia:</span><span>{product.familia_code || '—'}</span></div>
                         <div className="flex justify-between"><span className="text-slate-500">Medida:</span><span>{product.commercial_measure || '—'}</span></div>
-                        <div className="flex justify-between gap-2">
-                            <span className="text-slate-500">Estado:</span>
-                            <Badge variant={product.validation_status === 'ready' ? 'default' : product.validation_status === 'needs_review' ? 'destructive' : 'secondary'} className="text-xs">
-                                {product.validation_status === 'ready' ? 'Listo' : product.validation_status === 'needs_review' ? 'Revisar' : 'Incompleto'}
-                            </Badge>
-                        </div>
                         <div className="flex justify-between"><span className="text-slate-500">Nombre derivado:</span><span className="text-right max-w-[160px]">{engineResult.finalNameEs || '—'}</span></div>
                     </div>
                 </div>

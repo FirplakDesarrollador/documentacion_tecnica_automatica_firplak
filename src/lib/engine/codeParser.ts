@@ -469,7 +469,8 @@ export async function parseProductCode(
         }
 
         if (descUpper.includes('CARB 2') || descUpper.includes('CARB2')) {
-            result.carb2 = 'SÍ';
+            // Normalizamos a un valor consistente para UI + reglas + export
+            result.carb2 = 'CARB2';
         }
         if (descUpper.includes('FRENTES 18MM')) {
             result.special_label = (result.special_label && result.special_label !== 'NA') 

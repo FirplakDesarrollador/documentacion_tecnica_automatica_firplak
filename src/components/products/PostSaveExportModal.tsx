@@ -1,18 +1,35 @@
 "use client"
 
-import React, { useState, useEffect } from "react"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
-import { Button } from "@/components/ui/button"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Label } from "@/components/ui/label"
-import { Loader2, Download, CheckCircle2 } from "lucide-react"
+import React, { useEffect, useState } from "react"
+import { resolveAssetsAction } from "@/app/generate/actions"
+import { composeProductByIdAction, resolveZoneHomeEnAction } from "@/app/products/actions"
 import { getTemplatesAction } from "@/app/templates/actions"
-import { toast } from "sonner"
+import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { PIXELS_PER_MM } from "@/lib/constants"
 import { hydrateTemplateElements, hydrateText } from "@/lib/export/exportUtils"
 import { enrichProductDataWithIcons } from "@/lib/engine/productUtils"
-import { useRouter } from "next/navigation"
-import { resolveAssetsAction } from "@/app/generate/actions"
-import { resolveZoneHomeEnAction } from "@/app/products/actions"
+import { CheckCircle2, Download, Loader2 } from "lucide-react"
+import { toast } from "sonner"
+
+function sanitizeFilename(name: string): string {
+    return String(name || "").replace(/[\\/:*?"<>|]/g, "_").trim()
+}
+
+function isUuid(value: unknown): value is string {
+    if (!value || typeof value !== "string") return false
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+}
+
+function deriveSkuBase(code: unknown): string {
+    const raw = String(code || "").trim()
+    if (!raw) return ""
+    const parts = raw.split("-").filter(Boolean)
+    if (parts.length >= 3) return parts.slice(0, 3).join("-")
+    return raw
+}
 
 interface PostSaveExportModalProps {
     isOpen: boolean
@@ -20,8 +37,25 @@ interface PostSaveExportModalProps {
     onClose: () => void
 }
 
+function isFirplakCoreTemplate(template: any): boolean {
+    if (!template) return false
+    const dataSource = String(template.data_source || "").trim()
+    const brandScope = String(template.brand_scope || "").trim()
+    if (dataSource !== "core_firplak") return false
+    // Prefer the default Firplak (non-private-label) templates first.
+    return brandScope !== "private_label"
+}
+
+function getTemplateDisplayName(template: any): string {
+    const rawName = template?.name ? String(template.name).trim() : ""
+    if (rawName) return rawName
+    const w = template?.width_mm ?? ""
+    const h = template?.height_mm ?? ""
+    const suffix = w && h ? ` ${w}x${h}mm` : ""
+    return `Plantilla${suffix}`.trim()
+}
+
 export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExportModalProps) {
-    const router = useRouter()
     const [step, setStep] = useState<1 | 2>(1)
     const [templates, setTemplates] = useState<any[]>([])
     const [selectedTemplateId, setSelectedTemplateId] = useState<string>("")
@@ -39,25 +73,37 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
         setIsLoadingTemplates(true)
         try {
             const data = await getTemplatesAction()
-            setTemplates(data)
-            if (data.length > 0) {
-                setSelectedTemplateId(data[0].id)
-                
+            const sorted = Array.isArray(data)
+                ? [...data].sort((a, b) => {
+                    const aIsFirplak = isFirplakCoreTemplate(a)
+                    const bIsFirplak = isFirplakCoreTemplate(b)
+                    if (aIsFirplak !== bIsFirplak) return aIsFirplak ? -1 : 1
+                    return getTemplateDisplayName(a).localeCompare(getTemplateDisplayName(b), "es", { sensitivity: "base" })
+                })
+                : []
+
+            setTemplates(sorted)
+            if (sorted.length > 0) {
+                setSelectedTemplateId(sorted[0].id)
+
                 // Set default format based on template
-                const formats = data[0].export_formats ? data[0].export_formats.split(',').map((f: string) => f.trim().toLowerCase()) : ['pdf', 'jpg']
-                setExportFormat(formats.includes('pdf') ? 'pdf' : 'jpg')
+                const formats = sorted[0].export_formats
+                    ? sorted[0].export_formats.split(",").map((f: string) => f.trim().toLowerCase())
+                    : ["pdf", "jpg"]
+                setExportFormat(formats.includes("pdf") ? "pdf" : "jpg")
             }
-        } catch (error) {
+        } catch {
             toast.error("Error cargando plantillas")
         } finally {
             setIsLoadingTemplates(false)
         }
     }
 
-    const selectedTemplate = templates.find(t => t.id === selectedTemplateId)
-    const allowedFormats = selectedTemplate?.export_formats 
-        ? selectedTemplate.export_formats.split(',').map((f: string) => f.trim().toLowerCase()) 
-        : ['pdf', 'jpg']
+    const selectedTemplate = templates.find((t) => t.id === selectedTemplateId)
+    const selectedTemplateLabel = selectedTemplate ? getTemplateDisplayName(selectedTemplate) : ""
+    const allowedFormats = selectedTemplate?.export_formats
+        ? selectedTemplate.export_formats.split(",").map((f: string) => f.trim().toLowerCase())
+        : ["pdf", "jpg"]
 
     useEffect(() => {
         if (selectedTemplate && !allowedFormats.includes(exportFormat)) {
@@ -74,56 +120,79 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
 
         setIsExporting(true)
         try {
-            // 1. Obtener los iconos del sistema y activos específicos (isométrico, logo marca propia)
-            const assetsToResolve = []
-            if (singleProduct.isometric_asset_id) assetsToResolve.push(singleProduct.isometric_asset_id)
-            if (singleProduct.private_label_logo_id) assetsToResolve.push(singleProduct.private_label_logo_id)
-            
-            const assetMap = await resolveAssetsAction(assetsToResolve)
+            const elements =
+                typeof selectedTemplate.elements_json === "string"
+                    ? JSON.parse(selectedTemplate.elements_json)
+                    : selectedTemplate.elements_json
 
-            // 2. Asegurar que los elementos sean un objeto, no un string
-            const elements = typeof selectedTemplate.elements_json === 'string' 
-                ? JSON.parse(selectedTemplate.elements_json) 
-                : selectedTemplate.elements_json
+            const templateWidthMm = Number(selectedTemplate.width_mm || 200)
+            const templateHeightMm = Number(selectedTemplate.height_mm || 100)
+            const widthPx = Math.round(templateWidthMm * PIXELS_PER_MM)
+            const heightPx = Math.round(templateHeightMm * PIXELS_PER_MM)
 
-            // 3. Hidratar con el mapa de activos (Crucial para iconos técnicos)
-            const hydratedData = await hydrateTemplateElements(elements, singleProduct, assetMap)
-            
-            // 4. Preparar nombre de archivo dinámico
-            const zoneEn = await resolveZoneHomeEnAction(singleProduct.zone_home)
-            const productWithZone = zoneEn ? { ...singleProduct, zone_home_en: zoneEn } : singleProduct
-            const enrichedProduct = enrichProductDataWithIcons(productWithZone, assetMap)
-            const downloadName = hydrateText((selectedTemplate as any).export_filename_format || '{sku_base}_{final_name_es}', enrichedProduct)
+            const productsToExport = (isArray ? product : [product]).filter(Boolean)
 
-            const response = await fetch('/api/export', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    elements: hydratedData,
-                    template: {
-                        width_mm: selectedTemplate.width_mm,
-                        height_mm: selectedTemplate.height_mm,
-                        orientation: selectedTemplate.orientation
-                    },
-                    format: exportFormat,
-                    filename: downloadName
+            for (const currentProduct of productsToExport) {
+                const productId = (currentProduct as any)?.id
+                const composed = productId ? await composeProductByIdAction(String(productId)) : null
+                const exportProduct = composed || (currentProduct as any)
+
+                const assetIdsFromTemplate = (Array.isArray(elements) ? elements : [])
+                    .filter((el: any) => (el.type === "image" || el.type === "dynamic_image") && isUuid(el.content))
+                    .map((el: any) => el.content as string)
+
+                const extraAssetIds: string[] = []
+                if (isUuid((exportProduct as any)?.private_label_logo_id)) extraAssetIds.push((exportProduct as any).private_label_logo_id)
+                if (isUuid((exportProduct as any)?.isometric_asset_id)) extraAssetIds.push((exportProduct as any).isometric_asset_id)
+
+                const assetMap = await resolveAssetsAction([...assetIdsFromTemplate, ...extraAssetIds])
+
+                const zoneEn = await resolveZoneHomeEnAction((exportProduct as any).zone_home)
+                const sku_base = (exportProduct as any).sku_base || deriveSkuBase((exportProduct as any).code)
+                const baseProduct = sku_base ? { ...(exportProduct as any), sku_base } : (exportProduct as any)
+                const productWithZone = zoneEn ? { ...baseProduct, zone_home_en: zoneEn } : baseProduct
+
+                const hydratedData = await hydrateTemplateElements(elements, productWithZone, assetMap)
+
+                const enrichedProduct = enrichProductDataWithIcons(productWithZone, assetMap)
+                const rawDownloadName = hydrateText(
+                    (selectedTemplate as any).export_filename_format || "{sku_base}_{final_name_es}",
+                    enrichedProduct
+                )
+                const downloadName = sanitizeFilename(rawDownloadName) || sanitizeFilename((exportProduct as any).code) || "export"
+
+                const response = await fetch("/api/export", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        productId: (exportProduct as any).id,
+                        isExternalSource: (exportProduct as any).is_external === true,
+                        elements: hydratedData,
+                        format: exportFormat,
+                        width: widthPx,
+                        height: heightPx,
+                        filename: downloadName,
+                    }),
                 })
-            })
 
-            if (!response.ok) throw new Error('Export failed')
+                if (!response.ok) {
+                    const payload = await response.json().catch(() => null)
+                    const message = payload?.error ? String(payload.error) : "Export failed"
+                    throw new Error(message)
+                }
 
-            const blob = await response.blob()
-            const url = window.URL.createObjectURL(blob)
-            const a = document.createElement('a')
-            a.href = url
-            a.download = `${downloadName}.${exportFormat}`
-            document.body.appendChild(a)
-            a.click()
-            window.URL.revokeObjectURL(url)
-            document.body.removeChild(a)
+                const blob = await response.blob()
+                const url = window.URL.createObjectURL(blob)
+                const a = document.createElement("a")
+                a.href = url
+                a.download = `${downloadName}.${exportFormat}`
+                document.body.appendChild(a)
+                a.click()
+                window.URL.revokeObjectURL(url)
+                document.body.removeChild(a)
+            }
 
             toast.success("Documento exportado correctamente")
-            // After successful export, we close and go to products list
             onClose()
         } catch (error) {
             console.error("Export Error:", error)
@@ -148,28 +217,34 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
                             </div>
                             <DialogHeader>
                                 <DialogTitle className="text-2xl font-bold text-slate-900">
-                                    {productCount > 1 ? '¡Productos Guardados!' : '¡Producto Guardado!'}
+                                    {productCount > 1 ? "¡Productos Guardados!" : "¡Producto Guardado!"}
                                 </DialogTitle>
                                 <DialogDescription className="text-slate-500 text-base mt-2">
                                     {productCount > 1 ? (
-                                        <>Se crearon <b>{productCount} productos</b> correctamente en la base de datos.</>
+                                        <>
+                                            Se crearon <b>{productCount} productos</b> correctamente en la base de datos.
+                                        </>
                                     ) : (
-                                        <>El producto <b>{singleProduct?.code}</b> ha sido registrado correctamente en la base de datos.</>
+                                        <>
+                                            El producto <b>{singleProduct?.code}</b> ha sido registrado correctamente en la base de datos.
+                                        </>
                                     )}
                                 </DialogDescription>
                             </DialogHeader>
-                            
+
                             <div className="py-6 w-full">
-                                <p className="text-sm font-medium text-slate-700 mb-6">¿Desea exportar un documento sobre este producto ahora?</p>
+                                <p className="text-sm font-medium text-slate-700 mb-6">
+                                    ¿Desea exportar un documento sobre este producto ahora?
+                                </p>
                                 <div className="grid grid-cols-2 gap-4">
-                                    <Button 
-                                        variant="outline" 
+                                    <Button
+                                        variant="outline"
                                         onClick={handleJustSave}
                                         className="h-12 border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold"
                                     >
                                         No, solo agregar
                                     </Button>
-                                    <Button 
+                                    <Button
                                         onClick={() => setStep(2)}
                                         className="h-12 bg-indigo-600 hover:bg-indigo-700 text-white shadow-md font-semibold"
                                     >
@@ -193,19 +268,23 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
 
                         <div className="space-y-6">
                             <div className="space-y-2">
-                                <Label htmlFor="template" className="text-sm font-semibold text-slate-700">Plantilla Disponible</Label>
-                                <Select 
-                                    value={selectedTemplateId} 
-                                    onValueChange={(val) => setSelectedTemplateId(val || '')}
+                                <Label htmlFor="template" className="text-sm font-semibold text-slate-700">
+                                    Plantilla Disponible
+                                </Label>
+                                <Select
+                                    value={selectedTemplateId}
+                                    onValueChange={(val) => setSelectedTemplateId(val || "")}
                                     disabled={isLoadingTemplates}
                                 >
                                     <SelectTrigger id="template" className="h-12 bg-white border-slate-200">
-                                        <SelectValue placeholder="Seleccione una plantilla" />
+                                        <SelectValue placeholder="Seleccione una plantilla">
+                                            {selectedTemplateLabel || undefined}
+                                        </SelectValue>
                                     </SelectTrigger>
                                     <SelectContent>
                                         {templates.map((t) => (
                                             <SelectItem key={t.id} value={t.id}>
-                                                {t.name} ({t.width_mm}x{t.height_mm}mm)
+                                                {getTemplateDisplayName(t)} ({t.width_mm}x{t.height_mm}mm)
                                             </SelectItem>
                                         ))}
                                     </SelectContent>
@@ -215,7 +294,7 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
                             <div className="space-y-2">
                                 <Label className="text-sm font-semibold text-slate-700">Formato de Archivo</Label>
                                 <div className="flex bg-slate-200 p-1.5 rounded-xl w-full">
-                                    {['pdf', 'jpg'].map((fmt) => {
+                                    {["pdf", "jpg"].map((fmt) => {
                                         const isAllowed = allowedFormats.includes(fmt)
                                         return (
                                             <button
@@ -223,11 +302,11 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
                                                 disabled={!isAllowed}
                                                 onClick={() => setExportFormat(fmt as any)}
                                                 className={`flex-1 py-2.5 text-xs font-bold rounded-lg transition-all ${
-                                                    exportFormat === fmt 
-                                                        ? 'bg-white text-indigo-600 shadow-sm' 
-                                                        : isAllowed 
-                                                            ? 'text-slate-500 hover:text-slate-700' 
-                                                            : 'text-slate-400 opacity-50 cursor-not-allowed'
+                                                    exportFormat === fmt
+                                                        ? "bg-white text-indigo-600 shadow-sm"
+                                                        : isAllowed
+                                                            ? "text-slate-500 hover:text-slate-700"
+                                                            : "text-slate-400 opacity-50 cursor-not-allowed"
                                                 }`}
                                             >
                                                 {fmt.toUpperCase()}
@@ -240,15 +319,15 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
                         </div>
 
                         <DialogFooter className="mt-10 gap-3 border-t pt-6 bg-white sm:justify-end -mx-8 px-8 pb-8">
-                            <Button 
-                                variant="ghost" 
+                            <Button
+                                variant="ghost"
                                 onClick={handleJustSave}
                                 className="text-slate-500 hover:text-slate-800 font-medium"
                                 disabled={isExporting}
                             >
                                 No, me arrepentí
                             </Button>
-                            <Button 
+                            <Button
                                 onClick={handleExport}
                                 disabled={isExporting || !selectedTemplateId}
                                 className="min-w-[140px] bg-indigo-600 hover:bg-indigo-700 text-white font-bold h-11"

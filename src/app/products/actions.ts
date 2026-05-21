@@ -18,6 +18,14 @@ function normalizeCanto(val: any) {
     return String(val)
 }
 
+function normalizeCarb2(val: any) {
+    if (val === null || val === undefined || val === '' || val === 'false') return 'NA'
+    const clean = String(val).trim().toUpperCase()
+    if (clean === 'SI' || clean === 'SÍ' || clean === 'YES' || clean === 'TRUE') return 'CARB2'
+    if (clean === 'CARB 2') return 'CARB2'
+    return clean
+}
+
 function formatPGArray(arr: string[] | null | undefined) {
     if (!arr || !Array.isArray(arr) || arr.length === 0) return "'{}'"
     // PostgreSQL array syntax: '{val1,val2}'
@@ -66,6 +74,16 @@ export async function resolveZoneHomeEnAction(zoneEs: string | null | undefined)
     } catch {
         return null
     }
+}
+
+/**
+ * Re-fetches the fully composed product context from the DB/view (`v_ui_generate_list`).
+ * Use this after create/update before export so fields like `sku_base` match the export module pipeline.
+ */
+export async function composeProductByIdAction(id: string) {
+    if (!id) return null
+    const { composeProductById } = await import('@/lib/engine/product_composer')
+    return await composeProductById(id)
 }
 
 export async function checkFamilyExists(code: string) {
@@ -159,7 +177,7 @@ function buildCreateProductV6Payload(data: any, parsed: any, isPrivate: boolean,
             isometric_path: data.isometric_path || null,
             isometric_asset_id: data.isometric_asset_id || null,
             ref_attrs: {
-                carb2: data.carb2 || parsed.carb2 || 'NA',
+                carb2: normalizeCarb2(data.carb2 || parsed.carb2 || 'NA'),
                 bisagras: data.bisagras || parsed.bisagras || 'NA',
                 canto_puertas: normalizeCanto(data.canto_puertas),
                 accessory_text: data.accessory_text || null,
@@ -233,7 +251,7 @@ export async function createProductAction(data: any) {
         rh: data.rh || parsed.rh || 'NA',
         assembled_flag: data.assembled_flag || parsed.assembled_flag,
         canto_puertas: normalizeCanto(data.canto_puertas),
-        carb2: data.carb2 || parsed.carb2 || 'NA',
+        carb2: normalizeCarb2(data.carb2 || parsed.carb2 || 'NA'),
         line: data.line,
         use_destination: data.use_destination || parsed.use_destination,
         zone_home: data.zone_home || parsed.zone_home,

@@ -46,8 +46,9 @@ interface BulkExportPanelProps {
 function sanitizeFilename(name: string): string {
     // Eliminar caracteres prohibidos en sistemas de archivos (\ / : * ? " < > |)
     // Especialmente el '/' que estaba causando el error del usuario
-    return name.replace(/[\\/:*?"<>|]/g, '_').trim()
+    return name.replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim()
 }
+
 
 async function exportOneProduct(
     product: GenerateProduct, 
@@ -103,6 +104,8 @@ async function exportOneProduct(
     
     // Obtenemos el nombre base y lo sanitizamos para evitar errores de sistema de archivos
     const rawDownloadName = hydrateText((template as any).export_filename_format || '{sku_base}_{final_name_es}', enriched)
+    // Mantener el nombre completo diseñado; si el navegador/FS API no lo soporta en esa carpeta,
+    // caemos a descarga del navegador (sin truncar) y además limpiamos archivos parciales.
     const downloadName = sanitizeFilename(rawDownloadName)
     const fileName = `${downloadName}.${format}`
 
@@ -137,13 +140,51 @@ async function exportOneProduct(
 
     // 6. Guardar: En Carpeta o mediante Descarga Navegador
     if (directoryHandle) {
+        let writable: any | null = null
         try {
+            // Verificar permisos antes de intentar crear/escribir archivos.
+            // Nota: si el usuario renombra/mueve/elimina la carpeta mientras exporta, el handle puede quedar inválido.
+            try {
+                const permissionState =
+                    (await directoryHandle.queryPermission?.({ mode: 'readwrite' })) ?? 'prompt'
+                if (permissionState !== 'granted') {
+                    const requested =
+                        (await directoryHandle.requestPermission?.({ mode: 'readwrite' })) ?? permissionState
+                    if (requested !== 'granted') {
+                        throw new Error('Permisos de escritura no concedidos para la carpeta seleccionada.')
+                    }
+                }
+            } catch (permErr) {
+                console.warn('[bulk-export] No se pudo validar permisos de carpeta (continuando a intento de escritura)', permErr)
+            }
+
             const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true })
-            const writable = await fileHandle.createWritable()
+            writable = await fileHandle.createWritable()
             await writable.write(blob)
             await writable.close()
         } catch (err) {
-            console.error("Error guardando en carpeta seleccionada", err)
+            console.error('Error guardando en carpeta seleccionada', err)
+            try {
+                await writable?.abort?.()
+            } catch { /* noop */ }
+            // Evitar que queden archivos corruptos/0 bytes si la escritura falló.
+            try {
+                await directoryHandle.removeEntry?.(fileName)
+            } catch { /* noop */ }
+
+            const errName = String((err as any)?.name || '')
+            const errMessage = String((err as any)?.message || '')
+            const looksMissing =
+                errName === 'NotFoundError' ||
+                /not\s*found/i.test(errMessage) ||
+                /no\s*such\s*file/i.test(errMessage)
+
+            if (looksMissing) {
+                throw new Error(
+                    `[DIRECTORY_INVALID] No se pudo escribir en la carpeta seleccionada (puede haberse movido/renombrado, o la ruta/nombre es demasiado largo). Re-selecciona un destino o usa descarga del navegador. (${fileName})`
+                )
+            }
+
             throw new Error(`Permiso denegado o error al guardar archivo: ${fileName}`)
         }
     } else {
@@ -247,8 +288,28 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                 successCount += 1
                 updateItem(item.product.id, 'done')
             } catch (err: any) {
+                const msg = String(err?.message || 'Error desconocido')
+                if (msg.includes('[DIRECTORY_INVALID]')) {
+                    // Auto-recuperación: si el usuario renombró/movió/eliminó la carpeta,
+                    // desactivamos el guardado a carpeta y continuamos por descarga del navegador.
+                    toast.warning('Carpeta de exportación inválida. Continuando por descarga del navegador.')
+                    setDirectoryHandle(null)
+                    setDirectoryName(null)
+
+                    try {
+                        await exportOneProduct(item.product, template, selectedFormat, rules, null)
+                        successCount += 1
+                        updateItem(item.product.id, 'done')
+                        continue
+                    } catch (retryErr: any) {
+                        errorCount += 1
+                        updateItem(item.product.id, 'error', String(retryErr?.message || msg))
+                        continue
+                    }
+                }
+
                 errorCount += 1
-                updateItem(item.product.id, 'error', err?.message || 'Error desconocido')
+                updateItem(item.product.id, 'error', msg)
             }
         }
 
