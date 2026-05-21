@@ -12,7 +12,7 @@ import {
     Image as ImageIcon,
     BookOpen,
     LayoutTemplate,
-    AlertCircle,
+    AlertTriangle,
     ChevronLeft,
     ChevronRight,
     PanelLeftClose,
@@ -71,7 +71,7 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
     const navItems = [
         { name: 'Inicio', href: '/', icon: Home },
         { name: 'Productos', href: '/products', icon: Package },
-        { name: 'Excepciones', href: '/exceptions', icon: AlertCircle },
+        { name: 'Pendientes', href: '/pending', icon: AlertTriangle },
         { name: 'Plantillas', href: '/templates', icon: LayoutTemplate },
         { name: 'Bases de Datos', href: '/datasets', icon: Database },
         { name: 'Reglas', href: '/rules', icon: BookOpen },

@@ -1,7 +1,7 @@
 'use server'
 
 import { dbQuery } from '@/lib/supabase'
-import { revalidatePath } from 'next/cache'
+import { revalidatePath, revalidateTag } from 'next/cache'
 
 export async function getGlossaryAction() {
     return await dbQuery(`SELECT * FROM public.glossary ORDER BY term_es ASC`) || []
@@ -26,9 +26,15 @@ export async function upsertGlossaryTermAction(data: { id?: string, term_es: str
         `)
     }
     revalidatePath('/products/glossary')
+    revalidatePath('/pending')
+    revalidatePath('/')
+    revalidateTag('validation-sweep', { expire: 0 })
 }
 
 export async function deleteGlossaryTermAction(id: string) {
     await dbQuery(`DELETE FROM public.glossary WHERE id = '${id}'`)
     revalidatePath('/products/glossary')
+    revalidatePath('/pending')
+    revalidatePath('/')
+    revalidateTag('validation-sweep', { expire: 0 })
 }

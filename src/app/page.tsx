@@ -4,16 +4,16 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { 
-  Package, AlertCircle, LayoutTemplate, GitMerge, FileImage, 
-  FileText, PlusCircle, ArrowRight, Settings2, DatabaseZap
+  Package, AlertTriangle, LayoutTemplate, GitMerge, FileImage, 
+  FileText, PlusCircle, ArrowRight
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-import { getFullValidationSweepCached } from '@/lib/engine/validationActions'
+import { getPendingSummaryCached } from '@/lib/engine/validationActions'
 
 export default async function Home() {
   // Fetch real KPIs and validation state
-  const validationSummary = await getFullValidationSweepCached()
+  const pendingSummary = await getPendingSummaryCached()
   
   const kpiRows = await dbQuery(`
     SELECT
@@ -23,8 +23,8 @@ export default async function Home() {
   
   const kpi = kpiRows?.[0] || {}
   const totalProducts = parseInt(kpi.total_products || '0')
-  const incompleteProducts = validationSummary.incompleteProductsCount
-  const openExceptions = validationSummary.exceptionsCount
+  const pendingCount = pendingSummary.pendingCount
+  const pendingCriticalCount = pendingSummary.pendingCriticalCount
   const activeTemplates = parseInt(kpi.active_templates || '0')
 
   // Recent activity
@@ -48,11 +48,11 @@ export default async function Home() {
       color: "bg-indigo-50 border-indigo-100"
     },
     {
-      title: "Excepciones",
-      description: "Revisión de anomalías o incidencias",
-      icon: <AlertCircle className="h-6 w-6 text-rose-500" />,
-      href: "/exceptions",
-      color: "bg-rose-50 border-rose-100"
+      title: "Pendientes",
+      description: "Reporte de faltantes e incidencias",
+      icon: <AlertTriangle className="h-6 w-6 text-amber-600" />,
+      href: "/pending",
+      color: "bg-amber-50 border-amber-100"
     },
     {
       title: "Plantillas",
@@ -106,7 +106,7 @@ export default async function Home() {
       </div>
 
       {/* Summary KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="shadow-soft border-slate-200/60 rounded-xl overflow-hidden group hover:shadow-premium transition-all duration-300">
           <CardContent className="p-6">
             <div className="flex items-center justify-between space-y-0 pb-2">
@@ -123,26 +123,14 @@ export default async function Home() {
         <Card className="shadow-soft border-slate-200/60 rounded-xl overflow-hidden group hover:shadow-premium transition-all duration-300">
           <CardContent className="p-6">
             <div className="flex items-center justify-between space-y-0 pb-2">
-              <p className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">Incompletos</p>
+              <p className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">Pendientes</p>
               <div className="p-1.5 bg-amber-50 rounded-md">
-                <DatabaseZap className="h-4 w-4 text-amber-500" />
+                <AlertTriangle className="h-4 w-4 text-amber-600" />
               </div>
             </div>
-            <div className="text-3xl font-extrabold text-slate-900 mt-3 tabular-nums">{incompleteProducts}</div>
-            <p className="text-[10px] text-amber-600 mt-1 font-bold">ACCION REQUERIDA</p>
-          </CardContent>
-        </Card>
-
-        <Card className="shadow-soft border-slate-200/60 rounded-xl overflow-hidden group hover:shadow-premium transition-all duration-300">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between space-y-0 pb-2">
-              <p className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">Excepciones</p>
-              <div className="p-1.5 bg-rose-50 rounded-md">
-                <AlertCircle className="h-4 w-4 text-rose-500" />
-              </div>
-            </div>
-            <div className="text-3xl font-extrabold text-slate-900 mt-3 tabular-nums">{openExceptions}</div>
-            <p className="text-[10px] text-rose-600 mt-1 font-bold">CASOS PENDIENTES</p>
+            <div className="text-3xl font-extrabold text-slate-900 mt-3 tabular-nums">{pendingCount}</div>
+            <p className="text-[10px] text-amber-700 mt-1 font-bold">ACCIÓN REQUERIDA</p>
+            <p className="text-[10px] text-slate-400 mt-1 font-medium">Críticos: {pendingCriticalCount}</p>
           </CardContent>
         </Card>
 
@@ -235,16 +223,16 @@ export default async function Home() {
               </div>
               
               <div className="p-4 bg-slate-50/80 border-y border-slate-100 flex justify-between items-center mt-2">
-                <span className="text-sm font-semibold text-slate-700">Excepciones Pendientes</span>
-                <Link href="/exceptions" className="text-xs font-semibold text-rose-600 hover:text-rose-700">Atender</Link>
+                <span className="text-sm font-semibold text-slate-700">Pendientes</span>
+                <Link href="/pending" className="text-xs font-semibold text-amber-700 hover:text-amber-800">Ver reporte</Link>
               </div>
               <div className="p-4 flex items-center gap-3">
-                 <div className="h-8 w-8 rounded-full bg-rose-100 flex items-center justify-center shrink-0">
-                    <AlertCircle className="h-4 w-4 text-rose-600" />
+                 <div className="h-8 w-8 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                    <AlertTriangle className="h-4 w-4 text-amber-700" />
                  </div>
                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-slate-900">3 anomalías detectadas</span>
-                    <span className="text-xs text-slate-500">En el último proceso de importación</span>
+                    <span className="text-sm font-medium text-slate-900">{pendingCount} pendientes detectados</span>
+                    <span className="text-xs text-slate-500">Críticos: {pendingCriticalCount}</span>
                  </div>
               </div>
 

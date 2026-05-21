@@ -13,7 +13,7 @@ export async function POST(req: Request) {
 
     // Redundant path invalidation for safety.
     revalidatePath('/')
-    revalidatePath('/exceptions')
+    revalidatePath('/pending')
 
     return Response.json({ ok: true })
 }

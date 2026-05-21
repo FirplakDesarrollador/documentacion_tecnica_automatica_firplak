@@ -376,7 +376,7 @@ export async function POST(req: Request) {
 
     revalidatePath('/assets')
     revalidatePath('/products')
-    revalidatePath('/exceptions')
+    revalidatePath('/pending')
     await revalidateValidationSweepEverywhere()
 
     return NextResponse.json({ success: true, job_id: jobId || null, applied_ok: appliedOk, applied_err: appliedErr, results })

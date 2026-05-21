@@ -1,7 +1,7 @@
 'use server'
 
 import { dbQuery } from '@/lib/supabase'
-import { revalidatePath } from 'next/cache'
+import { revalidatePath, revalidateTag } from 'next/cache'
 import { recomputeMasterNamesByProductType } from '@/lib/engine/masterNaming'
 
 function esc(v: any) {
@@ -9,6 +9,12 @@ function esc(v: any) {
     if (typeof v === 'boolean') return v ? 'true' : 'false'
     if (typeof v === 'number') return String(v)
     return `'${String(v).replace(/'/g, "''")}'`
+}
+
+function revalidatePendingSweepEverywhere() {
+    revalidateTag('validation-sweep', { expire: 0 })
+    revalidatePath('/pending')
+    revalidatePath('/')
 }
 
 export async function getRulesAction() {
@@ -53,17 +59,20 @@ export async function upsertRuleAction(data: any) {
     }
 
     revalidatePath('/rules')
+    revalidatePendingSweepEverywhere()
 }
 
 export async function deleteRuleAction(id: string) {
     if (!id) return
     await dbQuery(`DELETE FROM public.rules WHERE id = '${id}'`)
     revalidatePath('/rules')
+    revalidatePendingSweepEverywhere()
 }
 
 export async function revalidateRulesAndProductsAction() {
     revalidatePath('/rules')
     revalidatePath('/products')
+    revalidatePendingSweepEverywhere()
 }
 
 export async function previewNamingRulesAction(productType: string, pendingRules: any[]) {
@@ -203,6 +212,7 @@ export async function saveEnConfigAction(targetEntity: string, variable_id: stri
     }
 
     revalidatePath('/rules')
+    revalidatePendingSweepEverywhere()
 }
 
 export async function saveFullConfigAction(productType: string, esRules: any[], deletedEsIds: string[], enConfig: any[]) {
@@ -226,6 +236,7 @@ export async function saveFullConfigAction(productType: string, esRules: any[], 
     }
 
     revalidatePath('/rules')
+    revalidatePendingSweepEverywhere()
     return { success: true }
 }
 
@@ -243,6 +254,9 @@ export async function saveGlossaryTermsAction(terms: { es: string, en: string }[
         `)
     }
 
+    revalidatePath('/rules')
+    revalidatePath('/products/glossary')
+    revalidatePendingSweepEverywhere()
     return { success: true }
 }
 

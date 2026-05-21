@@ -5,18 +5,16 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { PlusCircle, Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Bold, Italic, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, AlignVerticalJustifyEnd, AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Undo2, Redo2, Copy, Trash2, Settings, BookOpen, Shuffle, RotateCcw, LayoutGrid, Combine, FileText, FileEdit, AlertTriangle, CheckCircle2, ShieldAlert } from 'lucide-react'
+import { Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, AlignVerticalJustifyEnd, AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Undo2, Redo2, Copy, Trash2, Shuffle, RotateCcw, LayoutGrid, Combine, FileEdit, AlertTriangle, CheckCircle2, ShieldAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { updateTemplate, getPreviewProduct, getRandomPreviewProduct, validateExportFilenameLength } from '@/app/templates/actions'
 import { getDatasetsAction, FieldDef } from '@/app/datasets/actions'
 import { resolveAssetsAction } from '@/app/generate/actions'
-import { useRouter } from 'next/navigation'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { PIXELS_PER_MM } from '@/lib/constants'
-import { hydrateText } from '@/lib/export/exportUtils'
+import { hydrateText, getVariableValue } from '@/lib/export/exportUtils'
 import { resolveZoneHomeEnAction, getClientsAction } from '@/app/products/actions'
 
 export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'box' | 'dashed_line' | 'dynamic_image' | 'icon_group'
@@ -43,6 +41,8 @@ export interface TemplateElement {
     lineHeight?: number
     letterSpacing?: number
     textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize' | 'sentence'
+    color?: string
+    backgroundColor?: string
     // dynamic_image specific fields
     caption?: string                                      // Free text displayed below the icon (supports \n for line breaks)
     captionFontSize?: number                             // pt, default 6.5
@@ -60,7 +60,44 @@ export interface TemplateElement {
 
 const MAX_HISTORY = 10
 
-function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPreviewMode, type, previewData, dataField, fontSize, lineHeight, letterSpacing, textTransform, width, height }: { text: string, textAlign?: 'left' | 'center' | 'right' | undefined, verticalAlign?: 'top' | 'middle' | 'bottom' | undefined, isPreviewMode: boolean, type: string, previewData?: any, dataField?: string, fontSize?: number, lineHeight?: number, letterSpacing?: number, textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize', width?: number, height?: number, [key: string]: any }) {
+type PreviewData = Record<string, unknown>
+
+type AssetItem = {
+    id?: string
+    name?: string
+    file_path?: string
+    type?: string
+} & Record<string, unknown>
+
+type TemplateData = {
+    id: string
+    width_mm: number
+    height_mm: number
+    elements_json: string
+    name?: string
+    data_source?: string
+    export_formats?: string
+    export_filename_format?: string
+    brand_scope?: string
+    private_label_client_name?: string
+} & Record<string, unknown>
+
+type OverflowTextProps = {
+    text: string
+    textAlign?: 'left' | 'center' | 'right'
+    verticalAlign?: 'top' | 'middle' | 'bottom'
+    isPreviewMode: boolean
+    type: TemplateElementType
+    previewData?: PreviewData | null
+    dataField?: string
+    fontSize?: number
+    lineHeight?: number
+    letterSpacing?: number
+    width?: number
+    height?: number
+}
+
+function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPreviewMode, type, previewData, dataField, fontSize, lineHeight, letterSpacing, width, height }: OverflowTextProps) {
     const textRef = useRef<HTMLDivElement>(null)
     const [isOverflowing, setIsOverflowing] = useState(false)
     const [adjustedFontSize, setAdjustedFontSize] = useState<number>(fontSize || 12)
@@ -68,8 +105,6 @@ function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPr
     // Regex replacement for rich text variables
     const displayText = React.useMemo(() => {
         if (!isPreviewMode || !previewData) return text
-
-        const { getVariableValue } = require('@/lib/export/exportUtils')
 
         if (type === 'dynamic_text') {
             const varName = text.replace(/[{}]/g, '');
@@ -90,11 +125,13 @@ function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPr
 
     // Initialize/Reset font scaling when content or boundaries change
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setAdjustedFontSize(fontSize || 12)
     }, [fontSize, displayText, width, height])
 
     useEffect(() => {
         if (!textRef.current || !isPreviewMode) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             setIsOverflowing(false)
             return
         }
@@ -166,13 +203,14 @@ function DynamicImageElement({
 }: { 
     el: TemplateElement, 
     isPreviewMode: boolean, 
-    previewData: any 
+    previewData: PreviewData | null
 }) {
     const containerRef = useRef<HTMLDivElement>(null)
     const [innerOverflow, setInnerOverflow] = useState(false)
     const [adjustedCaptionFontSize, setAdjustedCaptionFontSize] = useState(el.captionFontSize || 6.5)
     
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setAdjustedCaptionFontSize(el.captionFontSize || 6.5)
     }, [el.caption, el.captionFontSize, el.width, el.height])
 
@@ -206,7 +244,8 @@ function DynamicImageElement({
         )
     }
 
-    const iconUrl = previewData?.[`${el.dataField}_url`]
+    const iconUrlKey = `${el.dataField}_url`
+    const iconUrl = typeof previewData?.[iconUrlKey] === 'string' ? previewData[iconUrlKey] : null
     if (!iconUrl) {
         if (el.groupId) return null; // Natural collapse inside flex groups
         return <div className="w-full h-full border border-dashed border-slate-200 rounded opacity-30 pointer-events-none" />
@@ -425,8 +464,6 @@ function RichTextEditor({ content, onChange, isExternalDataSource = false, datas
     const applyLetterSpacing = (lsEm: number) => {
         const selection = window.getSelection();
         if (!selection || selection.rangeCount === 0 || !editorRef.current) return;
-        
-        const range = selection.getRangeAt(0);
         
         // Find all blocks in selection
         const allBlocks = Array.from(editorRef.current.querySelectorAll('div, p'))
@@ -1095,7 +1132,6 @@ function RichTextEditor({ content, onChange, isExternalDataSource = false, datas
  */
 function CaptionEditor({ content, onChange }: { content: string, onChange: (val: string) => void }) {
     const editorRef = useRef<HTMLDivElement>(null);
-    const lastRangeRef = useRef<Range | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     const lineHeightRef = useRef<HTMLInputElement>(null);
     const letterSpacingRef = useRef<HTMLInputElement>(null);
@@ -1317,8 +1353,6 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
     const applyLetterSpacing = (lsEm: number) => {
         const selection = window.getSelection();
         if (!selection || selection.rangeCount === 0 || !editorRef.current) return;
-        
-        const range = selection.getRangeAt(0);
         
         // Find all block elements (DIV, P) within the editor that intersect with the selection
         const blocks = Array.from(editorRef.current.querySelectorAll('div, p'))
@@ -1579,7 +1613,7 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
     )
 }
 
-export function BuilderCanvas({ template, assets = [], datasetSchema: initialSchema = [] }: { template: any, assets?: any[], datasetSchema?: any[] }) {
+export function BuilderCanvas({ template, assets = [], datasetSchema: initialSchema = [] }: { template: TemplateData, assets?: AssetItem[], datasetSchema?: FieldDef[] }) {
 
     const [elements, setElements] = useState<TemplateElement[]>([])
     const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -1591,7 +1625,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     const [templateName, setTemplateName] = useState(template.name || '')
     const [dataSource, setDataSource] = useState(template.data_source || 'core_firplak')
     const [datasetSchema, setDatasetSchema] = useState(initialSchema)
-    const [availableDatasets, setAvailableDatasets] = useState<any[]>([])
+    const [availableDatasets, setAvailableDatasets] = useState<{ id: string, name?: string, schema_json?: unknown }[]>([])
 
     const [brandScope, setBrandScope] = useState<TemplateBrandScope>(
         template?.brand_scope === 'private_label' ? 'private_label' : 'firplak'
@@ -1599,7 +1633,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     const [privateLabelClientName, setPrivateLabelClientName] = useState<string>(
         template?.private_label_client_name ? String(template.private_label_client_name) : ''
     )
-    const [availableClients, setAvailableClients] = useState<any[]>([])
+    const [availableClients, setAvailableClients] = useState<{ id?: string | number, name: string }[]>([])
 
     const setIsModified = useCallback((val: boolean) => {
         isModifiedRef.current = val
@@ -1633,29 +1667,29 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
 
     const [isPreviewMode, setIsPreviewMode] = useState(false)
     const [isLoadingRandom, setIsLoadingRandom] = useState(false)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const [previewData, setPreviewData] = useState<any>(null)
+    const [previewData, setPreviewData] = useState<PreviewData | null>(null)
     const [isValidating, setIsValidating] = useState(false)
     const [validationResult, setValidationResult] = useState<{ success: boolean, error?: string, count?: number } | null>(null)
     const assetMap = React.useMemo(() => {
         const map: Record<string, string> = {}
         assets.forEach(a => {
-            if (a.name) map[a.name] = a.file_path
+            if (a.name && a.file_path) map[a.name] = a.file_path
         })
         return map
     }, [assets])
 
-    const enrichedData = React.useMemo(() => {
+    const enrichedData = React.useMemo<PreviewData | null>(() => {
         if (!previewData) return null
-        return enrichProductDataWithIcons(previewData, assetMap)
+        return enrichProductDataWithIcons(previewData, assetMap) as PreviewData
     }, [previewData, assetMap])
 
     // Helper: resuelve zone_home_en desde el Glosario antes de enriquecer (preview del builder)
-    const enrichWithZone = async (data: any, resolvedAssetMap: Record<string, string>) => {
-        if (!data) return enrichProductDataWithIcons(data, resolvedAssetMap)
-        const zoneEn = await resolveZoneHomeEnAction(data.zone_home)
+    const enrichWithZone = async (data: PreviewData | null, resolvedAssetMap: Record<string, string>): Promise<PreviewData | null> => {
+        if (!data) return null
+        const zoneHome = typeof data.zone_home === 'string' ? data.zone_home : null
+        const zoneEn = zoneHome ? await resolveZoneHomeEnAction(zoneHome) : null
         const dataWithZone = zoneEn ? { ...data, zone_home_en: zoneEn } : data
-        return enrichProductDataWithIcons(dataWithZone, resolvedAssetMap)
+        return enrichProductDataWithIcons(dataWithZone, resolvedAssetMap) as PreviewData
     }
 
     // Fetch datasets info
@@ -1666,7 +1700,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     // Fetch clients for private label templates
     useEffect(() => {
         getClientsAction()
-            .then((res: any) => setAvailableClients(Array.isArray(res) ? res : []))
+            .then((res) => setAvailableClients(Array.isArray(res) ? res : []))
             .catch(() => setAvailableClients([]))
     }, [])
 
@@ -1688,14 +1722,18 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             if (ds && ds.schema_json) {
                 const raw = ds.schema_json
                 if (Array.isArray(raw)) {
-                    setDatasetSchema(raw)
+                    setDatasetSchema(raw as FieldDef[])
                 } else if (raw && typeof raw === 'object') {
-                    const selectedCols = raw.selectedColumns || []
-                    setDatasetSchema(selectedCols.map((col: string) => ({
+                    const obj = raw as Record<string, unknown>
+                    const selectedCols = Array.isArray(obj.selectedColumns) ? obj.selectedColumns : []
+                    const fieldMap = (obj.fieldMap && typeof obj.fieldMap === 'object') ? (obj.fieldMap as Record<string, unknown>) : null
+                    const codeField = fieldMap && typeof fieldMap.code === 'string' ? fieldMap.code : null
+
+                    setDatasetSchema(selectedCols.filter((col): col is string => typeof col === 'string').map((col) => ({
                         key: col,
                         label: col.replace(/_/g, ' '),
                         original: col,
-                        is_identifier: col === raw.fieldMap?.code
+                        is_identifier: codeField ? col === codeField : false
                     })))
                 }
             }
@@ -1708,7 +1746,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     }
 
     // Determinar si es fuente externa o core Firplak
-    const isExternalDataSource = dataSource && dataSource !== 'core_firplak'
+    const isExternalDataSource = Boolean(dataSource) && dataSource !== 'core_firplak'
 
     // Lista de variables disponibles (estáticas para Firplak, dinámicas para datasets externos)
     const CORE_VARIABLE_OPTS = [
@@ -1750,25 +1788,6 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             { key: 'line', label: 'Línea' },
         ]},
     ]
-
-    const renderVariableOptions = () => {
-        if (isExternalDataSource && datasetSchema.length > 0) {
-            return (
-                <optgroup label="Dataset Externo">
-                    {datasetSchema.map(f => (
-                        <option key={f.key} value={f.key}>{f.label}</option>
-                    ))}
-                </optgroup>
-            )
-        }
-        return CORE_VARIABLE_OPTS.map(group => (
-            <optgroup key={group.group} label={group.group}>
-                {group.options.map(o => (
-                    <option key={o.key} value={o.key}>{o.label}</option>
-                ))}
-            </optgroup>
-        ))
-    }
 
     const canvasRef = useRef<HTMLDivElement>(null)
 
@@ -1869,7 +1888,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             const next = prev + 1
             return next >= MAX_HISTORY ? MAX_HISTORY - 1 : next
         })
-    }, [historyIndex])
+    }, [historyIndex, setIsModified])
 
     const undo = useCallback(() => {
         if (historyIndex > 0) {
@@ -1879,7 +1898,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             setIsModified(true)
             setSelectedIds([])
         }
-    }, [history, historyIndex])
+    }, [history, historyIndex, setIsModified])
 
     const redo = useCallback(() => {
         if (historyIndex < history.length - 1) {
@@ -1889,7 +1908,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             setIsModified(true)
             setSelectedIds([])
         }
-    }, [history, historyIndex])
+    }, [history, historyIndex, setIsModified])
 
     const updateSelectedElements = useCallback((updates: Partial<TemplateElement>) => {
         setElements(prev => {
@@ -1964,7 +1983,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
 
         const newElements = elements.filter(el => el.id !== groupEl.id).map(el => {
             if (el.groupId === groupEl.id) {
-                const { groupId, ...rest } = el;
+                const { groupId: _groupId, ...rest } = el;
                 return rest;
             }
             return el;
@@ -2126,7 +2145,8 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         setIsLoadingRandom(true)
         try {
             // Pass current product code so the server excludes it (avoids same product twice)
-            const data = await getRandomPreviewProduct(previewData?.code, dataSource)
+            const currentCode = typeof previewData?.code === 'string' ? previewData.code : undefined
+            const data = await getRandomPreviewProduct(currentCode, dataSource)
             if (data) {
                 const assetMap = await resolveAssetsAction([])
                 setPreviewData(await enrichWithZone(data, assetMap))
@@ -2328,7 +2348,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         const offsets = newSelectedIds?.map(selectedId => {
             const el = elements.find(el => el.id === selectedId)
             return el ? { id: selectedId, offsetX: mouseX - el.x, offsetY: mouseY - el.y } : null
-        }).filter(Boolean) as any[]
+        }).filter((o): o is { id: string, offsetX: number, offsetY: number } => o !== null)
 
         setDragOffsets(offsets)
         setIsDragging(true)
@@ -2562,13 +2582,13 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
 
                         <div className="flex-1" />
                         <span className="text-[10px] text-indigo-300 italic hidden md:block">
-                            Visualizando: {previewData?.final_name_es || 'Cargando...'}
+                            Visualizando: {typeof previewData?.final_name_es === 'string' ? previewData.final_name_es : 'Cargando...'}
                         </span>
                     </div>
                 )}
 
                 {/* The Canvas Area */}
-                <div className="flex-1 overflow-auto bg-slate-100 p-8 rounded-xl border flex items-center justify-center relative shadow-inner min-h-[500px]">
+                <div className="flex-1 overflow-auto bg-slate-100 p-8 rounded-xl border flex items-center justify-center relative shadow-inner min-h-125">
                     <div
                         ref={canvasRef}
                         onMouseDown={handleCanvasClick}
@@ -2595,18 +2615,18 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                             {isPreviewMode ? (
                                                 (() => {
                                                     const systemAsset = assets.find(a => a.name === childEl.content);
-                                                    if (systemAsset && systemAsset.file_path) return <img src={systemAsset.file_path} className="max-w-full max-h-full object-contain pointer-events-none" />
+                                                    if (systemAsset && systemAsset.file_path) return <img src={systemAsset.file_path} alt={childEl.content ? String(childEl.content) : ''} className="max-w-full max-h-full object-contain pointer-events-none" />
                                                     if (childEl.content === 'logo_empresa' || childEl.content === 'Logo Firplak general') {
-                                                        const logoAsset = assets.find(a => (a.name === 'Logo Firplak general') || (a.type === 'logo' && a.name.toLowerCase().includes('logo')));
-                                                        if (logoAsset && logoAsset.file_path) return <img src={logoAsset.file_path} className="max-w-full max-h-full object-contain pointer-events-none" />
+                                                        const logoAsset = assets.find(a => (a.name === 'Logo Firplak general') || (a.type === 'logo' && typeof a.name === 'string' && a.name.toLowerCase().includes('logo')));
+                                                        if (logoAsset && logoAsset.file_path) return <img src={logoAsset.file_path} alt="Logo" className="max-w-full max-h-full object-contain pointer-events-none" />
                                                         return <span className="text-gray-400 text-[10px] text-center">[Logo No Encontrado]</span>
                                                     }
                                                     if (childEl.content === 'Isométrico' || childEl.content === 'isometrico_placeholder' || childEl.content === 'Isométrico (Placeholder)') {
-                                                        if (previewData?.isometric_path) return <img src={previewData.isometric_path} className="max-w-full max-h-full object-contain pointer-events-none" />
+                                                        if (previewData?.isometric_path) return <img src={String(previewData.isometric_path)} alt="IsomÃ©trico" className="max-w-full max-h-full object-contain pointer-events-none" />
                                                         return <span className="text-red-500 text-[10px] font-bold text-center border border-red-200 bg-red-50 p-1 rounded">[FALTA ISOMÉTRICO]</span>
                                                     }
                                                     const asset = assets.find(a => a.id === childEl.content || a.name === childEl.content);
-                                                    if (asset && asset.file_path) return <img src={asset.file_path} className="max-w-full max-h-full object-contain pointer-events-none" />
+                                                    if (asset && asset.file_path) return <img src={asset.file_path} alt={childEl.content ? String(childEl.content) : ''} className="max-w-full max-h-full object-contain pointer-events-none" />
                                                     return <span className="text-gray-400 text-xs font-semibold pointer-events-none p-1 text-center bg-white/70 rounded">[{childEl.content}]</span>
                                                 })()
                                             ) : <span className="text-gray-400 text-xs font-semibold pointer-events-none p-1 text-center bg-white/70 rounded">[{childEl.content}]</span>}
@@ -2632,7 +2652,15 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                     {/* Text types */}
                                     {(childEl.type === 'dynamic_text' || childEl.type === 'text') && (
                                         <OverflowText
-                                            {...(childEl as any)}
+                                            textAlign={childEl.textAlign}
+                                            verticalAlign={childEl.verticalAlign}
+                                            type={childEl.type}
+                                            dataField={childEl.dataField}
+                                            fontSize={childEl.fontSize}
+                                            lineHeight={childEl.lineHeight}
+                                            letterSpacing={childEl.letterSpacing}
+                                            width={childEl.width}
+                                            height={childEl.height}
                                             text={childEl.type === 'dynamic_text' ? `{${childEl.dataField}}` : (childEl.content || '')}
                                             isPreviewMode={isPreviewMode}
                                             previewData={previewData}
@@ -2655,10 +2683,10 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                         fontWeight: el.fontWeight as 'normal' | 'bold' | '500',
                                         fontStyle: el.fontStyle,
                                         fontFamily: el.fontFamily === 'Montserrat' ? 'var(--font-montserrat), sans-serif' : 'inherit',
-                                        color: (el as any).color,
-                                        backgroundColor: el.type === 'icon_group' ? (isPreviewMode ? 'transparent' : 'rgba(238, 242, 255, 0.4)') : (el as any).backgroundColor,
+                                        color: el.color,
+                                        backgroundColor: el.type === 'icon_group' ? (isPreviewMode ? 'transparent' : 'rgba(238, 242, 255, 0.4)') : el.backgroundColor,
                                         border: el.type === 'icon_group' && !isPreviewMode ? '1px dashed #818cf8' : undefined,
-                                        textTransform: ((el as any).textTransform as any) || 'none'
+                                        textTransform: el.textTransform || 'none'
                                     }}
                                 >
                                     {renderResizeHandles(el)}
@@ -2766,7 +2794,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                         <Label className="text-xs text-slate-700 font-semibold mb-1 block">Alineación Interna</Label>
                                         <select 
                                             value={activeEl.groupAlign || 'flex-start'} 
-                                            onChange={(e) => updateSelectedElements({ groupAlign: e.target.value as any })}
+                                            onChange={(e) => updateSelectedElements({ groupAlign: e.target.value as TemplateElement['groupAlign'] })}
                                             className="w-full text-sm h-8 rounded border-slate-200 outline-none"
                                         >
                                             <option value="flex-start">Izquierda</option>
@@ -2848,7 +2876,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                             'Icono Canto',
                                             'Icono Cierre Lento',
                                             'Icono Extensión Total'
-                                        ].includes(a.name)).length > 0 && (
+                                        ].includes(a.name || '')).length > 0 && (
                                             <optgroup label="Assets (Base de Datos)">
                                                 {assets
                                                     .filter(a => ![
@@ -2858,7 +2886,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                                         'Icono Canto',
                                                         'Icono Cierre Lento',
                                                         'Icono Extensión Total'
-                                                    ].includes(a.name))
+                                                    ].includes(a.name || ''))
                                                     ?.map(a => (
                                                         <option key={a.id} value={a.id}>{a.name}</option>
                                                     ))
@@ -3054,8 +3082,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                             <select
                                                 className="flex h-8 w-full rounded-md border border-input bg-white px-2 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                                                 value={activeEl.borderStyle || 'solid'}
-                                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                                onChange={(e) => updateSelectedElements({ borderStyle: e.target.value as any })}
+                                                onChange={(e) => updateSelectedElements({ borderStyle: e.target.value as TemplateElement['borderStyle'] })}
                                             >
                                                 <option value="solid">Continua (___)</option>
                                                 <option value="dashed">Punteada (- - -)</option>
@@ -3157,7 +3184,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                             <select
                                                 className="flex h-8 w-full rounded-md border border-input bg-white px-2 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                                                 value={activeEl.textTransform || 'none'}
-                                                onChange={(e) => updateSelectedElements({ textTransform: e.target.value as any })}
+                                                onChange={(e) => updateSelectedElements({ textTransform: e.target.value as TemplateElement['textTransform'] })}
                                             >
                                                 <option value="none">Normal</option>
                                                 <option value="uppercase">MAYÚSCULAS</option>
@@ -3388,7 +3415,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                                 }}
                                             >
                                                 <option value="" disabled>-- Selecciona un cliente --</option>
-                                                {availableClients.map((c: any) => (
+                                                {availableClients.map((c) => (
                                                     <option key={c.id || c.name} value={c.name}>{c.name}</option>
                                                 ))}
                                             </select>
