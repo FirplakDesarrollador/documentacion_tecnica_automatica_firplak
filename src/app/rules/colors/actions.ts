@@ -38,6 +38,7 @@ export async function upsertColorAction(data: { code_4dig: string; name_color_sa
       [code, name]
     )
     revalidatePath('/rules/colors')
+    revalidatePath('/configuration/colors')
     return result[0]
   } else {
     const result = await dbQuery(
@@ -48,6 +49,7 @@ export async function upsertColorAction(data: { code_4dig: string; name_color_sa
       [name, code]
     )
     revalidatePath('/rules/colors')
+    revalidatePath('/configuration/colors')
     return result[0]
   }
 }
@@ -57,4 +59,5 @@ export async function deleteColorAction(code_4dig: string) {
   if (!code_4dig) throw new Error('Código es obligatorio para eliminar')
   await dbQuery(`DELETE FROM public.colors WHERE code_4dig = $1`, [code_4dig])
   revalidatePath('/rules/colors')
+  revalidatePath('/configuration/colors')
 }

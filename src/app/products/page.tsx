@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation'
 import { dbQuery } from '@/lib/supabase'
 import { getFamilyFilters, getReferenceFilters } from '@/lib/data/filters'
 import {
@@ -20,6 +21,7 @@ export default async function ProductsPage({
 }: {
     searchParams: Promise<{ [key: string]: string | string[] | undefined }>
 }) {
+    redirect('/')
     const searchParams = await searchParamsPromise
 
     const toArray = (val: string | string[] | undefined) => {

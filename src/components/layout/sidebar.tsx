@@ -70,13 +70,12 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
     
     const navItems = [
         { name: 'Inicio', href: '/', icon: Home },
-        { name: 'Productos', href: '/products', icon: Package },
         { name: 'Pendientes', href: '/pending', icon: AlertTriangle },
         { name: 'Plantillas', href: '/templates', icon: LayoutTemplate },
         { name: 'Bases de Datos', href: '/datasets', icon: Database },
-        { name: 'Reglas', href: '/rules', icon: BookOpen },
         { name: 'Recursos', href: '/assets', icon: ImageIcon },
         { name: 'Generar', href: '/generate', icon: FileText },
+        { name: 'Configuración', href: '/configuration', icon: Settings },
     ]
 
     // Si estamos en la ruta de exportación headless o en login, NO renderizar Sidebar ni estilos contenedores

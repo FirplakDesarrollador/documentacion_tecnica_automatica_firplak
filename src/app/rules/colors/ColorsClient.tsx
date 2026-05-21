@@ -110,7 +110,7 @@ export default function ColorsClient({ initialData }: ColorsClientProps) {
         <div className="flex flex-col gap-6 p-2">
             <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-4">
-                    <Link href="/rules">
+                    <Link href="/configuration">
                         <Button variant="outline" size="icon" className="border-slate-200 text-slate-700 hover:bg-slate-50">
                             <ArrowLeft className="h-4 w-4" />
                         </Button>

@@ -9,7 +9,7 @@ export default function SkuEditorPage() {
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-2">
-            <Link href="/products" className="text-slate-400 hover:text-slate-600 transition-colors">
+            <Link href="/configuration" className="text-slate-400 hover:text-slate-600 transition-colors">
               <ArrowLeft className="w-5 h-5" />
             </Link>
             <h1 className="text-3xl font-bold tracking-tight text-slate-900 flex items-center gap-3">

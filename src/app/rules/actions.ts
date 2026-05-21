@@ -59,6 +59,7 @@ export async function upsertRuleAction(data: any) {
     }
 
     revalidatePath('/rules')
+    revalidatePath('/configuration')
     revalidatePendingSweepEverywhere()
 }
 
@@ -66,11 +67,13 @@ export async function deleteRuleAction(id: string) {
     if (!id) return
     await dbQuery(`DELETE FROM public.rules WHERE id = '${id}'`)
     revalidatePath('/rules')
+    revalidatePath('/configuration')
     revalidatePendingSweepEverywhere()
 }
 
 export async function revalidateRulesAndProductsAction() {
     revalidatePath('/rules')
+    revalidatePath('/configuration')
     revalidatePath('/products')
     revalidatePendingSweepEverywhere()
 }
@@ -212,6 +215,7 @@ export async function saveEnConfigAction(targetEntity: string, variable_id: stri
     }
 
     revalidatePath('/rules')
+    revalidatePath('/configuration')
     revalidatePendingSweepEverywhere()
 }
 
@@ -236,6 +240,7 @@ export async function saveFullConfigAction(productType: string, esRules: any[], 
     }
 
     revalidatePath('/rules')
+    revalidatePath('/configuration')
     revalidatePendingSweepEverywhere()
     return { success: true }
 }
@@ -255,6 +260,7 @@ export async function saveGlossaryTermsAction(terms: { es: string, en: string }[
     }
 
     revalidatePath('/rules')
+    revalidatePath('/configuration')
     revalidatePath('/products/glossary')
     revalidatePendingSweepEverywhere()
     return { success: true }
@@ -276,6 +282,7 @@ export async function saveMassImportSettingsAction(input: { executeEnabled: bool
     `)
 
     revalidatePath('/rules')
+    revalidatePath('/configuration')
 }
 
 export async function applyFullBulkNamingUpdateBatchAction(

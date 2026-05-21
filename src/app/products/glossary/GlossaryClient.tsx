@@ -192,7 +192,7 @@ export default function GlossaryClient({ initialData, initialCategories }: Gloss
         <div className="flex flex-col gap-6 p-2">
             <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-4">
-                    <Link href="/products">
+                    <Link href="/configuration">
                         <Button variant="outline" size="icon">
                             <ArrowLeft className="h-4 w-4" />
                         </Button>

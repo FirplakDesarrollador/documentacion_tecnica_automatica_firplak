@@ -9,7 +9,7 @@ export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 async function getMassImportSettings(): Promise<{ executeEnabled: boolean; safeMaxRows: number }> {
-  // Source of truth: DB settings (editable in /rules).
+  // Source of truth: DB settings (editable in /configuration; /rules is legacy alias).
   // Intentionally does NOT read from .env (per governance requirement).
   try {
     const rows =

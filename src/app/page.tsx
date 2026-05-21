@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { 
   Package, AlertTriangle, LayoutTemplate, GitMerge, FileImage, 
-  FileText, PlusCircle, ArrowRight
+  FileText, PlusCircle, ArrowRight, Upload
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -41,13 +41,6 @@ export default async function Home() {
 
   const modules = [
     {
-      title: "Productos",
-      description: "Base maestra, catálogo y etiquetas",
-      icon: <Package className="h-6 w-6 text-indigo-500" />,
-      href: "/products",
-      color: "bg-indigo-50 border-indigo-100"
-    },
-    {
       title: "Pendientes",
       description: "Reporte de faltantes e incidencias",
       icon: <AlertTriangle className="h-6 w-6 text-amber-600" />,
@@ -62,10 +55,10 @@ export default async function Home() {
       color: "bg-emerald-50 border-emerald-100"
     },
     {
-      title: "Reglas",
-      description: "Motor de lógica y automatización",
+      title: "Configuración",
+      description: "Ajustes, diccionarios y reglas",
       icon: <GitMerge className="h-6 w-6 text-blue-500" />,
-      href: "/rules",
+      href: "/configuration",
       color: "bg-blue-50 border-blue-100"
     },
     {
@@ -100,6 +93,12 @@ export default async function Home() {
             <Button className="h-12 px-6 shadow-md font-semibold bg-indigo-600 hover:bg-indigo-700 transition-all">
               <PlusCircle className="mr-2 h-4 w-4" />
               Agregar producto
+            </Button>
+          </Link>
+          <Link href="/products/mass-import">
+            <Button variant="outline" className="h-12 px-6 shadow-md font-semibold border-indigo-200 text-indigo-700 hover:bg-indigo-50 transition-all">
+              <Upload className="mr-2 h-4 w-4" />
+              Carga masiva
             </Button>
           </Link>
         </div>
@@ -193,7 +192,6 @@ export default async function Home() {
             <CardContent className="p-0 overflow-hidden">
               <div className="p-4 bg-slate-50/80 border-b border-slate-100 flex justify-between items-center">
                 <span className="text-sm font-semibold text-slate-700">Últimos Productos Editados</span>
-                <Link href="/products" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">Ver todos</Link>
               </div>
               <div className="divide-y divide-slate-100">
                 {recentProducts.length > 0 ? recentProducts.map((p: any) => (

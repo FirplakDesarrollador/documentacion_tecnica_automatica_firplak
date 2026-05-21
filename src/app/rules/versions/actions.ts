@@ -28,6 +28,7 @@ export async function upsertVersionAction(data: {
             ]
         )
         revalidatePath('/rules/versions')
+        revalidatePath('/configuration/versions')
         return result[0]
     } else {
         // UPDATE existing version (PK = version_code, so we match by it)
@@ -45,6 +46,7 @@ export async function upsertVersionAction(data: {
             ]
         )
         revalidatePath('/rules/versions')
+        revalidatePath('/configuration/versions')
         return result[0]
     }
 }
@@ -52,4 +54,5 @@ export async function upsertVersionAction(data: {
 export async function deleteVersionAction(version_code: string) {
     await dbQuery(`DELETE FROM public.global_version_rules WHERE version_code = $1`, [version_code])
     revalidatePath('/rules/versions')
+    revalidatePath('/configuration/versions')
 }
