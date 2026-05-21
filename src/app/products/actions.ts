@@ -3,7 +3,7 @@
 import { dbQuery, supabaseServer } from '@/lib/supabase'
 import { Product } from '@prisma/client'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
-import { translateProductToEnglish } from '@/lib/engine/translator'
+import { resetGlossaryCache, translateProductToEnglish } from '@/lib/engine/translator'
 import { parseProductCode } from '@/lib/engine/codeParser'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
@@ -686,16 +686,36 @@ export async function saveGlossaryTermsAction(terms: { term_es: string, term_en:
     if (!terms || terms.length === 0) return { success: true }
     
     try {
+        const normalizeGlossaryInput = (t: { term_es: string, term_en: string, category: string, priority: number }) => {
+            const rawEs = String(t.term_es || '').trim().toUpperCase()
+            const rawEn = String(t.term_en || '').trim().toUpperCase()
+            let category = String(t.category || 'TECHNICAL_TERM').trim().toUpperCase()
+            let termEs = rawEs
+
+            const resolvedTypePrefix = 'RESOLVED_TYPE_MISSING:'
+            if (termEs.startsWith(resolvedTypePrefix)) {
+                termEs = termEs.slice(resolvedTypePrefix.length).trim()
+                category = 'RESOLVED_TYPE'
+            }
+
+            return { termEs, termEn: rawEn, category, priority: t.priority }
+        }
+
         for (const t of terms) {
+            const n = normalizeGlossaryInput(t)
             await dbQuery(`
                 INSERT INTO public.glossary (term_es, term_en, category, priority, active)
-                VALUES ('${t.term_es.replace(/'/g, "''")}', '${t.term_en.replace(/'/g, "''")}', '${t.category}', ${t.priority}, true)
+                VALUES ('${n.termEs.replace(/'/g, "''")}', '${n.termEn.replace(/'/g, "''")}', '${n.category.replace(/'/g, "''")}', ${n.priority}, true)
                 ON CONFLICT (term_es) DO UPDATE 
                 SET term_en = EXCLUDED.term_en,
                     category = EXCLUDED.category,
                     priority = EXCLUDED.priority;
             `)
         }
+        resetGlossaryCache()
+        revalidatePath('/products/glossary')
+        revalidatePath('/pending')
+        revalidatePath('/')
         return { success: true, message: `Se guardaron ${terms.length} términos correctamente.` }
     } catch (error: any) {
         console.error("Error saving glossary terms:", error)

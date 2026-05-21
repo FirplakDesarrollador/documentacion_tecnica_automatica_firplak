@@ -68,8 +68,21 @@ export default function GlossaryClient({ initialData, initialCategories }: Gloss
     // Scanner State
     const [isScanning, setIsScanning] = useState(false)
     const [scannerModalOpen, setScannerModalOpen] = useState(false)
-    const [missingTerms, setMissingTerms] = useState<{ term: string, count: number, translation: string, category: string, isNewCategory: boolean }[]>([])
+    const [missingTerms, setMissingTerms] = useState<{ term: string, count: number, translation: string, category: string, isNewCategory: boolean, kind?: 'RESOLVED_TYPE' | 'OTHER' }[]>([])
     const [isSavingScan, setIsSavingScan] = useState(false)
+
+    const normalizeMissingTerm = (raw: string): { term: string, kind: 'RESOLVED_TYPE' | 'OTHER', defaultCategory: string } => {
+        const upper = String(raw || '').trim().toUpperCase()
+        const resolvedTypePrefix = 'RESOLVED_TYPE_MISSING:'
+        if (upper.startsWith(resolvedTypePrefix)) {
+            return {
+                term: upper.slice(resolvedTypePrefix.length).trim(),
+                kind: 'RESOLVED_TYPE',
+                defaultCategory: 'RESOLVED_TYPE'
+            }
+        }
+        return { term: upper, kind: 'OTHER', defaultCategory: 'GENERAL' }
+    }
 
     const filteredData = data.filter(item => 
         item.term_es.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -127,7 +140,10 @@ export default function GlossaryClient({ initialData, initialCategories }: Gloss
                 if (res.missingTerms.length === 0) {
                     toast.success("¡Excelente! No se encontraron términos faltantes en el catálogo.")
                 } else {
-                    setMissingTerms(res.missingTerms.map(m => ({ ...m, translation: '', category: 'GENERAL', isNewCategory: false })))
+                    setMissingTerms(res.missingTerms.map(m => {
+                        const n = normalizeMissingTerm(m.term)
+                        return { term: n.term, count: m.count, translation: '', category: n.defaultCategory, isNewCategory: false, kind: n.kind }
+                    }))
                     setScannerModalOpen(true)
                 }
             } else {
@@ -153,8 +169,8 @@ export default function GlossaryClient({ initialData, initialCategories }: Gloss
             const payload = termsToSave.map(t => ({
                 term_es: t.term,
                 term_en: t.translation.toUpperCase(),
-                category: t.category,
-                priority: 10
+                category: t.kind === 'RESOLVED_TYPE' ? 'RESOLVED_TYPE' : t.category,
+                priority: t.kind === 'RESOLVED_TYPE' ? 20 : 10
             }))
             const res = await saveGlossaryTermsAction(payload)
             if (res.success) {
@@ -412,7 +428,7 @@ export default function GlossaryClient({ initialData, initialCategories }: Gloss
                                                         onClick={() => {
                                                             const newTerms = [...missingTerms]
                                                             newTerms[index].isNewCategory = false
-                                                            newTerms[index].category = 'GENERAL'
+                                                            newTerms[index].category = item.kind === 'RESOLVED_TYPE' ? 'RESOLVED_TYPE' : 'GENERAL'
                                                             setMissingTerms(newTerms)
                                                         }}
                                                     >
@@ -421,9 +437,11 @@ export default function GlossaryClient({ initialData, initialCategories }: Gloss
                                                 </div>
                                             ) : (
                                                 <Select
+                                                    disabled={item.kind === 'RESOLVED_TYPE'}
                                                     value={item.category}
                                                     onValueChange={(val) => {
                                                         if (!val) return
+                                                        if (item.kind === 'RESOLVED_TYPE') return
                                                         const newTerms = [...missingTerms]
                                                         if (val === 'ADD_NEW') {
                                                             newTerms[index].isNewCategory = true

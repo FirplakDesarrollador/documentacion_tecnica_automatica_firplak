@@ -1,6 +1,6 @@
 'use server'
 
-import { supabase } from '@/lib/supabase'
+import { supabase, dbQuery } from '@/lib/supabase'
 import { translateProductToEnglish, ProductPayload } from '@/lib/engine/translator'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
 
@@ -21,8 +21,8 @@ export interface TranslationBatchResult {
 }
 
 /**
- * Procesa un lote de productos para traducción a inglés.
- * Usa PostgREST y RPC para máxima estabilidad.
+ * Procesa un lote de productos para traducciÃ³n a inglÃ©s.
+ * Usa PostgREST y RPC para mÃ¡xima estabilidad.
  */
 export async function translateEnglishBatchAction(
     ids: string[]
@@ -69,7 +69,7 @@ export async function translateEnglishBatchAction(
                 )
                 const { translatedName, missingTerms } = translation
 
-                // Tracking de términos faltantes por producto
+                // Tracking de tÃ©rminos faltantes por producto
                 if (missingTerms.length > 0) {
                     missingTerms.forEach(t => {
                         if (!missingTermsTracker.has(t)) missingTermsTracker.set(t, new Set())
@@ -98,7 +98,7 @@ export async function translateEnglishBatchAction(
                 result.failedCount++
                 result.failedItems.push({
                     code: product.code || product.id,
-                    reason: err.message || 'Error en motor de traducción',
+                    reason: err.message || 'Error en motor de traducciÃ³n',
                     category: 'motor'
                 })
             }
@@ -140,7 +140,7 @@ export async function translateEnglishBatchAction(
         return { success: true, data: result }
     } catch (error: any) {
         console.error("Batch Translation Action Error:", error)
-        return { success: false, error: error.message || 'Error crítico en el lote' }
+        return { success: false, error: error.message || 'Error crÃ­tico en el lote' }
     }
 }
 
@@ -163,20 +163,24 @@ function createEmptyResult(): TranslationBatchResult {
 }
 
 /**
- * Escanea el catálogo en busca de términos faltantes en las traducciones
+ * Escanea el catÃ¡logo en busca de tÃ©rminos faltantes en las traducciones
  * sin realizar modificaciones en la base de datos.
- * Retorna una lista de términos y su frecuencia.
+ * Retorna una lista de tÃ©rminos y su frecuencia.
  */
 export async function scanMissingGlossaryTermsAction(): Promise<{ success: boolean; missingTerms?: { term: string, count: number }[]; error?: string }> {
     try {
-        const { data: rows, error: fetchError } = await supabase
-            .from('v_ui_generate_list')
-            .select('*')
-            .eq('status', 'ACTIVO')
-            // Limitar a productos incompletos o sin traducción (usando OR)
-            .or('validation_status.eq.incomplete,validation_status.eq.needs_review,final_complete_name_en.is.null,final_complete_name_en.eq.')
+        // IMPORTANTE:
+        // No filtrar por `validation_status` / `final_complete_name_en` (persistidos en DB),
+        // porque pueden estar desactualizados vs el motor vivo (cambios de reglas/config/glosario).
+        const rows =
+            (await dbQuery(`
+                SELECT *
+                FROM public.v_ui_generate_list
+                WHERE COALESCE(is_exportable, true) = true
+                  AND (effective_status IS NULL OR effective_status <> 'INACTIVO')
+                  AND (status IS NULL OR status = 'ACTIVO')
+            `)) || []
 
-        if (fetchError) throw new Error(`Fetch Error: ${fetchError.message}`)
         if (!rows || rows.length === 0) {
             return { success: true, missingTerms: [] }
         }
@@ -184,13 +188,7 @@ export async function scanMissingGlossaryTermsAction(): Promise<{ success: boole
         const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
         const products = rows.map((row: any) => mapRowToComposedProduct(row))
 
-        const { data: rules, error: rulesError } = await supabase
-            .from('rules')
-            .select('*')
-            .eq('enabled', true)
-            .order('priority', { ascending: true })
-
-        if (rulesError) throw new Error(`Fetch Rules Error: ${rulesError.message}`)
+        const rules = (await dbQuery(`SELECT * FROM public.rules WHERE enabled = true ORDER BY priority ASC`)) || []
 
         const termFrequency: Record<string, number> = {}
 
@@ -224,3 +222,4 @@ export async function scanMissingGlossaryTermsAction(): Promise<{ success: boole
         return { success: false, error: error.message || 'Error al escanear conflictos' }
     }
 }
+

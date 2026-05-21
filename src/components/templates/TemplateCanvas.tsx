@@ -16,6 +16,7 @@ import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { PIXELS_PER_MM } from '@/lib/constants'
 import { hydrateText, getVariableValue } from '@/lib/export/exportUtils'
 import { resolveZoneHomeEnAction, getClientsAction } from '@/app/products/actions'
+import Image from 'next/image'
 
 export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'box' | 'dashed_line' | 'dynamic_image' | 'icon_group'
 type TemplateBrandScope = 'firplak' | 'private_label'
@@ -288,15 +289,11 @@ function DynamicImageElement({
                 className="flex items-center justify-center min-h-0 w-full"
                 style={{ marginBottom: rawCaption.trim() ? `${gapPx}px` : '0px' }}
             >
-                <img
+                <Image
                     src={iconUrl}
-                    alt={el.dataField}
-                    style={{ 
-                        width: sizePx, 
-                        height: sizePx, 
-                        minWidth: sizePx, 
-                        minHeight: sizePx 
-                    }}
+                    alt={el.dataField ? String(el.dataField) : ''}
+                    width={Math.round(sizePx)}
+                    height={Math.round(sizePx)}
                     className="object-contain shrink-0"
                 />
             </div>
@@ -1117,7 +1114,7 @@ function RichTextEditor({ content, onChange, isExternalDataSource = false, datas
                 onKeyUp={saveSelection}
                 onFocus={saveSelection}
                 onBlur={saveSelection}
-                className="min-h-[80px] p-2 text-sm outline-none"
+                className="min-h-20 p-2 text-sm outline-none"
                 style={{ direction: 'ltr', whiteSpace: 'pre-wrap' }}
             />
         </div>
@@ -1606,7 +1603,7 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
                 ref={editorRef}
                 contentEditable
                 onInput={handleInput}
-                className="min-h-[60px] p-2 text-[8pt] outline-none leading-snug"
+                className="min-h-15 p-2 text-[8pt] outline-none leading-snug"
                 style={{ direction: 'ltr', whiteSpace: 'pre-wrap' }}
             />
         </div>
@@ -1983,7 +1980,8 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
 
         const newElements = elements.filter(el => el.id !== groupEl.id).map(el => {
             if (el.groupId === groupEl.id) {
-                const { groupId: _groupId, ...rest } = el;
+                const { groupId, ...rest } = el;
+                void groupId;
                 return rest;
             }
             return el;
@@ -2611,22 +2609,22 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
 
                                     {/* Image type */}
                                     {childEl.type === 'image' && (
-                                        <div className="w-full h-full border-2 border-dashed border-gray-300 flex items-center justify-center bg-gray-50/50 overflow-hidden">
+                                        <div className="w-full h-full border-2 border-dashed border-gray-300 flex items-center justify-center bg-gray-50/50 overflow-hidden relative">
                                             {isPreviewMode ? (
                                                 (() => {
                                                     const systemAsset = assets.find(a => a.name === childEl.content);
-                                                    if (systemAsset && systemAsset.file_path) return <img src={systemAsset.file_path} alt={childEl.content ? String(childEl.content) : ''} className="max-w-full max-h-full object-contain pointer-events-none" />
+                                                    if (systemAsset && systemAsset.file_path) return <Image src={systemAsset.file_path} alt={childEl.content ? String(childEl.content) : ''} fill sizes="100vw" className="object-contain pointer-events-none" />
                                                     if (childEl.content === 'logo_empresa' || childEl.content === 'Logo Firplak general') {
                                                         const logoAsset = assets.find(a => (a.name === 'Logo Firplak general') || (a.type === 'logo' && typeof a.name === 'string' && a.name.toLowerCase().includes('logo')));
-                                                        if (logoAsset && logoAsset.file_path) return <img src={logoAsset.file_path} alt="Logo" className="max-w-full max-h-full object-contain pointer-events-none" />
+                                                        if (logoAsset && logoAsset.file_path) return <Image src={logoAsset.file_path} alt="Logo" fill sizes="100vw" className="object-contain pointer-events-none" />
                                                         return <span className="text-gray-400 text-[10px] text-center">[Logo No Encontrado]</span>
                                                     }
                                                     if (childEl.content === 'Isométrico' || childEl.content === 'isometrico_placeholder' || childEl.content === 'Isométrico (Placeholder)') {
-                                                        if (previewData?.isometric_path) return <img src={String(previewData.isometric_path)} alt="IsomÃ©trico" className="max-w-full max-h-full object-contain pointer-events-none" />
+                                                        if (previewData?.isometric_path) return <Image src={String(previewData.isometric_path)} alt="IsomÃ©trico" fill sizes="100vw" className="object-contain pointer-events-none" />
                                                         return <span className="text-red-500 text-[10px] font-bold text-center border border-red-200 bg-red-50 p-1 rounded">[FALTA ISOMÉTRICO]</span>
                                                     }
                                                     const asset = assets.find(a => a.id === childEl.content || a.name === childEl.content);
-                                                    if (asset && asset.file_path) return <img src={asset.file_path} alt={childEl.content ? String(childEl.content) : ''} className="max-w-full max-h-full object-contain pointer-events-none" />
+                                                    if (asset && asset.file_path) return <Image src={asset.file_path} alt={childEl.content ? String(childEl.content) : ''} fill sizes="100vw" className="object-contain pointer-events-none" />
                                                     return <span className="text-gray-400 text-xs font-semibold pointer-events-none p-1 text-center bg-white/70 rounded">[{childEl.content}]</span>
                                                 })()
                                             ) : <span className="text-gray-400 text-xs font-semibold pointer-events-none p-1 text-center bg-white/70 rounded">[{childEl.content}]</span>}
