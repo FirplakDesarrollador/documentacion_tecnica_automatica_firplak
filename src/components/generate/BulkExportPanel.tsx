@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { ValidationWarnings, getMissingFields, getTemplateRequiredFields } from './ValidationWarnings'
+import { ValidationWarnings, getTemplateRequiredFields, getTemplateValidationIssues } from './ValidationWarnings'
 import type { TemplateOption } from './TemplatePicker'
 import type { GenerateProduct } from './GenerateProductTable'
 import { resolveAssetsAction } from '@/app/generate/actions'
@@ -69,6 +69,12 @@ async function exportOneProduct(
     try {
         elements = JSON.parse(template.elements_json || '[]')
     } catch { elements = [] }
+
+    const requiredFields = elements.filter(el => el.required === true)
+    const validationIssues = getTemplateValidationIssues(product, requiredFields)
+    if (validationIssues.length > 0) {
+        throw new Error(validationIssues.map(issue => issue.message).join(' | '))
+    }
 
     // 1. Identificar activos a resolver
     const assetIds = elements
@@ -231,7 +237,7 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
         selectedProducts.map(p => ({
             productCode: p.code,
             productName: p.final_name_es || '',
-            missingFields: getMissingFields(p, requiredFields),
+            issues: getTemplateValidationIssues(p, requiredFields),
         })),
         [selectedProducts, requiredFields]
     )
@@ -241,7 +247,7 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
         [selectedProducts]
     )
 
-    const hasWarnings = warnings.some(w => w.missingFields.length > 0)
+    const hasWarnings = warnings.some(w => w.issues.length > 0)
 
     const done = items.filter(i => i.status === 'done').length
     const errors = items.filter(i => i.status === 'error').length
@@ -398,7 +404,7 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                                 <p className="text-xs text-red-500 mt-0.5">{item.error}</p>
                             )}
                         </div>
-                        {warnings.find(w => w.productCode === item.product.code)?.missingFields.length ? (
+                        {warnings.find(w => w.productCode === item.product.code)?.issues.length ? (
                             <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                         ) : null}
                     </div>

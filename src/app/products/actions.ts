@@ -651,7 +651,24 @@ export async function checkProductExistsAction(code?: string, sapDesc?: string) 
         LIMIT 1
     `)
 
-    return res && res.length > 0 ? res[0] : null
+    if (!res || res.length === 0) return null
+
+    const match = res[0]
+    const normalizedCode = code ? String(code).trim().toUpperCase() : ""
+    const normalizedSapDesc = sapDesc ? String(sapDesc).trim().toUpperCase() : ""
+    const matchedCode = match.code ? String(match.code).trim().toUpperCase() === normalizedCode : false
+    const matchedSapDescription = match.sap_description ? String(match.sap_description).trim().toUpperCase() === normalizedSapDesc : false
+
+    return {
+        ...match,
+        matchType: matchedCode && matchedSapDescription
+            ? 'both'
+            : matchedCode
+                ? 'code'
+                : matchedSapDescription
+                    ? 'sap_description'
+                    : 'unknown'
+    }
 }
 
 export async function getClientsAction() {

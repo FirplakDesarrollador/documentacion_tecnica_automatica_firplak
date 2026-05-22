@@ -31,7 +31,12 @@ interface ProductFormProps {
 export function ProductForm({ initialData, backHref, readOnly = false }: ProductFormProps) {
     const isEdit = !!initialData
     const router = useRouter()
-    const [dupeAlertModal, setDupeAlertModal] = useState<string | null>(null)
+    const [dupeAlertModal, setDupeAlertModal] = useState<{
+        id: string
+        matchType: 'code' | 'sap_description' | 'both' | 'unknown'
+        code?: string | null
+        sap_description?: string | null
+    } | null>(null)
     const [isConfirmingSave, setIsConfirmingSave] = useState(false)
     const [savedProduct, setSavedProduct] = useState<any>(null)
     const [showExportModal, setShowExportModal] = useState(false)
@@ -167,7 +172,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         }
         const exist = await checkProductExistsAction(formData.code, formData.sap_description)
         if (exist) {
-            setDupeAlertModal(exist.id)
+            setDupeAlertModal(exist)
         } else {
             onSuccess()
         }
@@ -691,12 +696,36 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
             })
             return
         }
-        if (isEdit) {
-            setIsConfirmingSave(true);
-        } else {
-            onActualSubmit();
-        }
+    if (isEdit) {
+        setIsConfirmingSave(true);
+    } else {
+        onActualSubmit();
     }
+}
+
+    const dupeAlertTitle = dupeAlertModal?.matchType === 'sap_description'
+        ? 'DescripciÃ³n SAP ya existe en CatÃ¡logo'
+        : dupeAlertModal?.matchType === 'both'
+            ? 'SKU y descripciÃ³n ya existen en CatÃ¡logo'
+            : 'SKU ya existe en CatÃ¡logo'
+
+    const dupeAlertMessage = dupeAlertModal?.matchType === 'sap_description'
+        ? (
+            <>
+                La descripciÃ³n SAP <span className="font-bold text-slate-900">{formData.sap_description}</span> ya se encuentra registrada en el sistema, asociada a otro cÃ³digo.
+            </>
+        )
+        : dupeAlertModal?.matchType === 'both'
+            ? (
+                <>
+                    El cÃ³digo <span className="font-mono font-bold text-slate-900">{formData.code}</span> y la descripciÃ³n SAP <span className="font-bold text-slate-900">{formData.sap_description}</span> ya se encuentran registrados en el sistema.
+                </>
+            )
+            : (
+                <>
+                    El cÃ³digo <span className="font-mono font-bold text-slate-900">{formData.code}</span> ya se encuentra registrado en el sistema.
+                </>
+            )
 
     return (
         <div className="flex flex-col gap-8 w-full pb-20">
@@ -708,14 +737,12 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2 text-rose-600 font-bold uppercase">
                                 <AlertTriangle className="w-6 h-6"/>
-                                SKU ya existe en Catálogo
+                                {dupeAlertTitle}
                             </CardTitle>
                         </CardHeader>
                         <CardContent>
                             <div className="space-y-4">
-                                <p className="text-slate-600">
-                                    El código <span className="font-mono font-bold text-slate-900">{formData.code}</span> ya se encuentra registrado en el sistema.
-                                </p>
+                                <p className="text-slate-600">{dupeAlertMessage}</p>
                                 <p className="text-sm text-slate-500 italic">
                                     En modo creación no se permite sobrescribir SKUs existentes. La edición avanzada por capas se migrará en una fase posterior.
                                 </p>
@@ -724,7 +751,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                 <Button variant="outline" onClick={() => setDupeAlertModal(null)}>Cerrar</Button>
                                 <Button 
                                     className="bg-slate-700 hover:bg-slate-800 text-white" 
-                                    onClick={() => router.push(`/products/${dupeAlertModal}`)}
+                                    onClick={() => router.push(`/products/${dupeAlertModal.id}`)}
                                 >
                                     Ver producto existente
                                 </Button>
@@ -1513,3 +1540,4 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         </div>
     )
 }
+

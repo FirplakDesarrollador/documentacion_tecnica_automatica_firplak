@@ -1,6 +1,7 @@
 import { Product, Rule } from '@prisma/client'
 import { evaluateProductRules } from './ruleEvaluator'
 import { TemplateElement } from '@/components/templates/TemplateCanvas'
+import { resolveBarcodeFormat, validateBarcodeValue } from '@/lib/export/barcodeUtils'
 
 export interface ValidationIssues {
     isValid: boolean
@@ -62,6 +63,15 @@ export function validateProductReadiness(
             value = product.isometric_asset_id || product.isometric_path
         }
         else value = product[field as keyof Product]
+
+        const barcodeElement = templates.find(el => el.required && el.type === 'barcode' && el.dataField === field)
+        if (barcodeElement) {
+            const barcodeValidation = validateBarcodeValue(value, resolveBarcodeFormat(barcodeElement))
+            if (!barcodeValidation.ok) {
+                issues.missingFields.push(field)
+            }
+            return
+        }
 
         if (value === null || value === undefined || value === '') {
             issues.missingFields.push(field)

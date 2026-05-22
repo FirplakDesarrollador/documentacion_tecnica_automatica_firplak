@@ -1,24 +1,31 @@
 'use client'
 
 import { AlertTriangle, CheckCircle2, XCircle, Info } from 'lucide-react'
+import { resolveBarcodeFormat, validateBarcodeValue } from '@/lib/export/barcodeUtils'
+
+export interface TemplateValidationIssue {
+    field: string
+    reason: 'missing' | 'invalid'
+    message: string
+}
 
 interface ProductWarning {
     productCode: string
     productName: string
-    missingFields: string[]
+    issues: TemplateValidationIssue[]
+    missingFields?: string[]
 }
 
 interface ValidationWarningsProps {
     warnings: ProductWarning[]
-    /** Si true, sólo muestra un resumen colapsado */
     compact?: boolean
 }
 
-/** Mapeo de dataField a nombre legible en español */
 const FIELD_LABELS: Record<string, string> = {
     final_name_es: 'Nombre final (ES)',
     final_name_en: 'Nombre final (EN)',
     barcode_text: 'Código de barras EAN',
+    code: 'Código SKU',
     isometric_asset_id: 'Imagen isométrica',
     isometric_path: 'Imagen isométrica',
     commercial_measure: 'Medida comercial',
@@ -36,16 +43,37 @@ export function fieldLabel(field: string): string {
     return FIELD_LABELS[field] || field
 }
 
+export function issueLabel(issue: TemplateValidationIssue): string {
+    if (issue.field === 'barcode_text' && issue.reason === 'missing') return 'Código de barras EAN faltante'
+    if (issue.field === 'barcode_text' && issue.reason === 'invalid') return 'Código de barras EAN inválido'
+    if (issue.field === 'code' && issue.reason === 'missing') return 'Código SKU faltante'
+    if (issue.field === 'code' && issue.reason === 'invalid') return 'Código SKU inválido'
+    return issue.reason === 'invalid'
+        ? `${fieldLabel(issue.field)} inválido`
+        : fieldLabel(issue.field)
+}
+
+function normalizeWarningIssues(warning: ProductWarning): TemplateValidationIssue[] {
+    if (Array.isArray(warning.issues)) return warning.issues
+    return (warning.missingFields || []).map(field => ({
+        field,
+        reason: 'missing' as const,
+        message: `${fieldLabel(field)} faltante.`,
+    }))
+}
+
 export function ValidationWarnings({ warnings, compact = false }: ValidationWarningsProps) {
-    const productosConProblemas = warnings.filter(w => w.missingFields.length > 0)
-    const productosOk = warnings.length - productosConProblemas.length
-    const totalFaltantes = productosConProblemas.reduce((acc, w) => acc + w.missingFields.length, 0)
+    const warningsWithIssues = warnings
+        .map(w => ({ ...w, issues: normalizeWarningIssues(w) }))
+        .filter(w => w.issues.length > 0)
 
-    if (warnings.length === 0) {
-        return null
-    }
+    const productosConProblemas = warningsWithIssues.length
+    const productosOk = warnings.length - productosConProblemas
+    const totalIssues = warningsWithIssues.reduce((acc, w) => acc + w.issues.length, 0)
 
-    if (productosConProblemas.length === 0) {
+    if (warnings.length === 0) return null
+
+    if (productosConProblemas === 0) {
         return (
             <div className="flex items-center gap-2 px-4 py-2.5 bg-green-50 border border-green-200 rounded-xl text-sm text-green-700">
                 <CheckCircle2 className="w-4 h-4 shrink-0" />
@@ -59,8 +87,8 @@ export function ValidationWarnings({ warnings, compact = false }: ValidationWarn
             <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700">
                 <AlertTriangle className="w-4 h-4 shrink-0" />
                 <span>
-                    <span className="font-semibold">{productosConProblemas.length}</span> producto(s) con datos incompletos
-                    ({totalFaltantes} campo(s) faltante(s))
+                    <span className="font-semibold">{productosConProblemas}</span> producto(s) con datos faltantes o inválidos
+                    ({totalIssues} incidencia(s))
                 </span>
             </div>
         )
@@ -68,7 +96,6 @@ export function ValidationWarnings({ warnings, compact = false }: ValidationWarn
 
     return (
         <div className="rounded-xl border border-amber-200 bg-amber-50/60 overflow-hidden">
-            {/* Header */}
             <div className="flex items-center gap-3 px-4 py-3 border-b border-amber-200 bg-amber-50">
                 <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
                 <div className="flex-1">
@@ -76,19 +103,18 @@ export function ValidationWarnings({ warnings, compact = false }: ValidationWarn
                         Advertencias de exportación
                     </p>
                     <p className="text-xs text-amber-600 mt-0.5">
-                        {productosConProblemas.length} producto(s) tienen campos requeridos por la plantilla incompletos.
+                        {productosConProblemas} producto(s) tienen campos requeridos por la plantilla faltantes o inválidos.
                         {productosOk > 0 && ` ${productosOk} producto(s) están completos.`}
                     </p>
                 </div>
                 <div className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-100 px-2.5 py-1 rounded-full font-medium">
                     <Info className="w-3 h-3" />
-                    Aún puedes exportar
+                    Exportación bloqueada
                 </div>
             </div>
 
-            {/* Lista de productos con problemas */}
             <div className="divide-y divide-amber-100 max-h-56 overflow-y-auto">
-                {productosConProblemas.map((w) => (
+                {warningsWithIssues.map((w) => (
                     <div key={w.productCode} className="flex items-start gap-3 px-4 py-3">
                         <XCircle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
                         <div className="flex-1 min-w-0">
@@ -99,12 +125,12 @@ export function ValidationWarnings({ warnings, compact = false }: ValidationWarn
                                 )}
                             </p>
                             <div className="flex flex-wrap gap-1.5 mt-1.5">
-                                {w.missingFields.map(f => (
+                                {w.issues.map((issue) => (
                                     <span
-                                        key={f}
+                                        key={`${issue.field}-${issue.reason}`}
                                         className="inline-flex items-center text-[11px] bg-white border border-amber-200 text-amber-700 px-2 py-0.5 rounded-full font-medium"
                                     >
-                                        {fieldLabel(f)}
+                                        {issueLabel(issue)}
                                     </span>
                                 ))}
                             </div>
@@ -116,32 +142,38 @@ export function ValidationWarnings({ warnings, compact = false }: ValidationWarn
     )
 }
 
-/**
- * Determina si un producto tiene isométrico asignado.
- * Acepta cualquiera de los dos campos como fuente válida.
- */
 export function hasIsometric(product: Record<string, any>): boolean {
     return Boolean(product.isometric_asset_id || product.isometric_path)
 }
 
-/**
- * Dado un producto y los criterios requeridos por la plantilla,
- * retorna los nombres legibles de los campos/recursos que faltan.
- */
-export function getMissingFields(product: Record<string, any>, requirements: any[]): string[] {
-    const missing: string[] = []
+export function getTemplateValidationIssues(product: Record<string, any>, requirements: any[]): TemplateValidationIssue[] {
+    const issues: TemplateValidationIssue[] = []
 
     for (const req of requirements) {
-        // 1. Validar campos de datos (dynamic_text con dataField)
+        if (req.type === 'barcode' && req.dataField) {
+            const format = resolveBarcodeFormat(req)
+            const result = validateBarcodeValue(product[req.dataField], format)
+            if (!result.ok) {
+                issues.push({
+                    field: req.dataField,
+                    reason: result.errorCode === 'missing' ? 'missing' : 'invalid',
+                    message: result.errorMessage || `${fieldLabel(req.dataField)} inválido.`,
+                })
+            }
+            continue
+        }
+
         if (req.dataField) {
             const val = product[req.dataField]
             if (val === null || val === undefined || val === '') {
-                missing.push(req.dataField)
+                issues.push({
+                    field: req.dataField,
+                    reason: 'missing',
+                    message: `${fieldLabel(req.dataField)} faltante.`,
+                })
             }
         }
 
-        // 2. Validar marcadores de imagen de isométrico
-        //    Usa la regla: isometric_asset_id OR isometric_path
         if (req.type === 'image') {
             const isIsometric = (
                 req.content === 'isometrico_placeholder' ||
@@ -150,19 +182,24 @@ export function getMissingFields(product: Record<string, any>, requirements: any
                 req.dataField === 'isometric_asset_id'
             )
             if (isIsometric && !hasIsometric(product)) {
-                missing.push('isometric_asset_id')
+                issues.push({
+                    field: 'isometric_asset_id',
+                    reason: 'missing',
+                    message: 'Imagen isométrica faltante.',
+                })
             }
         }
     }
 
-    return Array.from(new Set(missing))
+    return issues.filter((issue, index, arr) =>
+        arr.findIndex(candidate => candidate.field === issue.field && candidate.reason === issue.reason) === index
+    )
 }
 
-/**
- * Extrae los elementos requeridos de una plantilla.
- * Solo incluye elementos explícitamente marcados como required=true.
- * Los dynamic_text sin required=true NO se tratan como obligatorios.
- */
+export function getMissingFields(product: Record<string, any>, requirements: any[]): string[] {
+    return getTemplateValidationIssues(product, requirements).map(issue => issue.field)
+}
+
 export function getTemplateRequiredFields(elementsJson: string): any[] {
     try {
         const elements: any[] = JSON.parse(elementsJson)

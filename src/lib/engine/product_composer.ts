@@ -101,6 +101,7 @@ export function mapRowToComposedProduct(row: any, options: EffectiveContextOptio
         version_code: row.version_code,
         color_code: row.color_code,
         sku_base: row.sku_base,
+        sku_complete: row.sku_complete,
 
         // === Family-level ===
         product_type: row.product_type,

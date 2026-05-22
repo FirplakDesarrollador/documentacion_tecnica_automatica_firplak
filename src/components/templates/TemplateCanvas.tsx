@@ -18,6 +18,8 @@ import { hydrateText, getVariableValue } from '@/lib/export/exportUtils'
 import { resolveZoneHomeEnAction, getClientsAction } from '@/app/products/actions'
 import { getTemplateFontCssStack, getTemplateFontLabel, normalizeTemplateFontFamily, TEMPLATE_FONT_OPTIONS, type TemplateFontFamily } from '@/lib/templates/templateTypography'
 import Image from 'next/image'
+import BarcodeElement from '@/components/export/BarcodeElement'
+import { resolveBarcodeFormat } from '@/lib/export/barcodeUtils'
 
 export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'box' | 'dashed_line' | 'dynamic_image' | 'icon_group'
 type TemplateBrandScope = 'firplak' | 'private_label'
@@ -40,6 +42,7 @@ export interface TemplateElement {
     fontFamily?: string
     borderStyle?: 'solid' | 'dashed' | 'dotted' // used for lines/boxes
     borderWidth?: number
+    lineOrientation?: 'horizontal' | 'vertical' // dashed_line only
     required?: boolean
     lineHeight?: number
     letterSpacing?: number
@@ -58,6 +61,15 @@ export interface TemplateElement {
     groupGapMM?: number
     groupAlign?: 'flex-start' | 'center' | 'flex-end' | 'space-between'
     groupWrap?: boolean
+    barcodeFormat?: 'ean13' | 'code128'
+    barcodeXDimensionMm?: number
+    barcodeBarHeightMm?: number
+    barcodeQuietZoneX?: number
+    barcodeOrientation?: 'horizontal' | 'vertical'
+    barcodeValue?: string | null
+    barcodeSvg?: string | null
+    barcodeError?: string | null
+    barcodeFormatResolved?: 'ean13' | 'code128'
 }
 
 
@@ -571,6 +583,56 @@ function RichTextEditor({ content, onChange, isExternalDataSource = false, datas
         }
     };
 
+    const applyInlineStyle = (prop: string, value: string) => {
+        const sel = window.getSelection();
+        if (!sel || !sel.rangeCount || !editorRef.current) return;
+        const range = sel.getRangeAt(0);
+        if (range.collapsed) {
+            let node = sel.anchorNode;
+            if (node?.nodeType === 3) node = node.parentNode;
+            const el = node as HTMLElement;
+            if (el && el !== editorRef.current) {
+                (el.style as any)[prop] = value;
+                onChange(editorRef.current.innerHTML);
+            }
+            return;
+        }
+        const cloned = range.cloneContents();
+        cloned.querySelectorAll('*').forEach(el => {
+            (el as HTMLElement).style[prop as any] = '';
+        });
+        const wrapper = document.createElement('span');
+        (wrapper.style as any)[prop] = value;
+        wrapper.appendChild(cloned);
+        editorRef.current.focus();
+        range.deleteContents();
+        range.insertNode(wrapper);
+        const newRange = document.createRange();
+        newRange.selectNodeContents(wrapper);
+        sel.removeAllRanges();
+        sel.addRange(newRange);
+        onChange(editorRef.current.innerHTML);
+    }
+
+    const applyLineHeight = (value: string) => {
+        const sel = window.getSelection();
+        if (!sel || !sel.rangeCount || !editorRef.current) return;
+        editorRef.current.focus();
+        let node = sel.anchorNode;
+        if (node?.nodeType === 3) node = node.parentNode;
+        let block = node as HTMLElement;
+        while (block && block !== editorRef.current) {
+            const d = window.getComputedStyle(block).display;
+            if (d === 'block' || block.tagName === 'DIV' || block.tagName === 'P') {
+                block.style.lineHeight = value;
+                block.setAttribute('data-lh', value);
+                onChange(editorRef.current.innerHTML);
+                return;
+            }
+            block = block.parentElement as HTMLElement;
+        }
+    }
+
     return (
         <div className="flex flex-col border border-input rounded-md overflow-hidden bg-white focus-within:ring-1 focus-within:ring-ring">
             <div className="flex flex-wrap bg-slate-50 border-b p-1 gap-1 items-center">
@@ -595,37 +657,8 @@ function RichTextEditor({ content, onChange, isExternalDataSource = false, datas
                     value={currentWeight}
                     onChange={(e) => {
                         const weight = e.target.value;
-                        const selection = window.getSelection();
-                        if (!selection || selection.rangeCount === 0) return;
-                        let node = selection.anchorNode;
-                        if (node?.nodeType === 3) node = node.parentNode;
-                        const element = node as HTMLElement;
-                        const currentFontSize = window.getComputedStyle(element).fontSize;
-
-                        editorRef.current?.focus();
-                        const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
-                        existingElements.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
-                        document.execCommand('styleWithCSS', false, "true");
-                        document.execCommand('fontSize', false, "7"); // Temporary marker
-                        
-                        if (editorRef.current) {
-                            const allFontOrSpan = editorRef.current.querySelectorAll('font, span');
-                            allFontOrSpan.forEach(el => {
-                                const htmlEl = el as HTMLElement;
-                                if (
-                                    !htmlEl.hasAttribute('data-pre-existing') || 
-                                    htmlEl.getAttribute('size') === '7' || 
-                                    htmlEl.style.fontSize === 'xxx-large' ||
-                                    htmlEl.style.fontSize === '7'
-                                ) {
-                                    htmlEl.style.fontWeight = weight;
-                                    htmlEl.style.fontSize = currentFontSize; // FIX: Keep current size
-                                    htmlEl.removeAttribute('size');
-                                }
-                            });
-                            existingElements.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
-                            onChange(editorRef.current.innerHTML);
-                        }
+                        setCurrentWeight(weight);
+                        applyInlineStyle('fontWeight', weight);
                     }}
                 >
                     <option value="normal">Normal</option>
@@ -643,51 +676,13 @@ function RichTextEditor({ content, onChange, isExternalDataSource = false, datas
                         onMouseDown={(e) => {
                             e.preventDefault();
                             const adjust = (val: number) => {
-                                // Use input value as base if possible, otherwise selection
                                 let currentPt = 10.5;
                                 if (inputRef.current && inputRef.current.value) {
                                     currentPt = parseFloat(inputRef.current.value);
-                                } else {
-                                    const selection = window.getSelection();
-                                    if (!selection || selection.rangeCount === 0) return;
-                                    let node = selection.anchorNode;
-                                    if (node?.nodeType === 3) node = node.parentNode;
-                                    const element = node as HTMLElement;
-                                    const currentPx = parseFloat(window.getComputedStyle(element).fontSize);
-                                    currentPt = Math.round(currentPx * 0.75 * 2) / 2;
                                 }
-                                
                                 const newSize = Math.max(6, Math.min(100, currentPt + val));
                                 if (inputRef.current) inputRef.current.value = newSize.toString();
-                                
-                                // Apply using the robust method
-                                editorRef.current?.focus();
-                                document.execCommand('formatBlock', false, 'div');
-                                const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
-                                existingElements.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
-                                document.execCommand('styleWithCSS', false, "true");
-                                document.execCommand('fontSize', false, "7");
-                                
-                                if (editorRef.current) {
-                                    const allFontOrSpan = editorRef.current.querySelectorAll('font, span');
-                                    allFontOrSpan.forEach(el => {
-                                        const htmlEl = el as HTMLElement;
-                                        // Target only NEW elements or elements that were just modified by the command (size 7)
-                                        if (
-                                            !htmlEl.hasAttribute('data-pre-existing') || 
-                                            htmlEl.getAttribute('size') === '7' || 
-                                            htmlEl.style.fontSize === 'xxx-large' ||
-                                            htmlEl.style.fontSize === '7'
-                                        ) {
-                                            htmlEl.style.fontSize = `${newSize}pt`;
-                                            htmlEl.removeAttribute('size');
-                                            // Extreme safety fallback
-                                            if (parseInt(htmlEl.style.fontSize) > 60) htmlEl.style.fontSize = '12pt';
-                                        }
-                                    });
-                                    existingElements.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
-                                    onChange(editorRef.current.innerHTML);
-                                }
+                                applyInlineStyle('fontSize', `${newSize}pt`);
                             };
 
                             adjust(-0.5);
@@ -713,27 +708,8 @@ function RichTextEditor({ content, onChange, isExternalDataSource = false, datas
                             if (val) {
                                 const newSize = parseFloat(val);
                                 if (!isNaN(newSize)) {
-                                    editorRef.current?.focus();
-                                    const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
-                                    existingElements.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
-                                    document.execCommand('styleWithCSS', false, "true");
-                                    document.execCommand('fontSize', false, "7");
-                                    if (editorRef.current) {
-                                        editorRef.current.querySelectorAll('font, span').forEach(el => {
-                                            const htmlEl = el as HTMLElement;
-                                            if (
-                                                !htmlEl.hasAttribute('data-pre-existing') || 
-                                                htmlEl.getAttribute('size') === '7' || 
-                                                htmlEl.style.fontSize === 'xxx-large' ||
-                                                htmlEl.style.fontSize === '7'
-                                            ) {
-                                                htmlEl.style.fontSize = `${newSize}pt`;
-                                                htmlEl.removeAttribute('size');
-                                            }
-                                        });
-                                        existingElements.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
-                                        onChange(editorRef.current.innerHTML);
-                                    }
+                                    if (inputRef.current) inputRef.current.value = newSize.toString();
+                                    applyInlineStyle('fontSize', `${Math.max(6, Math.min(100, newSize))}pt`);
                                 }
                             }
                         }}
@@ -750,47 +726,13 @@ function RichTextEditor({ content, onChange, isExternalDataSource = false, datas
                         onMouseDown={(e) => {
                             e.preventDefault();
                             const adjust = (val: number) => {
-                                // Use input value as base if possible, otherwise selection
                                 let currentPt = 10.5;
                                 if (inputRef.current && inputRef.current.value) {
                                     currentPt = parseFloat(inputRef.current.value);
-                                } else {
-                                    const selection = window.getSelection();
-                                    if (!selection || selection.rangeCount === 0) return;
-                                    let node = selection.anchorNode;
-                                    if (node?.nodeType === 3) node = node.parentNode;
-                                    const element = node as HTMLElement;
-                                    const currentPx = parseFloat(window.getComputedStyle(element).fontSize);
-                                    currentPt = Math.round(currentPx * 0.75 * 2) / 2;
                                 }
-                                
                                 const newSize = Math.max(6, Math.min(100, currentPt + val));
                                 if (inputRef.current) inputRef.current.value = newSize.toString();
-                                
-                                // Apply using the robust method
-                                editorRef.current?.focus();
-                                const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
-                                existingElements.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
-                                document.execCommand('styleWithCSS', false, "true");
-                                document.execCommand('fontSize', false, "7");
-                                
-                                if (editorRef.current) {
-                                    const allFontOrSpan = editorRef.current.querySelectorAll('font, span');
-                                    allFontOrSpan.forEach(el => {
-                                        const htmlEl = el as HTMLElement;
-                                        if (
-                                            !htmlEl.hasAttribute('data-pre-existing') || 
-                                            htmlEl.getAttribute('size') === '7' || 
-                                            htmlEl.style.fontSize === 'xxx-large' ||
-                                            htmlEl.style.fontSize === '7'
-                                        ) {
-                                            htmlEl.style.fontSize = `${newSize}pt`;
-                                            htmlEl.removeAttribute('size');
-                                        }
-                                    });
-                                    existingElements.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
-                                    onChange(editorRef.current.innerHTML);
-                                }
+                                applyInlineStyle('fontSize', `${newSize}pt`);
                             };
 
                             adjust(0.5);
@@ -820,50 +762,7 @@ function RichTextEditor({ content, onChange, isExternalDataSource = false, datas
                             const adjust = (val: number) => {
                                 startVal = Math.round(Math.max(0.4, Math.min(3.0, startVal + val)) * 100) / 100;
                                 if (lineHeightRef.current) lineHeightRef.current.value = startVal.toFixed(2);
-                                
-                                editorRef.current?.focus();
-                                const selection = window.getSelection();
-                                let node = selection?.anchorNode;
-                                if (node?.nodeType === 3) node = node.parentNode;
-                                const currentFontSize = window.getComputedStyle(node as HTMLElement || editorRef.current!).fontSize;
-
-                                const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
-                                existingElements.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
-                                document.execCommand('styleWithCSS', false, "true");
-                                document.execCommand('fontSize', false, "7"); 
-                                if (editorRef.current) {
-                                    editorRef.current.querySelectorAll('font, span').forEach(el => {
-                                        const htmlEl = el as HTMLElement;
-                                        if (
-                                            !htmlEl.hasAttribute('data-pre-existing') || 
-                                            htmlEl.getAttribute('size') === '7' || 
-                                            htmlEl.style.fontSize === 'xxx-large' ||
-                                            htmlEl.style.fontSize === '7'
-                                        ) {
-                                            const lhStr = startVal.toString();
-                                            htmlEl.style.lineHeight = lhStr;
-                                            htmlEl.setAttribute('data-lh', lhStr);
-                                            htmlEl.style.fontSize = currentFontSize;
-                                            htmlEl.removeAttribute('size');
-                                            
-                                            // Extreme safety fallback for 36pt spikes
-                                            if (parseInt(htmlEl.style.fontSize) > 60) htmlEl.style.fontSize = '10pt';
-
-                                            let p = htmlEl.parentElement;
-                                            while (p && p !== editorRef.current) {
-                                                const d = window.getComputedStyle(p).display;
-                                                if (d === 'block' || p.tagName === 'DIV' || p.tagName === 'P') {
-                                                    p.style.lineHeight = lhStr;
-                                                    p.setAttribute('data-lh', lhStr);
-                                                    break;
-                                                }
-                                                p = p.parentElement;
-                                            }
-                                        }
-                                    });
-                                    existingElements.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
-                                    onChange(editorRef.current.innerHTML);
-                                }
+                                applyLineHeight(startVal.toString());
                             };
 
                             adjust(-0.05);
@@ -887,41 +786,7 @@ function RichTextEditor({ content, onChange, isExternalDataSource = false, datas
                             setIsInputFocused(false);
                             const val = (e.target as HTMLInputElement).value;
                             if (val) {
-                                editorRef.current?.focus();
-                                // Ensure the current line is a block (fixes first lines issue)
-                                document.execCommand('formatBlock', false, 'div');
-                                
-                                const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
-                                existingElements.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
-                                document.execCommand('styleWithCSS', false, "true");
-                                document.execCommand('fontSize', false, "7"); // Marker
-                                if (editorRef.current) {
-                                    editorRef.current.querySelectorAll('font, span').forEach(el => {
-                                        const htmlEl = el as HTMLElement;
-                                        if (
-                                            !htmlEl.hasAttribute('data-pre-existing') || 
-                                            htmlEl.getAttribute('size') === '7' || 
-                                            htmlEl.style.fontSize === 'xxx-large' ||
-                                            htmlEl.style.fontSize === '7'
-                                        ) {
-                                            htmlEl.style.lineHeight = val;
-                                            htmlEl.removeAttribute('size');
-
-                                            // Apply to parent block
-                                            let p = htmlEl.parentElement;
-                                            while (p && p !== editorRef.current) {
-                                                const d = window.getComputedStyle(p).display;
-                                                if (d === 'block' || p.tagName === 'DIV' || p.tagName === 'P') {
-                                                    p.style.lineHeight = val;
-                                                    break;
-                                                }
-                                                p = p.parentElement;
-                                            }
-                                        }
-                                    });
-                                    existingElements.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
-                                    onChange(editorRef.current.innerHTML);
-                                }
+                                applyLineHeight(val);
                             }
                         }}
                         onKeyDown={(e) => {
@@ -940,43 +805,7 @@ function RichTextEditor({ content, onChange, isExternalDataSource = false, datas
                             const adjust = (val: number) => {
                                 startVal = Math.round(Math.max(0.4, Math.min(3.0, startVal + val)) * 100) / 100;
                                 if (lineHeightRef.current) lineHeightRef.current.value = startVal.toFixed(2);
-                                
-                                editorRef.current?.focus();
-                                const selection = window.getSelection();
-                                let node = selection?.anchorNode;
-                                if (node?.nodeType === 3) node = node.parentNode;
-                                const currentFontSize = window.getComputedStyle(node as HTMLElement || editorRef.current!).fontSize;
-
-                                const existingElements = editorRef.current?.querySelectorAll('font, span') || [];
-                                existingElements.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
-                                document.execCommand('styleWithCSS', false, "true");
-                                document.execCommand('fontSize', false, "7"); 
-                                if (editorRef.current) {
-                                    editorRef.current.querySelectorAll('font, span').forEach(el => {
-                                        const htmlEl = el as HTMLElement;
-                                        if (!htmlEl.hasAttribute('data-pre-existing') || htmlEl.getAttribute('size') === '7' || htmlEl.style.fontSize === 'xxx-large' || htmlEl.style.fontSize === '7') {
-                                            const lhStr = startVal.toString();
-                                            htmlEl.style.lineHeight = lhStr;
-                                            htmlEl.setAttribute('data-lh', lhStr);
-                                            htmlEl.style.fontSize = currentFontSize; // FIX: Preserve original font size
-                                            htmlEl.removeAttribute('size');
-
-                                            // Apply to parent block
-                                            let p = htmlEl.parentElement;
-                                            while (p && p !== editorRef.current) {
-                                                const d = window.getComputedStyle(p).display;
-                                                if (d === 'block' || p.tagName === 'DIV' || p.tagName === 'P') {
-                                                    p.style.lineHeight = lhStr;
-                                                    p.setAttribute('data-lh', lhStr);
-                                                    break;
-                                                }
-                                                p = p.parentElement;
-                                            }
-                                        }
-                                    });
-                                    existingElements.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
-                                    onChange(editorRef.current.innerHTML);
-                                }
+                                applyLineHeight(startVal.toString());
                             };
 
                             adjust(0.05);
@@ -1079,7 +908,8 @@ function RichTextEditor({ content, onChange, isExternalDataSource = false, datas
                     ) : (
                         <>
                         <optgroup label="Producto">
-                            <option value="sku_base">Código SKU</option>
+                            <option value="sku_base">SKU base</option>
+                            <option value="sku_complete">SKU completo</option>
                             <option value="final_name_es">Nombre (ES)</option>
                             <option value="final_name_en">Nombre (EN)</option>
                             <option value="technical_description_es">Descripción Técnica (ES)</option>
@@ -1235,68 +1065,58 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
         if (editorRef.current) onChange(editorRef.current.innerHTML);
     };
 
-    const applySize = (newSize: number) => {
-        editorRef.current?.focus();
-        const existing = editorRef.current?.querySelectorAll('font, span') || [];
-        existing.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
-        document.execCommand('styleWithCSS', false, 'true');
-        document.execCommand('fontSize', false, '7');
-        if (editorRef.current) {
-            editorRef.current.querySelectorAll('font, span').forEach(el => {
-                const h = el as HTMLElement;
-                if (!h.hasAttribute('data-pre-existing') || h.getAttribute('size') === '7' || h.style.fontSize === 'xxx-large') {
-                    h.style.fontSize = `${newSize}pt`;
-                    h.removeAttribute('size');
-                }
-            });
-            existing.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
-            onChange(editorRef.current.innerHTML);
+    const applyCaptionInlineStyle = (prop: string, value: string) => {
+        const sel = window.getSelection();
+        if (!sel || !sel.rangeCount || !editorRef.current) return;
+        const range = sel.getRangeAt(0);
+        if (range.collapsed) {
+            let node = sel.anchorNode;
+            if (node?.nodeType === 3) node = node.parentNode;
+            const el = node as HTMLElement;
+            if (el && el !== editorRef.current) {
+                (el.style as any)[prop] = value;
+                onChange(editorRef.current.innerHTML);
+            }
+            return;
         }
+        const cloned = range.cloneContents();
+        cloned.querySelectorAll('*').forEach(el => {
+            (el as HTMLElement).style[prop as any] = '';
+        });
+        const wrapper = document.createElement('span');
+        (wrapper.style as any)[prop] = value;
+        wrapper.appendChild(cloned);
+        editorRef.current.focus();
+        document.execCommand('insertHTML', false, wrapper.outerHTML);
+        onChange(editorRef.current.innerHTML);
+    }
+
+    const applyCaptionLineHeight = (value: string) => {
+        const sel = window.getSelection();
+        if (!sel || !sel.rangeCount || !editorRef.current) return;
+        editorRef.current.focus();
+        let node = sel.anchorNode;
+        if (node?.nodeType === 3) node = node.parentNode;
+        let block = node as HTMLElement;
+        while (block && block !== editorRef.current) {
+            const d = window.getComputedStyle(block).display;
+            if (d === 'block' || block.tagName === 'DIV' || block.tagName === 'P') {
+                block.style.lineHeight = value;
+                block.setAttribute('data-lh', value);
+                onChange(editorRef.current.innerHTML);
+                return;
+            }
+            block = block.parentElement as HTMLElement;
+        }
+    }
+
+    const applySize = (newSize: number) => {
+        if (inputRef.current) inputRef.current.value = newSize.toString();
+        applyCaptionInlineStyle('fontSize', `${newSize}pt`);
     };
 
     const applyLineHeight = (newLh: number) => {
-        let savedFontSize = '6.5pt';
-        const selForSize = window.getSelection();
-        if (selForSize && selForSize.rangeCount > 0) {
-            let n = selForSize.anchorNode;
-            if (n?.nodeType === 3) n = n.parentNode;
-            savedFontSize = window.getComputedStyle(n as HTMLElement).fontSize;
-        }
-
-        editorRef.current?.focus();
-        document.execCommand('formatBlock', false, 'div');
-        const existing = editorRef.current?.querySelectorAll('font, span') || [];
-        existing.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
-        document.execCommand('styleWithCSS', false, 'true');
-        document.execCommand('fontSize', false, '7'); 
-        if (editorRef.current) {
-            editorRef.current.querySelectorAll('font, span').forEach(el => {
-                const h = el as HTMLElement;
-                if (!h.hasAttribute('data-pre-existing') || h.getAttribute('size') === '7' || h.style.fontSize === 'xxx-large') {
-                    const lhStr = (Math.round(newLh * 100) / 100).toString();
-                    h.style.lineHeight = lhStr;
-                    h.setAttribute('data-lh', lhStr);
-                    // Force the font size back and REMOVE the size attribute completely
-                    h.style.fontSize = savedFontSize; 
-                    h.removeAttribute('size');
-                    // Safety: if the font size is still dangerously large, force a default
-                    if (parseInt(h.style.fontSize) > 40) h.style.fontSize = '8pt';
-                    
-                    let p = h.parentElement;
-                    while (p && p !== editorRef.current) {
-                        const d = window.getComputedStyle(p).display;
-                        if (d === 'block' || p.tagName === 'DIV' || p.tagName === 'P') { 
-                            p.style.lineHeight = lhStr; 
-                            p.setAttribute('data-lh', lhStr);
-                            break; 
-                        }
-                        p = p.parentElement;
-                    }
-                }
-            });
-            existing.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
-            onChange(editorRef.current.innerHTML);
-        }
+        applyCaptionLineHeight((Math.round(newLh * 100) / 100).toString());
     };
 
 
@@ -1433,29 +1253,8 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
                     value={currentWeight}
                     onChange={(e) => {
                         const weight = e.target.value;
-                        const selection = window.getSelection();
-                        if (!selection || selection.rangeCount === 0) return;
-                        let node = selection.anchorNode;
-                        if (node?.nodeType === 3) node = node.parentNode;
-                        const currentFontSize = window.getComputedStyle(node as HTMLElement).fontSize;
-                        editorRef.current?.focus();
-                        const existing = editorRef.current?.querySelectorAll('font, span') || [];
-                        existing.forEach(el => (el as HTMLElement).setAttribute('data-pre-existing', 'true'));
-                        document.execCommand('styleWithCSS', false, 'true');
-                        document.execCommand('fontSize', false, '7');
-                        if (editorRef.current) {
-                            editorRef.current.querySelectorAll('font, span').forEach(el => {
-                                const h = el as HTMLElement;
-                                if (!h.hasAttribute('data-pre-existing') || h.getAttribute('size') === '7' || h.style.fontSize === 'xxx-large') {
-                                    h.style.fontWeight = weight;
-                                    h.style.fontSize = currentFontSize;
-                                    h.removeAttribute('size');
-                                }
-                            });
-                            existing.forEach(el => (el as HTMLElement).removeAttribute('data-pre-existing'));
-                            setCurrentWeight(weight);
-                            onChange(editorRef.current.innerHTML);
-                        }
+                        setCurrentWeight(weight);
+                        applyCaptionInlineStyle('fontWeight', weight);
                     }}
                 >
                     <option value="normal">Normal</option>
@@ -1503,7 +1302,6 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
                             e.preventDefault();
                             let startVal = getSelectionLh(); 
                             const adjust = (v: number) => { 
-                                document.execCommand('formatBlock', false, 'div'); 
                                 startVal = Math.round(Math.max(0.4, Math.min(3.0, startVal + v)) * 100) / 100; 
                                 if (lineHeightRef.current) lineHeightRef.current.value = startVal.toFixed(2); 
                                 applyLineHeight(startVal); 
@@ -1524,7 +1322,6 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
                             e.preventDefault();
                             let startVal = getSelectionLh(); 
                             const adjust = (v: number) => { 
-                                document.execCommand('formatBlock', false, 'div'); 
                                 startVal = Math.round(Math.max(0.4, Math.min(3.0, startVal + v)) * 100) / 100; 
                                 if (lineHeightRef.current) lineHeightRef.current.value = startVal.toFixed(2); 
                                 applyLineHeight(startVal); 
@@ -1790,7 +1587,8 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     const CORE_VARIABLE_OPTS = [
         { group: 'Identificadores', options: [
             { key: 'code', label: 'Código SKU (Completo)' },
-            { key: 'sku_base', label: 'Código base SKU' },
+            { key: 'sku_base', label: 'SKU base' },
+            { key: 'sku_complete', label: 'SKU completo' },
             { key: 'familia_code', label: 'Código Familia' },
             { key: 'ref_code', label: 'Código Referencia' },
             { key: 'version_code', label: 'Código Versión' },
@@ -1858,8 +1656,24 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         try {
             const parsed = JSON.parse(template.elements_json)
             if (Array.isArray(parsed)) {
-                setElements(parsed)
-                setHistory([parsed])
+                const migrated = parsed.map((el: any) => {
+                    if (el?.type !== 'barcode') return el
+                    const dataField = el.dataField || 'barcode_text'
+                    const barcodeFormat = el.barcodeFormat || (dataField === 'code' ? 'code128' : 'ean13')
+                    return {
+                        ...el,
+                        dataField,
+                        barcodeFormat,
+                        barcodeOrientation: (el.barcodeOrientation === 'vertical' ? 'vertical' : 'horizontal'),
+                        // Keep barcodes backgroundless unless explicitly set by older templates.
+                        backgroundColor: (typeof el.backgroundColor === 'string' ? el.backgroundColor : 'transparent'),
+                        barcodeXDimensionMm: el.barcodeXDimensionMm ?? 0.33,
+                        barcodeBarHeightMm: el.barcodeBarHeightMm ?? 20,
+                        barcodeQuietZoneX: el.barcodeQuietZoneX ?? 10,
+                    }
+                })
+                setElements(migrated as any)
+                setHistory([migrated as any])
                 setHistoryIndex(0)
             } else {
                 setHistory([[]])
@@ -2251,7 +2065,13 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             fontFamily: templateFontFamily,
             borderStyle: type === 'dashed_line' ? 'dashed' : 'solid',
             borderWidth: type === 'dashed_line' ? 2 : 0,
-            required: false
+            lineOrientation: type === 'dashed_line' ? 'horizontal' : undefined,
+            required: false,
+            backgroundColor: type === 'barcode' ? 'transparent' : undefined,
+            barcodeFormat: type === 'barcode' ? 'ean13' : undefined,
+            barcodeXDimensionMm: type === 'barcode' ? 0.33 : undefined,
+            barcodeBarHeightMm: type === 'barcode' ? 20 : undefined,
+            barcodeQuietZoneX: type === 'barcode' ? 10 : undefined,
         }
 
         if (type === 'image') {
@@ -2267,6 +2087,12 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             newEl.height = 52   // ~13 mm — enough for icon + two-line caption
             newEl.captionFontSize = 6.5
             newEl.captionTextAlign = 'center'
+        }
+
+        if (type === 'barcode') {
+            // Make the element render immediately with the default preview product.
+            newEl.dataField = 'barcode_text'
+            newEl.barcodeOrientation = 'horizontal'
         }
 
         commitHistory([...elements, newEl])
@@ -2681,7 +2507,23 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                     {childEl.type === 'dashed_line' && (
                                         <div
                                             className="w-full h-full border-gray-800"
-                                            style={{ borderBottomStyle: childEl.borderStyle || 'solid', borderBottomWidth: childEl.borderWidth || 2 }}
+                                            style={
+                                                (childEl.lineOrientation || 'horizontal') === 'vertical'
+                                                    ? {
+                                                        borderLeftStyle: childEl.borderStyle || 'solid',
+                                                        borderLeftWidth: childEl.borderWidth || 2,
+                                                        height: '100%',
+                                                        width: 0,
+                                                        margin: '0 auto',
+                                                    }
+                                                    : {
+                                                        borderBottomStyle: childEl.borderStyle || 'solid',
+                                                        borderBottomWidth: childEl.borderWidth || 2,
+                                                        width: '100%',
+                                                        height: 0,
+                                                        margin: 'auto 0',
+                                                    }
+                                            }
                                         />
                                     )}
 
@@ -2720,9 +2562,15 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
 
                                     {/* Barcode type */}
                                     {childEl.type === 'barcode' && (
-                                        <div className="w-full h-full bg-slate-800 pointer-events-none text-white text-xs flex items-center justify-center opacity-70 overflow-hidden">
-                                            ||| BARCODE {isPreviewMode && previewData && previewData[childEl.dataField || ''] ? `(${previewData[childEl.dataField || '']})` : ''} |||
-                                        </div>
+                                        <BarcodeElement
+                                            el={{
+                                                ...childEl,
+                                                barcodeFormatResolved: resolveBarcodeFormat(childEl),
+                                            }}
+                                            rawValue={isPreviewMode && enrichedData && childEl.dataField ? enrichedData[childEl.dataField || ''] : undefined}
+                                            sampleWhenEmpty={!isPreviewMode || !enrichedData}
+                                            className="pointer-events-none"
+                                        />
                                     )}
 
                                     {/* Text types */}
@@ -2878,6 +2726,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                     <Label htmlFor="required-toggle" className="text-xs font-bold text-slate-700 cursor-pointer">
                                         Campo Obligatorio (Bloquea Exportación si está vacío)
                                     </Label>
+                                    {/* Barcode-specific settings live under the barcode element properties, not here. */}
                                 </div>
                             )}
 
@@ -2944,7 +2793,29 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                             ))
                                         )}
                                         {/* NOTE: Icon data fields removed — use 'Icono Variable' element type instead */}
+                                        {isExternalDataSource && datasetSchema.length > 0 && (
+                                            <optgroup label="Dataset Externo">
+                                                {datasetSchema.map(f => (
+                                                    <option key={f.key} value={f.key}>{f.label}</option>
+                                                ))}
+                                            </optgroup>
+                                        )}
+                                        {isExternalDataSource && datasetSchema.length > 0 && (
+                                            <optgroup label="Dataset Externo">
+                                                {datasetSchema.map(f => (
+                                                    <option key={f.key} value={f.key}>{f.label}</option>
+                                                ))}
+                                            </optgroup>
+                                        )}
+                                        {isExternalDataSource && datasetSchema.length > 0 && (
+                                            <optgroup label="Dataset Externo">
+                                                {datasetSchema.map(f => (
+                                                    <option key={f.key} value={f.key}>{f.label}</option>
+                                                ))}
+                                            </optgroup>
+                                        )}
                                     </select>
+
                                 </div>
                             )}
 
@@ -3162,16 +3033,95 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                             )}
 
                             {activeEl.type === 'barcode' && (
-                                <div>
+                                <div className="space-y-3">
                                     <Label className="text-xs text-slate-700 font-semibold mb-1 block">Variable a codificar en Barras</Label>
                                     <select
                                         className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                                        value={activeEl.dataField || ''}
-                                        onChange={(e) => updateSelectedElements({ dataField: e.target.value })}
+                                        value={activeEl.dataField || 'barcode_text'}
+                                        onChange={(e) => {
+                                            const nextField = e.target.value
+                                            updateSelectedElements({
+                                                dataField: nextField,
+                                                barcodeFormat: nextField === 'code' ? 'code128' : 'ean13',
+                                            })
+                                        }}
                                     >
                                         <option value="barcode_text">Campo de Código de Barras EAN</option>
                                         <option value="code">Código SKU</option>
+                                        {isExternalDataSource && datasetSchema.length > 0 && (
+                                            <optgroup label="Dataset Externo">
+                                                {datasetSchema.map(f => (
+                                                    <option key={f.key} value={f.key}>{f.label}</option>
+                                                ))}
+                                            </optgroup>
+                                        )}
                                     </select>
+
+                                    <div>
+                                        <Label className="text-xs text-slate-700 font-semibold mb-1 block">Tipo de Barcode</Label>
+                                        <select
+                                            className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                            value={resolveBarcodeFormat(activeEl)}
+                                            onChange={(e) => updateSelectedElements({ barcodeFormat: e.target.value as TemplateElement['barcodeFormat'] })}
+                                        >
+                                            <option value="ean13">EAN-13</option>
+                                            <option value="code128">Code128</option>
+                                        </select>
+                                    </div>
+
+                                    <div>
+                                        <Label className="text-xs text-slate-700 font-semibold mb-1 block">Orientación</Label>
+                                        <select
+                                            className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                            value={activeEl.barcodeOrientation || 'horizontal'}
+                                            onChange={(e) => updateSelectedElements({ barcodeOrientation: e.target.value as TemplateElement['barcodeOrientation'] })}
+                                        >
+                                            <option value="horizontal">Horizontal</option>
+                                            <option value="vertical">Vertical</option>
+                                        </select>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <Label className="text-[11px] mb-1 block">X (mm)</Label>
+                                            <select
+                                                className="flex h-8 w-full rounded-md border border-input bg-white px-2 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                value={String(activeEl.barcodeXDimensionMm ?? 0.33)}
+                                                onChange={(e) => updateSelectedElements({ barcodeXDimensionMm: parseFloat(e.target.value) || 0.33 })}
+                                            >
+                                                <option value="0.33">0.33</option>
+                                                <option value="0.495">0.495</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <Label className="text-[11px] mb-1 block">Altura (mm)</Label>
+                                            <select
+                                                className="flex h-8 w-full rounded-md border border-input bg-white px-2 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                value={String(activeEl.barcodeBarHeightMm ?? 20)}
+                                                onChange={(e) => updateSelectedElements({ barcodeBarHeightMm: parseFloat(e.target.value) || 20 })}
+                                            >
+                                                <option value="10">10</option>
+                                                <option value="12.5">12.5</option>
+                                                <option value="15">15</option>
+                                                <option value="17.5">17.5</option>
+                                                <option value="20">20</option>
+                                                <option value="22.5">22.5</option>
+                                                <option value="25">25</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <Label className="text-[11px] mb-1 block">Quiet Zone (X por lado)</Label>
+                                        <Input
+                                            type="number"
+                                            step="1"
+                                            min="0"
+                                            className="bg-white h-8"
+                                            value={activeEl.barcodeQuietZoneX ?? 10}
+                                            onChange={(e) => updateSelectedElements({ barcodeQuietZoneX: parseFloat(e.target.value) || 0 })}
+                                        />
+                                    </div>
                                 </div>
                             )}
 
@@ -3195,6 +3145,57 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                                 <option value="dashed">Punteada (- - -)</option>
                                                 <option value="dotted">Puntos (. . .)</option>
                                             </select>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <Label className="text-[11px] mb-1 block">Orientación</Label>
+                                        <div className="flex gap-1 bg-slate-100 p-1 rounded-md border border-slate-200">
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                variant={(activeEl.lineOrientation || 'horizontal') === 'horizontal' ? 'default' : 'ghost'}
+                                                className={cn(
+                                                    "h-8 flex-1 shadow-none transition-all text-xs",
+                                                    (activeEl.lineOrientation || 'horizontal') === 'horizontal'
+                                                        ? "bg-white text-indigo-600 shadow-sm hover:bg-white"
+                                                        : "text-slate-500 hover:bg-slate-200"
+                                                )}
+                                                onClick={() => {
+                                                    const current = activeEl.lineOrientation || 'horizontal'
+                                                    if (current === 'horizontal') return
+                                                    // Swap the element box so the line "rotates" visually, not just the border.
+                                                    updateSelectedElements({
+                                                        lineOrientation: 'horizontal',
+                                                        width: Math.max(activeEl.height, 2),
+                                                        height: Math.max(activeEl.width, 2),
+                                                    })
+                                                }}
+                                            >
+                                                Horizontal
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                variant={(activeEl.lineOrientation || 'horizontal') === 'vertical' ? 'default' : 'ghost'}
+                                                className={cn(
+                                                    "h-8 flex-1 shadow-none transition-all text-xs",
+                                                    (activeEl.lineOrientation || 'horizontal') === 'vertical'
+                                                        ? "bg-white text-indigo-600 shadow-sm hover:bg-white"
+                                                        : "text-slate-500 hover:bg-slate-200"
+                                                )}
+                                                onClick={() => {
+                                                    const current = activeEl.lineOrientation || 'horizontal'
+                                                    if (current === 'vertical') return
+                                                    updateSelectedElements({
+                                                        lineOrientation: 'vertical',
+                                                        width: Math.max(activeEl.height, 2),
+                                                        height: Math.max(activeEl.width, 2),
+                                                    })
+                                                }}
+                                            >
+                                                Vertical
+                                            </Button>
                                         </div>
                                     </div>
                                 </div>

@@ -15,7 +15,7 @@ import {
 import { GenerateFilters } from '@/components/generate/GenerateFilters'
 import { TemplatePicker, type TemplateOption } from '@/components/generate/TemplatePicker'
 import { GenerateProductTable, type GenerateProduct } from '@/components/generate/GenerateProductTable'
-import { ValidationWarnings, getMissingFields, getTemplateRequiredFields } from '@/components/generate/ValidationWarnings'
+import { ValidationWarnings, getTemplateRequiredFields, getTemplateValidationIssues } from '@/components/generate/ValidationWarnings'
 import { BulkExportPanel } from '@/components/generate/BulkExportPanel'
 
 const STORAGE_KEYS = {
@@ -173,13 +173,21 @@ export function GenerateClient({
         [selectedTemplate]
     )
 
-    const missingFieldsByProduct = useMemo(() => {
-        const map: Record<string, string[]> = {}
+    const validationIssuesByProduct = useMemo(() => {
+        const map: Record<string, ReturnType<typeof getTemplateValidationIssues>> = {}
         for (const p of products) {
-            map[p.id] = getMissingFields(p, requiredFields)
+            map[p.id] = getTemplateValidationIssues(p, requiredFields)
         }
         return map
     }, [products, requiredFields])
+
+    const missingFieldsByProduct = useMemo(() => {
+        const map: Record<string, string[]> = {}
+        for (const p of products) {
+            map[p.id] = (validationIssuesByProduct[p.id] || []).map(issue => issue.field)
+        }
+        return map
+    }, [products, validationIssuesByProduct])
 
     const warnings = useMemo(() =>
         products
@@ -187,9 +195,9 @@ export function GenerateClient({
             .map(p => ({
                 productCode: p.code,
                 productName: p.final_name_es || '',
-                missingFields: missingFieldsByProduct[p.id] || [],
+                issues: validationIssuesByProduct[p.id] || [],
             })),
-        [products, selectedIds, missingFieldsByProduct]
+        [products, selectedIds, validationIssuesByProduct]
     )
 
     const selectedProducts = useMemo(
@@ -197,7 +205,7 @@ export function GenerateClient({
         [products, selectedIds]
     )
 
-    const hasWarnings = warnings.some(w => w.missingFields.length > 0)
+    const hasWarnings = warnings.some(w => w.issues.length > 0)
 
     // --- Filtrado local por texto ---
     const filteredProducts = useMemo(() => {
@@ -362,7 +370,7 @@ export function GenerateClient({
                                 {hasWarnings ? (
                                     <p className="text-xs text-amber-600 flex items-center gap-1 mt-0.5">
                                         <AlertTriangle className="w-3 h-3" />
-                                        {warnings.filter(w => w.missingFields.length > 0).length} con datos incompletos
+                                        {warnings.filter(w => w.issues.length > 0).length} con datos incompletos
                                     </p>
                                 ) : (
                                     <p className="text-xs text-green-600 mt-0.5">Todos listos para exportar</p>

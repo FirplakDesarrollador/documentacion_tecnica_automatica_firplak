@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import { TemplatePicker, type TemplateOption } from '@/components/generate/TemplatePicker'
-import { ValidationWarnings, getMissingFields, getTemplateRequiredFields } from '@/components/generate/ValidationWarnings'
+import { ValidationWarnings, getTemplateRequiredFields, getTemplateValidationIssues } from '@/components/generate/ValidationWarnings'
 import { resolveAssetsAction } from '@/app/generate/actions'
 import { hydrateTemplateElements, hydrateText } from '@/lib/export/exportUtils'
 import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
@@ -189,13 +189,13 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
         [selectedTemplate]
     )
 
-    const missingFields = useMemo(
-        () => getMissingFields(product, requiredFields),
+    const validationIssues = useMemo(
+        () => getTemplateValidationIssues(product, requiredFields),
         [product, requiredFields]
     )
 
-    const warnings = missingFields.length > 0
-        ? [{ productCode: product.code, productName: product.final_name_es || '', missingFields }]
+    const warnings = validationIssues.length > 0
+        ? [{ productCode: product.code, productName: product.final_name_es || '', issues: validationIssues }]
         : []
 
     const canvasW = selectedTemplate ? Math.round(selectedTemplate.width_mm * PIXELS_PER_MM) : 0
@@ -424,14 +424,14 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
 
                             <Button 
                                 className={`w-full h-12 text-sm font-bold transition-all duration-300 ${
-                                    (preflightReport.criticalErrors.length > 0 || missingFields.length > 0 || product.is_exportable === false)
+                                    (preflightReport.criticalErrors.length > 0 || validationIssues.length > 0 || product.is_exportable === false)
                                         ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300' 
                                         : (preflightReport.missingVariables.length > 0 || preflightReport.missingAssets.length > 0)
                                             ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-lg shadow-amber-200'
                                             : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-200'
                                 }`}
                                 onClick={handleExport}
-                                disabled={isExporting || preflightReport.criticalErrors.length > 0 || missingFields.length > 0 || product.is_exportable === false}
+                                disabled={isExporting || preflightReport.criticalErrors.length > 0 || validationIssues.length > 0 || product.is_exportable === false}
                             >
                                 {isExporting ? (
                                     <>
@@ -442,7 +442,7 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                                     <>
                                         <Download className="mr-2 h-4 w-4" />
                                         <span>
-                                            {(preflightReport.criticalErrors.length > 0 || missingFields.length > 0 || product.is_exportable === false)
+                                            {(preflightReport.criticalErrors.length > 0 || validationIssues.length > 0 || product.is_exportable === false)
                                                 ? 'Exportación Bloqueada'
                                                 : (preflightReport.missingVariables.length > 0 || preflightReport.missingAssets.length > 0)
                                                     ? `Exportar con Avisos (${exportFormat.toUpperCase()})`

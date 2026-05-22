@@ -23,6 +23,20 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Missing template elements payload' }, { status: 400 })
         }
 
+        const invalidRequiredBarcodes = Array.isArray(elements)
+            ? elements.filter((el: any) => el?.type === 'barcode' && el?.required === true && !!el?.barcodeError)
+            : []
+
+        if (invalidRequiredBarcodes.length > 0) {
+            return NextResponse.json({
+                error: 'Invalid required barcode data',
+                details: invalidRequiredBarcodes.map((el: any) => ({
+                    dataField: el?.dataField || null,
+                    message: el?.barcodeError || 'Barcode inválido',
+                })),
+            }, { status: 409 })
+        }
+
         if (productId) {
             const { composeProductById } = await import('@/lib/engine/product_composer')
             const exportProduct = await composeProductById(productId)

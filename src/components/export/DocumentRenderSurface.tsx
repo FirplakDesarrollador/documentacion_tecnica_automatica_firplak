@@ -2,7 +2,6 @@
 
 import React from 'react'
 import { getTemplateFontCssStack } from '@/lib/templates/templateTypography'
-
 const PIXELS_PER_MM = 4
 
 function AutoScalingText({ el }: { el: any }) {
@@ -153,22 +152,64 @@ export default function DocumentRenderSurface({
 
     const renderElementInner = (el: any) => {
         if (el.type === 'barcode') {
+            if (!el.barcodeSvg) {
+                return (
+                    <div className="w-full h-full bg-slate-800 pointer-events-none text-white flex items-center justify-center opacity-70 overflow-hidden" style={{ fontSize: '6pt' }}>
+                        ||| BARCODE {el.barcodeError ? `(Error: ${el.barcodeError})` : ''} |||
+                    </div>
+                )
+            }
+            const isVertical = el.barcodeOrientation === 'vertical'
+            if (isVertical && el.height != null && el.width != null) {
+                const h = el.height
+                const w = el.width
+                return (
+                    <div className="w-full h-full pointer-events-none overflow-hidden bg-transparent flex items-center justify-center">
+                        <div
+                            className="flex items-center justify-center bg-transparent shrink-0"
+                            style={{
+                                width: `${h}px`,
+                                height: `${w}px`,
+                                transform: 'rotate(90deg)',
+                                transformOrigin: 'center',
+                            }}
+                            dangerouslySetInnerHTML={{ __html: el.barcodeSvg }}
+                        />
+                    </div>
+                )
+            }
             return (
-                <div className="w-full h-full bg-slate-800 pointer-events-none text-white flex items-center justify-center opacity-70 overflow-hidden" style={{ fontSize: '6pt' }}>
-                    ||| BARCODE {el.content ? `(${el.content})` : ''} |||
+                <div className="w-full h-full pointer-events-none overflow-hidden bg-transparent flex items-center justify-center">
+                    <div
+                        className="w-full h-full flex items-center justify-center bg-transparent"
+                        dangerouslySetInnerHTML={{ __html: el.barcodeSvg }}
+                    />
                 </div>
             )
         }
 
         if (el.type === 'dashed_line') {
+            const orientation = (el.lineOrientation || 'horizontal') as 'horizontal' | 'vertical'
             return (
                 <div
                     className="w-full h-full"
                     style={{
-                        borderBottomStyle: el.borderStyle || 'solid',
-                        borderBottomWidth: el.borderWidth || 2,
+                        ...(orientation === 'vertical'
+                            ? {
+                                borderLeftStyle: el.borderStyle || 'solid',
+                                borderLeftWidth: el.borderWidth || 2,
+                                height: '100%',
+                                width: 0,
+                                margin: '0 auto',
+                            }
+                            : {
+                                borderBottomStyle: el.borderStyle || 'solid',
+                                borderBottomWidth: el.borderWidth || 2,
+                                height: 0,
+                                width: '100%',
+                                margin: 'auto 0',
+                            }),
                         borderColor: el.color || '#334155',
-                        height: 0,
                         alignSelf: 'center'
                     }}
                 />

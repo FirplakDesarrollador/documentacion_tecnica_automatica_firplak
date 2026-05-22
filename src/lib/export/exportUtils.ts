@@ -1,5 +1,6 @@
 import { dbQuery } from '@/lib/supabase'
 import { PIXELS_PER_MM } from '@/lib/constants'
+import { buildBarcode, resolveBarcodeFormat } from './barcodeUtils'
 
 /**
  * Resolves the English translation for a zone_home value from the Supabase glossary.
@@ -193,6 +194,23 @@ export async function hydrateTemplateElements(
             hydrated = hydrated.replace(/text-decoration:\s*underline\s*dotted[^;"]+;?/gi, '')
             hydrated = hydrated.replace(/cursor:\s*text;?/gi, '')
             cloned.content = hydrated
+        }
+
+        if (cloned.type === 'barcode') {
+            const format = resolveBarcodeFormat(cloned)
+            const rawBarcodeValue = cloned.dataField ? getVariableValue(enrichedProduct, cloned.dataField) : ''
+            const barcode = buildBarcode(rawBarcodeValue, format, {
+                width: cloned.width,
+                height: cloned.height,
+                xDimensionMm: cloned.barcodeXDimensionMm,
+                barHeightMm: cloned.barcodeBarHeightMm,
+                quietZoneX: cloned.barcodeQuietZoneX,
+            })
+
+            cloned.barcodeFormatResolved = format
+            cloned.barcodeValue = barcode.normalizedValue
+            cloned.barcodeSvg = barcode.svgMarkup
+            cloned.barcodeError = barcode.errorMessage
         }
 
         return cloned
