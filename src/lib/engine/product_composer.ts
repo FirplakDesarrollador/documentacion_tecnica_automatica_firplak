@@ -69,8 +69,6 @@ export interface ComposedProduct {
     is_exportable: boolean;
     inactive_reasons: string[];
 
-    // === Private label (from version rules or version_attrs) ===
-    private_label_flag: boolean;
     private_label_client_name: string | null;
 
     // === Color ===
@@ -160,8 +158,6 @@ export function mapRowToComposedProduct(row: any, options: EffectiveContextOptio
         is_exportable: effectiveContext.is_exportable,
         inactive_reasons: effectiveContext.inactive_reasons,
 
-        // === Private label ===
-        private_label_flag: effectiveContext.resolved_private_label_client_name !== null,
         private_label_client_name: effectiveContext.resolved_private_label_client_name,
 
         // === Color ===

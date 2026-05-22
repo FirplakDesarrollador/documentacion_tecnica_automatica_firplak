@@ -60,7 +60,7 @@ async function fetchClientByNameInsensitive(nameUpper: string) {
   return rows[0] || null
 }
 
-export async function createClientAction(input: { name: string; logo_asset_id?: string | null }) {
+export async function createClientAction(input: { name: string; logo_asset_id?: string | null }): Promise<ClientRow> {
   const nameUpper = normalizeClientName(input?.name)
   const logoAssetId = input?.logo_asset_id ? String(input.logo_asset_id) : null
 
@@ -87,7 +87,9 @@ export async function createClientAction(input: { name: string; logo_asset_id?: 
   revalidatePath('/templates')
   revalidatePath('/products')
 
-  return hydrated || row
+  if (hydrated) return hydrated
+  if (row) return { ...row, logo_url: null }
+  throw new Error('No se pudo crear el cliente')
 }
 
 export async function updateClientLogoAction(input: { client_id: string; logo_asset_id: string | null }) {

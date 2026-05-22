@@ -22,7 +22,7 @@ import { AlertCircle, CheckCircle2, Languages, Sparkles } from 'lucide-react'
 export function EditProductForm({ initialData }: { initialData: any }) {
     const initialPrivateName = (initialData.private_label_client_name && String(initialData.private_label_client_name).trim() !== '' && String(initialData.private_label_client_name).toUpperCase() !== 'NA')
         ? String(initialData.private_label_client_name).trim()
-        : 'NA'
+        : ''
 
     const [formData, setFormData] = useState({
         code: initialData.code || '',
@@ -45,9 +45,7 @@ export function EditProductForm({ initialData }: { initialData: any }) {
         final_name_es: initialData.final_name_es || '',
         final_name_en: initialData.final_name_en || '',
         door_color_text: initialData.door_color_text || 'NA',
-        private_label_flag: initialPrivateName !== 'NA',
         private_label_client_name: initialPrivateName,
-        private_label_client_id: initialData.private_label_client_id || '',
         isometric_path: initialData.isometric_path || '',
         isometric_asset_id: initialData.isometric_asset_id || '',
     })
@@ -257,13 +255,15 @@ export function EditProductForm({ initialData }: { initialData: any }) {
                                     />
                                     <Label htmlFor="assembled_flag">Es Armado</Label>
                                 </div>
-                                <div className="flex items-center space-x-2">
-                                    <Checkbox
-                                        id="private_label_flag"
-                                        checked={formData.private_label_flag}
-                                        onCheckedChange={(c) => setFormData(p => ({ ...p, private_label_flag: !!c }))}
+                                <div className="grid gap-2 min-w-[260px]">
+                                    <Label htmlFor="private_label_client_name">Cliente Marca Propia</Label>
+                                    <Input
+                                        id="private_label_client_name"
+                                        name="private_label_client_name"
+                                        value={formData.private_label_client_name}
+                                        onChange={handleChange}
+                                        placeholder="Vacío si no aplica"
                                     />
-                                    <Label htmlFor="private_label_flag">Marca Propia</Label>
                                 </div>
                             </div>
 

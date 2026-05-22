@@ -123,6 +123,7 @@ async function exportOneProduct(
             format, 
             width: widthPx, 
             height: heightPx,
+            templateFontFamily: (template as any).template_font_family,
             filename: downloadName
         }),
     })

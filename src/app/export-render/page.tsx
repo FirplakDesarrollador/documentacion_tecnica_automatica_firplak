@@ -78,6 +78,7 @@ export default function ExportRenderPage() {
                 elements={payload.elements} 
                 width={payload.width} 
                 height={payload.height} 
+                templateFontFamily={payload.templateFontFamily}
             />
         </div>
     )

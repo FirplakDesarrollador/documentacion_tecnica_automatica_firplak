@@ -87,7 +87,7 @@ export async function parseProductCode(
         canto_puertas: null,
         armado_con_lvm: 'NA',
         carb2: 'NA',
-        private_label_client_name: 'NA',
+        private_label_client_name: null,
         special_label: 'NA',
         bisagras: 'NA',
         barcode_text: null,
@@ -438,7 +438,7 @@ export async function parseProductCode(
         }
 
         // Detección de Marca Propia
-        if (result.private_label_client_name === 'NA' || result.private_label_client_name === null) {
+        if (!result.private_label_client_name) {
             const knownClients = ['CHILEMAT', 'D-ACQUA', 'PROMART', 'FERMETAL', 'SODIMAC CHILE'];
             let matchedClient = '';
             for (const client of knownClients) {

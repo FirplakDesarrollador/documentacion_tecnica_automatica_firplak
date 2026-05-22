@@ -540,6 +540,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
 
                 const key = String(privateLabelData.client_key || '').trim()
                 if (key === '__NEW__') return String(privateLabelData.client_name || '').trim()
+                if (key.toUpperCase() === 'NA') return ''
                 return key
             })()
 
@@ -547,8 +548,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                 ...formData, 
                 _newFamily: isNewFamily ? familyData : undefined,
                 _newColor: isNewColor ? colorData : undefined,
-                private_label_client_id: '',
-                private_label_client_name: effectivePrivateName,
+                private_label_client_name: effectivePrivateName || null,
                 private_label_logo_id: privateLabelData.logo_id
             };
 
@@ -841,7 +841,6 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                                 onChange={(e) => setPrivateLabelData(p => ({ ...p, client_key: e.target.value, client_name: e.target.value === '__NEW__' ? '' : p.client_name }))}
                                             >
                                                 <option value="">(Vacío / No aplica)</option>
-                                                <option value="NA">NA</option>
                                                 {clients.map(c => (
                                                     <option key={c.id} value={c.name}>{c.name}</option>
                                                 ))}

@@ -155,7 +155,7 @@ export async function upsertColorAction(code: string, name: string) {
     return rows ? rows[0] : null
 }
 
-function buildCreateProductV6Payload(data: any, parsed: any, isPrivate: boolean, clientId: string, clientName: string, sap_description_recommended: string, final_name_es: string, final_name_en: string) {
+function buildCreateProductV6Payload(data: any, parsed: any, isPrivate: boolean, clientName: string | null, sap_description_recommended: string, final_name_es: string, final_name_en: string) {
     const normalizedPrivateName = (clientName && String(clientName).trim() !== '' && String(clientName).toUpperCase() !== 'NA')
         ? String(clientName).trim()
         : null
@@ -295,8 +295,7 @@ export async function createProductAction(data: any) {
     // Private label is derived from the presence of a client name (no flag)
     const clientNameRaw = data.private_label_client_name ? String(data.private_label_client_name).trim() : ''
     const isPrivate = clientNameRaw !== '' && clientNameRaw.toUpperCase() !== 'NA'
-    const clientName = isPrivate ? clientNameRaw : 'NA'
-    const clientId = ''
+    const clientName = isPrivate ? clientNameRaw : null
 
     // Store client metadata whenever we have a valid private-label client name
     // (logo association is optional and does not affect private-label logic).
@@ -308,7 +307,7 @@ export async function createProductAction(data: any) {
         }
     }
 
-    const payload = buildCreateProductV6Payload(data, parsed, isPrivate, clientId, clientName, sap_description_recommended, final_name_es, final_name_en)
+    const payload = buildCreateProductV6Payload(data, parsed, isPrivate, clientName, sap_description_recommended, final_name_es, final_name_en)
 
     if (data._newColor && (data.color_code || parsed.color_code)) {
         const cCode = data.color_code || parsed.color_code
@@ -373,8 +372,7 @@ export async function updateProductAction(id: string, data: any) {
         data,
         parsed,
         isPrivate,
-        '',
-        clientNameRaw,
+        isPrivate ? clientNameRaw : null,
         final_name_es.toUpperCase().substring(0, 40),
         final_name_es,
         final_name_en
@@ -851,8 +849,7 @@ export async function batchCreateColorVariantsAction(
                 workingProduct, 
                 parsed, 
                 isPrivate, 
-                '', 
-                clientNameRaw, 
+                isPrivate ? clientNameRaw : null, 
                 sap_description_recommended, 
                 final_name_es, 
                 final_name_en

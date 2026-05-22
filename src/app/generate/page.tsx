@@ -60,10 +60,25 @@ export default async function GeneratePage({
     // Las medidas ya van integradas en el label de referencias — no se exponen como filtro separado.
 
     // --- Cargar plantillas activas ---
-    const templates = await dbQuery(
-        `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json, export_formats, export_filename_format, data_source, brand_scope, private_label_client_name
-         FROM public.plantillas_doc_tec WHERE active = true ORDER BY created_at ASC`
-    ) || []
+    let templates: any[] = []
+    try {
+        const res = await dbQuery(
+            `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json, export_formats, export_filename_format, data_source, template_font_family, brand_scope, private_label_client_name
+             FROM public.plantillas_doc_tec WHERE active = true ORDER BY created_at ASC`
+        )
+        templates = Array.isArray(res) ? res : (res?.rows || [])
+    } catch (e: any) {
+        const msg = String(e?.message || e || "")
+        if (msg.includes('column "template_font_family"') && msg.includes('does not exist')) {
+            const res = await dbQuery(
+                `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json, export_formats, export_filename_format, data_source, brand_scope, private_label_client_name
+                 FROM public.plantillas_doc_tec WHERE active = true ORDER BY created_at ASC`
+            )
+            templates = Array.isArray(res) ? res : (res?.rows || [])
+        } else {
+            throw e
+        }
+    }
 
     // --- Cargar reglas del motor ---
     const rules = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true`) || []

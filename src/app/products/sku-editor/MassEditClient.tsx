@@ -175,7 +175,7 @@ export default function MassEditClient() {
 
     return Array.from(vals)
       .map(v => v.trim())
-      .filter(v => v !== '' && v.toUpperCase() !== 'NULL');
+      .filter(v => v !== '' && v.toUpperCase() !== 'NULL' && !(editField === 'private_label_client_name' && v.toUpperCase() === 'NA'));
   }, [editField, editType, filterOpts.refAttrsValues, filterOpts.skuAttrsValues, skus]);
 
   // Reset custom/clear modes and pre-select first suggestion if available

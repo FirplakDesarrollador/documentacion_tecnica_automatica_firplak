@@ -240,6 +240,7 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                     format: exportFormat, 
                     width: widthPx, 
                     height: heightPx,
+                    templateFontFamily: selectedTemplate.template_font_family,
                     filename: hydrateText((selectedTemplate as any).export_filename_format || '{sku_base}_{final_name_es}', enrichedProduct)
                 }),
             })
@@ -302,7 +303,12 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                                 transition: 'transform 0.2s ease-out'
                             }}
                         >
-                            <DocumentRenderSurface elements={hydratedElements} width={canvasW} height={canvasH} />
+                            <DocumentRenderSurface
+                                elements={hydratedElements}
+                                width={canvasW}
+                                height={canvasH}
+                                templateFontFamily={selectedTemplate.template_font_family}
+                            />
                         </div>
                     </div>
                 ) : (

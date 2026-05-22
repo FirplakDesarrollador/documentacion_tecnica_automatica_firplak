@@ -1,6 +1,7 @@
 'use client'
 
 import React from 'react'
+import { getTemplateFontCssStack } from '@/lib/templates/templateTypography'
 
 const PIXELS_PER_MM = 4
 
@@ -139,12 +140,15 @@ function AutoScalingIconContent({ el }: { el: any }) {
 export default function DocumentRenderSurface({ 
     elements, 
     width, 
-    height 
+    height,
+    templateFontFamily,
 }: { 
     elements: any[], 
     width: number, 
-    height: number 
+    height: number
+    templateFontFamily?: string
 }) {
+    const effectiveFontFamily = getTemplateFontCssStack(templateFontFamily)
     const rootElements = elements.filter(el => !el.groupId)
 
     const renderElementInner = (el: any) => {
@@ -209,7 +213,7 @@ export default function DocumentRenderSurface({
             fontSize: isText ? undefined : `${el.fontSize || 14}pt`, // AutoScalingText maneja su propia fuente
             fontWeight: el.fontWeight || 'normal',
             fontStyle: el.fontStyle || 'normal',
-            fontFamily: el.fontFamily === 'Montserrat' ? 'var(--font-montserrat), sans-serif' : 'inherit',
+            fontFamily: effectiveFontFamily,
             color: el.color || '#000000',
             backgroundColor: el.type === 'icon_group' ? 'transparent' : (el.backgroundColor || 'transparent'),
             textTransform: (el.textTransform as any) || 'none',

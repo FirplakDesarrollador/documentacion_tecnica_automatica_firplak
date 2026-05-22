@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
-import { montserrat } from './fonts';
+import { lato, montserrat, openSans, roboto } from './fonts';
 import './globals.css';
 import { Sidebar } from '@/components/layout/sidebar';
 
@@ -25,7 +25,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es" className={`${montserrat.variable} ${geistSans.variable} ${geistMono.variable}`}>
+    <html
+      lang="es"
+      className={`${montserrat.variable} ${lato.variable} ${openSans.variable} ${roboto.variable} ${geistSans.variable} ${geistMono.variable}`}
+    >
       <body className="antialiased text-foreground bg-background font-sans min-h-screen">
         <Sidebar>{children}</Sidebar>
       </body>

@@ -15,6 +15,7 @@ export async function POST(req: Request) {
             format = 'pdf',
             width = 800,
             height = 400,
+            templateFontFamily,
             filename
         } = await req.json()
 
@@ -71,7 +72,7 @@ export async function POST(req: Request) {
         // Inyectar datos en el localStorage antes de cargar la página
         await page.evaluateOnNewDocument((payload: string) => {
             window.localStorage.setItem('__EXPORT_DATA__', payload);
-        }, JSON.stringify({ elements, width, height }));
+        }, JSON.stringify({ elements, width, height, templateFontFamily }));
 
         if (bypassSecret) {
             await page.setExtraHTTPHeaders({

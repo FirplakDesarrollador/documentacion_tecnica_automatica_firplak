@@ -16,10 +16,12 @@ import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { PIXELS_PER_MM } from '@/lib/constants'
 import { hydrateText, getVariableValue } from '@/lib/export/exportUtils'
 import { resolveZoneHomeEnAction, getClientsAction } from '@/app/products/actions'
+import { getTemplateFontCssStack, getTemplateFontLabel, normalizeTemplateFontFamily, TEMPLATE_FONT_OPTIONS, type TemplateFontFamily } from '@/lib/templates/templateTypography'
 import Image from 'next/image'
 
 export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'box' | 'dashed_line' | 'dynamic_image' | 'icon_group'
 type TemplateBrandScope = 'firplak' | 'private_label'
+type PropertiesPanelTab = 'element' | 'template'
 
 export interface TemplateElement {
     id: string
@@ -77,6 +79,7 @@ type TemplateData = {
     elements_json: string
     name?: string
     data_source?: string
+    template_font_family?: string
     export_formats?: string
     export_filename_format?: string
     brand_scope?: string
@@ -1621,8 +1624,12 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     // Global settings states
     const [templateName, setTemplateName] = useState(template.name || '')
     const [dataSource, setDataSource] = useState(template.data_source || 'core_firplak')
+    const [templateFontFamily, setTemplateFontFamily] = useState<TemplateFontFamily>(
+        normalizeTemplateFontFamily(template.template_font_family)
+    )
     const [datasetSchema, setDatasetSchema] = useState(initialSchema)
     const [availableDatasets, setAvailableDatasets] = useState<{ id: string, name?: string, schema_json?: unknown }[]>([])
+    const [propertiesPanelTab, setPropertiesPanelTab] = useState<PropertiesPanelTab>('template')
 
     const [brandScope, setBrandScope] = useState<TemplateBrandScope>(
         template?.brand_scope === 'private_label' ? 'private_label' : 'firplak'
@@ -1689,6 +1696,35 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         return enrichProductDataWithIcons(dataWithZone, resolvedAssetMap) as PreviewData
     }
 
+    const getPreviewScopeArgs = () => ({
+        brandScope: dataSource === 'core_firplak' ? brandScope : 'firplak' as TemplateBrandScope,
+        privateLabelClientName:
+            dataSource === 'core_firplak' && brandScope === 'private_label'
+                ? String(privateLabelClientName || '').trim()
+                : null,
+    })
+
+    useEffect(() => {
+        if (!isPreviewMode) return
+
+        let cancelled = false
+
+        const refreshPreview = async () => {
+            const { brandScope: previewBrandScope, privateLabelClientName: previewClientName } = getPreviewScopeArgs()
+            const data = await getPreviewProduct(dataSource, previewBrandScope, previewClientName)
+            const resolvedAssets = await resolveAssetsAction([])
+            if (!cancelled) {
+                setPreviewData(await enrichWithZone(data, resolvedAssets))
+            }
+        }
+
+        refreshPreview()
+
+        return () => {
+            cancelled = true
+        }
+    }, [isPreviewMode, dataSource, brandScope, privateLabelClientName])
+
     // Fetch datasets info
     useEffect(() => {
         getDatasetsAction().then(res => setAvailableDatasets(res))
@@ -1737,7 +1773,12 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         }
 
         // Reload preview product for the new source
-        const data = await getPreviewProduct(newSource)
+        const nextBrandScope = newSource === 'core_firplak' ? brandScope : 'firplak'
+        const nextPrivateLabelClientName =
+            newSource === 'core_firplak' && brandScope === 'private_label'
+                ? String(privateLabelClientName || '').trim()
+                : null
+        const data = await getPreviewProduct(newSource, nextBrandScope, nextPrivateLabelClientName)
         const assetsRemote = await resolveAssetsAction([])
         setPreviewData(await enrichWithZone(data, assetsRemote))
     }
@@ -2128,6 +2169,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         const res = await updateTemplate(template.id, {
             name: templateName,
             data_source: dataSource,
+            template_font_family: templateFontFamily,
             elements_json: JSON.stringify(elements),
             export_formats: exportFormats.join(','),
             export_filename_format: exportFilenameFormat,
@@ -2150,7 +2192,8 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     const handleTogglePreview = async () => {
         if (!isPreviewMode) {
             if (!previewData) {
-                const data = await getPreviewProduct(dataSource)
+                const { brandScope: previewBrandScope, privateLabelClientName: previewClientName } = getPreviewScopeArgs()
+                const data = await getPreviewProduct(dataSource, previewBrandScope, previewClientName)
                 // Resolve system asset URLs (icons, logos) and enrich product data with icon fields
                 const assetMap = await resolveAssetsAction([])
                 setPreviewData(await enrichWithZone(data, assetMap))
@@ -2164,7 +2207,8 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         try {
             // Pass current product code so the server excludes it (avoids same product twice)
             const currentCode = typeof previewData?.code === 'string' ? previewData.code : undefined
-            const data = await getRandomPreviewProduct(currentCode, dataSource)
+            const { brandScope: previewBrandScope, privateLabelClientName: previewClientName } = getPreviewScopeArgs()
+            const data = await getRandomPreviewProduct(currentCode, dataSource, previewBrandScope, previewClientName)
             if (data) {
                 const assetMap = await resolveAssetsAction([])
                 setPreviewData(await enrichWithZone(data, assetMap))
@@ -2180,7 +2224,8 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     const handleBasePreview = async () => {
         setIsLoadingRandom(true)
         try {
-            const data = await getPreviewProduct(dataSource)
+            const { brandScope: previewBrandScope, privateLabelClientName: previewClientName } = getPreviewScopeArgs()
+            const data = await getPreviewProduct(dataSource, previewBrandScope, previewClientName)
             const assetMap = await resolveAssetsAction([])
             setPreviewData(await enrichWithZone(data, assetMap))
         } finally {
@@ -2203,7 +2248,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             fontStyle: 'normal',
             textAlign: 'left',
             verticalAlign: 'middle',
-            fontFamily: 'Montserrat',
+            fontFamily: templateFontFamily,
             borderStyle: type === 'dashed_line' ? 'dashed' : 'solid',
             borderWidth: type === 'dashed_line' ? 2 : 0,
             required: false
@@ -2450,6 +2495,19 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     }, [isDragging, isResizing, selectedIds, dragOffsets, resizeStartRect, resizeStartMouse, resizeHandle, resizingElementId, commitHistory, elements])
 
     const activeEl = selectedIds.length === 1 ? elements.find(e => e.id === selectedIds[0]) : null
+    const effectiveTemplateFontFamily = getTemplateFontCssStack(templateFontFamily)
+    const templateFontLabel = getTemplateFontLabel(templateFontFamily)
+
+    useEffect(() => {
+        if (selectedIds.length === 0) {
+            setPropertiesPanelTab('template')
+            return
+        }
+
+        if (selectedIds.length === 1) {
+            setPropertiesPanelTab('element')
+        }
+    }, [selectedIds])
 
     // Helper to render Resize Handles
     const renderResizeHandles = (el: TemplateElement) => {
@@ -2700,7 +2758,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                         fontSize: `${el.fontSize}pt`,
                                         fontWeight: el.fontWeight as 'normal' | 'bold' | '500',
                                         fontStyle: el.fontStyle,
-                                        fontFamily: el.fontFamily === 'Montserrat' ? 'var(--font-montserrat), sans-serif' : 'inherit',
+                                        fontFamily: effectiveTemplateFontFamily,
                                         color: el.color,
                                         backgroundColor: el.type === 'icon_group' ? (isPreviewMode ? 'transparent' : 'rgba(238, 242, 255, 0.4)') : el.backgroundColor,
                                         border: el.type === 'icon_group' && !isPreviewMode ? '1px dashed #818cf8' : undefined,
@@ -2756,20 +2814,51 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             {/* Properties Panel */}
             <div className="w-full xl:w-80 flex flex-col shrink-0 h-full">
                 <Card className="flex-1 flex flex-col overflow-hidden bg-slate-50/50 shadow-inner">
-                    <div className="p-4 border-b border-slate-200 bg-white/50 backdrop-blur-sm flex justify-between items-center shrink-0">
+                    <div className="p-4 border-b border-slate-200 bg-white/50 backdrop-blur-sm shrink-0">
                         <h3 className="font-bold text-slate-800 flex items-center gap-2">
                             <Box className="h-4 w-4 text-indigo-500" />
                             Propiedades
                         </h3>
-                        {selectedIds.length > 1 && (
-                            <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold text-[10px]">
-                                {selectedIds.length} ítems
-                            </span>
-                        )}
+                        <div className="mt-3 flex items-center justify-between gap-2">
+                            <div className="flex items-center rounded-lg border border-slate-200 bg-slate-100 p-1">
+                                <button
+                                    type="button"
+                                    className={cn(
+                                        "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors",
+                                        propertiesPanelTab === 'element'
+                                            ? "bg-white text-indigo-700 shadow-sm"
+                                            : "text-slate-500 hover:text-slate-700"
+                                    )}
+                                    onClick={() => setPropertiesPanelTab('element')}
+                                >
+                                    <Box className="h-3.5 w-3.5" />
+                                    Elemento
+                                </button>
+                                <button
+                                    type="button"
+                                    className={cn(
+                                        "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors",
+                                        propertiesPanelTab === 'template'
+                                            ? "bg-white text-indigo-700 shadow-sm"
+                                            : "text-slate-500 hover:text-slate-700"
+                                    )}
+                                    onClick={() => setPropertiesPanelTab('template')}
+                                >
+                                    <FileEdit className="h-3.5 w-3.5" />
+                                    Plantilla
+                                </button>
+                            </div>
+                            {selectedIds.length > 1 && (
+                                <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold text-[10px]">
+                                    {selectedIds.length} ítems
+                                </span>
+                            )}
+                        </div>
                     </div>
 
                     <div className="flex-1 overflow-y-auto p-5 custom-scrollbar pb-12">
-                    {activeEl ? (
+                    {propertiesPanelTab === 'element' ? (
+                        activeEl ? (
                         <div className="flex flex-col gap-5">
                             <div>
                                 <Label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Tipo de Elemento</Label>
@@ -3113,7 +3202,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
 
                             {(activeEl.type === 'text' || activeEl.type === 'dynamic_text') && (
                                 <div className="space-y-4 border-t pt-4 border-slate-200">
-                                    <Label className="font-semibold text-xs text-muted-foreground uppercase flex items-center">Tipografía (Fuente de Letra)</Label>
+                                    <Label className="font-semibold text-xs text-muted-foreground uppercase flex items-center">Texto y Alineación</Label>
 
 
                                     <div className="grid grid-cols-1 gap-3">
@@ -3255,13 +3344,22 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                             <span className="text-xs mt-1 px-4">{selectedIds.length} elementos seleccionados. Usa las herramientas de la barra superior.</span>
                         </div>
                     ) : (
-                        <div className="text-muted-foreground text-sm text-center py-10 flex flex-col items-center bg-white rounded-lg border border-dashed opacity-60 hover:opacity-100 transition-opacity">
+                        <div className="text-muted-foreground text-sm text-center py-10 px-4 flex flex-col items-center gap-3 bg-white rounded-lg border border-dashed opacity-80 hover:opacity-100 transition-opacity">
                             <Move className="h-10 w-10 mb-3 text-slate-300" />
-                            Selecciona un elemento en el lienzo para configurar medidas.
+                            <p>Selecciona un elemento en el lienzo para editar sus propiedades.</p>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                className="text-xs font-semibold"
+                                onClick={() => setPropertiesPanelTab('template')}
+                            >
+                                Abrir propiedades de plantilla
+                            </Button>
                         </div>
-                    )}
+                    )
+                    ) : (
 
-                        <div className="space-y-4 border-t pt-4 border-slate-200">
+                        <div className="space-y-4">
                             <div className="flex items-center gap-3">
                                 <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center">
                                     <FileEdit className="w-4 h-4 text-indigo-600" />
@@ -3317,7 +3415,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                         setIsValidating(true);
                                         setValidationResult(null);
                                         try {
-                                            const res = await validateExportFilenameLength(exportFilenameFormat, template.data_source);
+                                            const res = await validateExportFilenameLength(exportFilenameFormat, dataSource);
                                             setValidationResult(res);
                                             if (res.success) {
                                                 toast.success(`Validación exitosa: ${res.count} registros cumplen.`);
@@ -3444,11 +3542,50 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                     )}
 
                                     <p className="text-[10px] text-slate-400 mt-1.5 leading-tight">
-                                        Cambiar la fuente actualizará las variables disponibles y la previsualización.
+                                        Cambiar la fuente de datos actualizará las variables disponibles y la previsualización.
                                     </p>
                                 </div>
                             </div>
                             
+                            <div className="space-y-3">
+                                <Label className="text-xs font-bold text-slate-700">Tipografía</Label>
+                                <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                                    <div>
+                                        <Label className="text-[11px] font-bold text-slate-500 mb-1.5 block uppercase">Fuente Global de la Plantilla</Label>
+                                        <select
+                                            className="flex h-9 w-full rounded-md border border-slate-200 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus:border-indigo-200"
+                                            value={templateFontFamily}
+                                            onChange={(e) => {
+                                                setTemplateFontFamily(normalizeTemplateFontFamily(e.target.value))
+                                                setIsModified(true)
+                                            }}
+                                        >
+                                            {TEMPLATE_FONT_OPTIONS.map((option) => (
+                                                <option key={option.value} value={option.value}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+
+                                    <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50/50 p-3">
+                                        <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-500 mb-1">
+                                            Vista previa
+                                        </p>
+                                        <p
+                                            className="text-sm text-slate-700"
+                                            style={{ fontFamily: effectiveTemplateFontFamily }}
+                                        >
+                                            {templateFontLabel}: ABCDEFG abcdefg 1234567890
+                                        </p>
+                                    </div>
+
+                                    <p className="text-[10px] text-slate-400 leading-tight">
+                                        Esta fuente se aplicará a todos los textos visibles de la plantilla, incluyendo variables y captions de iconos.
+                                    </p>
+                                </div>
+                            </div>
+
                             <div className="flex flex-col gap-3">
                                 <Label className="text-xs font-bold text-slate-700">Formatos de Exportación Permitidos</Label>
                                 <div className="flex gap-2">
@@ -3480,13 +3617,8 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                     Define qué formatos podrán elegir los usuarios al exportar productos con esta plantilla.
                                 </p>
                             </div>
-
-                            <div className="bg-amber-50 border border-amber-100 p-3 rounded-md mt-4">
-                                <p className="text-[10px] text-amber-700 leading-tight">
-                                    <b>Tipografía:</b> Esta plantilla utiliza <b>Montserrat</b> por defecto. Asegúrate de que los textos sean legibles antes de guardar.
-                                </p>
-                            </div>
                         </div>
+                    )}
                     </div>
                 </Card>
             </div>

@@ -147,7 +147,7 @@ export async function hydrateTemplateElements(
             // 2. Mapeo de assets de sistema y lógica de Marca Propia
             else if (content === 'logo_empresa' || content === 'Logo Empresa Pordefecto') {
                 // Si es Marca Propia y hay un logo específico, lo priorizamos
-                if (product.private_label_flag && product.private_label_logo_id && assetMap[product.private_label_logo_id]) {
+                if (product.private_label_client_name && product.private_label_logo_id && assetMap[product.private_label_logo_id]) {
                     src = assetMap[product.private_label_logo_id]
                 } else {
                     src = assetMap['Logo Empresa Pordefecto'] || assetMap['logo_empresa'] || ''

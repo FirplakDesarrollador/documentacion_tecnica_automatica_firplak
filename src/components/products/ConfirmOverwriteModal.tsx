@@ -38,7 +38,7 @@ export function ConfirmOverwriteModal({
     const valCurr = currentData[key]
     
     // Normalización básica para comparación
-    const normalize = (v: any) => (v === null || v === undefined || v === '' ? 'NA' : String(v).trim())
+    const normalize = (v: any) => (v === null || v === undefined || v === '' ? '' : String(v).trim())
     
     return normalize(valInit) !== normalize(valCurr)
   }) : []
@@ -73,7 +73,6 @@ export function ConfirmOverwriteModal({
     carb2: 'CARB2',
     special_label: 'Etiqueta Especial',
     barcode_text: 'Código Barras',
-    private_label_flag: 'Marca Propia',
     private_label_client_name: 'Cliente Marca Propia',
     armado_con_lvm: 'Armado con LVM',
     status: 'Estado'

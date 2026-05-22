@@ -2,12 +2,19 @@
 
 import { dbQuery } from "@/lib/supabase"
 import { revalidatePath } from "next/cache"
+import { normalizeTemplateFontFamily } from "@/lib/templates/templateTypography"
+
+function isMissingTemplateFontFamilyColumn(error: unknown): boolean {
+    const msg = String((error as any)?.message || error || "")
+    return msg.includes('column "template_font_family"') && msg.includes('does not exist')
+}
 
 export async function createTemplate(data: {
     name: string
     width_mm: number
     height_mm: number
     data_source: string
+    template_font_family?: string
     brand_scope?: 'firplak' | 'private_label'
     private_label_client_name?: string | null
 }) {
@@ -15,38 +22,74 @@ export async function createTemplate(data: {
         const orientation = data.width_mm >= data.height_mm ? 'horizontal' : 'vertical'
         const brandScope = data.data_source === 'core_firplak' && data.brand_scope === 'private_label' ? 'private_label' : 'firplak'
         const plc = data.private_label_client_name ? String(data.private_label_client_name).trim() : ''
+        const templateFontFamily = normalizeTemplateFontFamily(data.template_font_family)
 
         if (brandScope === 'private_label' && !plc) {
             return { success: false, error: 'Cliente marca propia requerido' }
         }
 
-        const rows = await dbQuery(`
-            INSERT INTO public.plantillas_doc_tec (
-                name,
-                width_mm,
-                height_mm,
-                orientation,
-                document_type,
-                elements_json,
-                active,
-                data_source,
-                brand_scope,
-                private_label_client_name
-            )
-            VALUES (
-                '${data.name.replace(/'/g, "''")}',
-                ${data.width_mm},
-                ${data.height_mm},
-                '${orientation}',
-                'label',
-                '[]',
-                true,
-                '${data.data_source.replace(/'/g, "''")}',
-                '${brandScope}',
-                ${brandScope === 'private_label' ? `'${plc.replace(/'/g, "''")}'` : 'NULL'}
-            )
-            RETURNING id
-        `)
+        let rows: any
+        try {
+            rows = await dbQuery(`
+                INSERT INTO public.plantillas_doc_tec (
+                    name,
+                    width_mm,
+                    height_mm,
+                    orientation,
+                    document_type,
+                    elements_json,
+                    active,
+                    data_source,
+                    template_font_family,
+                    brand_scope,
+                    private_label_client_name
+                )
+                VALUES (
+                    '${data.name.replace(/'/g, "''")}',
+                    ${data.width_mm},
+                    ${data.height_mm},
+                    '${orientation}',
+                    'label',
+                    '[]',
+                    true,
+                    '${data.data_source.replace(/'/g, "''")}',
+                    '${templateFontFamily}',
+                    '${brandScope}',
+                    ${brandScope === 'private_label' ? `'${plc.replace(/'/g, "''")}'` : 'NULL'}
+                )
+                RETURNING id
+            `)
+        } catch (e) {
+            if (!isMissingTemplateFontFamilyColumn(e)) throw e
+            // Backward compatible mode: DB doesn't have template_font_family yet.
+            rows = await dbQuery(`
+                INSERT INTO public.plantillas_doc_tec (
+                    name,
+                    width_mm,
+                    height_mm,
+                    orientation,
+                    document_type,
+                    elements_json,
+                    active,
+                    data_source,
+                    brand_scope,
+                    private_label_client_name
+                )
+                VALUES (
+                    '${data.name.replace(/'/g, "''")}',
+                    ${data.width_mm},
+                    ${data.height_mm},
+                    '${orientation}',
+                    'label',
+                    '[]',
+                    true,
+                    '${data.data_source.replace(/'/g, "''")}',
+                    '${brandScope}',
+                    ${brandScope === 'private_label' ? `'${plc.replace(/'/g, "''")}'` : 'NULL'}
+                )
+                RETURNING id
+            `)
+        }
 
         revalidatePath('/templates')
         return { success: true, id: rows?.[0]?.id }
@@ -66,6 +109,7 @@ export async function duplicateTemplate(id: string, newName: string, dataSource:
             originalBrandScope === 'private_label' && original?.private_label_client_name
                 ? String(original.private_label_client_name)
                 : null
+        const originalTemplateFontFamily = normalizeTemplateFontFamily(original?.template_font_family)
         
         // Escape elements_json safely. Original is already a stringified JSON.
         const safeJson = original.elements_json ? original.elements_json.replace(/'/g, "''") : '[]'
@@ -73,38 +117,77 @@ export async function duplicateTemplate(id: string, newName: string, dataSource:
         const finalHeight = height_mm || original.height_mm
         const orientation = finalWidth >= finalHeight ? 'horizontal' : 'vertical'
 
-        const inserted = await dbQuery(`
-            INSERT INTO public.plantillas_doc_tec (
-                name,
-                width_mm,
-                height_mm,
-                orientation,
-                document_type,
-                elements_json,
-                active,
-                data_source,
-                export_formats,
-                export_filename_format,
-                brand_scope,
-                private_label_client_name
-            )
-            VALUES (
-                '${newName.replace(/'/g, "''")}', 
-                ${finalWidth}, 
-                ${finalHeight}, 
-                '${orientation}', 
+        let inserted: any
+        try {
+            inserted = await dbQuery(`
+                INSERT INTO public.plantillas_doc_tec (
+                    name,
+                    width_mm,
+                    height_mm,
+                    orientation,
+                    document_type,
+                    elements_json,
+                    active,
+                    data_source,
+                    template_font_family,
+                    export_formats,
+                    export_filename_format,
+                    brand_scope,
+                    private_label_client_name
+                )
+                VALUES (
+                    '${newName.replace(/'/g, "''")}', 
+                    ${finalWidth}, 
+                    ${finalHeight}, 
+                    '${orientation}', 
 
-                '${original.document_type}', 
-                '${safeJson}', 
-                true, 
-                '${dataSource.replace(/'/g, "''")}',
-                ${original.export_formats ? `'${original.export_formats.replace(/'/g, "''")}'` : 'NULL'},
-                ${original.export_filename_format ? `'${original.export_filename_format.replace(/'/g, "''")}'` : 'NULL'},
-                '${originalBrandScope}',
-                ${originalPrivateLabelClientName ? `'${originalPrivateLabelClientName.replace(/'/g, "''")}'` : 'NULL'}
-            )
-            RETURNING id
-        `)
+                    '${original.document_type}', 
+                    '${safeJson}', 
+                    true, 
+                    '${dataSource.replace(/'/g, "''")}',
+                    '${originalTemplateFontFamily}',
+                    ${original.export_formats ? `'${original.export_formats.replace(/'/g, "''")}'` : 'NULL'},
+                    ${original.export_filename_format ? `'${original.export_filename_format.replace(/'/g, "''")}'` : 'NULL'},
+                    '${originalBrandScope}',
+                    ${originalPrivateLabelClientName ? `'${originalPrivateLabelClientName.replace(/'/g, "''")}'` : 'NULL'}
+                )
+                RETURNING id
+            `)
+        } catch (e) {
+            if (!isMissingTemplateFontFamilyColumn(e)) throw e
+            inserted = await dbQuery(`
+                INSERT INTO public.plantillas_doc_tec (
+                    name,
+                    width_mm,
+                    height_mm,
+                    orientation,
+                    document_type,
+                    elements_json,
+                    active,
+                    data_source,
+                    export_formats,
+                    export_filename_format,
+                    brand_scope,
+                    private_label_client_name
+                )
+                VALUES (
+                    '${newName.replace(/'/g, "''")}', 
+                    ${finalWidth}, 
+                    ${finalHeight}, 
+                    '${orientation}', 
+
+                    '${original.document_type}', 
+                    '${safeJson}', 
+                    true, 
+                    '${dataSource.replace(/'/g, "''")}',
+                    ${original.export_formats ? `'${original.export_formats.replace(/'/g, "''")}'` : 'NULL'},
+                    ${original.export_filename_format ? `'${original.export_filename_format.replace(/'/g, "''")}'` : 'NULL'},
+                    '${originalBrandScope}',
+                    ${originalPrivateLabelClientName ? `'${originalPrivateLabelClientName.replace(/'/g, "''")}'` : 'NULL'}
+                )
+                RETURNING id
+            `)
+        }
 
         revalidatePath('/templates')
         return { success: true, id: inserted?.[0]?.id }
@@ -121,6 +204,7 @@ export async function updateTemplate(id: string, data: {
     export_formats?: string
     export_filename_format?: string
     data_source?: string
+    template_font_family?: string
     brand_scope?: 'firplak' | 'private_label'
     private_label_client_name?: string | null
 }) {
@@ -129,6 +213,10 @@ export async function updateTemplate(id: string, data: {
         const formatsClause = data.export_formats ? `, export_formats='${data.export_formats.replace(/'/g, "''")}' ` : ''
         const filenameClause = data.export_filename_format ? `, export_filename_format='${data.export_filename_format.replace(/'/g, "''")}' ` : ''
         const sourceClause = data.data_source ? `, data_source='${data.data_source.replace(/'/g, "''")}' ` : ''
+        const templateFontClause =
+            data.template_font_family !== undefined
+                ? `, template_font_family='${normalizeTemplateFontFamily(data.template_font_family)}' `
+                : ''
         const widthClause = data.width_mm ? `, width_mm=${data.width_mm} ` : ''
         const heightClause = data.height_mm ? `, height_mm=${data.height_mm} ` : ''
         const brandScopeClause = data.brand_scope ? `, brand_scope='${data.brand_scope}' ` : ''
@@ -156,7 +244,24 @@ export async function updateTemplate(id: string, data: {
                 ? `, private_label_client_name=NULL `
                 : ''
 
-        await dbQuery(`
+        const queryWithFont = `
+            UPDATE public.plantillas_doc_tec SET
+                ${elementsClause}
+                updated_at=now()
+                ${nameClause} 
+                ${widthClause}
+                ${heightClause}
+                ${orientationClause}
+                ${formatsClause} 
+                ${filenameClause} 
+                ${sourceClause}
+                ${templateFontClause}
+                ${brandScopeClause}
+                ${data.brand_scope === 'firplak' ? forcePlcNullClause : plcClause}
+            WHERE id='${id}'
+        `
+
+        const queryWithoutFont = `
             UPDATE public.plantillas_doc_tec SET
                 ${elementsClause}
                 updated_at=now()
@@ -170,7 +275,14 @@ export async function updateTemplate(id: string, data: {
                 ${brandScopeClause}
                 ${data.brand_scope === 'firplak' ? forcePlcNullClause : plcClause}
             WHERE id='${id}'
-        `)
+        `
+
+        try {
+            await dbQuery(queryWithFont)
+        } catch (e) {
+            if (!isMissingTemplateFontFamilyColumn(e)) throw e
+            await dbQuery(queryWithoutFont)
+        }
 
         revalidatePath('/templates')
         revalidatePath('/templates/builder')
@@ -180,7 +292,27 @@ export async function updateTemplate(id: string, data: {
     }
 }
 
-export async function getPreviewProduct(dataSource: string = 'core_firplak') {
+function getPreviewBrandClause(
+    dataSource: string,
+    brandScope: 'firplak' | 'private_label' = 'firplak',
+    privateLabelClientName?: string | null
+) {
+    if (dataSource !== 'core_firplak') return ''
+
+    if (brandScope === 'private_label') {
+        const clientName = String(privateLabelClientName || '').trim()
+        if (!clientName) return ` AND 1 = 0 `
+        return ` AND UPPER(BTRIM(COALESCE(resolved_private_label_client_name, ''))) = UPPER('${clientName.replace(/'/g, "''")}') `
+    }
+
+    return ` AND NULLIF(BTRIM(COALESCE(resolved_private_label_client_name, '')), '') IS NULL `
+}
+
+export async function getPreviewProduct(
+    dataSource: string = 'core_firplak',
+    brandScope: 'firplak' | 'private_label' = 'firplak',
+    privateLabelClientName?: string | null
+) {
     if (dataSource && dataSource !== 'core_firplak') {
         try {
             const rows = await dbQuery(`
@@ -200,11 +332,13 @@ export async function getPreviewProduct(dataSource: string = 'core_firplak') {
     }
 
     try {
+        const brandClause = getPreviewBrandClause(dataSource, brandScope, privateLabelClientName)
         const rows = await dbQuery(`
             SELECT *
             FROM public.v_ui_generate_list
             WHERE final_complete_name_es IS NOT NULL
               AND status != 'INACTIVO'
+              ${brandClause}
             LIMIT 50
         `)
 
@@ -249,7 +383,12 @@ export async function getPreviewProduct(dataSource: string = 'core_firplak') {
  * Returns a random active product, optionally excluding the product currently in preview
  * to avoid showing the same one twice in a row.
  */
-export async function getRandomPreviewProduct(excludeCode?: string, dataSource: string = 'core_firplak') {
+export async function getRandomPreviewProduct(
+    excludeCode?: string,
+    dataSource: string = 'core_firplak',
+    brandScope: 'firplak' | 'private_label' = 'firplak',
+    privateLabelClientName?: string | null
+) {
     if (dataSource && dataSource !== 'core_firplak') {
         try {
             const rows = await dbQuery(`
@@ -270,6 +409,7 @@ export async function getRandomPreviewProduct(excludeCode?: string, dataSource: 
     }
 
     try {
+        const brandClause = getPreviewBrandClause(dataSource, brandScope, privateLabelClientName)
         const excludeClause = excludeCode
             ? `AND sku_complete != '${excludeCode.replace(/'/g, "''")}'`
             : ''
@@ -279,6 +419,7 @@ export async function getRandomPreviewProduct(excludeCode?: string, dataSource: 
             FROM public.v_ui_generate_list
             WHERE final_complete_name_es IS NOT NULL
               AND status != 'INACTIVO'
+              ${brandClause}
             ${excludeClause}
             ORDER BY RANDOM()
             LIMIT 1
@@ -294,6 +435,7 @@ export async function getRandomPreviewProduct(excludeCode?: string, dataSource: 
                 FROM public.v_ui_generate_list
                 WHERE final_complete_name_es IS NOT NULL
                   AND status != 'INACTIVO'
+                  ${brandClause}
                 ORDER BY RANDOM()
                 LIMIT 1
             `)

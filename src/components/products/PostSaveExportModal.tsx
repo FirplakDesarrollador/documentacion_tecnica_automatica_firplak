@@ -171,6 +171,7 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
                         format: exportFormat,
                         width: widthPx,
                         height: heightPx,
+                        templateFontFamily: (selectedTemplate as any).template_font_family,
                         filename: downloadName,
                     }),
                 })
