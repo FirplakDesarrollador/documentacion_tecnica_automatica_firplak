@@ -24,25 +24,10 @@ export default async function GeneratePreviewPage({
     }
 
     // 1. Cargar plantillas activas
-    let templates: any[] = []
-    try {
-        const res = await dbQuery(
-            `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json, export_formats, export_filename_format, data_source, template_font_family, brand_scope, private_label_client_name
-             FROM public.plantillas_doc_tec WHERE active = true ORDER BY updated_at DESC`
-        )
-        templates = Array.isArray(res) ? res : (res?.rows || [])
-    } catch (e: any) {
-        const msg = String(e?.message || e || "")
-        if (msg.includes('column "template_font_family"') && msg.includes('does not exist')) {
-            const res = await dbQuery(
-                `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json, export_formats, export_filename_format, data_source, brand_scope, private_label_client_name
-                 FROM public.plantillas_doc_tec WHERE active = true ORDER BY updated_at DESC`
-            )
-            templates = Array.isArray(res) ? res : (res?.rows || [])
-        } else {
-            throw e
-        }
-    }
+    const templates = await dbQuery(
+        `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json, export_formats, export_filename_format, data_source, template_font_family, brand_scope, private_label_client_name
+         FROM public.plantillas_doc_tec WHERE active = true ORDER BY updated_at DESC`
+    ) || []
 
     const initialTemplateId = templateIdParam ?? templates[0]?.id ?? null
     const selectedTemplate = templates.find((t: any) => t.id === initialTemplateId)

@@ -4,11 +4,6 @@ import { dbQuery } from "@/lib/supabase"
 import { revalidatePath } from "next/cache"
 import { normalizeTemplateFontFamily } from "@/lib/templates/templateTypography"
 
-function isMissingTemplateFontFamilyColumn(error: unknown): boolean {
-    const msg = String((error as any)?.message || error || "")
-    return msg.includes('column "template_font_family"') && msg.includes('does not exist')
-}
-
 export async function createTemplate(data: {
     name: string
     width_mm: number
@@ -28,68 +23,35 @@ export async function createTemplate(data: {
             return { success: false, error: 'Cliente marca propia requerido' }
         }
 
-        let rows: any
-        try {
-            rows = await dbQuery(`
-                INSERT INTO public.plantillas_doc_tec (
-                    name,
-                    width_mm,
-                    height_mm,
-                    orientation,
-                    document_type,
-                    elements_json,
-                    active,
-                    data_source,
-                    template_font_family,
-                    brand_scope,
-                    private_label_client_name
-                )
-                VALUES (
-                    '${data.name.replace(/'/g, "''")}',
-                    ${data.width_mm},
-                    ${data.height_mm},
-                    '${orientation}',
-                    'label',
-                    '[]',
-                    true,
-                    '${data.data_source.replace(/'/g, "''")}',
-                    '${templateFontFamily}',
-                    '${brandScope}',
-                    ${brandScope === 'private_label' ? `'${plc.replace(/'/g, "''")}'` : 'NULL'}
-                )
-                RETURNING id
-            `)
-        } catch (e) {
-            if (!isMissingTemplateFontFamilyColumn(e)) throw e
-            // Backward compatible mode: DB doesn't have template_font_family yet.
-            rows = await dbQuery(`
-                INSERT INTO public.plantillas_doc_tec (
-                    name,
-                    width_mm,
-                    height_mm,
-                    orientation,
-                    document_type,
-                    elements_json,
-                    active,
-                    data_source,
-                    brand_scope,
-                    private_label_client_name
-                )
-                VALUES (
-                    '${data.name.replace(/'/g, "''")}',
-                    ${data.width_mm},
-                    ${data.height_mm},
-                    '${orientation}',
-                    'label',
-                    '[]',
-                    true,
-                    '${data.data_source.replace(/'/g, "''")}',
-                    '${brandScope}',
-                    ${brandScope === 'private_label' ? `'${plc.replace(/'/g, "''")}'` : 'NULL'}
-                )
-                RETURNING id
-            `)
-        }
+        const rows = await dbQuery(`
+            INSERT INTO public.plantillas_doc_tec (
+                name,
+                width_mm,
+                height_mm,
+                orientation,
+                document_type,
+                elements_json,
+                active,
+                data_source,
+                template_font_family,
+                brand_scope,
+                private_label_client_name
+            )
+            VALUES (
+                '${data.name.replace(/'/g, "''")}',
+                ${data.width_mm},
+                ${data.height_mm},
+                '${orientation}',
+                'label',
+                '[]',
+                true,
+                '${data.data_source.replace(/'/g, "''")}',
+                '${templateFontFamily}',
+                '${brandScope}',
+                ${brandScope === 'private_label' ? `'${plc.replace(/'/g, "''")}'` : 'NULL'}
+            )
+            RETURNING id
+        `)
 
         revalidatePath('/templates')
         return { success: true, id: rows?.[0]?.id }
@@ -117,77 +79,40 @@ export async function duplicateTemplate(id: string, newName: string, dataSource:
         const finalHeight = height_mm || original.height_mm
         const orientation = finalWidth >= finalHeight ? 'horizontal' : 'vertical'
 
-        let inserted: any
-        try {
-            inserted = await dbQuery(`
-                INSERT INTO public.plantillas_doc_tec (
-                    name,
-                    width_mm,
-                    height_mm,
-                    orientation,
-                    document_type,
-                    elements_json,
-                    active,
-                    data_source,
-                    template_font_family,
-                    export_formats,
-                    export_filename_format,
-                    brand_scope,
-                    private_label_client_name
-                )
-                VALUES (
-                    '${newName.replace(/'/g, "''")}', 
-                    ${finalWidth}, 
-                    ${finalHeight}, 
-                    '${orientation}', 
+        const inserted = await dbQuery(`
+            INSERT INTO public.plantillas_doc_tec (
+                name,
+                width_mm,
+                height_mm,
+                orientation,
+                document_type,
+                elements_json,
+                active,
+                data_source,
+                template_font_family,
+                export_formats,
+                export_filename_format,
+                brand_scope,
+                private_label_client_name
+            )
+            VALUES (
+                '${newName.replace(/'/g, "''")}', 
+                ${finalWidth}, 
+                ${finalHeight}, 
+                '${orientation}', 
 
-                    '${original.document_type}', 
-                    '${safeJson}', 
-                    true, 
-                    '${dataSource.replace(/'/g, "''")}',
-                    '${originalTemplateFontFamily}',
-                    ${original.export_formats ? `'${original.export_formats.replace(/'/g, "''")}'` : 'NULL'},
-                    ${original.export_filename_format ? `'${original.export_filename_format.replace(/'/g, "''")}'` : 'NULL'},
-                    '${originalBrandScope}',
-                    ${originalPrivateLabelClientName ? `'${originalPrivateLabelClientName.replace(/'/g, "''")}'` : 'NULL'}
-                )
-                RETURNING id
-            `)
-        } catch (e) {
-            if (!isMissingTemplateFontFamilyColumn(e)) throw e
-            inserted = await dbQuery(`
-                INSERT INTO public.plantillas_doc_tec (
-                    name,
-                    width_mm,
-                    height_mm,
-                    orientation,
-                    document_type,
-                    elements_json,
-                    active,
-                    data_source,
-                    export_formats,
-                    export_filename_format,
-                    brand_scope,
-                    private_label_client_name
-                )
-                VALUES (
-                    '${newName.replace(/'/g, "''")}', 
-                    ${finalWidth}, 
-                    ${finalHeight}, 
-                    '${orientation}', 
-
-                    '${original.document_type}', 
-                    '${safeJson}', 
-                    true, 
-                    '${dataSource.replace(/'/g, "''")}',
-                    ${original.export_formats ? `'${original.export_formats.replace(/'/g, "''")}'` : 'NULL'},
-                    ${original.export_filename_format ? `'${original.export_filename_format.replace(/'/g, "''")}'` : 'NULL'},
-                    '${originalBrandScope}',
-                    ${originalPrivateLabelClientName ? `'${originalPrivateLabelClientName.replace(/'/g, "''")}'` : 'NULL'}
-                )
-                RETURNING id
-            `)
-        }
+                '${original.document_type}', 
+                '${safeJson}', 
+                true, 
+                '${dataSource.replace(/'/g, "''")}',
+                '${originalTemplateFontFamily}',
+                ${original.export_formats ? `'${original.export_formats.replace(/'/g, "''")}'` : 'NULL'},
+                ${original.export_filename_format ? `'${original.export_filename_format.replace(/'/g, "''")}'` : 'NULL'},
+                '${originalBrandScope}',
+                ${originalPrivateLabelClientName ? `'${originalPrivateLabelClientName.replace(/'/g, "''")}'` : 'NULL'}
+            )
+            RETURNING id
+        `)
 
         revalidatePath('/templates')
         return { success: true, id: inserted?.[0]?.id }
@@ -244,7 +169,7 @@ export async function updateTemplate(id: string, data: {
                 ? `, private_label_client_name=NULL `
                 : ''
 
-        const queryWithFont = `
+        await dbQuery(`
             UPDATE public.plantillas_doc_tec SET
                 ${elementsClause}
                 updated_at=now()
@@ -259,30 +184,7 @@ export async function updateTemplate(id: string, data: {
                 ${brandScopeClause}
                 ${data.brand_scope === 'firplak' ? forcePlcNullClause : plcClause}
             WHERE id='${id}'
-        `
-
-        const queryWithoutFont = `
-            UPDATE public.plantillas_doc_tec SET
-                ${elementsClause}
-                updated_at=now()
-                ${nameClause} 
-                ${widthClause}
-                ${heightClause}
-                ${orientationClause}
-                ${formatsClause} 
-                ${filenameClause} 
-                ${sourceClause}
-                ${brandScopeClause}
-                ${data.brand_scope === 'firplak' ? forcePlcNullClause : plcClause}
-            WHERE id='${id}'
-        `
-
-        try {
-            await dbQuery(queryWithFont)
-        } catch (e) {
-            if (!isMissingTemplateFontFamilyColumn(e)) throw e
-            await dbQuery(queryWithoutFont)
-        }
+        `)
 
         revalidatePath('/templates')
         revalidatePath('/templates/builder')
