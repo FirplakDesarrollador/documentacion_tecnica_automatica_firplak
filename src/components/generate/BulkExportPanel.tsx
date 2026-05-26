@@ -21,7 +21,7 @@ import { toast } from 'sonner'
 import { ValidationWarnings, getTemplateRequiredFields, getTemplateValidationIssues } from './ValidationWarnings'
 import type { TemplateOption } from './TemplatePicker'
 import type { GenerateProduct } from './GenerateProductTable'
-import { resolveAssetsAction } from '@/app/generate/actions'
+import { resolveAssetsAction, getAllFilteredProductsAction } from '@/app/generate/actions'
 import { hydrateTemplateElements, hydrateText } from '@/lib/export/exportUtils'
 import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
@@ -40,6 +40,13 @@ interface BulkExportPanelProps {
     selectedProducts: GenerateProduct[]
     template: TemplateOption | null
     rules: any[]
+    totalCount?: number
+    exportFilterFamilies?: string[]
+    exportFilterReferences?: string[]
+    exportFilterMeasures?: string[]
+    exportFilterSearch?: string | null
+    exportBrandScope?: string
+    exportPrivateLabelClientName?: string
     onClose: () => void
 }
 
@@ -208,7 +215,19 @@ async function exportOneProduct(
     return true
 }
 
-export function BulkExportPanel({ selectedProducts, template, rules, onClose }: BulkExportPanelProps) {
+export function BulkExportPanel({
+    selectedProducts,
+    template,
+    rules,
+    totalCount = 0,
+    exportFilterFamilies = [],
+    exportFilterReferences = [],
+    exportFilterMeasures = [],
+    exportFilterSearch = null,
+    exportBrandScope = 'firplak',
+    exportPrivateLabelClientName = '',
+    onClose,
+}: BulkExportPanelProps) {
     const [items, setItems] = useState<ProductExportItem[]>(
         selectedProducts.map(p => ({ product: p, status: 'pending' }))
     )
@@ -227,6 +246,8 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
     const [selectedFormat, setSelectedFormat] = useState<'pdf' | 'jpg'>(
         allowedFormats.length > 0 ? (allowedFormats[0] as any) : 'pdf'
     )
+
+    const [exportMode, setExportMode] = useState<'selected' | 'all'>('selected')
 
     const requiredFields = useMemo(
         () => template ? getTemplateRequiredFields(template.elements_json) : [],
@@ -247,13 +268,15 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
         [selectedProducts]
     )
 
+    const exportableTotal = exportMode === 'all' ? totalCount : selectedProducts.length
+
     const hasWarnings = warnings.some(w => w.issues.length > 0)
 
     const done = items.filter(i => i.status === 'done').length
     const errors = items.filter(i => i.status === 'error').length
     const total = items.length
-    const progress = Math.round(((done + errors) / total) * 100)
-    const estimatedSeconds = Math.round(total * 2)
+    const progress = Math.round(total > 0 ? ((done + errors) / total) * 100 : 0)
+    const estimatedSeconds = Math.round((exportMode === 'all' ? totalCount : total) * 2)
 
     const updateItem = useCallback((id: string, status: ExportStatus, error?: string) => {
         setItems(prev => prev.map(item =>
@@ -282,10 +305,32 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
         setIsRunning(true)
         setStarted(true)
         isCancelledRef.current = false
+
+        let exportItems = items
+        if (exportMode === 'all') {
+            try {
+                const allProducts = await getAllFilteredProductsAction(
+                    exportFilterFamilies,
+                    exportFilterReferences,
+                    exportFilterMeasures,
+                    exportFilterSearch,
+                    exportBrandScope,
+                    exportPrivateLabelClientName
+                )
+                exportItems = allProducts.map(p => ({ product: p, status: 'pending' as ExportStatus }))
+                setItems(exportItems)
+            } catch (err: any) {
+                toast.error('Error al cargar todos los productos: ' + (err?.message || 'Error desconocido'))
+                setIsRunning(false)
+                setStarted(false)
+                return
+            }
+        }
+
         let successCount = 0
         let errorCount = 0
 
-        for (const item of items) {
+        for (const item of exportItems) {
             if (isCancelledRef.current) break
             if (item.status !== 'pending') continue
 
@@ -351,24 +396,28 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                     <Package className="w-5 h-5 text-indigo-600" />
                 </div>
                 <div>
-                    <p className="font-semibold text-slate-800">{total} producto(s) seleccionado(s)</p>
+                    <p className="font-semibold text-slate-800">
+                        {exportMode === 'all'
+                            ? `Todos los ${totalCount} producto(s) encontrados`
+                            : `${selectedProducts.length} producto(s) seleccionado(s)`}
+                    </p>
                     <p className="text-sm text-slate-500">
                         Plantilla: <span className="font-medium text-indigo-600">{template?.name || 'Sin plantilla'}</span>
                         {!started && (
                             <span className="ml-2 text-slate-400">
-                                · Est. <Clock className="w-3 h-3 inline" /> ~{estimatedSeconds}s
+                                · Est. <Clock className="w-3 h-3 inline" /> ~{Math.round((exportMode === 'all' ? totalCount : total) * 2)}s
                             </span>
                         )}
                     </p>
                 </div>
             </div>
 
-            {/* Advertencias (informativas, no bloquean) */}
-            {hasWarnings && (
+            {/* Advertencias (informativas, no bloquean) — solo para modo seleccionados */}
+            {exportMode === 'selected' && hasWarnings && (
                 <ValidationWarnings warnings={warnings} />
             )}
 
-            {blockedProducts.length > 0 && (
+            {exportMode === 'selected' && blockedProducts.length > 0 && (
                 <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
                     <p className="font-semibold">Hay productos inactivos bloqueados para exportacion.</p>
                     <p className="mt-1 text-xs">
@@ -410,6 +459,43 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                     </div>
                 ))}
             </div>
+
+            {/* Modo de exportación */}
+            {!started && totalCount > 0 && totalCount > selectedProducts.length && (
+                <div className="flex flex-col gap-2 p-4 bg-slate-50 border border-slate-200 rounded-xl">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">
+                        Alcance de exportación
+                    </label>
+                    <div className="flex gap-3">
+                        <label className="flex items-center gap-2 px-3 py-2 bg-white border rounded-lg cursor-pointer hover:border-indigo-300 transition-colors flex-1 has-[:checked]:border-indigo-500 has-[:checked]:bg-indigo-50/50">
+                            <input
+                                type="radio"
+                                name="exportMode"
+                                checked={exportMode === 'selected'}
+                                onChange={() => setExportMode('selected')}
+                                className="accent-indigo-600"
+                            />
+                            <div className="text-sm">
+                                <span className="font-medium text-slate-700">Seleccionados</span>
+                                <p className="text-xs text-slate-400">{selectedProducts.length} producto(s)</p>
+                            </div>
+                        </label>
+                        <label className="flex items-center gap-2 px-3 py-2 bg-white border rounded-lg cursor-pointer hover:border-indigo-300 transition-colors flex-1 has-[:checked]:border-indigo-500 has-[:checked]:bg-indigo-50/50">
+                            <input
+                                type="radio"
+                                name="exportMode"
+                                checked={exportMode === 'all'}
+                                onChange={() => setExportMode('all')}
+                                className="accent-indigo-600"
+                            />
+                            <div className="text-sm">
+                                <span className="font-medium text-slate-700">Todos</span>
+                                <p className="text-xs text-slate-400">{totalCount} producto(s) encontrados</p>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+            )}
 
             {/* Destino y Formato */}
             {!started && (
@@ -478,9 +564,9 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                     <>
                         <Button
                             onClick={startExport}
-                            disabled={!template || isRunning || !allowedFormats.includes(selectedFormat) || blockedProducts.length > 0}
+                            disabled={!template || isRunning || !allowedFormats.includes(selectedFormat) || (exportMode === 'selected' && blockedProducts.length > 0)}
                             className={`flex-1 ${
-                                !allowedFormats.includes(selectedFormat) || blockedProducts.length > 0
+                                !allowedFormats.includes(selectedFormat) || (exportMode === 'selected' && blockedProducts.length > 0)
                                     ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300'
                                     : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-100'
                             }`}
@@ -488,7 +574,9 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                             <Download className="w-4 h-4 mr-2" />
                             {!allowedFormats.includes(selectedFormat) 
                                 ? `Formato ${selectedFormat.toUpperCase()} no permitido`
-                                : `Iniciar Exportación (${total})`
+                                : exportMode === 'all'
+                                    ? `Exportar todos (${totalCount})`
+                                    : `Iniciar Exportación (${total})`
                             }
                         </Button>
                         <Button variant="outline" onClick={onClose} className="w-24">

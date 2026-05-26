@@ -96,7 +96,8 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         status: initialData?.status || 'ACTIVO',
         barcode_text: initialData?.barcode_text || '',
         armado_con_lvm: initialData?.armado_con_lvm || '',
-        door_color_text: initialData?.door_color_text || 'NA'
+        door_color_text: initialData?.door_color_text || 'NA',
+        version_label: initialData?.version_label || 'NA'
     })
 
     const [datalistOptions, setDatalistOptions] = useState({ 
@@ -113,7 +114,8 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         specialLabels: [] as string[], 
         zoneHomes: [] as string[],
         rh: [] as string[],
-        cantoPuertas: [] as string[]
+        cantoPuertas: [] as string[],
+        versionLabels: [] as string[]
     })
 
     const [isAnalyzed, setIsAnalyzed] = useState(isEdit)
@@ -266,7 +268,8 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                     isometric_from_different_version: !!parsed.isometric_from_different_version,
                     status: parsed.status || prev.status || 'ACTIVO',
                     armado_con_lvm: parsed.armado_con_lvm || prev.armado_con_lvm || '',
-                    assembled_flag: (parsed.assembled_flag !== undefined) ? parsed.assembled_flag : prev.assembled_flag
+                    assembled_flag: (parsed.assembled_flag !== undefined) ? parsed.assembled_flag : prev.assembled_flag,
+                    version_label: parsed.version_label || prev.version_label || 'NA'
                 }))
 
                 // Marca propia calculada por versión (si existe en global_version_rules)
@@ -451,7 +454,8 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         formData.designation, formData.commercial_measure, formData.accessory_text,
         formData.rh, formData.assembled_flag, formData.canto_puertas,
         formData.carb2, formData.bisagras, formData.special_label, formData.door_color_text,
-        formData.product_type, formData.zone_home, formData.use_destination
+        formData.product_type, formData.zone_home, formData.use_destination,
+        formData.version_label
     ]);
 
     const handleGenerateNames = async (force: boolean = false) => {
@@ -1256,11 +1260,22 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Zona</Label>
                                             {renderCreatableSelect('zone_home', datalistOptions.zoneHomes || [], 'ZONA')}
                                         </div>
-                                        <div className="grid gap-2">
-                                            <Label className="text-xs font-bold text-slate-500 uppercase">Etiqueta Especial</Label>
-                                            {renderCreatableSelect('special_label', datalistOptions.specialLabels || [], 'ETIQUETA ESPECIAL')}
-                                        </div>
+                                    <div className="grid gap-2">
+                                        <Label className="text-xs font-bold text-slate-500 uppercase">Etiqueta Especial</Label>
+                                        {renderCreatableSelect('special_label', datalistOptions.specialLabels || [], 'ETIQUETA ESPECIAL')}
                                     </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="grid gap-2">
+                                        <Label className="text-xs font-bold text-slate-500 uppercase">Etiqueta de Versión</Label>
+                                        {renderCreatableSelect('version_label', datalistOptions.versionLabels || [], 'ETIQUETA DE VERSIÓN')}
+                                    </div>
+                                    <div className="grid gap-2">
+                                        <Label className="text-xs font-bold text-slate-500 uppercase">Color Puerta</Label>
+                                        <Input name="door_color_text" value={formData.door_color_text} onChange={handleChange} className="border-slate-200" disabled={readOnly} />
+                                    </div>
+                                </div>
 
                                     <div className="pt-4 border-t border-slate-100 mt-2">
                                         <div className="flex flex-col lg:flex-row items-center justify-between gap-4">

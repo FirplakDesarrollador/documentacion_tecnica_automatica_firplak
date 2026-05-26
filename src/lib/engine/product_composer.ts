@@ -198,7 +198,8 @@ export interface ProductFilters {
 
 export async function composeProductsByFilters(
     filters: ProductFilters, 
-    limit: number = 200
+    limit: number = 200,
+    offset: number = 0
 ): Promise<{ products: ComposedProduct[], totalCount: number }> {
     let query = supabaseServer.from('v_ui_generate_list').select('*', { count: 'exact' })
 
@@ -222,10 +223,8 @@ export async function composeProductsByFilters(
         } else if (filters.brandFilter.scope === 'private_label') {
             const clientName = String(filters.brandFilter.clientName || '').trim()
             if (clientName) {
-                // Exact match, case-insensitive (ILIKE without wildcards).
                 query = query.ilike('resolved_private_label_client_name', clientName)
             } else {
-                // Defensive: force empty result.
                 query = query.eq('id', '00000000-0000-0000-0000-000000000000')
             }
         }
@@ -234,7 +233,7 @@ export async function composeProductsByFilters(
     query = query
         .order('is_exportable', { ascending: false })
         .order('sku_complete', { ascending: true })
-        .limit(limit)
+        .range(offset, offset + limit - 1)
     
     const { data, count, error } = await query
     

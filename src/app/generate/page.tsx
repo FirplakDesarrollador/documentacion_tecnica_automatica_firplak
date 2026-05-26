@@ -20,6 +20,9 @@ export default async function GeneratePage({
     const r = toArray(searchParams?.r)
     const m = toArray(searchParams?.m)
     const q = typeof searchParams?.q === 'string' ? searchParams.q : null
+    const pageStr = typeof searchParams?.page === 'string' ? searchParams.page : '1'
+    const page = Math.max(1, parseInt(pageStr, 10) || 1)
+    const pageSize = 200
     const templateId = typeof searchParams?.template_id === 'string' ? searchParams.template_id : null
     const datasetIdParam = typeof searchParams?.dataset_id === 'string' ? searchParams.dataset_id : null
 
@@ -165,8 +168,8 @@ export default async function GeneratePage({
         }
         
         const { composeProductsByFilters } = await import('@/lib/engine/product_composer')
-        const limitVal = q ? 1000 : 200
-        const result = await composeProductsByFilters(filtersObj, limitVal)
+        const offset = (page - 1) * pageSize
+        const result = await composeProductsByFilters(filtersObj, pageSize, offset)
         products = result.products
         totalCount = result.totalCount
     }
@@ -181,7 +184,7 @@ export default async function GeneratePage({
                             <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
                                 <FileOutput className="w-5 h-5 text-indigo-600" />
                             </div>
-                            Generar Documentos
+                            Generar documentos
                         </h1>
                         <div className="flex items-center gap-2 mt-1 md:mt-0 ml-0 md:ml-4">
                             <span className="inline-flex items-center rounded-md bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600 ring-1 ring-inset ring-slate-200 uppercase tracking-tight">
@@ -208,6 +211,8 @@ export default async function GeneratePage({
                 hasFilter={effectiveHasFilter}
                 isExternalSource={isDataSourceExternal}
                 totalCount={totalCount}
+                page={page}
+                pageSize={pageSize}
                 templateBrandWarning={templateBrandWarning}
                 datasetsForTemplate={availableDatasetsForTemplate}
                 initialDatasetId={effectiveDatasetId}

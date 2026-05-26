@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo, useCallback, useEffect } from 'react'
-import { Search, Download, AlertTriangle, X } from 'lucide-react'
+import { Search, Download, AlertTriangle, X, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -38,6 +38,8 @@ interface GenerateClientProps {
     rules: any[]
     isExternalSource?: boolean
     totalCount?: number
+    page?: number
+    pageSize?: number
     templateBrandWarning?: string | null
 }
 
@@ -53,6 +55,8 @@ export function GenerateClient({
     rules,
     isExternalSource = false,
     totalCount = 0,
+    page = 1,
+    pageSize = 200,
     templateBrandWarning = null,
 }: GenerateClientProps) {
     const router = useRouter()
@@ -73,6 +77,9 @@ export function GenerateClient({
     )
 
     const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(initialDatasetId ?? null)
+
+    // --- Estado de Página ---
+    const [currentPage, setCurrentPage] = useState(page)
 
     const [showBulkExport, setShowBulkExport] = useState(false)
 
@@ -142,6 +149,11 @@ export function GenerateClient({
                 params.set('dataset_id', selectedDatasetId)
             }
 
+            // Página
+            if (currentPage > 1) {
+                params.set('page', String(currentPage))
+            }
+
             // Persistencia
             localStorage.setItem(STORAGE_KEYS.SELECTED_IDS, JSON.stringify(selectedIds))
             localStorage.setItem(STORAGE_KEYS.FAMILY, JSON.stringify(familyIds))
@@ -165,7 +177,7 @@ export function GenerateClient({
         }, 300)
 
         return () => clearTimeout(timeout)
-    }, [familyIds, referenceIds, selectedTemplateId, selectedDatasetId, selectedIds, textFilter, isLoaded, router, searchParams])
+    }, [familyIds, referenceIds, selectedTemplateId, selectedDatasetId, selectedIds, textFilter, currentPage, isLoaded, router, searchParams])
 
     useEffect(() => {
         setSelectedIds(prev =>
@@ -191,6 +203,15 @@ export function GenerateClient({
             setLastSyncedInitialDatasetId(initialDatasetId)
         }
     }, [initialDatasetId, lastSyncedInitialDatasetId])
+
+    // 4. Sincronizar página con cambios externos (navegación atrás/adelante)
+    const [lastSyncedPage, setLastSyncedPage] = useState(page)
+    useEffect(() => {
+        if (page !== lastSyncedPage) {
+            setCurrentPage(page)
+            setLastSyncedPage(page)
+        }
+    }, [page, lastSyncedPage])
 
     // --- Computed Values ---
     const selectedTemplate = useMemo(
@@ -258,6 +279,32 @@ export function GenerateClient({
         })
     }, [products, textFilter])
 
+    // --- Paginación ---
+    const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
+    const pageStart = totalCount > 0 ? (currentPage - 1) * pageSize + 1 : 0
+    const pageEnd = Math.min(currentPage * pageSize, totalCount)
+
+    const handlePageChange = (newPage: number) => {
+        if (newPage < 1 || newPage > totalPages || newPage === currentPage) return
+        setCurrentPage(newPage)
+    }
+
+    const getPageNumbers = useCallback(() => {
+        const pages: (number | 'ellipsis')[] = []
+        if (totalPages <= 7) {
+            for (let i = 1; i <= totalPages; i++) pages.push(i)
+        } else {
+            pages.push(1)
+            if (currentPage > 3) pages.push('ellipsis')
+            const start = Math.max(2, currentPage - 1)
+            const end = Math.min(totalPages - 1, currentPage + 1)
+            for (let i = start; i <= end; i++) pages.push(i)
+            if (currentPage < totalPages - 2) pages.push('ellipsis')
+            pages.push(totalPages)
+        }
+        return pages
+    }, [currentPage, totalPages])
+
     // --- Handlers ---
     const handleFilterChange = (families: string[], references: string[]) => {
         setFamilyIds(families)
@@ -289,6 +336,30 @@ export function GenerateClient({
         setSelectedDatasetId(datasetId)
         setSelectedIds([])
     }
+
+    // --- Valores para exportación completa ---
+    const brandScope = selectedTemplate?.brand_scope === 'private_label' ? 'private_label' : 'firplak'
+    const privateLabelClientName = selectedTemplate?.private_label_client_name
+        ? String(selectedTemplate.private_label_client_name).trim()
+        : ''
+
+    const parsedRefsForExport = useMemo(() => {
+        return referenceIds.map((v) => {
+            const parts = v.split('|||')
+            if (parts.length >= 3) return { reference_code: parts[1], commercial_measure: parts[2] }
+            if (parts.length === 2) return { reference_code: parts[0], commercial_measure: parts[1] }
+            return { reference_code: parts[0], commercial_measure: undefined }
+        })
+    }, [referenceIds])
+
+    const refCodesForExport = useMemo(
+        () => parsedRefsForExport.map(p => p.reference_code).filter((v): v is string => Boolean(v)),
+        [parsedRefsForExport]
+    )
+    const measuresForExport = useMemo(
+        () => parsedRefsForExport.map(p => p.commercial_measure).filter((v): v is string => Boolean(v)),
+        [parsedRefsForExport]
+    )
 
     console.log(`[GenerateClient] Render actual. initialTemplateId: ${initialTemplateId}, selectedTemplateId: ${selectedTemplateId}`)
 
@@ -379,7 +450,7 @@ export function GenerateClient({
                             {textFilter ? (
                                 `Filtrados: ${filteredProducts.length} de ${products.length} cargados (Total: ${totalCount})`
                             ) : (
-                                `Mostrando ${products.length} de ${totalCount} productos encontrados`
+                                `Mostrando ${pageStart}-${pageEnd} de ${totalCount} productos encontrados`
                             )}
                         </div>
                     )}
@@ -427,6 +498,53 @@ export function GenerateClient({
                     />
                 )}
             </div>
+
+            {/* Paginación */}
+            {hasFilter && totalPages > 1 && (
+                <div className="flex items-center justify-between gap-4 px-1">
+                    <div className="text-xs text-slate-400">
+                        Página {currentPage} de {totalPages}
+                    </div>
+                    <div className="flex items-center gap-1">
+                        <button
+                            onClick={() => handlePageChange(currentPage - 1)}
+                            disabled={currentPage <= 1}
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-sm font-medium text-slate-600 hover:text-indigo-600 disabled:text-slate-300 disabled:cursor-not-allowed transition-colors rounded-md hover:bg-slate-100 disabled:hover:bg-transparent"
+                        >
+                            <ChevronLeft className="w-4 h-4" />
+                            Anterior
+                        </button>
+                        <div className="flex items-center gap-0.5">
+                            {getPageNumbers().map((p, i) =>
+                                p === 'ellipsis' ? (
+                                    <span key={`ellipsis-${i}`} className="px-1.5 text-slate-400 text-sm">...</span>
+                                ) : (
+                                    <button
+                                        key={p}
+                                        onClick={() => handlePageChange(p)}
+                                        className={`min-w-[32px] h-8 text-sm font-medium rounded-md transition-colors ${
+                                            p === currentPage
+                                                ? 'bg-indigo-600 text-white shadow-sm'
+                                                : 'text-slate-600 hover:bg-slate-100'
+                                        }`}
+                                    >
+                                        {p}
+                                    </button>
+                                )
+                            )}
+                        </div>
+                        <button
+                            onClick={() => handlePageChange(currentPage + 1)}
+                            disabled={currentPage >= totalPages}
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-sm font-medium text-slate-600 hover:text-indigo-600 disabled:text-slate-300 disabled:cursor-not-allowed transition-colors rounded-md hover:bg-slate-100 disabled:hover:bg-transparent"
+                        >
+                            Siguiente
+                            <ChevronRight className="w-4 h-4" />
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* Footer sticky con exportación masiva */}
             {selectedIds.length > 0 && (
                 <div className="sticky bottom-4 z-20">
@@ -486,6 +604,13 @@ export function GenerateClient({
                             selectedProducts={selectedProducts}
                             template={selectedTemplate}
                             rules={rules}
+                            totalCount={totalCount}
+                            exportFilterFamilies={familyIds}
+                            exportFilterReferences={refCodesForExport}
+                            exportFilterMeasures={measuresForExport}
+                            exportFilterSearch={textFilter.trim() || null}
+                            exportBrandScope={brandScope}
+                            exportPrivateLabelClientName={privateLabelClientName}
                             onClose={() => setShowBulkExport(false)}
                         />
                     </div>

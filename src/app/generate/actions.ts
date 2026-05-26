@@ -1,6 +1,7 @@
 'use server'
 
 import { supabaseServer } from '@/lib/supabase'
+import type { ProductFilters } from '@/lib/engine/product_composer'
 
 export async function resolveAssetsAction(assetIds: string[]) {
     const map: Record<string, string> = {}
@@ -69,4 +70,29 @@ export async function resolveAssetsAction(assetIds: string[]) {
         console.log("==> ASSET MAP GENERATED (SERVER):", map)
     }
     return map
+}
+
+export async function getAllFilteredProductsAction(
+    families: string[],
+    references: string[],
+    measures: string[],
+    search: string | null,
+    brandScope: string,
+    privateLabelClientName: string
+) {
+    const { composeProductsByFilters } = await import('@/lib/engine/product_composer')
+
+    const filters: ProductFilters = {
+        families: families.length > 0 ? families : undefined,
+        references: references.length > 0 ? references : undefined,
+        measures: measures.length > 0 ? measures : undefined,
+        search: search || undefined,
+        brandFilter:
+            brandScope === 'firplak'
+                ? { scope: 'firplak' }
+                : { scope: 'private_label', clientName: privateLabelClientName },
+    }
+
+    const result = await composeProductsByFilters(filters, 10000)
+    return result.products
 }
