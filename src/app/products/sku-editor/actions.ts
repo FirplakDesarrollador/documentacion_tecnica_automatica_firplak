@@ -138,6 +138,17 @@ export async function executeMassUpdateSkus(skuIds: string[], normalUpdates: any
   return { success: true, data };
 }
 
+export async function previewDeleteSkusAction(skuIds: string[]) {
+  return { skuCount: skuIds.length };
+}
+
+export async function deleteSkusAction(skuIds: string[]) {
+  const ids = skuIds.map(v => `'${v.replace(/'/g, "''")}'`).join(',');
+  await dbQuery(`DELETE FROM public.product_skus WHERE id IN (${ids})`);
+  revalidatePath('/products');
+  revalidatePath('/generate');
+}
+
 export async function getSkuFilterOptions() {
   const [rows, familiesRows] = await Promise.all([
     dbQuery(`

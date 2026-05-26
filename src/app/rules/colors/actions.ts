@@ -54,10 +54,38 @@ export async function upsertColorAction(data: { code_4dig: string; name_color_sa
   }
 }
 
-/** Delete a color */
+/** Delete a color (checks for associated SKUs first) */
 export async function deleteColorAction(code_4dig: string) {
   if (!code_4dig) throw new Error('Código es obligatorio para eliminar')
+
+  const skus = await dbQuery(
+    `SELECT id, sku_complete FROM public.product_skus WHERE color_code = $1`,
+    [code_4dig]
+  )
+
+  if (skus && skus.length > 0) {
+    return {
+      success: false,
+      hasSkus: true,
+      skuCount: skus.length,
+      skuCodes: skus.map((s: any) => s.sku_complete),
+      message: `Este color está siendo usado por ${skus.length} SKU(s).`
+    }
+  }
+
   await dbQuery(`DELETE FROM public.colors WHERE code_4dig = $1`, [code_4dig])
   revalidatePath('/rules/colors')
   revalidatePath('/configuration/colors')
+  return { success: true }
+}
+
+/** Force delete a color and all SKUs that use it */
+export async function forceDeleteColorAction(code_4dig: string) {
+  if (!code_4dig) throw new Error('Código es obligatorio para eliminar')
+  await dbQuery(`DELETE FROM public.product_skus WHERE color_code = $1`, [code_4dig])
+  await dbQuery(`DELETE FROM public.colors WHERE code_4dig = $1`, [code_4dig])
+  revalidatePath('/rules/colors')
+  revalidatePath('/configuration/colors')
+  revalidatePath('/products')
+  return { success: true }
 }

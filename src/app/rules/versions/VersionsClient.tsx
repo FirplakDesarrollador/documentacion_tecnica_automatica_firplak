@@ -7,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge'
 import { PlusCircle, Trash2, Search, ArrowLeft, Loader2, Save, Settings } from 'lucide-react'
 import Link from 'next/link'
-import { upsertVersionAction, deleteVersionAction } from './actions'
+import { upsertVersionAction, deleteVersionAction, previewDeleteVersionAction } from './actions'
 import { toast } from 'sonner'
 import {
     Dialog,
@@ -42,6 +42,13 @@ export default function VersionsClient({ initialData }: VersionsClientProps) {
     // Modal state for Add/Edit
     const [modalOpen, setModalOpen] = useState(false)
     const [editingVersion, setEditingVersion] = useState<Partial<VersionEntry> & { isNew?: boolean } | null>(null)
+
+    // Delete preview state
+    const [deletePreview, setDeletePreview] = useState<{
+        version_code: string
+        versionCount: number
+        skuCount: number
+    } | null>(null)
 
     const filteredData = data.filter(item => 
         item.version_code.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -92,12 +99,32 @@ export default function VersionsClient({ initialData }: VersionsClientProps) {
     }
 
     const handleDelete = async (version_code: string) => {
-        if (!confirm("¿Seguro que deseas eliminar esta regla de versión?")) return
         setIsDeleting(version_code)
         try {
+            const preview = await previewDeleteVersionAction(version_code)
+            if (preview.versionCount > 0 || preview.skuCount > 0) {
+                setDeletePreview(preview)
+                return
+            }
             await deleteVersionAction(version_code)
             setData(prev => prev.filter(t => t.version_code !== version_code))
             toast.success("Versión eliminada")
+        } catch (error) {
+            console.error(error)
+            toast.error("Error al eliminar")
+        } finally {
+            setIsDeleting(null)
+        }
+    }
+
+    const handleConfirmDelete = async () => {
+        if (!deletePreview) return
+        setIsDeleting(deletePreview.version_code)
+        try {
+            await deleteVersionAction(deletePreview.version_code)
+            setData(prev => prev.filter(t => t.version_code !== deletePreview.version_code))
+            toast.success(`Versión eliminada (${deletePreview.versionCount} versiones y ${deletePreview.skuCount} SKU(s) afectados)`)
+            setDeletePreview(null)
         } catch (error) {
             console.error(error)
             toast.error("Error al eliminar")
@@ -295,6 +322,41 @@ export default function VersionsClient({ initialData }: VersionsClientProps) {
                             </Button>
                         </DialogFooter>
                     </form>
+                </DialogContent>
+            </Dialog>
+
+            {/* Delete Preview Dialog */}
+            <Dialog open={!!deletePreview} onOpenChange={(open) => { if (!open) setDeletePreview(null) }}>
+                <DialogContent className="sm:max-w-[480px]">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2 text-red-600 font-bold">
+                            <Trash2 className="h-5 w-5" />
+                            Eliminar versión &quot;{deletePreview?.version_code}&quot;
+                        </DialogTitle>
+                        <DialogDescription>
+                            Esta versión global tiene registros asociados en el catálogo.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid grid-cols-2 gap-4 py-4">
+                        <div className="bg-slate-50 p-4 rounded-lg border text-center">
+                            <p className="text-slate-500 text-sm font-medium">Versiones en catálogo</p>
+                            <p className="text-3xl font-bold text-red-600 mt-1">{deletePreview?.versionCount ?? 0}</p>
+                        </div>
+                        <div className="bg-slate-50 p-4 rounded-lg border text-center">
+                            <p className="text-slate-500 text-sm font-medium">SKUs asociados</p>
+                            <p className="text-3xl font-bold text-orange-600 mt-1">{deletePreview?.skuCount ?? 0}</p>
+                        </div>
+                    </div>
+                    <p className="text-sm text-slate-600 bg-amber-50 p-3 rounded border border-amber-200">
+                        Se eliminarán todos estos registros de forma permanente.
+                    </p>
+                    <DialogFooter className="gap-2">
+                        <Button variant="outline" onClick={() => setDeletePreview(null)}>Cancelar</Button>
+                        <Button onClick={handleConfirmDelete} disabled={isDeleting !== null} className="bg-red-600 hover:bg-red-700 text-white font-semibold">
+                            {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                            Eliminar todo
+                        </Button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
         </div>

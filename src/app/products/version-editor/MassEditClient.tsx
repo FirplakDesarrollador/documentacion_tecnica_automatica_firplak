@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { toast } from 'sonner';
-import { searchVersions, previewMassUpdateVersions, executeMassUpdateVersions, getVersionFilterOptions } from './actions';
-import { Loader2, Search, CheckSquare, Edit, AlertTriangle, Info, Check, X, Layers } from 'lucide-react';
+import { searchVersions, previewMassUpdateVersions, executeMassUpdateVersions, getVersionFilterOptions, previewDeleteVersionInstancesAction, deleteVersionInstancesAction } from './actions';
+import { Loader2, Search, CheckSquare, Edit, AlertTriangle, Info, Check, X, Layers, Trash2 } from 'lucide-react';
 
 const NORMAL_COLS = [
   { key: 'version_label', label: 'Etiqueta de Versión', type: 'text' },
@@ -71,6 +71,13 @@ export default function MassEditClient() {
   const [previewData, setPreviewData] = useState<any>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionProgress, setExecutionProgress] = useState<{ processed: number; total: number } | null>(null);
+
+  // Delete state
+  const [deletePreview, setDeletePreview] = useState<{
+    versionCount: number;
+    skuCount: number;
+  } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     async function loadInitial() {
@@ -334,6 +341,35 @@ export default function MassEditClient() {
     }
   };
 
+  const handleDeletePreview = async () => {
+    if (selectedIds.length === 0) return toast.warning('Selecciona al menos una versión');
+    setIsDeleting(true);
+    try {
+      const res = await previewDeleteVersionInstancesAction(selectedIds);
+      setDeletePreview(res);
+    } catch (e: any) {
+      toast.error('Error al obtener preview: ' + (e?.message || 'Error desconocido'));
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deletePreview) return;
+    setIsDeleting(true);
+    try {
+      await deleteVersionInstancesAction(selectedIds);
+      toast.success(`Eliminadas ${deletePreview.versionCount} versión(es) y ${deletePreview.skuCount} SKU(s)`);
+      setDeletePreview(null);
+      setSelectedIds([]);
+      handleSearch();
+    } catch (e: any) {
+      toast.error('Error al eliminar: ' + (e?.message || 'Error desconocido'));
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <div className="flex flex-col lg:flex-row gap-6">
       <div className="flex-1 space-y-4">
@@ -459,7 +495,19 @@ export default function MassEditClient() {
         <div className="bg-white rounded-lg border shadow-sm overflow-hidden flex flex-col h-[500px]">
           <div className="p-3 bg-slate-50 border-b flex justify-between items-center shrink-0">
             <h2 className="font-semibold text-slate-800 text-sm">Resultados ({versions.length})</h2>
-            <span className="text-xs font-medium text-orange-600 bg-orange-50 px-2 py-1 rounded-md">{selectedIds.length} seleccionados</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-orange-600 bg-orange-50 px-2 py-1 rounded-md">{selectedIds.length} seleccionados</span>
+              {selectedIds.length > 0 && (
+                <button
+                  onClick={handleDeletePreview}
+                  disabled={isDeleting}
+                  className="text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 px-2 py-1 rounded-md transition-colors disabled:opacity-50"
+                >
+                  {isDeleting ? <Loader2 className="w-3 h-3 animate-spin inline" /> : <Trash2 className="w-3 h-3 inline mr-1" />}
+                  Eliminar {selectedIds.length}
+                </button>
+              )}
+            </div>
           </div>
           <div className="overflow-auto flex-1">
             <table className="w-full text-left text-sm whitespace-nowrap">
@@ -735,6 +783,54 @@ export default function MassEditClient() {
                   )}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deletePreview && (
+        <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-red-100 rounded-full">
+                <Trash2 className="w-5 h-5 text-red-600" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-900">Eliminar versiones</h3>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div className="bg-slate-50 p-3 rounded-lg border text-center">
+                <p className="text-slate-500 text-xs font-medium">Versiones</p>
+                <p className="text-2xl font-bold text-red-600">{deletePreview.versionCount}</p>
+              </div>
+              <div className="bg-slate-50 p-3 rounded-lg border text-center">
+                <p className="text-slate-500 text-xs font-medium">SKUs asociados</p>
+                <p className="text-2xl font-bold text-orange-600">{deletePreview.skuCount}</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-600 bg-amber-50 p-3 rounded border border-amber-200 mb-6">
+              Se eliminarán permanentemente estas versiones y sus SKUs.
+              La referencia y familia no se verán afectadas.
+            </p>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setDeletePreview(null)}
+                disabled={isDeleting}
+                className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-md font-medium"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDeleteConfirm}
+                disabled={isDeleting}
+                className="px-6 py-2 text-sm text-white bg-red-600 hover:bg-red-700 rounded-md font-bold flex items-center gap-2 disabled:opacity-50"
+              >
+                {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                {isDeleting ? 'Eliminando...' : 'Eliminar'}
+              </button>
             </div>
           </div>
         </div>

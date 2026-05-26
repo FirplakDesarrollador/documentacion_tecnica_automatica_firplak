@@ -420,12 +420,6 @@ export async function updateFamilyAction(code: string, data: any) {
     redirect('/families')
 }
 
-export async function deleteFamilyAction(code: string) {
-    if (!code) throw new Error("Family code is required")
-    await dbQuery(`DELETE FROM public.families WHERE family_code='${code.replace(/'/g, "''")}'`)
-    revalidatePath('/configuration/families')
-}
-
 /**
  * Validates a generated English name against Firplak SAP rules.
  * Returns the failed rule name if invalid, or null if valid.

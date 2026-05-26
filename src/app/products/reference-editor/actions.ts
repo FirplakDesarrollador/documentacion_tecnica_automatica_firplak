@@ -1,6 +1,6 @@
 'use server';
 
-import { supabaseServer } from '@/lib/supabase';
+import { supabaseServer, dbQuery } from '@/lib/supabase';
 import { revalidatePath } from 'next/cache';
 
 // --- FLUJO B: MASS EDIT ---
@@ -69,6 +69,32 @@ export async function executeMassUpdateReferences(referenceIds: string[], normal
   if (error) return { success: false, error: error.message };
   revalidatePath('/configuration/reference-editor');
   return { success: true, data };
+}
+
+export async function previewDeleteReferencesAction(referenceIds: string[]) {
+  const ids = referenceIds.map(v => `'${v.replace(/'/g, "''")}'`).join(',');
+  const result = await dbQuery(`
+    SELECT
+      (SELECT COUNT(*)::int FROM public.product_versions WHERE reference_id IN (${ids})) AS version_count,
+      (SELECT COUNT(*)::int FROM public.product_skus WHERE version_id IN (SELECT id FROM public.product_versions WHERE reference_id IN (${ids}))) AS sku_count
+  `) || [];
+  return {
+    referenceCount: referenceIds.length,
+    versionCount: result[0]?.version_count ?? 0,
+    skuCount: result[0]?.sku_count ?? 0
+  };
+}
+
+export async function deleteReferencesAction(referenceIds: string[]) {
+  const ids = referenceIds.map(v => `'${v.replace(/'/g, "''")}'`).join(',');
+  await dbQuery(`
+    DELETE FROM public.product_skus WHERE version_id IN (SELECT id FROM public.product_versions WHERE reference_id IN (${ids}));
+    DELETE FROM public.product_versions WHERE reference_id IN (${ids});
+    DELETE FROM public.product_references WHERE id IN (${ids});
+  `);
+  revalidatePath('/configuration/reference-editor');
+  revalidatePath('/products');
+  revalidatePath('/generate');
 }
 
 export async function getFilterOptions() {

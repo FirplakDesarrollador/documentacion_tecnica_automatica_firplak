@@ -51,8 +51,26 @@ export async function upsertVersionAction(data: {
     }
 }
 
+export async function previewDeleteVersionAction(version_code: string) {
+    const result = await dbQuery(`
+        SELECT
+            (SELECT COUNT(*) FROM public.product_versions WHERE version_code = $1)::int AS version_count,
+            (SELECT COUNT(*) FROM public.product_skus WHERE version_id IN (SELECT id FROM public.product_versions WHERE version_code = $1))::int AS sku_count
+    `, [version_code])
+    return {
+        version_code,
+        versionCount: result?.[0]?.version_count ?? 0,
+        skuCount: result?.[0]?.sku_count ?? 0
+    }
+}
+
 export async function deleteVersionAction(version_code: string) {
-    await dbQuery(`DELETE FROM public.global_version_rules WHERE version_code = $1`, [version_code])
+    await dbQuery(`
+        DELETE FROM public.product_skus WHERE version_id IN (SELECT id FROM public.product_versions WHERE version_code = $1);
+        DELETE FROM public.product_versions WHERE version_code = $1;
+        DELETE FROM public.global_version_rules WHERE version_code = $1;
+    `, [version_code])
     revalidatePath('/rules/versions')
     revalidatePath('/configuration/versions')
+    revalidatePath('/products')
 }

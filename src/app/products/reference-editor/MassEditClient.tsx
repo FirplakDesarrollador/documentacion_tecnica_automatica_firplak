@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { toast } from 'sonner';
-import { searchReferences, previewMassUpdateReferences, executeMassUpdateReferences, getFilterOptions } from './actions';
+import { searchReferences, previewMassUpdateReferences, executeMassUpdateReferences, getFilterOptions, previewDeleteReferencesAction, deleteReferencesAction } from './actions';
 import { getFamiliesWithSchema } from '@/app/families/actions';
-import { Loader2, Search, CheckSquare, Edit, AlertTriangle, Info, Check, X } from 'lucide-react';
+import { Loader2, Search, CheckSquare, Edit, AlertTriangle, Info, Check, X, Trash2 } from 'lucide-react';
 
 const NORMAL_COLS = [
   { key: 'product_name', label: 'Nombre' },
@@ -47,6 +47,14 @@ export default function MassEditClient() {
   const [previewData, setPreviewData] = useState<any>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionProgress, setExecutionProgress] = useState<{ processed: number; total: number } | null>(null);
+
+  // Delete state
+  const [deletePreview, setDeletePreview] = useState<{
+    referenceCount: number;
+    versionCount: number;
+    skuCount: number;
+  } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     async function loadInitial() {
@@ -201,6 +209,29 @@ export default function MassEditClient() {
     } finally {
       setIsExecuting(false);
       setExecutionProgress(null);
+    }
+  };
+
+  // Delete handlers
+  const handleDeletePreview = async () => {
+    if (selectedIds.length === 0) return;
+    const res = await previewDeleteReferencesAction(selectedIds);
+    setDeletePreview(res);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deletePreview) return;
+    setIsDeleting(true);
+    try {
+      await deleteReferencesAction(selectedIds);
+      toast.success(`${selectedIds.length} referencias eliminadas con éxito`);
+      setDeletePreview(null);
+      setSelectedIds([]);
+      await handleSearch();
+    } catch (e: any) {
+      toast.error('Error eliminando referencias: ' + (e?.message || 'Error desconocido'));
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -406,6 +437,15 @@ export default function MassEditClient() {
             >
               Generar Vista Previa
             </button>
+
+            <button
+              onClick={handleDeletePreview}
+              disabled={selectedIds.length === 0 || isDeleting}
+              className="w-full mt-3 py-2.5 bg-red-600 text-white rounded-md hover:bg-red-700 font-medium disabled:opacity-50 transition-colors shadow-sm flex items-center justify-center gap-2"
+            >
+              <Trash2 className="w-4 h-4" />
+              Eliminar {selectedIds.length} Referencia{selectedIds.length !== 1 ? 's' : ''}
+            </button>
           </div>
         </div>
       </div>
@@ -488,6 +528,57 @@ export default function MassEditClient() {
                   )}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deletePreview && (
+        <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-red-100 rounded-full">
+                <Trash2 className="w-5 h-5 text-red-600" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-900">Eliminar referencias</h3>
+            </div>
+
+            <div className="grid grid-cols-3 gap-4 mb-4">
+              <div className="bg-slate-50 p-3 rounded-lg border text-center">
+                <p className="text-slate-500 text-xs font-medium">Referencias</p>
+                <p className="text-2xl font-bold text-red-600">{deletePreview.referenceCount}</p>
+              </div>
+              <div className="bg-slate-50 p-3 rounded-lg border text-center">
+                <p className="text-slate-500 text-xs font-medium">Versiones</p>
+                <p className="text-2xl font-bold text-orange-600">{deletePreview.versionCount}</p>
+              </div>
+              <div className="bg-slate-50 p-3 rounded-lg border text-center">
+                <p className="text-slate-500 text-xs font-medium">SKUs</p>
+                <p className="text-2xl font-bold text-amber-600">{deletePreview.skuCount}</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-600 bg-amber-50 p-3 rounded border border-amber-200 mb-6">
+              Se eliminarán permanentemente estas referencias junto con todas sus versiones y SKUs asociados. Esta acción no se puede deshacer.
+            </p>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setDeletePreview(null)}
+                disabled={isDeleting}
+                className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-md font-medium"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDeleteConfirm}
+                disabled={isDeleting}
+                className="px-6 py-2 text-sm text-white bg-red-600 hover:bg-red-700 rounded-md font-bold flex items-center gap-2 disabled:opacity-50"
+              >
+                {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                {isDeleting ? 'Eliminando...' : 'Eliminar'}
+              </button>
             </div>
           </div>
         </div>

@@ -274,3 +274,27 @@ export async function executeMassUpdateVersions(ids: string[], normalUpdates: an
     return { success: false, error: error.message };
   }
 }
+
+export async function previewDeleteVersionInstancesAction(versionIds: string[]) {
+  const ids = versionIds.map(v => `'${v.replace(/'/g, "''")}'`).join(',');
+  const result = await dbQuery(`
+    SELECT COUNT(*)::int AS sku_count
+    FROM public.product_skus
+    WHERE version_id IN (${ids})
+  `) || [];
+  return {
+    versionCount: versionIds.length,
+    skuCount: result[0]?.sku_count ?? 0
+  };
+}
+
+export async function deleteVersionInstancesAction(versionIds: string[]) {
+  const ids = versionIds.map(v => `'${v.replace(/'/g, "''")}'`).join(',');
+  await dbQuery(`
+    DELETE FROM public.product_skus WHERE version_id IN (${ids});
+    DELETE FROM public.product_versions WHERE id IN (${ids});
+  `);
+  revalidatePath('/configuration/version-editor');
+  revalidatePath('/products');
+  revalidatePath('/generate');
+}

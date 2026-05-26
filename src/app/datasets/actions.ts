@@ -374,7 +374,11 @@ export async function normalizeDatasetRowJsonKeysAction(datasetId: string) {
 
 export async function deleteDatasetAction(id: string) {
     try {
-        await dbQuery(`DELETE FROM public.custom_datasets WHERE id = '${id.replace(/'/g, "''")}'`)
+        const safeId = id.replace(/'/g, "''")
+        await dbQuery(`
+            DELETE FROM public.custom_dataset_rows WHERE dataset_id = '${safeId}';
+            DELETE FROM public.custom_datasets WHERE id = '${safeId}';
+        `)
         revalidatePath('/datasets')
         return { success: true }
     } catch (e: any) {

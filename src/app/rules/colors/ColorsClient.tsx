@@ -7,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge'
 import { PlusCircle, Trash2, Search, ArrowLeft, Loader2, Save, Palette } from 'lucide-react'
 import Link from 'next/link'
-import { upsertColorAction, deleteColorAction } from './actions'
+import { upsertColorAction, deleteColorAction, forceDeleteColorAction } from './actions'
 import { toast } from 'sonner'
 import {
     Dialog,
@@ -37,6 +37,13 @@ export default function ColorsClient({ initialData }: ColorsClientProps) {
     // Modal state for Add/Edit
     const [modalOpen, setModalOpen] = useState(false)
     const [editingColor, setEditingColor] = useState<Partial<ColorEntry> & { isNew?: boolean } | null>(null)
+
+    // Delete conflict state
+    const [deleteConflict, setDeleteConflict] = useState<{
+        code_4dig: string
+        skuCount: number
+        skuCodes: string[]
+    } | null>(null)
 
     const filteredData = data.filter(item => 
         item.code_4dig.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -95,12 +102,37 @@ export default function ColorsClient({ initialData }: ColorsClientProps) {
         if (!confirm(`¿Seguro que deseas eliminar el color con código "${code_4dig}"?`)) return
         setIsDeleting(code_4dig)
         try {
-            await deleteColorAction(code_4dig)
+            const res = await deleteColorAction(code_4dig)
+            if (!res.success && (res as any).hasSkus) {
+                const conflict = res as any
+                setDeleteConflict({
+                    code_4dig,
+                    skuCount: conflict.skuCount,
+                    skuCodes: conflict.skuCodes
+                })
+                return
+            }
             setData(prev => prev.filter(c => c.code_4dig !== code_4dig))
             toast.success("Color eliminado correctamente")
         } catch (error) {
             console.error(error)
             toast.error("Error al eliminar el color")
+        } finally {
+            setIsDeleting(null)
+        }
+    }
+
+    const handleForceDelete = async () => {
+        if (!deleteConflict) return
+        setIsDeleting(deleteConflict.code_4dig)
+        try {
+            await forceDeleteColorAction(deleteConflict.code_4dig)
+            setData(prev => prev.filter(c => c.code_4dig !== deleteConflict.code_4dig))
+            toast.success(`Color y ${deleteConflict.skuCount} SKU(s) eliminados`)
+            setDeleteConflict(null)
+        } catch (error) {
+            console.error(error)
+            toast.error("Error al eliminar")
         } finally {
             setIsDeleting(null)
         }
@@ -248,6 +280,35 @@ export default function ColorsClient({ initialData }: ColorsClientProps) {
                             </Button>
                         </DialogFooter>
                     </form>
+                </DialogContent>
+            </Dialog>
+
+            {/* Delete Conflict Dialog */}
+            <Dialog open={!!deleteConflict} onOpenChange={(open) => { if (!open) setDeleteConflict(null) }}>
+                <DialogContent className="sm:max-w-[500px]">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2 text-red-600 font-bold">
+                            <Trash2 className="h-5 w-5" />
+                            Color en uso
+                        </DialogTitle>
+                        <DialogDescription>
+                            Este color está siendo usado por {deleteConflict?.skuCount} SKU(s). ¿Eliminar también esos SKUs?
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="max-h-32 overflow-y-auto bg-slate-50 rounded p-3 border text-xs font-mono">
+                        {deleteConflict?.skuCodes.map((code) => (
+                            <div key={code} className="text-slate-700">{code}</div>
+                        ))}
+                    </div>
+                    <DialogFooter className="gap-2">
+                        <Button variant="outline" onClick={() => setDeleteConflict(null)} className="border-slate-200">
+                            Cancelar
+                        </Button>
+                        <Button onClick={handleForceDelete} disabled={isDeleting !== null} className="bg-red-600 hover:bg-red-700 text-white font-semibold">
+                            {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                            Eliminar color y {deleteConflict?.skuCount} SKU(s)
+                        </Button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
         </div>
