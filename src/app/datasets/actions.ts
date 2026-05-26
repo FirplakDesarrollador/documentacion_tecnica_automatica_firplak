@@ -20,6 +20,79 @@ export type CustomDataset = {
     row_count?: number
 }
 
+export async function revalidateDatasetsPathsAction() {
+    revalidatePath('/datasets')
+    revalidatePath('/templates')
+    revalidatePath('/generate')
+    return { success: true }
+}
+
+type TemplateLinkRow = { template_id: string; dataset_id: string }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export async function linkDatasetToTemplatesAction(datasetId: string, templateIds: string[]) {
+    const did = String(datasetId || '').trim()
+    if (!UUID_RE.test(did)) return { success: false, error: 'dataset_id inválido' }
+
+    const validTemplateIds = (templateIds || []).map(v => String(v || '').trim()).filter(v => UUID_RE.test(v))
+    if (validTemplateIds.length === 0) return { success: true, linked: 0 }
+
+    const values = validTemplateIds
+        .map((tid) => `('${tid.replace(/'/g, "''")}', '${did.replace(/'/g, "''")}')`)
+        .join(', ')
+
+    try {
+        await dbQuery(`
+            INSERT INTO public.template_dataset_links (template_id, dataset_id)
+            VALUES ${values}
+            ON CONFLICT (template_id, dataset_id) DO NOTHING
+        `)
+        revalidatePath('/datasets')
+        revalidatePath('/templates')
+        revalidatePath('/generate')
+        return { success: true, linked: validTemplateIds.length }
+    } catch (e: any) {
+        return { success: false, error: e.message }
+    }
+}
+
+export async function unlinkDatasetFromTemplateAction(datasetId: string, templateId: string) {
+    const did = String(datasetId || '').trim()
+    const tid = String(templateId || '').trim()
+    if (!UUID_RE.test(did) || !UUID_RE.test(tid)) return { success: false, error: 'IDs inválidos' }
+
+    try {
+        await dbQuery(`
+            DELETE FROM public.template_dataset_links
+            WHERE template_id = '${tid.replace(/'/g, "''")}' AND dataset_id = '${did.replace(/'/g, "''")}'
+        `)
+        revalidatePath('/datasets')
+        revalidatePath('/templates')
+        revalidatePath('/generate')
+        return { success: true }
+    } catch (e: any) {
+        return { success: false, error: e.message }
+    }
+}
+
+export async function getDatasetLinkedTemplateIdsAction(datasetId: string): Promise<string[]> {
+    const did = String(datasetId || '').trim()
+    if (!UUID_RE.test(did)) return []
+
+    try {
+        const rows = (await dbQuery(`
+            SELECT template_id, dataset_id
+            FROM public.template_dataset_links
+            WHERE dataset_id = '${did.replace(/'/g, "''")}'
+        `)) as TemplateLinkRow[]
+
+        return (rows || []).map(r => String(r.template_id)).filter(Boolean)
+    } catch {
+        return []
+    }
+}
+
 // ─── Read ─────────────────────────────────────────────────────────────────────
 
 export async function getDatasetsAction(): Promise<CustomDataset[]> {
@@ -209,6 +282,95 @@ export async function createOrphanRowsAction(datasetId: string, rows: Record<str
 }
 
 // ─── Delete ───────────────────────────────────────────────────────────────────
+
+export async function backfillDatasetRowKeysAction(
+    datasetId: string,
+    renames: { fromKey: string; toKey: string }[]
+) {
+    try {
+        const id = String(datasetId || '').trim()
+        if (!UUID_RE.test(id)) return { success: false, error: 'dataset_id inválido' }
+
+        const pairs = (renames || [])
+            .map((r) => ({ fromKey: String(r?.fromKey || '').trim(), toKey: String(r?.toKey || '').trim() }))
+            .filter((r) => r.fromKey && r.toKey && r.fromKey !== r.toKey)
+
+        if (pairs.length === 0) return { success: true, updated: 0 }
+
+        for (const { fromKey, toKey } of pairs) {
+            const fromEsc = fromKey.replace(/'/g, "''")
+            const toEsc = toKey.replace(/'/g, "''")
+            await dbQuery(`
+                UPDATE public.custom_dataset_rows
+                SET data_json = CASE
+                    WHEN (data_json ? '${fromEsc}') AND NOT (data_json ? '${toEsc}')
+                        THEN data_json || jsonb_build_object('${toEsc}', data_json->'${fromEsc}')
+                    ELSE data_json
+                END,
+                updated_at = NOW()
+                WHERE dataset_id = '${id.replace(/'/g, "''")}'
+            `)
+        }
+
+        revalidatePath('/datasets')
+        revalidatePath('/templates')
+        revalidatePath('/generate')
+        return { success: true, updated: pairs.length }
+    } catch (e: any) {
+        return { success: false, error: e.message }
+    }
+}
+
+export async function normalizeDatasetRowJsonKeysAction(datasetId: string) {
+    try {
+        const id = String(datasetId || '').trim()
+        if (!UUID_RE.test(id)) return { success: false, error: 'dataset_id inválido' }
+
+        const dsRows = await dbQuery(`
+            SELECT schema_json
+            FROM public.custom_datasets
+            WHERE id = '${id.replace(/'/g, "''")}'
+            LIMIT 1
+        `)
+        const ds = dsRows?.[0]
+        if (!ds) return { success: false, error: 'Dataset no encontrado' }
+
+        const raw = typeof ds.schema_json === 'string' ? JSON.parse(ds.schema_json) : ds.schema_json
+        const columns =
+            raw && typeof raw === 'object' && !Array.isArray(raw) && Array.isArray((raw as any).columns)
+                ? (raw as any).columns
+                : null
+
+        if (!columns) {
+            // Sin `columns` no podemos inferir qué llaves son duplicadas de forma segura.
+            return { success: true, removedKeys: 0 }
+        }
+
+        const toDrop = Array.from(
+            new Set(
+                (columns as any[])
+                    .map((c) => ({ original: String(c?.original ?? ''), key: String(c?.key ?? '') }))
+                    .filter((c) => c.original && c.key && c.original !== c.key)
+                    .map((c) => c.original)
+            )
+        )
+
+        for (const k of toDrop) {
+            const keyEsc = k.replace(/'/g, "''")
+            await dbQuery(`
+                UPDATE public.custom_dataset_rows
+                SET data_json = data_json - '${keyEsc}', updated_at = NOW()
+                WHERE dataset_id = '${id.replace(/'/g, "''")}' AND (data_json ? '${keyEsc}')
+            `)
+        }
+
+        revalidatePath('/datasets')
+        revalidatePath('/generate')
+        return { success: true, removedKeys: toDrop.length }
+    } catch (e: any) {
+        return { success: false, error: e.message }
+    }
+}
 
 export async function deleteDatasetAction(id: string) {
     try {

@@ -4,10 +4,11 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Database, Plus, Trash2, Upload } from 'lucide-react'
+import { Database, Plus, Settings, Trash2, Upload } from 'lucide-react'
 import type { CustomDataset } from '@/app/datasets/actions'
 import { deleteDatasetAction } from '@/app/datasets/actions'
 import { DatasetIngestor } from './DatasetIngestor'
+import { DatasetConfigurator } from './DatasetConfigurator'
 import { toast } from 'sonner'
 
 interface DatasetsClientProps {
@@ -18,6 +19,7 @@ export function DatasetsClient({ initialDatasets }: DatasetsClientProps) {
     const [datasets, setDatasets] = useState<CustomDataset[]>(initialDatasets)
     const [showIngestor, setShowIngestor] = useState(false)
     const [ingestorMode, setIngestorMode] = useState<'new' | { id: string; name: string }>('new')
+    const [configDatasetId, setConfigDatasetId] = useState<string | null>(null)
 
     const handleDelete = async (id: string, name: string) => {
         if (!confirm(`¿Eliminar la base de datos "${name}"? Esta acción también borrará todos sus registros.`)) return
@@ -38,6 +40,10 @@ export function DatasetsClient({ initialDatasets }: DatasetsClientProps) {
     const openAdd = (ds: CustomDataset) => {
         setIngestorMode({ id: ds.id, name: ds.name })
         setShowIngestor(true)
+    }
+
+    const openConfig = (ds: CustomDataset) => {
+        setConfigDatasetId(ds.id)
     }
 
     const handleIngestDone = (updated: CustomDataset[]) => {
@@ -161,6 +167,14 @@ export function DatasetsClient({ initialDatasets }: DatasetsClientProps) {
                                             </Button>
                                             <Button
                                                 variant="ghost" size="sm"
+                                                className="text-slate-600 hover:text-slate-800 hover:bg-slate-100 gap-1 font-semibold"
+                                                onClick={() => openConfig(ds)}
+                                            >
+                                                <Settings className="h-3.5 w-3.5" />
+                                                Configurar
+                                            </Button>
+                                            <Button
+                                                variant="ghost" size="sm"
                                                 className="text-red-500 hover:text-red-700 hover:bg-red-50"
                                                 onClick={() => handleDelete(ds.id, ds.name)}
                                             >
@@ -181,6 +195,20 @@ export function DatasetsClient({ initialDatasets }: DatasetsClientProps) {
                     existingDatasets={datasets}
                     onClose={() => setShowIngestor(false)}
                     onDone={handleIngestDone}
+                />
+            )}
+
+            {configDatasetId && (
+                <DatasetConfigurator
+                    datasetId={configDatasetId}
+                    onClose={() => setConfigDatasetId(null)}
+                    onSaved={(updated) => {
+                        setDatasets(prev => prev.map(d => (
+                            d.id === updated.id
+                                ? { ...d, name: updated.name, schema_json: updated.schema_json as any }
+                                : d
+                        )))
+                    }}
                 />
             )}
         </>

@@ -22,7 +22,8 @@ const STORAGE_KEYS = {
     SELECTED_IDS: 'generate-selected-ids',
     FAMILY: 'generate_filter_family',
     REFERENCE: 'generate_filter_reference',
-    TEMPLATE: 'generate_filter_template_id'
+    TEMPLATE: 'generate_filter_template_id',
+    DATASET: 'generate_filter_dataset_id'
 }
 
 interface GenerateClientProps {
@@ -31,6 +32,8 @@ interface GenerateClientProps {
     families: { value: string, label: string }[]
     references: { value: string, label: string }[]
     initialTemplateId: string | null
+    datasetsForTemplate?: { id: string; name: string }[]
+    initialDatasetId?: string | null
     hasFilter: boolean
     rules: any[]
     isExternalSource?: boolean
@@ -44,6 +47,8 @@ export function GenerateClient({
     families,
     references,
     initialTemplateId,
+    datasetsForTemplate = [],
+    initialDatasetId = null,
     hasFilter,
     rules,
     isExternalSource = false,
@@ -67,6 +72,8 @@ export function GenerateClient({
         initialTemplateId ?? (templates[0]?.id ?? null)
     )
 
+    const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(initialDatasetId ?? null)
+
     const [showBulkExport, setShowBulkExport] = useState(false)
 
     // 1. Cargar estados iniciales desde localStorage si la URL está vacía
@@ -82,6 +89,7 @@ export function GenerateClient({
             const savedFam = localStorage.getItem(STORAGE_KEYS.FAMILY)
             const savedRef = localStorage.getItem(STORAGE_KEYS.REFERENCE)
             const savedTpl = localStorage.getItem(STORAGE_KEYS.TEMPLATE)
+            const savedDs = localStorage.getItem(STORAGE_KEYS.DATASET)
 
             if (savedFam) {
                 try {
@@ -99,6 +107,10 @@ export function GenerateClient({
                 // Solo restaurar si no hay nada en la URL que mande
                 const exists = templates.some(t => t.id === savedTpl)
                 if (exists) setSelectedTemplateId(savedTpl)
+            }
+            if (savedDs && !initialDatasetId) {
+                const exists = datasetsForTemplate.some(d => d.id === savedDs)
+                if (exists) setSelectedDatasetId(savedDs)
             }
         }
         setIsLoaded(true)
@@ -125,12 +137,22 @@ export function GenerateClient({
                 params.set('template_id', selectedTemplateId)
             }
 
+            // Dataset (solo cuando aplica: el server decide si lo usa o no)
+            if (selectedDatasetId) {
+                params.set('dataset_id', selectedDatasetId)
+            }
+
             // Persistencia
             localStorage.setItem(STORAGE_KEYS.SELECTED_IDS, JSON.stringify(selectedIds))
             localStorage.setItem(STORAGE_KEYS.FAMILY, JSON.stringify(familyIds))
             localStorage.setItem(STORAGE_KEYS.REFERENCE, JSON.stringify(referenceIds))
             if (selectedTemplateId) {
                 localStorage.setItem(STORAGE_KEYS.TEMPLATE, selectedTemplateId)
+            }
+            if (selectedDatasetId) {
+                localStorage.setItem(STORAGE_KEYS.DATASET, selectedDatasetId)
+            } else {
+                localStorage.removeItem(STORAGE_KEYS.DATASET)
             }
 
             const current = searchParams.toString()
@@ -143,7 +165,7 @@ export function GenerateClient({
         }, 300)
 
         return () => clearTimeout(timeout)
-    }, [familyIds, referenceIds, selectedTemplateId, selectedIds, textFilter, isLoaded, router, searchParams])
+    }, [familyIds, referenceIds, selectedTemplateId, selectedDatasetId, selectedIds, textFilter, isLoaded, router, searchParams])
 
     useEffect(() => {
         setSelectedIds(prev =>
@@ -154,6 +176,7 @@ export function GenerateClient({
     // 3. Sincronizar selección de plantilla con cambios en la URL (Navegación externa/atrás)
     // Usamos este patrón para evitar que el estado local "pelee" con la prop inicial durante el re-renderizado
     const [lastSyncedInitialId, setLastSyncedInitialId] = useState(initialTemplateId)
+    const [lastSyncedInitialDatasetId, setLastSyncedInitialDatasetId] = useState(initialDatasetId)
     
     useEffect(() => {
         if (initialTemplateId !== lastSyncedInitialId) {
@@ -162,11 +185,21 @@ export function GenerateClient({
         }
     }, [initialTemplateId, lastSyncedInitialId])
 
+    useEffect(() => {
+        if (initialDatasetId !== lastSyncedInitialDatasetId) {
+            setSelectedDatasetId(initialDatasetId ?? null)
+            setLastSyncedInitialDatasetId(initialDatasetId)
+        }
+    }, [initialDatasetId, lastSyncedInitialDatasetId])
+
     // --- Computed Values ---
     const selectedTemplate = useMemo(
         () => templates.find(t => t.id === selectedTemplateId) ?? null,
         [templates, selectedTemplateId]
     )
+
+    const isGenericDatasetsTemplate = selectedTemplate?.data_source === 'custom_datasets'
+    const needsDatasetSelection = Boolean(isGenericDatasetsTemplate && !selectedDatasetId)
 
     const requiredFields = useMemo(
         () => selectedTemplate ? getTemplateRequiredFields(selectedTemplate.elements_json) : [],
@@ -247,6 +280,14 @@ export function GenerateClient({
             setFamilyIds([])
             setReferenceIds([])
         }
+
+        // La selección de dataset depende de la plantilla (server-side)
+        setSelectedDatasetId(null)
+    }
+
+    const handleDatasetChange = (datasetId: string) => {
+        setSelectedDatasetId(datasetId)
+        setSelectedIds([])
     }
 
     console.log(`[GenerateClient] Render actual. initialTemplateId: ${initialTemplateId}, selectedTemplateId: ${selectedTemplateId}`)
@@ -256,7 +297,7 @@ export function GenerateClient({
             {/* Toolbar */}
             <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between p-4 bg-white border border-slate-200 rounded-xl shadow-sm">
                 <div className="w-full lg:w-auto flex-1">
-                    {!isExternalSource ? (
+                    {!isExternalSource && !isGenericDatasetsTemplate ? (
                         <GenerateFilters
                             families={families}
                             references={references}
@@ -268,7 +309,9 @@ export function GenerateClient({
                         />
                     ) : (
                         <div className="flex items-center gap-3 flex-wrap">
-                            <span className="text-sm text-slate-500 font-medium px-2 py-1 bg-indigo-50 text-indigo-700 rounded-md ring-1 ring-indigo-200">Dataset Externo (No aplica filtros de Familia)</span>
+                            <span className="text-sm text-slate-500 font-medium px-2 py-1 bg-indigo-50 text-indigo-700 rounded-md ring-1 ring-inset ring-indigo-200">
+                                {isGenericDatasetsTemplate ? 'Plantilla por Dataset' : 'Dataset Externo (No aplica filtros de Familia)'}
+                            </span>
                             <div className="relative flex items-center max-w-[280px] w-full">
                                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                                 <Input
@@ -296,6 +339,25 @@ export function GenerateClient({
                         selectedTemplateId={selectedTemplateId}
                         onSelect={handleTemplateChange}
                     />
+                    {isGenericDatasetsTemplate && (
+                        <div className="min-w-[220px]">
+                            <select
+                                value={selectedDatasetId ?? ''}
+                                onChange={(e) => handleDatasetChange(e.target.value)}
+                                className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-60"
+                                disabled={datasetsForTemplate.length === 0}
+                            >
+                                <option value="" disabled>
+                                    {datasetsForTemplate.length === 0 ? 'Sin datasets asociados' : '-- Selecciona dataset --'}
+                                </option>
+                                {datasetsForTemplate.map((d) => (
+                                    <option key={d.id} value={d.id}>
+                                        {d.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -334,7 +396,17 @@ export function GenerateClient({
             {/* Tabla de productos */}
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                 {/* Empty state */}
-                {!hasFilter ? (
+                {needsDatasetSelection ? (
+                    <div className="flex flex-col items-center justify-center h-72 text-center px-6">
+                        <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-3 ring-1 ring-inset ring-indigo-100">
+                            <Search className="w-8 h-8 text-indigo-400" />
+                        </div>
+                            <h3 className="text-base font-semibold text-slate-800">Selecciona un dataset</h3>
+                            <p className="text-sm text-slate-500 mt-1 max-w-xs">
+                                Esta plantilla usa <b>Bases de datos</b>. Elige un dataset asociado para cargar los registros.
+                            </p>
+                    </div>
+                ) : !hasFilter ? (
                     <div className="flex flex-col items-center justify-center h-72 text-center px-6">
                         <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-3">
                             <Search className="w-8 h-8 text-slate-400" />

@@ -1,16 +1,32 @@
 import { Metadata } from 'next';
+import { ChevronLeft, DatabaseZap } from 'lucide-react';
+import Link from 'next/link';
 import ReferenceEditorTabs from './ReferenceEditorTabs';
 
 export const metadata: Metadata = {
   title: 'Editor de Referencias | Firplak',
-  description: 'Módulo de edición masiva de referencias y configuración de atributos',
+  description: 'Módulo de edición masiva de referencias.',
 };
 
 export default function ReferenceEditorPage() {
   return (
-    <div className="flex-1 space-y-4 p-8 pt-6">
-      <div className="flex items-center justify-between space-y-2">
-        <h2 className="text-3xl font-bold tracking-tight text-slate-800">Editor de Referencias</h2>
+    <div className="flex flex-col gap-6 max-w-7xl mx-auto w-full py-8">
+      <div className="flex items-center justify-between">
+        <div>
+          <Link
+            href="/configuration"
+            className="text-slate-500 hover:text-slate-800 flex items-center gap-1 text-sm mb-2 transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" /> Volver a Configuración
+          </Link>
+          <h1 className="text-3xl font-bold text-slate-900 flex items-center gap-3">
+            <DatabaseZap className="w-8 h-8 text-indigo-600" />
+            Editor de Referencias
+          </h1>
+          <p className="text-slate-500 mt-1">
+            Búsqueda relacional y modificación masiva de valores y atributos de referencias.
+          </p>
+        </div>
       </div>
       <ReferenceEditorTabs />
     </div>

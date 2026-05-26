@@ -1,8 +1,8 @@
-import Link from 'next/link'
-import { ChevronLeft, Edit3 } from 'lucide-react'
-import MassEditClient from './MassEditClient'
+import { ChevronLeft, Edit3 } from 'lucide-react';
+import Link from 'next/link';
+import MassEditClient from '@/app/products/sku-editor/MassEditClient';
 
-export default function SkuEditorPage() {
+export default function ConfigSkuEditorPage() {
   return (
     <div className="flex flex-col gap-6 max-w-7xl mx-auto w-full py-8">
       <div>
@@ -20,8 +20,7 @@ export default function SkuEditorPage() {
           Herramienta avanzada para actualizar masivamente información de los SKUs, como código de barras, estado, y atributos personalizados JSONB (sku_attrs).
         </p>
       </div>
-
       <MassEditClient />
     </div>
-  )
+  );
 }

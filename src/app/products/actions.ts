@@ -131,7 +131,7 @@ export async function upsertFamilyAction(data: any) {
         RETURNING *
     `
     const rows = await dbQuery(query)
-    revalidatePath('/families')
+    revalidatePath('/configuration/families')
     return rows ? rows[0] : null
 }
 
@@ -416,14 +416,14 @@ export async function updateFamilyAction(code: string, data: any) {
             updated_at=now()
         WHERE family_code='${code.replace(/'/g, "''")}'
     `)
-    revalidatePath('/families')
+    revalidatePath('/configuration/families')
     redirect('/families')
 }
 
 export async function deleteFamilyAction(code: string) {
     if (!code) throw new Error("Family code is required")
     await dbQuery(`DELETE FROM public.families WHERE family_code='${code.replace(/'/g, "''")}'`)
-    revalidatePath('/families')
+    revalidatePath('/configuration/families')
 }
 
 /**

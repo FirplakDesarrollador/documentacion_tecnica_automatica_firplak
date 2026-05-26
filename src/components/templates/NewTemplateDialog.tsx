@@ -112,9 +112,7 @@ export function NewTemplateDialog({ datasets = [] }: { datasets?: {id: string, n
                                 className="col-span-3 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
                             >
                                 <option value="core_firplak">Catálogo Core: Productos Firplak</option>
-                                {datasets.map(ds => (
-                                    <option key={ds.id} value={ds.id}>{ds.name} (Dataset Externo)</option>
-                                ))}
+                                <option value="custom_datasets">Bases de Datos (Genérico)</option>
                             </select>
                         </div>
                         <div className="grid grid-cols-4 items-center gap-4">

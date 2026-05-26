@@ -1,6 +1,8 @@
 import { getDatasetsAction } from './actions'
 import { DatasetsClient } from '@/components/datasets/DatasetsClient'
 
+export const dynamic = 'force-dynamic'
+
 export default async function DatasetsPage() {
     const datasets = await getDatasetsAction()
 

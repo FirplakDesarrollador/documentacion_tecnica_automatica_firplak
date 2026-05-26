@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
-import { PlusCircle, Trash2, Search, ArrowLeft, Loader2, Save, ScanSearch, X } from 'lucide-react'
+import { PlusCircle, Trash2, Search, ChevronLeft, Loader2, Save, ScanSearch, X } from 'lucide-react'
 import Link from 'next/link'
 import { upsertGlossaryTermAction, deleteGlossaryTermAction } from './actions'
 import { scanMissingGlossaryTermsAction } from '../translation-actions'
@@ -191,18 +191,19 @@ export default function GlossaryClient({ initialData, initialCategories }: Gloss
     return (
         <div className="flex flex-col gap-6 p-2">
             <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-4">
-                    <Link href="/configuration">
-                        <Button variant="outline" size="icon">
-                            <ArrowLeft className="h-4 w-4" />
-                        </Button>
+            <div>
+                    <Link
+                        href="/configuration"
+                        className="text-slate-500 hover:text-slate-800 flex items-center gap-1 text-sm mb-2 transition-colors"
+                    >
+                        <ChevronLeft className="w-4 h-4" /> Volver a Configuración
                     </Link>
-                    <div>
-                        <h1 className="text-3xl font-bold tracking-tight">Glosario Técnico</h1>
-                        <p className="text-muted-foreground italic">
-                            Define traducciones precisas para términos específicos de Firplak.
-                        </p>
-                    </div>
+                    <h1 className="text-3xl font-bold text-slate-900">
+                        Glosario Técnico
+                    </h1>
+                    <p className="text-slate-500 mt-1">
+                        Define traducciones precisas para términos específicos de Firplak.
+                    </p>
                 </div>
                 <div className="flex gap-2">
                     <Button onClick={handleScanMissingTerms} disabled={isScanning} variant="outline" className="text-amber-700 border-amber-200 bg-amber-50 hover:bg-amber-100 shadow-sm">

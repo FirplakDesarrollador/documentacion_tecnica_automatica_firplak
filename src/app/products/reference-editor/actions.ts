@@ -3,81 +3,6 @@
 import { supabaseServer } from '@/lib/supabase';
 import { revalidatePath } from 'next/cache';
 
-// --- FLUJO A: SCHEMA CONFIG ---
-
-export async function getFamiliesWithSchema(productTypeFilter?: string) {
-  let query = supabaseServer.from('families').select('family_code, product_type, ref_attrs_schema');
-  
-  if (productTypeFilter) {
-    query = query.eq('product_type', productTypeFilter);
-  }
-
-  const { data, error } = await query.order('family_code', { ascending: true });
-  
-  if (error) {
-    console.error('Error fetching families schema:', error);
-    return { success: false, error: error.message };
-  }
-  
-  return { success: true, data };
-}
-
-export async function previewAddAttrToFamilies(familyCodes: string[], attrKey: string) {
-  const { data, error } = await (supabaseServer as any).rpc('rpc_preview_add_attr_to_families', {
-    p_family_codes: familyCodes,
-    p_attr_key: attrKey
-  });
-
-  if (error) {
-    return { success: false, error: error.message };
-  }
-
-  return { success: true, data };
-}
-
-export async function executeAddAttrToFamilies(familyCodes: string[], attrKey: string, attrDef: any, defaultValue: string) {
-  const { error } = await (supabaseServer as any).rpc('rpc_add_attr_to_families', {
-    p_family_codes: familyCodes,
-    p_attr_key: attrKey,
-    p_attr_def: attrDef,
-    p_default_value: defaultValue
-  });
-
-  if (error) {
-    return { success: false, error: error.message };
-  }
-
-  revalidatePath('/products/reference-editor');
-  return { success: true };
-}
-
-export async function previewRemoveAttrFromFamilies(familyCodes: string[], attrKey: string) {
-  const { data, error } = await (supabaseServer as any).rpc('rpc_preview_remove_attr_from_families', {
-    p_family_codes: familyCodes,
-    p_attr_key: attrKey
-  });
-
-  if (error) {
-    return { success: false, error: error.message };
-  }
-
-  return { success: true, data };
-}
-
-export async function executeRemoveAttrFromFamilies(familyCodes: string[], attrKey: string) {
-  const { error } = await (supabaseServer as any).rpc('rpc_remove_attr_from_families', {
-    p_family_codes: familyCodes,
-    p_attr_key: attrKey
-  });
-
-  if (error) {
-    return { success: false, error: error.message };
-  }
-
-  revalidatePath('/products/reference-editor');
-  return { success: true };
-}
-
 // --- FLUJO B: MASS EDIT ---
 
 export async function searchReferences(filters: any) {
@@ -142,7 +67,7 @@ export async function executeMassUpdateReferences(referenceIds: string[], normal
   });
 
   if (error) return { success: false, error: error.message };
-  revalidatePath('/products/reference-editor');
+  revalidatePath('/configuration/reference-editor');
   return { success: true, data };
 }
 

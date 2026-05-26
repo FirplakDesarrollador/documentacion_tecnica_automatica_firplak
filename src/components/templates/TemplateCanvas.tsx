@@ -1,13 +1,13 @@
 'use client'
 
-import React, { useState, useRef, useEffect, MouseEvent, useCallback } from 'react'
+import React, { useState, useRef, useEffect, MouseEvent, useCallback, useMemo } from 'react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, AlignVerticalJustifyEnd, AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Undo2, Redo2, Copy, Trash2, Shuffle, RotateCcw, LayoutGrid, Combine, FileEdit, AlertTriangle, CheckCircle2, ShieldAlert } from 'lucide-react'
 import { toast } from 'sonner'
-import { updateTemplate, getPreviewProduct, getRandomPreviewProduct, validateExportFilenameLength } from '@/app/templates/actions'
+import { updateTemplate, getPreviewProduct, getRandomPreviewProduct, validateExportFilenameLength, getTemplateLinkedDatasetsAction } from '@/app/templates/actions'
 import { getDatasetsAction, FieldDef } from '@/app/datasets/actions'
 import { resolveAssetsAction } from '@/app/generate/actions'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -20,6 +20,7 @@ import { getTemplateFontCssStack, getTemplateFontLabel, normalizeTemplateFontFam
 import Image from 'next/image'
 import BarcodeElement from '@/components/export/BarcodeElement'
 import { resolveBarcodeFormat } from '@/lib/export/barcodeUtils'
+import { extractTemplateVariables } from '@/lib/templates/templateVariables'
 
 export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'box' | 'dashed_line' | 'dynamic_image' | 'icon_group'
 type TemplateBrandScope = 'firplak' | 'private_label'
@@ -1426,6 +1427,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     )
     const [datasetSchema, setDatasetSchema] = useState(initialSchema)
     const [availableDatasets, setAvailableDatasets] = useState<{ id: string, name?: string, schema_json?: unknown }[]>([])
+    const [linkedDatasets, setLinkedDatasets] = useState<{ id: string, name?: string, schema_json?: unknown }[]>([])
     const [propertiesPanelTab, setPropertiesPanelTab] = useState<PropertiesPanelTab>('template')
 
     const [brandScope, setBrandScope] = useState<TemplateBrandScope>(
@@ -1435,6 +1437,8 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         template?.private_label_client_name ? String(template.private_label_client_name) : ''
     )
     const [availableClients, setAvailableClients] = useState<{ id?: string | number, name: string }[]>([])
+
+    // Nota: la sincronización de datasets ↔ plantillas se gestiona desde `/datasets`.
 
     const setIsModified = useCallback((val: boolean) => {
         isModifiedRef.current = val
@@ -1501,14 +1505,22 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                 : null,
     })
 
+    const effectivePreviewSource = useMemo(() => {
+        if (dataSource === 'custom_datasets' && linkedDatasets.length > 0) {
+            return linkedDatasets[0].id
+        }
+        return dataSource
+    }, [dataSource, linkedDatasets])
+
     useEffect(() => {
         if (!isPreviewMode) return
 
         let cancelled = false
 
         const refreshPreview = async () => {
+            if (effectivePreviewSource === 'custom_datasets' || !effectivePreviewSource) return
             const { brandScope: previewBrandScope, privateLabelClientName: previewClientName } = getPreviewScopeArgs()
-            const data = await getPreviewProduct(dataSource, previewBrandScope, previewClientName)
+            const data = await getPreviewProduct(effectivePreviewSource, previewBrandScope, previewClientName)
             const resolvedAssets = await resolveAssetsAction([])
             if (!cancelled) {
                 setPreviewData(await enrichWithZone(data, resolvedAssets))
@@ -1520,12 +1532,59 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         return () => {
             cancelled = true
         }
-    }, [isPreviewMode, dataSource, brandScope, privateLabelClientName])
+    }, [isPreviewMode, effectivePreviewSource, brandScope, privateLabelClientName])
 
-    // Fetch datasets info
+    // Fetch datasets info (solo necesario para legacy selector/compat)
     useEffect(() => {
         getDatasetsAction().then(res => setAvailableDatasets(res))
     }, [])
+
+    const refreshLinkedDatasets = useCallback(async () => {
+        const tid = String((template as any)?.id || '').trim()
+        if (!tid) return
+        try {
+            const rows = await getTemplateLinkedDatasetsAction(tid)
+            setLinkedDatasets(Array.isArray(rows) ? rows : [])
+
+            if (dataSource === 'custom_datasets' && Array.isArray(rows)) {
+                const merged = new Map<string, FieldDef>()
+                for (const ds of rows) {
+                    const raw = typeof ds.schema_json === 'string' ? JSON.parse(ds.schema_json) : ds.schema_json
+                    let cols: any[] = []
+                    if (raw && typeof raw === 'object' && !Array.isArray(raw) && Array.isArray((raw as any).columns)) {
+                        cols = (raw as any).columns
+                    } else if (Array.isArray(raw)) {
+                        cols = raw
+                    }
+                    for (const c of cols) {
+                        const key = String(c?.key ?? c?.original ?? '').trim()
+                        if (!key || merged.has(key)) continue
+                        merged.set(key, {
+                            key,
+                            label: String(c?.label ?? c?.key ?? c?.original ?? '').replace(/_/g, ' '),
+                            original: String(c?.original ?? c?.key ?? ''),
+                            is_identifier: Boolean(c?.is_identifier),
+                        })
+                    }
+                }
+                setDatasetSchema(Array.from(merged.values()))
+            } else {
+                setDatasetSchema([])
+            }
+        } catch {
+            setLinkedDatasets([])
+            setDatasetSchema([])
+        }
+    }, [template, dataSource])
+
+    useEffect(() => {
+        if (dataSource !== 'custom_datasets') {
+            setLinkedDatasets([])
+            setDatasetSchema([])
+            return
+        }
+        refreshLinkedDatasets()
+    }, [dataSource, refreshLinkedDatasets])
 
     // Fetch clients for private label templates
     useEffect(() => {
@@ -1547,6 +1606,9 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         // Update schema locally
         if (newSource === 'core_firplak') {
             setDatasetSchema([])
+        } else if (newSource === 'custom_datasets') {
+            // Generic datasets: schema depends on the associated datasets, so we don't assume a single schema here.
+            setDatasetSchema([])
         } else {
             const ds = availableDatasets.find(d => d.id === newSource)
             if (ds && ds.schema_json) {
@@ -1555,21 +1617,31 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                     setDatasetSchema(raw as FieldDef[])
                 } else if (raw && typeof raw === 'object') {
                     const obj = raw as Record<string, unknown>
-                    const selectedCols = Array.isArray(obj.selectedColumns) ? obj.selectedColumns : []
                     const fieldMap = (obj.fieldMap && typeof obj.fieldMap === 'object') ? (obj.fieldMap as Record<string, unknown>) : null
                     const codeField = fieldMap && typeof fieldMap.code === 'string' ? fieldMap.code : null
 
-                    setDatasetSchema(selectedCols.filter((col): col is string => typeof col === 'string').map((col) => ({
-                        key: col,
-                        label: col.replace(/_/g, ' '),
-                        original: col,
-                        is_identifier: codeField ? col === codeField : false
-                    })))
+                    if (Array.isArray((obj as any).columns)) {
+                        setDatasetSchema((obj as any).columns.map((c: any) => ({
+                            key: String(c?.key ?? c?.original ?? ''),
+                            label: String(c?.label ?? c?.key ?? c?.original ?? '').replace(/_/g, ' '),
+                            original: String(c?.original ?? c?.key ?? ''),
+                            is_identifier: Boolean(c?.is_identifier) || (codeField ? String(c?.original ?? '') === codeField : false)
+                        })).filter((c: any) => c.key && c.original))
+                    } else {
+                        const selectedCols = Array.isArray(obj.selectedColumns) ? obj.selectedColumns : []
+                        setDatasetSchema(selectedCols.filter((col): col is string => typeof col === 'string').map((col) => ({
+                            key: col,
+                            label: col.replace(/_/g, ' '),
+                            original: col,
+                            is_identifier: codeField ? col === codeField : false
+                        })))
+                    }
                 }
             }
         }
 
         // Reload preview product for the new source
+        // For custom_datasets, the effectivePreviewSource will resolve when linkedDatasets load
         const nextBrandScope = newSource === 'core_firplak' ? brandScope : 'firplak'
         const nextPrivateLabelClientName =
             newSource === 'core_firplak' && brandScope === 'private_label'
@@ -1582,6 +1654,33 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
 
     // Determinar si es fuente externa o core Firplak
     const isExternalDataSource = Boolean(dataSource) && dataSource !== 'core_firplak'
+    const requiredVarsForTemplate = React.useMemo(() => extractTemplateVariables(JSON.stringify(elements)), [elements])
+
+    const isSchemaSyncedToTemplate = useCallback((schema_json: any) => {
+        try {
+            const raw = typeof schema_json === 'string' ? JSON.parse(schema_json) : schema_json
+            const cols = raw && typeof raw === 'object' && Array.isArray((raw as any).columns) ? (raw as any).columns : null
+            const keys = new Set<string>()
+            if (cols) {
+                cols.forEach((c: any) => {
+                    const k = String(c?.key || '').trim()
+                    if (k) keys.add(k)
+                })
+            } else if (Array.isArray(raw)) {
+                raw.forEach((c: any) => {
+                    const k = String(c?.key ?? c ?? '').trim()
+                    if (k) keys.add(k)
+                })
+            }
+
+            for (const v of requiredVarsForTemplate) {
+                if (!keys.has(v)) return false
+            }
+            return true
+        } catch {
+            return false
+        }
+    }, [requiredVarsForTemplate.join('|')])
 
     // Lista de variables disponibles (estáticas para Firplak, dinámicas para datasets externos)
     const CORE_VARIABLE_OPTS = [
@@ -2007,7 +2106,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         if (!isPreviewMode) {
             if (!previewData) {
                 const { brandScope: previewBrandScope, privateLabelClientName: previewClientName } = getPreviewScopeArgs()
-                const data = await getPreviewProduct(dataSource, previewBrandScope, previewClientName)
+                const data = await getPreviewProduct(effectivePreviewSource, previewBrandScope, previewClientName)
                 // Resolve system asset URLs (icons, logos) and enrich product data with icon fields
                 const assetMap = await resolveAssetsAction([])
                 setPreviewData(await enrichWithZone(data, assetMap))
@@ -2022,7 +2121,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             // Pass current product code so the server excludes it (avoids same product twice)
             const currentCode = typeof previewData?.code === 'string' ? previewData.code : undefined
             const { brandScope: previewBrandScope, privateLabelClientName: previewClientName } = getPreviewScopeArgs()
-            const data = await getRandomPreviewProduct(currentCode, dataSource, previewBrandScope, previewClientName)
+            const data = await getRandomPreviewProduct(currentCode, effectivePreviewSource, previewBrandScope, previewClientName)
             if (data) {
                 const assetMap = await resolveAssetsAction([])
                 setPreviewData(await enrichWithZone(data, assetMap))
@@ -2039,7 +2138,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         setIsLoadingRandom(true)
         try {
             const { brandScope: previewBrandScope, privateLabelClientName: previewClientName } = getPreviewScopeArgs()
-            const data = await getPreviewProduct(dataSource, previewBrandScope, previewClientName)
+            const data = await getPreviewProduct(effectivePreviewSource, previewBrandScope, previewClientName)
             const assetMap = await resolveAssetsAction([])
             setPreviewData(await enrichWithZone(data, assetMap))
         } finally {
@@ -2540,7 +2639,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                                         return <span className="text-gray-400 text-[10px] text-center">[Logo No Encontrado]</span>
                                                     }
                                                     if (childEl.content === 'Isométrico' || childEl.content === 'isometrico_placeholder' || childEl.content === 'Isométrico (Placeholder)') {
-                                                        if (previewData?.isometric_path) return <Image src={String(previewData.isometric_path)} alt="IsomÃ©trico" fill sizes="100vw" className="object-contain pointer-events-none" />
+                                                        if (previewData?.isometric_path) return <Image src={String(previewData.isometric_path)} alt="Isométrico" fill sizes="100vw" className="object-contain pointer-events-none" />
                                                         return <span className="text-red-500 text-[10px] font-bold text-center border border-red-200 bg-red-50 p-1 rounded">[FALTA ISOMÉTRICO]</span>
                                                     }
                                                     const asset = assets.find(a => a.id === childEl.content || a.name === childEl.content);
@@ -2791,28 +2890,6 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                                     ))}
                                                 </optgroup>
                                             ))
-                                        )}
-                                        {/* NOTE: Icon data fields removed — use 'Icono Variable' element type instead */}
-                                        {isExternalDataSource && datasetSchema.length > 0 && (
-                                            <optgroup label="Dataset Externo">
-                                                {datasetSchema.map(f => (
-                                                    <option key={f.key} value={f.key}>{f.label}</option>
-                                                ))}
-                                            </optgroup>
-                                        )}
-                                        {isExternalDataSource && datasetSchema.length > 0 && (
-                                            <optgroup label="Dataset Externo">
-                                                {datasetSchema.map(f => (
-                                                    <option key={f.key} value={f.key}>{f.label}</option>
-                                                ))}
-                                            </optgroup>
-                                        )}
-                                        {isExternalDataSource && datasetSchema.length > 0 && (
-                                            <optgroup label="Dataset Externo">
-                                                {datasetSchema.map(f => (
-                                                    <option key={f.key} value={f.key}>{f.label}</option>
-                                                ))}
-                                            </optgroup>
                                         )}
                                     </select>
 
@@ -3496,12 +3573,56 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                         onChange={(e) => handleDataSourceChange(e.target.value)}
                                     >
                                         <option value="core_firplak">Firplak Core (Catálogo Maestro)</option>
-                                        <optgroup label="Bases de Datos Externas">
-                                            {availableDatasets.map(ds => (
-                                                <option key={ds.id} value={ds.id}>{ds.name}</option>
-                                            ))}
-                                        </optgroup>
+                                        <option value="custom_datasets">Bases de Datos (Genérico)</option>
+                                        {dataSource !== 'core_firplak' && dataSource !== 'custom_datasets' && (
+                                            <optgroup label="Legacy (Dataset específico)">
+                                                {availableDatasets.map(ds => (
+                                                    <option key={ds.id} value={ds.id}>{ds.name}</option>
+                                                ))}
+                                            </optgroup>
+                                        )}
                                     </select>
+
+                                    {dataSource === 'custom_datasets' && (
+                                        <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50/30 p-3">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <div>
+                                                    <p className="text-[11px] font-bold text-slate-700 uppercase">Datasets asociados</p>
+                                                    <p className="text-[10px] text-slate-400 leading-tight">
+                                                        Solo los sincronizados (verde) aparecerán en <b>/generate</b>.
+                                                    </p>
+                                                </div>
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    className="h-9 rounded-xl border-indigo-200 bg-white"
+                                                    onClick={() => (window.location.href = '/datasets')}
+                                                >
+                                                    Gestionar en Datasets
+                                                </Button>
+                                            </div>
+
+                                            <div className="mt-3 space-y-2">
+                                                {linkedDatasets.length === 0 ? (
+                                                    <p className="text-[11px] text-slate-500">Aún no hay datasets asociados.</p>
+                                                ) : (
+                                                    linkedDatasets.map((d) => {
+                                                        const ok = isSchemaSyncedToTemplate(d.schema_json)
+                                                        return (
+                                                            <div key={d.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                                                                <div className="min-w-0">
+                                                                    <p className="text-[12px] font-semibold text-slate-800 truncate">{d.name || d.id}</p>
+                                                                    <p className="text-[10px] text-slate-400">{ok ? 'Sincronizado' : 'No sincronizado'}</p>
+                                                                </div>
+                                                                <span className={cn('inline-flex h-2.5 w-2.5 rounded-full', ok ? 'bg-green-500' : 'bg-red-500')} />
+                                                            </div>
+                                                        )
+                                                    })
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+
                                     <div className="mt-4">
                                         <Label className="text-[11px] font-bold text-slate-500 mb-1.5 block uppercase">Alcance de Marca</Label>
                                         <select

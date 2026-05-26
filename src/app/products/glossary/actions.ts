@@ -25,7 +25,7 @@ export async function upsertGlossaryTermAction(data: { id?: string, term_es: str
             VALUES ('${termEsEsc}', '${termEnEsc}', ${categoryEsc})
         `)
     }
-    revalidatePath('/products/glossary')
+    revalidatePath('/configuration/glossary')
     revalidatePath('/pending')
     revalidatePath('/')
     revalidateTag('validation-sweep', { expire: 0 })
@@ -33,7 +33,7 @@ export async function upsertGlossaryTermAction(data: { id?: string, term_es: str
 
 export async function deleteGlossaryTermAction(id: string) {
     await dbQuery(`DELETE FROM public.glossary WHERE id = '${id}'`)
-    revalidatePath('/products/glossary')
+    revalidatePath('/configuration/glossary')
     revalidatePath('/pending')
     revalidatePath('/')
     revalidateTag('validation-sweep', { expire: 0 })

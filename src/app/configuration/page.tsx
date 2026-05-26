@@ -37,34 +37,40 @@ export default async function ConfigurationPage() {
         </div>
 
         <div className="flex flex-col sm:flex-row flex-wrap items-start sm:items-center gap-3">
-          <Link href="/families">
+          <Link href="/configuration/families">
             <Button variant="outline" className="w-full sm:w-auto border-slate-200 text-slate-600 hover:bg-slate-50">
               <PlusCircle className="mr-2 h-4 w-4" />
               Editor de familias
             </Button>
           </Link>
-          <Link href="/products/reference-editor">
+          <Link href="/configuration/reference-editor">
             <Button variant="secondary" className="w-full sm:w-auto">
               <DatabaseZap className="mr-2 h-4 w-4 text-indigo-500" />
               Editor de Referencias
             </Button>
           </Link>
-          <Link href="/products/version-editor">
+          <Link href="/configuration/version-editor">
             <Button variant="secondary" className="w-full sm:w-auto">
               <Layers className="mr-2 h-4 w-4 text-orange-500" />
               Editor de Versionamiento
+            </Button>
+          </Link>
+          <Link href="/configuration/sku-editor">
+            <Button variant="secondary" className="w-full sm:w-auto">
+              <DatabaseZap className="mr-2 h-4 w-4 text-emerald-500" />
+              Editor de SKUs
+            </Button>
+          </Link>
+          <Link href="/configuration/glossary">
+            <Button variant="outline" className="w-full sm:w-auto border-blue-200 text-blue-600 hover:bg-blue-50">
+              <BookOpen className="mr-2 h-4 w-4" />
+              Glosario
             </Button>
           </Link>
           <Link href="/configuration/versions">
             <Button variant="secondary" className="w-full sm:w-auto">
               <Settings className="mr-2 h-4 w-4 text-indigo-500" />
               Editor de versiones
-            </Button>
-          </Link>
-          <Link href="/products/sku-editor">
-            <Button variant="secondary" className="w-full sm:w-auto">
-              <DatabaseZap className="mr-2 h-4 w-4 text-emerald-500" />
-              Editor de SKUs
             </Button>
           </Link>
           <Link href="/configuration/colors">
@@ -77,12 +83,6 @@ export default async function ConfigurationPage() {
             <Button variant="secondary" className="w-full sm:w-auto">
               <Users className="mr-2 h-4 w-4 text-slate-700" />
               Editor de clientes
-            </Button>
-          </Link>
-          <Link href="/products/glossary">
-            <Button variant="outline" className="w-full sm:w-auto border-blue-200 text-blue-600 hover:bg-blue-50">
-              <BookOpen className="mr-2 h-4 w-4" />
-              Glosario
             </Button>
           </Link>
         </div>

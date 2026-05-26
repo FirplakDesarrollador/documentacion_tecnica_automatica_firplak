@@ -356,7 +356,7 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                         Plantilla: <span className="font-medium text-indigo-600">{template?.name || 'Sin plantilla'}</span>
                         {!started && (
                             <span className="ml-2 text-slate-400">
-                                Â· Est. <Clock className="w-3 h-3 inline" /> ~{estimatedSeconds}s
+                                · Est. <Clock className="w-3 h-3 inline" /> ~{estimatedSeconds}s
                             </span>
                         )}
                     </p>
@@ -416,7 +416,7 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                 <div className="flex flex-col gap-4 p-4 bg-slate-50 border border-slate-200 rounded-xl">
                     <div className="flex flex-col gap-2">
                         <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">
-                            Destino de exportaciÃ³n
+                            Destino de exportación
                         </label>
                         {!directoryHandle ? (
                             <Button 
@@ -449,7 +449,7 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                             </div>
                         )}
                         <p className="text-[10px] text-slate-400 ml-1 italic leading-tight">
-                            * Si no eliges carpeta, los archivos se descargarÃ¡n por defecto en "Descargas".
+                            * Si no eliges carpeta, los archivos se descargarán por defecto en "Descargas".
                         </p>
                     </div>
 
@@ -488,7 +488,7 @@ export function BulkExportPanel({ selectedProducts, template, rules, onClose }: 
                             <Download className="w-4 h-4 mr-2" />
                             {!allowedFormats.includes(selectedFormat) 
                                 ? `Formato ${selectedFormat.toUpperCase()} no permitido`
-                                : `Iniciar ExportaciÃ³n (${total})`
+                                : `Iniciar Exportación (${total})`
                             }
                         </Button>
                         <Button variant="outline" onClick={onClose} className="w-24">

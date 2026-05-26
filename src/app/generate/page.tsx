@@ -21,6 +21,7 @@ export default async function GeneratePage({
     const m = toArray(searchParams?.m)
     const q = typeof searchParams?.q === 'string' ? searchParams.q : null
     const templateId = typeof searchParams?.template_id === 'string' ? searchParams.template_id : null
+    const datasetIdParam = typeof searchParams?.dataset_id === 'string' ? searchParams.dataset_id : null
 
     // Para filtrar productos: extraer reference_code y commercial_measure desde valores compuestos.
     // Formatos soportados (compat):
@@ -69,8 +70,44 @@ export default async function GeneratePage({
     const rules = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true`) || []
 
     const selectedTemplateInfo = templates.find((t: any) => t.id === templateId) || templates[0]
-    const currentDataSource = selectedTemplateInfo?.data_source || 'core_firplak'
-    const isDataSourceExternal = currentDataSource !== 'core_firplak'
+    const templateDataSource = selectedTemplateInfo?.data_source || 'core_firplak'
+
+    const isLegacySpecificDataset =
+        templateDataSource !== 'core_firplak' &&
+        templateDataSource !== 'custom_datasets' &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(templateDataSource))
+
+    const isGenericDatasets = templateDataSource === 'custom_datasets'
+
+    let effectiveDatasetId: string | null = null
+    let availableDatasetsForTemplate: { id: string; name: string }[] = []
+
+    if (isLegacySpecificDataset) {
+        effectiveDatasetId = String(templateDataSource)
+    } else if (isGenericDatasets && selectedTemplateInfo?.id) {
+        const linkedDatasets = await dbQuery(`
+            SELECT d.id, d.name, d.schema_json, d.created_at
+            FROM public.template_dataset_links l
+            JOIN public.custom_datasets d ON d.id = l.dataset_id
+            WHERE l.template_id = '${String(selectedTemplateInfo.id).replace(/'/g, "''")}'
+            ORDER BY d.created_at DESC
+        `) || []
+
+        // Show ALL linked datasets — synced or not — so the user can preview any associated data.
+        // The sync status is visible in the DatasetConfigurator.
+        availableDatasetsForTemplate = (linkedDatasets || []).map((d: any) => ({
+            id: String(d.id),
+            name: String(d.name || ''),
+        }))
+
+        if (datasetIdParam && availableDatasetsForTemplate.some(d => d.id === datasetIdParam)) {
+            effectiveDatasetId = datasetIdParam
+        } else {
+            effectiveDatasetId = null
+        }
+    }
+
+    const isDataSourceExternal = Boolean(effectiveDatasetId)
 
     const brandScope = selectedTemplateInfo?.brand_scope === 'private_label' ? 'private_label' : 'firplak'
     const plc = selectedTemplateInfo?.private_label_client_name ? String(selectedTemplateInfo.private_label_client_name).trim() : ''
@@ -81,30 +118,36 @@ export default async function GeneratePage({
 
     let templateBrandWarning: string | null = null
     let effectiveHasFilter = hasFilter
+
+    // Dataset-genérico no requiere filtros (se usa selector de dataset).
+    if (isGenericDatasets) {
+        effectiveHasFilter = true
+    }
     
-    // Si la plantilla es de un dataset externo, sobreescribimos los productos con todo el dataset
+    // Si la plantilla usa dataset externo (legacy o genérico con dataset seleccionado), sobreescribimos los productos con todo el dataset
     // (no aplican los filtros de Familia/Referencia)
-    if (isDataSourceExternal) {
+    if (isDataSourceExternal && effectiveDatasetId) {
         effectiveHasFilter = true 
         const dsRows = await dbQuery(`
             SELECT id, data_json 
             FROM public.custom_dataset_rows 
-            WHERE dataset_id = '${currentDataSource.replace(/'/g, "''")}'
+            WHERE dataset_id = '${effectiveDatasetId.replace(/'/g, "''")}'
             LIMIT 500
         `) || []
         
-        products = dsRows.map((r: any) => {
-            const parsed = typeof r.data_json === 'string' ? JSON.parse(r.data_json) : r.data_json
-            return {
-                ...parsed,
-                id: r.id,
-                code: parsed.code || parsed.sku || parsed.id || r.id,
-                final_name_es: parsed.final_name_es || parsed.name || parsed.nombre || 'Registro dataset',
-                status: 'ACTIVO'
-            }
-        })
-        totalCount = products.length
-    } else if (brandScope === 'private_label' && !plc) {
+         products = dsRows.map((r: any) => {
+             const parsed = typeof r.data_json === 'string' ? JSON.parse(r.data_json) : r.data_json
+             return {
+                 ...parsed,
+                 id: r.id,
+                 code: parsed.code || parsed.sku || parsed.id || r.id,
+                 final_name_es: parsed.final_name_es || parsed.name || parsed.nombre || 'Registro dataset',
+                 status: 'ACTIVO',
+                 is_external: true,
+             }
+         })
+         totalCount = products.length
+     } else if (brandScope === 'private_label' && !plc) {
         // Private label template without client configured: block listing/export safely.
         effectiveHasFilter = true
         products = []
@@ -166,6 +209,8 @@ export default async function GeneratePage({
                 isExternalSource={isDataSourceExternal}
                 totalCount={totalCount}
                 templateBrandWarning={templateBrandWarning}
+                datasetsForTemplate={availableDatasetsForTemplate}
+                initialDatasetId={effectiveDatasetId}
             />
         </div>
     )

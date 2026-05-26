@@ -33,13 +33,13 @@ export default function NewFamilyPage() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         await upsertFamilyAction(formData)
-        router.push('/families')
+        router.push('/configuration/families')
     }
 
     return (
         <div className="flex flex-col gap-6 max-w-2xl mx-auto w-full py-8">
             <div className="flex items-center gap-4">
-                <Link href="/families">
+                <Link href="/configuration/families">
                     <Button variant="outline" size="icon" type="button">
                         <ArrowLeft className="h-4 w-4" />
                     </Button>

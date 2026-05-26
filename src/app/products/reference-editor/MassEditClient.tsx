@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { toast } from 'sonner';
-import { searchReferences, previewMassUpdateReferences, executeMassUpdateReferences, getFilterOptions, getFamiliesWithSchema } from './actions';
+import { searchReferences, previewMassUpdateReferences, executeMassUpdateReferences, getFilterOptions } from './actions';
+import { getFamiliesWithSchema } from '@/app/families/actions';
 import { Loader2, Search, CheckSquare, Edit, AlertTriangle, Info, Check, X } from 'lucide-react';
 
 const NORMAL_COLS = [

@@ -8,7 +8,7 @@ import {
   executeAddAttrToFamilies,
   previewRemoveAttrFromFamilies,
   executeRemoveAttrFromFamilies
-} from './actions';
+} from '@/app/families/actions';
 import { Loader2, Plus, Trash2, Search, AlertTriangle, Info } from 'lucide-react';
 
 export default function SchemaConfigClient() {

@@ -132,7 +132,7 @@ export async function executeMassUpdateSkus(skuIds: string[], normalUpdates: any
   if (error) return { success: false, error: error.message };
 
   await recomputeMasterNamesForSkuIds(skuIds);
-  revalidatePath('/products/sku-editor');
+  revalidatePath('/configuration/sku-editor');
   revalidatePath('/products');
   revalidatePath('/generate');
   return { success: true, data };

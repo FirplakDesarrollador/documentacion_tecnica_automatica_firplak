@@ -215,7 +215,7 @@ export async function getPreviewProduct(
     brandScope: 'firplak' | 'private_label' = 'firplak',
     privateLabelClientName?: string | null
 ) {
-    if (dataSource && dataSource !== 'core_firplak') {
+    if (dataSource && dataSource !== 'core_firplak' && dataSource !== 'custom_datasets') {
         try {
             const rows = await dbQuery(`
                 SELECT data_json
@@ -291,7 +291,7 @@ export async function getRandomPreviewProduct(
     brandScope: 'firplak' | 'private_label' = 'firplak',
     privateLabelClientName?: string | null
 ) {
-    if (dataSource && dataSource !== 'core_firplak') {
+    if (dataSource && dataSource !== 'core_firplak' && dataSource !== 'custom_datasets') {
         try {
             const rows = await dbQuery(`
                 SELECT data_json
@@ -376,6 +376,49 @@ export async function getTemplatesAction() {
     }
 }
 
+export async function getDatasetModeTemplatesAction(): Promise<{ id: string; name: string; elements_json: string; data_source: string }[]> {
+    try {
+        const rows = await dbQuery(`
+            SELECT id, name, elements_json, data_source
+            FROM public.plantillas_doc_tec
+            WHERE active = true
+            ORDER BY name ASC
+        `)
+        return (rows || []).map((r: any) => ({
+            id: String(r.id),
+            name: String(r.name || ''),
+            elements_json: String(r.elements_json || '[]'),
+            data_source: String(r.data_source || 'core_firplak'),
+        }))
+    } catch {
+        return []
+    }
+}
+
+export async function getTemplateLinkedDatasetsAction(templateId: string): Promise<{ id: string; name: string; schema_json: any; created_at: string }[]> {
+    try {
+        const tid = String(templateId || '').trim()
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tid)) return []
+
+        const rows = await dbQuery(`
+            SELECT d.id, d.name, d.schema_json, d.created_at
+            FROM public.template_dataset_links l
+            JOIN public.custom_datasets d ON d.id = l.dataset_id
+            WHERE l.template_id = '${tid.replace(/'/g, "''")}'
+            ORDER BY d.created_at DESC
+        `)
+
+        return (rows || []).map((r: any) => ({
+            id: String(r.id),
+            name: String(r.name || ''),
+            schema_json: r.schema_json,
+            created_at: String(r.created_at || ''),
+        }))
+    } catch {
+        return []
+    }
+}
+
 /**
  * Validates the length of generated filenames across all products in the database.
  */
@@ -383,7 +426,7 @@ export async function validateExportFilenameLength(pattern: string, dataSource: 
     try {
         let products: any[] = []
 
-        if (dataSource && dataSource !== 'core_firplak') {
+        if (dataSource && dataSource !== 'core_firplak' && dataSource !== 'custom_datasets') {
             const rows = await dbQuery(`
                 SELECT data_json FROM public.custom_dataset_rows 
                 WHERE dataset_id = '${dataSource.replace(/'/g, "''")}'

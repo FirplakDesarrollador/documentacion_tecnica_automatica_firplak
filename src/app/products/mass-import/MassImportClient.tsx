@@ -197,7 +197,7 @@ function ProductsImportClient() {
               </div>
               <div className="text-xs text-muted-foreground mt-2">
                 Si hay `REF_ATTR_*` desconocidos o familias sin schema, ve a{' '}
-                <Link className="underline" href="/products/reference-editor">/products/reference-editor</Link>.
+                <Link className="underline" href="/configuration/reference-editor">/configuration/reference-editor</Link>.
               </div>
             </div>
           )}

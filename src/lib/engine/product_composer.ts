@@ -16,6 +16,7 @@ export interface ComposedProduct {
     version_code: string;
     color_code: string;
     sku_base: string;
+    sku_complete: string;
 
     // === Family-level ===
     product_type: string | null;

@@ -31,6 +31,7 @@ You operate within a 3-layer architecture that separates concerns to maximize re
 ## 🛠️ Operating Principles & Quality Standards
 
 ### 1. Principles of Action
+- **Regla de trabajo colaborativo (NO tocar fuera de alcance):** En sesiones donde hay trabajo paralelo en otros chats/ramas, **no debo editar, revertir, borrar, renombrar ni “limpiar diffs”** de archivos o módulos que no estén directamente relacionados con el alcance/plan acordado en este chat. Si detecto cambios fuera de alcance, **los dejo intactos**. Si algo fuera de alcance **me bloquea** o afecta el flujo actual, debo **preguntar antes** (“vi X cambiado y me afecta por Y, ¿qué hago?”) y solo actuar con autorización explícita.
 - **Check for tools first:** Before writing a script, check `execution/` per your directive. Only create new scripts if none exist.
 - **Think Before Acting:** Analyze the task before writing code. Break problems into smaller steps.
 - **Self-anneal when things break:** Fix scripts, test them, and update directives with what you learned (API limits, edge cases).

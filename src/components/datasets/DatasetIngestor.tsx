@@ -42,6 +42,9 @@ import {
 import Papa from 'papaparse'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
+import { linkDatasetToTemplatesAction, revalidateDatasetsPathsAction } from '@/app/datasets/actions'
+import { getDatasetModeTemplatesAction } from '@/app/templates/actions'
+import { extractTemplateVariables } from '@/lib/templates/templateVariables'
 
 interface DatasetIngestorProps {
     mode: 'new' | { id: string; name: string }
@@ -50,7 +53,7 @@ interface DatasetIngestorProps {
     onDone: (updated: any[]) => void
 }
 
-type Step = 'name_file' | 'strategy' | 'mapping' | 'preview'
+type Step = 'name_file' | 'strategy' | 'mapping' | 'associate_templates' | 'preview'
 
 export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: DatasetIngestorProps) {
     const isNew = mode === 'new'
@@ -78,6 +81,36 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
 
     const [loading, setLoading] = useState(false)
 
+    const [availableTemplates, setAvailableTemplates] = useState<{ id: string; name: string; elements_json: string; data_source: string }[]>([])
+    const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([])
+    const [templateVarToHeader, setTemplateVarToHeader] = useState<Record<string, string>>({})
+
+    const stripDiacritics = (value: string) =>
+        value.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+
+    const toSnakeCaseKey = (value: string) => {
+        const base = stripDiacritics(String(value || '').trim().toLowerCase())
+            .replace(/[^a-z0-9]+/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_+|_+$/g, '')
+
+        if (!base) return 'col'
+        if (/^[a-z]/.test(base)) return base
+        return `col_${base}`
+    }
+
+    const toDisplayLabel = (value: string) => {
+        const normalized = String(value || '')
+            .replace(/[_-]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+
+        if (!normalized) return ''
+
+        const lower = normalized.toLowerCase()
+        return lower.charAt(0).toUpperCase() + lower.slice(1)
+    }
+
     // Auto-mapeo inicial al cargar archivo
     const autoMap = (headers: string[]) => {
         const newMap: Record<string, string> = { code: '', final_name_es: '' }
@@ -96,14 +129,93 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
         
         // Inicializar configuraciones con nombres originales
         const configs: Record<string, { key: string, label: string }> = {}
-        headers.forEach(h => {
+        const usedKeys = new Set<string>()
+        headers.forEach((h) => {
+            const baseKey = toSnakeCaseKey(h)
+            let key = baseKey
+            let suffix = 2
+            while (usedKeys.has(key)) {
+                key = `${baseKey}_${suffix++}`
+            }
+            usedKeys.add(key)
+
             configs[h] = {
-                key: h, 
-                label: h.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+                key,
+                label: toDisplayLabel(h),
             }
         })
+
+        // Evitar duplicidad: forzar keys canónicas para identificador y nombre visible
+        if (newMap.code && configs[newMap.code]) configs[newMap.code].key = 'code'
+        if (newMap.final_name_es && configs[newMap.final_name_es]) configs[newMap.final_name_es].key = 'final_name_es'
+
         setColumnConfigs(configs)
     }
+
+    const isDatasetModeTemplate = (t: { data_source: string }) => {
+        const ds = String(t.data_source || '').trim()
+        if (!ds) return false
+        if (ds === 'custom_datasets') return true
+        if (ds === 'core_firplak') return false
+        // Legacy: template.data_source points to a specific dataset UUID
+        return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ds)
+    }
+
+    useEffect(() => {
+        if (step !== 'associate_templates') return
+        if (availableTemplates.length > 0) return
+
+        getDatasetModeTemplatesAction()
+            .then((rows) => setAvailableTemplates((rows || []).filter(isDatasetModeTemplate)))
+            .catch(() => setAvailableTemplates([]))
+    }, [step, availableTemplates.length])
+
+    const requiredTemplateVars = useMemo(() => {
+        const selected = availableTemplates.filter(t => selectedTemplateIds.includes(t.id))
+        const union = new Set<string>()
+        for (const t of selected) {
+            for (const v of extractTemplateVariables(t.elements_json)) union.add(v)
+        }
+        return Array.from(union).sort((a, b) => a.localeCompare(b))
+    }, [availableTemplates, selectedTemplateIds])
+
+    const normalizedLoose = (value: string) => stripDiacritics(String(value || '').toLowerCase()).replace(/[^a-z0-9]+/g, ' ').trim()
+
+    const autoSuggestHeaderForVar = (varName: string) => {
+        if (varName === 'code' && fieldMap.code) return fieldMap.code
+        if (varName === 'final_name_es' && fieldMap.final_name_es) return fieldMap.final_name_es
+
+        const target = normalizedLoose(varName)
+        if (!target) return ''
+
+        // 1) Exact match against snake_case(header)
+        const exact = csvHeaders.find(h => toSnakeCaseKey(h) === varName)
+        if (exact) return exact
+
+        // 2) Loose match
+        const loose = csvHeaders.find(h => normalizedLoose(h) === target)
+        if (loose) return loose
+
+        return ''
+    }
+
+    useEffect(() => {
+        if (step !== 'associate_templates') return
+        setTemplateVarToHeader((prev) => {
+            const next = { ...prev }
+            for (const v of requiredTemplateVars) {
+                if (!next[v]) {
+                    const suggested = autoSuggestHeaderForVar(v)
+                    if (suggested) next[v] = suggested
+                }
+            }
+            // Clean stale keys
+            Object.keys(next).forEach((k) => {
+                if (!requiredTemplateVars.includes(k)) delete next[k]
+            })
+            return next
+        })
+    }, [step, requiredTemplateVars.join('|')])
 
     const parseFile = useCallback((file: File, enc: string) => {
         Papa.parse(file, {
@@ -124,6 +236,11 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
         if (!file) return
         setSelectedFile(file)
         parseFile(file, encoding)
+        // Auto-proponer nombre desde el archivo solo si el usuario aún no escribió nada
+        if (isNew && !datasetName.trim()) {
+            const nameFromFile = file.name.replace(/\.csv$/i, '').trim()
+            if (nameFromFile) setDatasetName(nameFromFile)
+        }
     }
 
     // Re-parsear cuando cambia la codificación
@@ -159,6 +276,51 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                 toast.error('Debes seleccionar la columna que servirá como Identificador (ID/SKU)')
                 return
             }
+
+            const includedHeaders = Array.from(new Set([
+                ...selectedColumns,
+                fieldMap.code,
+                fieldMap.final_name_es,
+            ].filter(Boolean)))
+
+            const seenKeys = new Set<string>()
+            for (const header of includedHeaders) {
+                const key = String(columnConfigs[header]?.key || '').trim()
+                if (!key) {
+                    toast.error(`La variable interna (key) es obligatoria para: ${header}`)
+                    return
+                }
+                if (seenKeys.has(key)) {
+                    toast.error(`La variable interna (key) debe ser única. Repetida: "${key}".`)
+                    return
+                }
+                seenKeys.add(key)
+            }
+
+            if (isNew) setStep('associate_templates')
+            else setStep('preview')
+        }
+        else if (step === 'associate_templates') {
+            if (selectedTemplateIds.length === 0) {
+                setStep('preview')
+                return
+            }
+
+            // Validate mapping completeness and uniqueness
+            const used = new Set<string>()
+            for (const v of requiredTemplateVars) {
+                const header = String(templateVarToHeader[v] || '').trim()
+                if (!header) {
+                    toast.error(`Debes asociar la variable "${v}" a una columna del CSV.`)
+                    return
+                }
+                if (used.has(header)) {
+                    toast.error(`La columna "${header}" no puede asignarse a múltiples variables de plantilla.`)
+                    return
+                }
+                used.add(header)
+            }
+
             setStep('preview')
         }
     }
@@ -169,7 +331,11 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
             if (isNew) setStep('name_file')
             else setStep('strategy')
         }
-        else if (step === 'preview') setStep('mapping')
+        else if (step === 'associate_templates') setStep('mapping')
+        else if (step === 'preview') {
+            if (isNew) setStep('associate_templates')
+            else setStep('mapping')
+        }
     }
 
     const toggleColumn = (header: string) => {
@@ -183,12 +349,37 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
         try {
             let workingDatasetId = mode === 'new' ? null : mode.id
 
+            // Apply template mappings (canonical keys) before persisting rows/schema.
+            let effectiveColumnConfigs = columnConfigs
+            if (isNew && selectedTemplateIds.length > 0 && requiredTemplateVars.length > 0) {
+                effectiveColumnConfigs = { ...columnConfigs }
+                for (const v of requiredTemplateVars) {
+                    const header = String(templateVarToHeader[v] || '').trim()
+                    if (!header) continue
+                    effectiveColumnConfigs[header] = {
+                        ...(effectiveColumnConfigs[header] || { key: header, label: header }),
+                        key: v,
+                    }
+                }
+            }
+
+            // Ensure unique keys within selected columns (global canonical keys for the dataset).
+            const uniqueKeys = new Set<string>()
+            for (const h of selectedColumns) {
+                const k = String(effectiveColumnConfigs[h]?.key || h).trim()
+                if (!k) continue
+                if (uniqueKeys.has(k)) {
+                    throw new Error(`La variable interna (key) debe ser única. Repetida: "${k}".`)
+                }
+                uniqueKeys.add(k)
+            }
+
             // 1. Crear dataset si es nuevo
             if (isNew) {
                 const finalColumns = selectedColumns.map(h => ({
                     original: h,
-                    key: columnConfigs[h]?.key || h,
-                    label: columnConfigs[h]?.label || h,
+                    key: effectiveColumnConfigs[h]?.key || h,
+                    label: effectiveColumnConfigs[h]?.label || h,
                     is_identifier: h === fieldMap.code
                 }))
 
@@ -225,14 +416,12 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                 
                 // Conservar TODOS los campos seleccionados
                 selectedColumns.forEach(h => {
-                    const config = columnConfigs[h]
+                    const config = effectiveColumnConfigs[h]
                     const targetKey = config?.key || h
                     data[targetKey] = row[h]
                     
                     // Si el nombre original es distinto al key, también guardamos el original para respaldo
-                    if (targetKey !== h) {
-                        data[h] = row[h]
-                    }
+                    // No duplicar llaves con el header original (evita columnas duplicadas en exportación).
                 })
 
                 return {
@@ -261,6 +450,12 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
             if (error) throw error
 
             toast.success('Base de datos procesada con éxito')
+
+            if (isNew && selectedTemplateIds.length > 0 && workingDatasetId) {
+                await linkDatasetToTemplatesAction(String(workingDatasetId), selectedTemplateIds)
+            }
+
+            await revalidateDatasetsPathsAction()
             
             // Recargar datasets
             const { data: updated } = await supabase
@@ -490,6 +685,8 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                                      </div>
                                  </div>
 
+                                 <p className="text-[9px] text-slate-400 italic">La variable interna no debe tener espacios ni tildes. El nombre visible sí.</p>
+
                                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                                      <div className="max-h-[350px] overflow-y-auto custom-scrollbar">
                                          <table className="w-full text-left border-collapse">
@@ -497,8 +694,8 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                                                  <tr>
                                                      <th className="p-3 pl-6 text-[9px] font-black text-slate-400 uppercase w-[80px]">Importar</th>
                                                      <th className="p-3 text-[9px] font-black text-slate-400 uppercase">Original</th>
-                                                     <th className="p-3 text-[9px] font-black text-slate-400 uppercase w-[180px]">Key (Variable)</th>
-                                                     <th className="p-3 pr-6 text-[9px] font-black text-slate-400 uppercase w-[180px]">Etiqueta App</th>
+                                                     <th className="p-3 text-[9px] font-black text-slate-400 uppercase w-[220px]">Variable interna (para plantillas)</th>
+                                                     <th className="p-3 pr-6 text-[9px] font-black text-slate-400 uppercase w-[220px]">Nombre visible (en la app)</th>
                                                  </tr>
                                              </thead>
                                              <tbody className="divide-y divide-slate-50">
@@ -548,7 +745,107 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                         </div>
                     )}
 
-                    {/* ── PASO 4: PREVIEW FINAL ───────────────────────────────── */}
+                    {/* ── PASO 4: ASOCIAR PLANTILLAS (OPCIONAL) ───────────────── */}
+                    {step === 'associate_templates' && (
+                        <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+                            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                                <div className="flex items-start justify-between gap-4">
+                                    <div>
+                                        <p className="font-black text-sm text-slate-800">Asociar plantillas</p>
+                                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Opcional (recomendado)</p>
+                                        <p className="text-[11px] text-slate-500 mt-2 leading-relaxed">
+                                            Si eliges plantillas, el sistema te pedirá asociar variables internas de la plantilla con columnas del CSV
+                                            para asegurar que la exportación funcione.
+                                        </p>
+                                    </div>
+                                    <Badge variant="secondary" className="bg-slate-50 text-slate-500 border-slate-100 font-black text-[9px]">OPCIONAL</Badge>
+                                </div>
+
+                                {availableTemplates.length === 0 ? (
+                                    <div className="text-sm text-slate-400 italic">No hay plantillas activas en modo Bases de Datos.</div>
+                                ) : (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        {availableTemplates.map((t) => {
+                                            const checked = selectedTemplateIds.includes(t.id)
+                                            return (
+                                                <label key={t.id} className={`flex items-start gap-3 p-4 rounded-2xl border transition-colors cursor-pointer ${checked ? 'border-indigo-200 bg-indigo-50/30' : 'border-slate-100 bg-white hover:border-slate-200'}`}>
+                                                    <Checkbox
+                                                        checked={checked}
+                                                        onCheckedChange={(v) => {
+                                                            const next = Boolean(v)
+                                                            setSelectedTemplateIds(prev => next ? Array.from(new Set([...prev, t.id])) : prev.filter(x => x !== t.id))
+                                                        }}
+                                                        className="rounded-md border-slate-300 mt-0.5"
+                                                    />
+                                                    <div className="min-w-0">
+                                                        <p className="font-black text-slate-800 text-sm truncate">{t.name}</p>
+                                                    </div>
+                                                </label>
+                                            )
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+
+                            {selectedTemplateIds.length > 0 && (
+                                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                                    <div className="flex items-center justify-between gap-4">
+                                        <div>
+                                            <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2">
+                                                <Settings className="h-4 w-4" /> Asociación de variables
+                                            </h4>
+                                            <p className="text-[11px] text-slate-500 mt-1">Se renombrará la key interna del dataset para que coincida con la variable de la plantilla.</p>
+                                        </div>
+                                        <Badge className="bg-indigo-50 text-indigo-600 border-indigo-100 font-black text-[9px]">
+                                            {requiredTemplateVars.length} variables
+                                        </Badge>
+                                    </div>
+
+                                    {requiredTemplateVars.length === 0 ? (
+                                        <p className="text-sm text-slate-400 italic">Las plantillas seleccionadas no usan variables detectables.</p>
+                                    ) : (
+                                        <div className="rounded-2xl border border-slate-200 overflow-hidden">
+                                            <table className="w-full text-left border-collapse">
+                                                <thead className="bg-slate-50 border-b border-slate-100">
+                                                    <tr>
+                                                        <th className="p-3 pl-5 text-[9px] font-black text-slate-400 uppercase">Variable plantilla</th>
+                                                        <th className="p-3 pr-5 text-[9px] font-black text-slate-400 uppercase">Columna CSV</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-50">
+                                                    {requiredTemplateVars.map((v) => (
+                                                        <tr key={v}>
+                                                            <td className="p-3 pl-5">
+                                                                <span className="font-mono text-[11px] font-bold text-slate-700">{`{${v}}`}</span>
+                                                            </td>
+                                                            <td className="p-3 pr-5">
+                                                                <Select
+                                                                    value={templateVarToHeader[v] || ''}
+                                                                    onValueChange={(val) => setTemplateVarToHeader(p => ({ ...p, [v]: val || '' }))}
+                                                                >
+                                                                    <SelectTrigger className="w-full h-10 rounded-xl border-slate-200 bg-slate-50 font-bold text-slate-700">
+                                                                        <SelectValue placeholder="Selecciona columna" />
+                                                                    </SelectTrigger>
+                                                                    <SelectContent>
+                                                                        <SelectItem value="" className="text-slate-400 italic">Sin asociar</SelectItem>
+                                                                        {csvHeaders.map(h => (
+                                                                            <SelectItem key={h} value={h} className="font-medium">{h}</SelectItem>
+                                                                        ))}
+                                                                    </SelectContent>
+                                                                </Select>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ── PASO 5: PREVIEW FINAL ───────────────────────────────── */}
                     {step === 'preview' && (
                         <div className="space-y-6 animate-in fade-in zoom-in-95 duration-300">
                              <div className="bg-gradient-to-br from-indigo-600 to-indigo-800 rounded-3xl p-8 text-white shadow-2xl shadow-indigo-200 flex items-center justify-between overflow-hidden relative">
