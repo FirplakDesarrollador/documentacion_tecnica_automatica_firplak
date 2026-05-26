@@ -1,26 +1,12 @@
 import { dbQuery } from '@/lib/supabase'
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-} from '@/components/ui/table'
-import { Button } from '@/components/ui/button'
-import { Search, Image as ImageIcon } from 'lucide-react'
-import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
 import { UploadAssetButton } from '@/components/assets/UploadAssetButton'
-import { EditAssetDialog } from '@/components/assets/EditAssetDialog'
-import { DeleteAssetDialog } from '@/components/assets/DeleteAssetDialog'
-import { ViewAssetDialog } from '@/components/assets/ViewAssetDialog'
 import { IsometricAssociationDialog } from '@/components/assets/IsometricAssociationDialog'
 import { SmartIsometricSuggestionsDialog } from '@/components/assets/SmartIsometricSuggestionsDialog'
 import { SmartIsometricNormalizationDialog } from '@/components/assets/SmartIsometricNormalizationDialog'
 import { OrphanProductsDialog } from '@/components/assets/OrphanProductsDialog'
-
 import { ResourceSearch } from '@/components/assets/ResourceSearch'
+import { AssetsGallery } from '@/components/assets/AssetsGallery'
+import { getGroupedIsometricsAction } from '@/app/assets/actions'
 
 export default async function AssetsPage({
     searchParams: searchParamsPromise
@@ -32,8 +18,12 @@ export default async function AssetsPage({
     
     let whereClause = ''
     if (query) {
-        const safeQuery = query.replace(/'/g, "''")
-        whereClause = `WHERE name ILIKE '%${safeQuery}%' OR type ILIKE '%${safeQuery}%' OR file_path ILIKE '%${safeQuery}%'`
+        const keywords = query.split(/\s+/).filter(Boolean)
+        const escaped = keywords.map(k => `'%${k.replace(/'/g, "''")}%'`)
+        const conditions = `(${escaped.map(e => `name ILIKE ${e}`).join(' AND ')})
+            OR (${escaped.map(e => `type ILIKE ${e}`).join(' AND ')})
+            OR (${escaped.map(e => `file_path ILIKE ${e}`).join(' AND ')})`
+        whereClause = `WHERE ${conditions}`
     }
 
     const assets = await dbQuery(`
@@ -95,75 +85,14 @@ export default async function AssetsPage({
                 <div className="p-5 border-b border-slate-100 flex flex-wrap gap-4 items-center bg-slate-50/50">
                     <ResourceSearch />
                 </div>
-                <Table>
-                    <TableHeader className="bg-slate-50/50">
-                        <TableRow>
-                            <TableHead className="w-[100px] uppercase tracking-wider text-[10px] font-bold text-slate-500">Vista</TableHead>
-                            <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500">Categoría</TableHead>
-                            <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500">Identificador</TableHead>
-                            <TableHead className="w-[120px] text-right uppercase tracking-wider text-[10px] font-bold text-slate-500">Acciones</TableHead>
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {assets.length === 0 ? (
-                            <TableRow>
-                                <TableCell colSpan={4} className="h-24 text-center">
-                                    No se han subido Recursos aún.
-                                </TableCell>
-                            </TableRow>
-                        ) : (
-                            assets.map((asset: any) => {
-                                const isDefault = defaultNames.includes(asset.name)
-                                return (
-                                    <TableRow key={asset.id}>
-                                        <TableCell>
-                                            <ViewAssetDialog assetName={asset.name} assetUrl={asset.file_path}>
-                                                <div className="w-12 h-12 rounded-lg bg-slate-50 flex items-center justify-center overflow-hidden border border-slate-200 cursor-pointer hover:ring-2 hover:ring-indigo-500/50 hover:border-indigo-500 transition-all shadow-sm">
-                                                    {asset.file_path ? (
-                                                        <img 
-                                                            src={asset.file_path} 
-                                                            alt={asset.name} 
-                                                            className="max-w-full max-h-full object-contain p-1.5"
-                                                        />
-                                                    ) : (
-                                                        <ImageIcon className="h-5 w-5 text-slate-300" />
-                                                    )}
-                                                </div>
-                                            </ViewAssetDialog>
-                                        </TableCell>
-                                        <TableCell>
-                                            <Badge className="bg-slate-50 text-slate-600 ring-1 ring-slate-600/10 hover:bg-slate-50 text-[9px] px-1.5 py-0 font-bold uppercase tracking-tight">
-                                                {asset.type}
-                                            </Badge>
-                                        </TableCell>
-                                        <TableCell className="font-medium text-slate-800">
-                                            <div className="flex items-center gap-2">
-                                                {asset.name}
-                                                {isDefault && <Badge variant="secondary" className="text-[8px] h-4">Sistema</Badge>}
-                                                {asset.type?.toUpperCase() === 'ISOMETRIC' && asset.relation_count === 0 && (
-                                                    <Badge className="bg-rose-500 text-white border-none text-[8px] h-4 font-bold animate-pulse">HUÉRFANO</Badge>
-                                                )}
-                                            </div>
-                                        </TableCell>
-                                        <TableCell className="text-right flex items-center justify-end gap-1">
-                                            <EditAssetDialog 
-                                                assetId={asset.id} 
-                                                assetName={asset.name} 
-                                                isDefault={isDefault}
-                                            />
-                                            {!isDefault && (
-                                                <DeleteAssetDialog 
-                                                    assetId={asset.id} 
-                                                    assetName={asset.name} 
-                                                />
-                                            )}
-                                        </TableCell>
-                                    </TableRow>
-                                )
-                            })
-                        )}
-                    </TableBody>
-                </Table>
+                <AssetsGallery
+                    isometricRows={!query ? (await getGroupedIsometricsAction() || []) : []}
+                    icons={(assets || []).filter((a: any) => a.type?.toLowerCase() === 'icon')}
+                    logos={(assets || []).filter((a: any) => a.type?.toLowerCase() === 'logo')}
+                    allAssets={assets || []}
+                    defaultNames={defaultNames}
+                    searchQuery={query}
+                />
             </div>
         </div>
     )

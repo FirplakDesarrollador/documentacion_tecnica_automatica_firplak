@@ -20,12 +20,9 @@ export async function POST(request: Request) {
         const fileName = `${uuidv4()}.${ext}`
         const bucketPath = `assets/${fileName}`
 
-        // Determine type
-        let type = data.get('type') as string || ''
-        if (!type) {
-            type = 'icon'
-            if (ext.toLowerCase() === 'svg' || file.name.toLowerCase().includes('logo')) type = 'logo'
-        }
+        // Type and name from form data (always explicit in Phase 2)
+        const type = data.get('type') as string || 'icon'
+        const customName = (data.get('name') as string || '').trim()
 
         // Upload to Supabase Storage (bucket 'assets')
         const { error: storageError } = await supabase.storage
@@ -61,9 +58,10 @@ export async function POST(request: Request) {
             `)
         } else {
             // Create new DB record in Supabase
+            const assetName = customName || file.name.replace(`.${ext}`, '').replace(/'/g, "''")
             rows = await dbQuery(`
                 INSERT INTO public.assets (name, type, file_path)
-                VALUES ('${file.name.replace(`.${ext}`, '').replace(/'/g, "''")}', '${type}', '${filePath.replace(/'/g, "''")}')
+                VALUES ('${assetName.replace(/'/g, "''")}', '${type}', '${filePath.replace(/'/g, "''")}')
                 RETURNING id, name, type, file_path, created_at
             `)
         }

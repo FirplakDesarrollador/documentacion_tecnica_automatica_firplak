@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { MultiSelectSearchField } from "@/components/ui-custom/MultiSelectSearchField"
-import { Box, Image as ImageIcon, Loader2, CheckCircle2 } from "lucide-react"
+import { Box, Image as ImageIcon, Loader2, CheckCircle2, Search } from "lucide-react"
 import { 
     getFamiliesAction, 
     getReferencesByFamilyAction, 
@@ -79,6 +79,7 @@ export function IsometricAssociationDialog({
     const [selectedMeasures, setSelectedMeasures] = React.useState<string[]>([])
     const [selectedVersions, setSelectedVersions] = React.useState<string[]>([])
     const [selectedAssetId, setSelectedAssetId] = React.useState<string>("")
+    const [searchQuery, setSearchQuery] = React.useState("")
 
     const [blockingDiffFields, setBlockingDiffFields] = React.useState<string[]>([])
     const [confirmBlockingDiffs, setConfirmBlockingDiffs] = React.useState(false)
@@ -121,6 +122,7 @@ export function IsometricAssociationDialog({
             setSelectedMeasures([])
             setSelectedVersions([])
             setSelectedAssetId("")
+            setSearchQuery("")
             setReferences([])
             setMeasures([])
             setVersions([])
@@ -307,13 +309,21 @@ export function IsometricAssociationDialog({
         }
     }
 
+    const filteredAssets = assets.filter(a => {
+        if (!searchQuery.trim()) return true
+        const keywords = searchQuery.toLowerCase().split(/\s+/).filter(Boolean)
+        const name = a.name.toLowerCase()
+        const path = (a.file_path || '').toLowerCase()
+        return keywords.every(kw => name.includes(kw) || path.includes(kw))
+    })
+
     return (
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger 
                 render={trigger || (
                     <Button variant="outline" className="gap-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 shadow-sm transition-all h-10 px-4">
                         <Box className="h-4 w-4" />
-                        Isométricos
+                        Asociar isométricos
                     </Button>
                 )} 
             />
@@ -377,10 +387,24 @@ export function IsometricAssociationDialog({
                             </p>
                         </div>
 
-                        {/* Existing Assets List */}
+                        {/* Search Filter */}
                         {assets.length > 0 && (
+                            <div className="relative">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                                <input
+                                    type="text"
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    placeholder="Buscar isométrico..."
+                                    className="w-full h-10 pl-9 pr-3 rounded-xl border border-slate-200 bg-white text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                                />
+                            </div>
+                        )}
+
+                        {/* Existing Assets List */}
+                        {filteredAssets.length > 0 && (
                             <div className="grid grid-cols-1 gap-2 max-h-[180px] overflow-y-auto pr-1">
-                                {assets.map((asset) => (
+                                {filteredAssets.map((asset) => (
                                     <div 
                                         key={asset.id}
                                         onClick={() => setSelectedAssetId(asset.id)}
@@ -410,6 +434,11 @@ export function IsometricAssociationDialog({
                                         {selectedAssetId === asset.id && <CheckCircle2 className="h-5 w-5 text-indigo-500" />}
                                     </div>
                                 ))}
+                            </div>
+                        )}
+                        {assets.length > 0 && filteredAssets.length === 0 && (
+                            <div className="text-center py-6 text-sm text-slate-400">
+                                No se encontraron isométricos con ese nombre.
                             </div>
                         )}
                     </div>

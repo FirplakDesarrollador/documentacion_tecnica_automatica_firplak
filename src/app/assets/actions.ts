@@ -115,6 +115,47 @@ export async function getAssetsByTypeAction(type: string) {
     `) || []
 }
 
+export interface IsometricGroupRow {
+    id: string
+    name: string
+    type: string
+    file_path: string
+    tags: string | null
+    created_at: string
+    updated_at: string
+    relation_count: number
+    family_code: string | null
+    product_name: string | null
+}
+
+export async function getGroupedIsometricsAction() {
+    return await dbQuery(`
+        WITH asset_counts AS (
+            SELECT 
+                a.id,
+                (
+                    (SELECT COUNT(*) FROM public.product_references r WHERE r.isometric_asset_id::text = a.id::text) + 
+                    (SELECT COUNT(*) FROM public.product_versions v WHERE v.version_attrs->>'isometric_asset_id' = a.id::text)
+                ) as total_relations
+            FROM public.assets a
+            WHERE a.type = 'isometric'
+        )
+        SELECT 
+            a.*, 
+            ac.total_relations as relation_count,
+            pr.family_code,
+            pr.product_name
+        FROM public.assets a
+        JOIN asset_counts ac ON a.id = ac.id
+        LEFT JOIN public.product_references pr ON pr.isometric_asset_id::text = a.id::text
+        WHERE a.type = 'isometric'
+        ORDER BY 
+            pr.family_code NULLS LAST,
+            pr.product_name NULLS LAST,
+            a.name ASC
+    `) || []
+}
+
 export async function associateIsometricAction(data: {
     assetId: string,
     familyCodes: string[],
@@ -287,10 +328,11 @@ export async function deleteAssetAction(assetId: string) {
     return { success: true }
 }
 
-export async function updateAssetAction(assetId: string, data: { name?: string, file_path?: string }) {
+export async function updateAssetAction(assetId: string, data: { name?: string, file_path?: string, type?: string }) {
     const updates = []
     if (data.name) updates.push(`name = '${data.name.replace(/'/g, "''")}'`)
     if (data.file_path) updates.push(`file_path = '${data.file_path.replace(/'/g, "''")}'`)
+    if (data.type) updates.push(`type = '${data.type.replace(/'/g, "''")}'`)
     
     if (updates.length === 0) return { success: true }
 

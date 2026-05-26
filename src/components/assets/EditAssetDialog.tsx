@@ -25,7 +25,8 @@ import {
     Info,
     ChevronRight,
     AlertCircle,
-    Box
+    Box,
+    Layers
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
@@ -41,12 +42,16 @@ import { cn } from '@/lib/utils'
 interface Props {
     assetId: string;
     assetName: string;
+    assetType?: string;
     isDefault?: boolean;
     onUploadComplete?: (asset: any) => void;
 }
 
-export function EditAssetDialog({ assetId, assetName, isDefault, onUploadComplete }: Props) {
+const ASSET_TYPES = ['isometric', 'icon', 'logo']
+
+export function EditAssetDialog({ assetId, assetName, assetType, isDefault, onUploadComplete }: Props) {
     const [name, setName] = useState(assetName)
+    const [typeVal, setTypeVal] = useState(assetType || 'icon')
     const [isUpdating, setIsUpdating] = useState(false)
     const [open, setOpen] = useState(false)
     const [showRelationships, setShowRelationships] = useState(false)
@@ -56,6 +61,12 @@ export function EditAssetDialog({ assetId, assetName, isDefault, onUploadComplet
     const fileInputRef = useRef<HTMLInputElement>(null)
     const [selectedFile, setSelectedFile] = useState<File | null>(null)
     const router = useRouter()
+
+    useEffect(() => {
+        if (open) {
+            setTypeVal(assetType || 'icon')
+        }
+    }, [open, assetType])
 
     useEffect(() => {
         if (open && showRelationships) {
@@ -95,9 +106,11 @@ export function EditAssetDialog({ assetId, assetName, isDefault, onUploadComplet
             }
 
             const nameToUpdate = !isDefault && name !== assetName ? name : undefined
+            const typeChanged = !isDefault && typeVal !== assetType
+            const typeToUpdate = typeChanged ? typeVal : undefined
             
-            if (nameToUpdate || finalPath) {
-                await updateAssetAction(assetId, { name: nameToUpdate, file_path: finalPath })
+            if (nameToUpdate || finalPath || typeToUpdate) {
+                await updateAssetAction(assetId, { name: nameToUpdate, file_path: finalPath, type: typeToUpdate })
                 toast.success('Recurso actualizado con éxito')
                 setOpen(false)
                 router.refresh()
@@ -199,6 +212,10 @@ export function EditAssetDialog({ assetId, assetName, isDefault, onUploadComplet
                                         </p>
                                     )}
                                 </div>
+
+                                {!isDefault && (
+                                <TypeSelector typeVal={typeVal} onChange={setTypeVal} />
+                                )}
 
                                 <div className="space-y-2">
                                     <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Archivo Multimedia</Label>
@@ -417,4 +434,53 @@ export function EditAssetDialog({ assetId, assetName, isDefault, onUploadComplet
     )
 }
 
-import { Layers } from 'lucide-react'
+const ASSET_TYPE_OPTIONS = ['isometric', 'icon', 'logo']
+
+function TypeSelector({ typeVal, onChange }: { typeVal: string; onChange: (v: string) => void }) {
+    const [isCustom, setIsCustom] = useState(!ASSET_TYPE_OPTIONS.includes(typeVal))
+
+    return (
+        <div className="space-y-2">
+            <Label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Tipo de Recurso</Label>
+            {!isCustom ? (
+                <div className="flex gap-2">
+                    <select
+                        value={typeVal}
+                        onChange={(e) => {
+                            if (e.target.value === '__custom__') {
+                                setIsCustom(true)
+                                onChange('')
+                            } else {
+                                onChange(e.target.value)
+                            }
+                        }}
+                        className="flex-1 h-11 bg-slate-50 border border-slate-200 rounded-lg px-3 text-sm font-medium text-slate-900 focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                    >
+                        {ASSET_TYPE_OPTIONS.map(t => (
+                            <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+                        ))}
+                        <option value="__custom__">Otro...</option>
+                    </select>
+                </div>
+            ) : (
+                <div className="flex gap-2">
+                    <Input
+                        value={typeVal}
+                        onChange={(e) => onChange(e.target.value)}
+                        placeholder="Escribe el nuevo tipo..."
+                        className="flex-1 h-11 bg-slate-50 border-slate-200 focus:bg-white"
+                    />
+                    <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => { setIsCustom(false); onChange('icon') }}
+                        className="h-11 px-3 text-xs font-bold text-slate-500"
+                    >
+                        Cancelar
+                    </Button>
+                </div>
+            )}
+            <p className="text-[10px] text-slate-400">Si el tipo no está en la lista, selecciona "Otro..." y escríbelo.</p>
+        </div>
+    )
+}
