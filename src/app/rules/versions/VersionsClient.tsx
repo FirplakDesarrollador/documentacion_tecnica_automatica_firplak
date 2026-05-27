@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
-import { PlusCircle, Trash2, Search, ArrowLeft, Loader2, Save, Settings } from 'lucide-react'
+import { PlusCircle, Trash2, Search, ArrowLeft, Loader2, Save, Settings, X } from 'lucide-react'
 import Link from 'next/link'
 import { upsertVersionAction, deleteVersionAction, previewDeleteVersionAction } from './actions'
 import { toast } from 'sonner'
@@ -31,9 +31,30 @@ interface VersionEntry {
 
 interface VersionsClientProps {
     initialData: VersionEntry[]
+    productTypes: string[]
 }
 
-export default function VersionsClient({ initialData }: VersionsClientProps) {
+const OVERRIDE_FIELDS: { key: string; label: string; group: string; type: 'text' | 'number' | 'select'; options?: string[] }[] = [
+    { key: 'rh', label: 'Material RH', group: 'Material', type: 'select', options: ['NA', 'RH'] },
+    { key: 'bisagras', label: 'Bisagras', group: 'Material', type: 'text' },
+    { key: 'carb2', label: 'CARB2', group: 'Material', type: 'text' },
+    { key: 'canto_puertas', label: 'Canto Puertas', group: 'Material', type: 'text' },
+    { key: 'accessory_text', label: 'Accesorios', group: 'Material', type: 'text' },
+    { key: 'door_color_text', label: 'Color Puerta', group: 'Material', type: 'text' },
+    { key: 'armado_con_lvm', label: 'Armado con LVM', group: 'Material', type: 'text' },
+    { key: 'pur', label: 'PUR', group: 'Material', type: 'text' },
+    { key: 'special_label', label: 'Etiqueta Especial', group: 'Etiquetas', type: 'text' },
+    { key: 'version_label', label: 'Etiqueta de Versión', group: 'Etiquetas', type: 'text' },
+    { key: 'private_label_client_name', label: 'Cliente / Marca Propia', group: 'Marca Propia', type: 'text' },
+    { key: 'width_cm', label: 'Ancho (cm)', group: 'Dimensiones', type: 'number' },
+    { key: 'depth_cm', label: 'Fondo (cm)', group: 'Dimensiones', type: 'number' },
+    { key: 'height_cm', label: 'Alto (cm)', group: 'Dimensiones', type: 'number' },
+    { key: 'weight_kg', label: 'Peso (kg)', group: 'Dimensiones', type: 'number' },
+]
+
+const OVERRIDE_GROUPS = Array.from(new Set(OVERRIDE_FIELDS.map(f => f.group)))
+
+export default function VersionsClient({ initialData, productTypes }: VersionsClientProps) {
     const [data, setData] = useState<VersionEntry[]>(initialData)
     const [searchTerm, setSearchTerm] = useState('')
     const [isSaving, setIsSaving] = useState(false)
@@ -66,16 +87,23 @@ export default function VersionsClient({ initialData }: VersionsClientProps) {
 
     const handleSave = async (e: React.FormEvent) => {
         e.preventDefault()
-        if (!editingVersion?.version_code || !editingVersion?.version_description) {
-            toast.error("El código y la descripción son obligatorios")
+        const vc = editingVersion?.version_code || ''
+        if (!vc || !/^[A-Z0-9]{3}$/.test(vc)) {
+            toast.error("Código de versión inválido", {
+                description: "Debe tener exactamente 3 caracteres alfanuméricos (A-Z, 0-9), sin tildes ni caracteres especiales."
+            })
+            return
+        }
+        if (!editingVersion?.version_description) {
+            toast.error("La descripción es obligatoria")
             return
         }
 
         setIsSaving(true)
         try {
             const saved = await upsertVersionAction({
-                version_code: editingVersion.version_code,
-                version_description: editingVersion.version_description,
+                version_code: editingVersion.version_code!,
+                version_description: editingVersion.version_description!,
                 automatic_version_rules: editingVersion.automatic_version_rules,
                 status: editingVersion.status || 'ACTIVO',
                 product_types: editingVersion.product_types || [],
@@ -172,6 +200,7 @@ export default function VersionsClient({ initialData }: VersionsClientProps) {
                             <TableHead className="font-bold uppercase text-[10px] w-24">Código</TableHead>
                             <TableHead className="font-bold uppercase text-[10px]">Descripción / Accesorios</TableHead>
                             <TableHead className="font-bold uppercase text-[10px]">Reglas Automáticas</TableHead>
+                            <TableHead className="font-bold uppercase text-[10px]">Tipos de Producto</TableHead>
                             <TableHead className="font-bold uppercase text-[10px] w-20">Estado</TableHead>
                             <TableHead className="text-right font-bold uppercase text-[10px]">Acciones</TableHead>
                         </TableRow>
@@ -179,7 +208,7 @@ export default function VersionsClient({ initialData }: VersionsClientProps) {
                     <TableBody>
                         {filteredData.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={5} className="h-32 text-center text-muted-foreground italic">
+                                <TableCell colSpan={6} className="h-32 text-center text-muted-foreground italic">
                                     No se encontraron versiones.
                                 </TableCell>
                             </TableRow>
@@ -197,17 +226,30 @@ export default function VersionsClient({ initialData }: VersionsClientProps) {
                                         <TableCell className="text-slate-700 font-medium italic">{item.version_description}</TableCell>
                                         <TableCell>
                                             <div className="flex flex-wrap gap-1">
-                                                {rules?.rh && (
-                                                    <Badge variant="secondary" className="text-[9px] bg-amber-50 text-amber-700 border-amber-100">
-                                                        RH: {rules.rh}
-                                                    </Badge>
-                                                )}
-                                                {rules?.client_name && (
-                                                    <Badge variant="secondary" className="text-[9px] bg-blue-50 text-blue-700 border-blue-100">
-                                                        CLIENTE: {rules.client_name}
-                                                    </Badge>
-                                                )}
-                                                {!hasRules && <span className="text-[10px] text-slate-400 italic">Sin reglas</span>}
+                                                {hasRules
+                                                    ? Object.entries(rules).map(([key, val]) => {
+                                                        const field = OVERRIDE_FIELDS.find(f => f.key === key)
+                                                        const label = field?.label || key
+                                                        return (
+                                                            <Badge key={key} variant="secondary" className="text-[9px] bg-amber-50 text-amber-700 border-amber-100">
+                                                                {label}: {String(val)}
+                                                            </Badge>
+                                                        )
+                                                    })
+                                                    : <span className="text-[10px] text-slate-400 italic">Sin reglas</span>
+                                                }
+                                            </div>
+                                        </TableCell>
+                                        <TableCell>
+                                            <div className="flex flex-wrap gap-1">
+                                                {Array.isArray(item.product_types) && item.product_types.length > 0
+                                                    ? item.product_types.map(pt => (
+                                                        <Badge key={pt} variant="outline" className="text-[9px] bg-sky-50 text-sky-700 border-sky-200">
+                                                            {pt}
+                                                        </Badge>
+                                                    ))
+                                                    : <span className="text-[10px] text-slate-400 italic">Sin tipos</span>
+                                                }
                                             </div>
                                         </TableCell>
                                         <TableCell>
@@ -258,10 +300,14 @@ export default function VersionsClient({ initialData }: VersionsClientProps) {
                             <Label htmlFor="code" className="text-right">Código SKU</Label>
                             <Input 
                                 id="code" 
-                                className="col-span-3"
+                                className="col-span-3 font-mono font-bold tracking-widest"
                                 value={editingVersion?.version_code || ''} 
-                                onChange={(e) => setEditingVersion(prev => ({ ...prev!, version_code: e.target.value.toUpperCase() }))}
+                                onChange={(e) => {
+                                    const raw = e.target.value.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z0-9]/g, '').slice(0, 3)
+                                    setEditingVersion(prev => ({ ...prev!, version_code: raw }))
+                                }}
                                 placeholder="E.g. CHT, MRH, 001"
+                                maxLength={3}
                                 required
                                 disabled={!editingVersion?.isNew}
                             />
@@ -277,40 +323,118 @@ export default function VersionsClient({ initialData }: VersionsClientProps) {
                                 required
                             />
                         </div>
-                        
-                        <div className="border rounded-lg p-4 bg-slate-50 space-y-3">
-                            <div className="flex items-center gap-2 text-indigo-700 font-bold text-sm mb-2">
-                                <Settings className="h-4 w-4" />
-                                Reglas de Automatización (Opcional)
+
+                        <div className="grid gap-3">
+                            <Label className="text-xs font-bold text-indigo-800 uppercase tracking-wider">Tipos de Producto Asociados</Label>
+                            <div className="flex flex-wrap gap-3 p-3 bg-white rounded-xl border border-slate-200/50">
+                                {productTypes.length === 0 ? (
+                                    <span className="text-xs text-slate-400 italic">Cargando tipos...</span>
+                                ) : (
+                                    productTypes.map(pt => (
+                                        <label key={pt} className="flex items-center gap-2 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={(editingVersion?.product_types as string[] | undefined)?.includes(pt) || false}
+                                                onChange={() => {
+                                                    const current = (editingVersion?.product_types as string[]) || []
+                                                    setEditingVersion(prev => ({
+                                                        ...prev!,
+                                                        product_types: current.includes(pt)
+                                                            ? current.filter(t => t !== pt)
+                                                            : [...current, pt]
+                                                    }))
+                                                }}
+                                                className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                            />
+                                            <span className="text-xs font-medium text-slate-700">{pt}</span>
+                                        </label>
+                                    ))
+                                )}
                             </div>
-                            
-                            <div className="grid grid-cols-4 items-center gap-4">
-                                <Label className="text-right text-xs">Forzar RH</Label>
-                                <select 
-                                    className="col-span-3 h-9 px-3 py-1 text-sm border rounded-md"
-                                    value={editingVersion?.automatic_version_rules?.rh || ''}
-                                    onChange={(e) => setEditingVersion(prev => ({
-                                        ...prev!,
-                                        automatic_version_rules: { ...prev!.automatic_version_rules, rh: e.target.value || undefined }
-                                    }))}
+                        </div>
+                        
+                        <div className="border rounded-xl p-4 bg-white border-slate-200 space-y-4">
+                            <div className="flex items-center justify-between">
+                                <Label className="text-xs font-extrabold text-indigo-800 uppercase tracking-wider">Reglas de Automatización (Override por Versión)</Label>
+                                <select
+                                    className="text-xs h-8 px-2 border border-indigo-200 rounded-md bg-white text-indigo-700 font-medium"
+                                    value=""
+                                    onChange={(e) => {
+                                        const key = e.target.value
+                                        if (!key) return
+                                        const rules = editingVersion?.automatic_version_rules || {}
+                                        if (rules[key] !== undefined) return
+                                        const field = OVERRIDE_FIELDS.find(f => f.key === key)
+                                        let defaultVal = ''
+                                        if (field?.type === 'select' && field.options) defaultVal = field.options[0]
+                                        setEditingVersion(prev => ({
+                                            ...prev!,
+                                            automatic_version_rules: { ...(prev!.automatic_version_rules || {}), [key]: defaultVal }
+                                        }))
+                                    }}
                                 >
-                                    <option value="">No aplicar</option>
-                                    <option value="RH">FORZAR RH</option>
-                                    <option value="NA">FORZAR SIN RH (NA)</option>
+                                    <option value="">+ Agregar Override</option>
+                                    {OVERRIDE_GROUPS.map(group => (
+                                        <optgroup key={group} label={group}>
+                                            {OVERRIDE_FIELDS
+                                                .filter(f => f.group === group)
+                                                .filter(f => (editingVersion?.automatic_version_rules || {})[f.key] === undefined)
+                                                .map(f => (
+                                                    <option key={f.key} value={f.key}>{f.label}</option>
+                                                ))
+                                            }
+                                        </optgroup>
+                                    ))}
                                 </select>
                             </div>
-
-                            <div className="grid grid-cols-4 items-center gap-4">
-                                <Label className="text-right text-xs">Forzar Cliente</Label>
-                                <Input 
-                                    className="col-span-3 h-9"
-                                    value={editingVersion?.automatic_version_rules?.client_name || ''}
-                                    onChange={(e) => setEditingVersion(prev => ({
-                                        ...prev!,
-                                        automatic_version_rules: { ...prev!.automatic_version_rules, client_name: e.target.value.toUpperCase() || undefined }
-                                    }))}
-                                    placeholder="Nombre del cliente"
-                                />
+                            {Object.keys(editingVersion?.automatic_version_rules || {}).length === 0 && (
+                                <p className="text-[11px] text-slate-400 italic text-center py-2">
+                                    Sin overrides. Usa el selector de arriba para agregar reglas.
+                                </p>
+                            )}
+                            <div className="space-y-3">
+                                {Object.entries(editingVersion?.automatic_version_rules || {}).map(([key, value]) => {
+                                    const field = OVERRIDE_FIELDS.find(f => f.key === key)
+                                    if (!field) return null
+                                    return (
+                                        <div key={key} className="flex items-center gap-3 animate-in fade-in slide-in-from-left-2 duration-200">
+                                            <Label className="text-xs font-bold text-slate-600 w-36 shrink-0">{field.label}</Label>
+                                            {field.type === 'select' && field.options ? (
+                                                <select
+                                                    className="flex-1 h-9 px-2 border border-indigo-200 rounded-md bg-white text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                                                    value={String(value)}
+                                                    onChange={(e) => setEditingVersion(prev => ({
+                                                        ...prev!,
+                                                        automatic_version_rules: { ...(prev!.automatic_version_rules || {}), [key]: e.target.value }
+                                                    }))}
+                                                >
+                                                    {field.options.map(opt => (
+                                                        <option key={opt} value={opt}>{opt}</option>
+                                                    ))}
+                                                </select>
+                                            ) : (
+                                                <input
+                                                    type={field.type}
+                                                    className="flex-1 h-9 px-3 border border-indigo-200 rounded-md bg-white text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                                                    value={String(value)}
+                                                    onChange={(e) => setEditingVersion(prev => ({
+                                                        ...prev!,
+                                                        automatic_version_rules: { ...(prev!.automatic_version_rules || {}), [key]: e.target.value }
+                                                    }))}
+                                                />
+                                            )}
+                                            <button
+                                                type="button"
+                                                className="text-red-400 hover:text-red-600 text-lg leading-none px-1"
+                                                onClick={() => {
+                                                    const rules = { ...(editingVersion?.automatic_version_rules || {}) }
+                                                    delete rules[key]
+                                                    setEditingVersion(prev => ({ ...prev!, automatic_version_rules: rules }))
+                                                }}
+                                            ><X className="h-4 w-4" /></button>
+                                        </div>
+                                    )
+                                })}
                             </div>
                         </div>
 

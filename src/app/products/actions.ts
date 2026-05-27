@@ -624,6 +624,8 @@ export async function getUniquePropertiesAction() {
     const rhValues = await dbQuery(`SELECT DISTINCT ref_attrs->>'rh' as rh FROM public.product_references WHERE ref_attrs->>'rh' IS NOT NULL AND ref_attrs->>'rh' != '' ORDER BY ref_attrs->>'rh' ASC`) || []
     const cantoValues = await dbQuery(`SELECT DISTINCT ref_attrs->>'canto_puertas' as canto_puertas FROM public.product_references WHERE ref_attrs->>'canto_puertas' IS NOT NULL AND ref_attrs->>'canto_puertas' != '' ORDER BY ref_attrs->>'canto_puertas' ASC`) || []
     
+    const doorColorTextValues = await dbQuery(`SELECT DISTINCT ref_attrs->>'door_color_text' as door_color_text FROM public.product_references WHERE ref_attrs->>'door_color_text' IS NOT NULL AND ref_attrs->>'door_color_text' != '' ORDER BY ref_attrs->>'door_color_text' ASC`) || []
+    
     const versionLabelValues = await dbQuery(`SELECT DISTINCT version_label FROM public.product_versions WHERE version_label IS NOT NULL AND version_label != '' ORDER BY version_label ASC`) || []
     
     const colors = await dbQuery(`SELECT code_4dig as code_color, name_color_sap FROM public.colors ORDER BY code_4dig ASC`) || []
@@ -642,6 +644,7 @@ export async function getUniquePropertiesAction() {
         zoneHomes: zoneHomes.map((r: any) => r.zone_home),
         rh: ['NA', ...rhValues.map((r: any) => r.rh).filter((v: string) => v !== 'NA')],
         cantoPuertas: ['NA', ...cantoValues.map((r: any) => r.canto_puertas).filter((v: string) => v !== 'NA')],
+        doorColorTexts: ['NA', ...doorColorTextValues.map((r: any) => r.door_color_text).filter((v: string) => v !== 'NA')],
         versionLabels: ['NA', ...versionLabelValues.map((r: any) => r.version_label).filter((v: string) => v !== 'NA')],
         colors: colors.map((r: any) => ({ code: r.code_color, name: r.name_color_sap }))
     }

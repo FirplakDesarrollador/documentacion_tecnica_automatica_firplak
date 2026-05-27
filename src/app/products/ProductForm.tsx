@@ -60,6 +60,8 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
     const [glossaryDefinitions, setGlossaryDefinitions] = useState<Record<string, string>>({})
     const [resolvedTypeMissing, setResolvedTypeMissing] = useState<{key: string, value: string} | null>(null)
     const [hasBarcode, setHasBarcode] = useState(!!initialData?.barcode_text)
+    const [fieldSources, setFieldSources] = useState<Record<string, string>>({})
+    const [warnings, setWarnings] = useState<string[]>([])
     
     const [formData, setFormData] = useState({
         code: initialData?.code || '',
@@ -115,6 +117,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         zoneHomes: [] as string[],
         rh: [] as string[],
         cantoPuertas: [] as string[],
+        doorColorTexts: [] as string[],
         versionLabels: [] as string[]
     })
 
@@ -209,12 +212,6 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         }
     }
 
-    const handleManualProcess = () => {
-        handleCheckDupe(() => {
-            if (!isAnalyzed) setIsAnalyzed(true)
-        })
-    }
-
     // ── Validación Estricta de Formato SKU ──
     const validateSkuFormat = (code: string): string | null => {
         if (!code || !code.trim()) return 'El código es obligatorio.';
@@ -298,7 +295,8 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                     status: parsed.status || prev.status || 'ACTIVO',
                     armado_con_lvm: parsed.armado_con_lvm || prev.armado_con_lvm || '',
                     assembled_flag: (parsed.assembled_flag !== undefined) ? parsed.assembled_flag : prev.assembled_flag,
-                    version_label: parsed.version_label || prev.version_label || 'NA'
+                    version_label: parsed.version_label || prev.version_label || 'NA',
+                    door_color_text: parsed.door_color_text || prev.door_color_text || 'NA'
                 }))
 
                 // Marca propia calculada por versión (si existe en global_version_rules)
@@ -317,6 +315,13 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                 if (parsed.barcode_text) setHasBarcode(true)
                 if (!isAnalyzed) setIsAnalyzed(true)
                 setAnalysisSource((parsed as any)._source || 'parser')
+                setFieldSources(parsed.inheritance_sources || {})
+                if (parsed.warnings && parsed.warnings.length > 0) {
+                    setWarnings(parsed.warnings)
+                    parsed.warnings.forEach((w: string) => toast.warning(w))
+                } else {
+                    setWarnings([])
+                }
 
                 // Verificación de Familia
                 const familyExists = await checkFamilyExistsAction(formData.code)
@@ -479,6 +484,52 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                 {options.map(o => <option key={o} value={o}>{o}</option>)}
             </select>
         )
+    }
+
+    const SOURCE_LABELS: Record<string, string> = {
+        family: 'Familia',
+        version_rule: 'Versión',
+        version_code: 'Versión',
+        historic_sku: 'SKU',
+        historic_version: 'Versión',
+        historic_reference: 'Referencia',
+    }
+
+    const renderFormField = (name: string, options: string[], placeholder: string) => {
+        const source = fieldSources[name]
+        const isLocked = source && source !== 'sap_desc'
+
+        if (isLocked) {
+            const currentValue = String(formData[name as keyof typeof formData] || '')
+            return (
+                <div className="relative">
+                    <select
+                        className="flex h-10 w-full rounded-md border border-input bg-slate-100 px-3 py-2 text-sm text-slate-500 cursor-not-allowed opacity-75"
+                        value={currentValue}
+                        disabled
+                    >
+                        {currentValue && !options.includes(currentValue) && (
+                            <option value={currentValue}>{currentValue}</option>
+                        )}
+                        {options.map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400 bg-slate-200/80 px-1.5 py-0.5 rounded-sm uppercase">
+                        {SOURCE_LABELS[source] || source}
+                    </span>
+                </div>
+            )
+        }
+
+        return renderCreatableSelect(name, options, placeholder)
+    }
+
+    const isFieldLocked = (field: string): boolean => {
+        const source = fieldSources[field]
+        return !!source && source !== 'sap_desc'
+    }
+
+    const lockedInputClass = (field: string): string => {
+        return isFieldLocked(field) ? 'bg-slate-100 text-slate-500 cursor-not-allowed opacity-75' : ''
     }
 
     // Generación de Nombres en Tiempo Real
@@ -982,15 +1033,6 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
 
                             <div className="pt-2 flex justify-end gap-3">
                                 <Button 
-                                    variant="outline"
-                                    type="button" 
-                                    onClick={handleManualProcess}
-                                    disabled={readOnly}
-                                    className="border-indigo-200 text-indigo-700 hover:bg-indigo-50"
-                                >
-                                    Rellenar Manualmente
-                                </Button>
-                                <Button 
                                     type="button" 
                                     onClick={handleAutoProcess}
                                     disabled={readOnly}
@@ -1438,11 +1480,11 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Tipo de Producto</Label>
-                                            {renderCreatableSelect('product_type', datalistOptions.productTypes, 'TIPO DE PRODUCTO')}
+                                            {renderFormField('product_type', datalistOptions.productTypes, 'TIPO DE PRODUCTO')}
                                         </div>
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Nombre del Producto</Label>
-                                            {renderCreatableSelect('product_name', datalistOptions.productNames || [], 'NOMBRE DEL PRODUCTO')}
+                                            {renderFormField('product_name', datalistOptions.productNames || [], 'NOMBRE DEL PRODUCTO')}
                                         </div>
                                     </div>
 
@@ -1456,75 +1498,86 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                         </div>
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Línea</Label>
-                                            {renderCreatableSelect('line', datalistOptions.lines, 'LÍNEA')}
+                                            {renderFormField('line', datalistOptions.lines, 'LÍNEA')}
                                         </div>
                                     </div>
 
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Destino de Uso</Label>
-                                            {renderCreatableSelect('use_destination', datalistOptions.useDestinations, 'DESTINO DE USO')}
+                                            {renderFormField('use_destination', datalistOptions.useDestinations, 'DESTINO DE USO')}
                                         </div>
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Designación</Label>
-                                            {renderCreatableSelect('designation', datalistOptions.designations, 'DESIGNACIÓN')}
+                                            {renderFormField('designation', datalistOptions.designations, 'DESIGNACIÓN')}
                                         </div>
                                     </div>
 
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Medida Comercial</Label>
-                                            {renderCreatableSelect('commercial_measure', datalistOptions.commercialMeasures || [], 'MEDIDA COMERCIAL')}
+                                            {renderFormField('commercial_measure', datalistOptions.commercialMeasures || [], 'MEDIDA COMERCIAL')}
                                         </div>
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Canto Puertas</Label>
-                                            {renderCreatableSelect('canto_puertas', datalistOptions.cantoPuertas || [], 'CANTO PUERTAS')}
+                                            {renderFormField('canto_puertas', datalistOptions.cantoPuertas || [], 'CANTO PUERTAS')}
                                         </div>
                                     </div>
 
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Material / RH</Label>
-                                            {renderCreatableSelect('rh', datalistOptions.rh || [], 'MATERIAL / RH')}
+                                            {renderFormField('rh', datalistOptions.rh || [], 'MATERIAL / RH')}
                                         </div>
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Accesorios / Rieles</Label>
-                                            {renderCreatableSelect('accessory_text', datalistOptions.accessoryTexts || [], 'ACCESORIO/RIEL')}
+                                            {renderFormField('accessory_text', datalistOptions.accessoryTexts || [], 'ACCESORIO/RIEL')}
                                         </div>
                                     </div>
 
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Bisagras</Label>
-                                            {renderCreatableSelect('bisagras', datalistOptions.bisagras || [], 'BISAGRAS')}
+                                            {renderFormField('bisagras', datalistOptions.bisagras || [], 'BISAGRAS')}
                                         </div>
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">CARB2</Label>
-                                            {renderCreatableSelect('carb2', datalistOptions.carb2 || [], 'CARB2')}
+                                            {renderFormField('carb2', datalistOptions.carb2 || [], 'CARB2')}
                                         </div>
                                     </div>
 
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Zona</Label>
-                                            {renderCreatableSelect('zone_home', datalistOptions.zoneHomes || [], 'ZONA')}
+                                            {renderFormField('zone_home', datalistOptions.zoneHomes || [], 'ZONA')}
                                         </div>
                                     <div className="grid gap-2">
                                         <Label className="text-xs font-bold text-slate-500 uppercase">Etiqueta Especial</Label>
-                                        {renderCreatableSelect('special_label', datalistOptions.specialLabels || [], 'ETIQUETA ESPECIAL')}
+                                        {renderFormField('special_label', datalistOptions.specialLabels || [], 'ETIQUETA ESPECIAL')}
                                     </div>
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-4">
                                     <div className="grid gap-2">
                                         <Label className="text-xs font-bold text-slate-500 uppercase">Etiqueta de Versión</Label>
-                                        {renderCreatableSelect('version_label', datalistOptions.versionLabels || [], 'ETIQUETA DE VERSIÓN')}
+                                        {renderFormField('version_label', datalistOptions.versionLabels || [], 'ETIQUETA DE VERSIÓN')}
                                     </div>
                                     <div className="grid gap-2">
                                         <Label className="text-xs font-bold text-slate-500 uppercase">Color Puerta</Label>
-                                        <Input name="door_color_text" value={formData.door_color_text} onChange={handleChange} className="border-slate-200" disabled={readOnly} />
+                                        {renderFormField('door_color_text', datalistOptions.doorColorTexts || [], 'COLOR PUERTA')}
                                     </div>
                                 </div>
+
+                                {warnings.length > 0 && (
+                                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-2">
+                                        {warnings.map((w, i) => (
+                                            <div key={i} className="flex items-start gap-2 text-amber-800 text-xs">
+                                                <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                                                <span className="font-medium">{w}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
 
                                     <div className="pt-4 border-t border-slate-100 mt-2">
                                         <div className="flex flex-col lg:flex-row items-center justify-between gap-4">
@@ -1535,9 +1588,9 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                                         id="assembled_flag" 
                                                         checked={formData.assembled_flag} 
                                                         onCheckedChange={(c) => setFormData(p => ({ ...p, assembled_flag: !!c }))} 
-                                                        disabled={readOnly}
+                                                        disabled={readOnly || isFieldLocked('assembled_flag')}
                                                     />
-                                                    <Label htmlFor="assembled_flag" className="text-xs font-bold text-slate-700 cursor-pointer">Es Armado</Label>
+                                                    <Label htmlFor="assembled_flag" className={`text-xs font-bold ${isFieldLocked('assembled_flag') ? 'text-slate-400' : 'text-slate-700'} cursor-pointer`}>Es Armado</Label>
                                                 </div>
 
                                                 <div className="flex items-center space-x-2 border-l border-slate-200 pl-6">
@@ -1558,8 +1611,8 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                                             value={formData.barcode_text}
                                                             onChange={handleChange}
                                                             placeholder="Código..."
-                                                            className="w-32 h-8 text-xs border-indigo-200 focus:ring-indigo-500 bg-white"
-                                                            disabled={readOnly}
+                                                            className={`w-32 h-8 text-xs border-indigo-200 focus:ring-indigo-500 bg-white ${lockedInputClass('barcode_text')}`}
+                                                            disabled={readOnly || isFieldLocked('barcode_text')}
                                                         />
                                                     </div>
                                                 )}
@@ -1573,8 +1626,8 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                                             value={formData.armado_con_lvm}
                                                             onChange={handleChange}
                                                             placeholder="Ej: LVM SIKUANI"
-                                                            className="w-32 h-8 text-xs border-blue-200 focus:ring-blue-500 bg-white"
-                                                            disabled={readOnly}
+                                                            className={`w-32 h-8 text-xs border-blue-200 focus:ring-blue-500 bg-white ${lockedInputClass('armado_con_lvm')}`}
+                                                            disabled={readOnly || isFieldLocked('armado_con_lvm')}
                                                         />
                                                     </div>
                                                 )}
@@ -1756,25 +1809,25 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                     <div className="grid grid-cols-3 gap-4">
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Ancho (cm)</Label>
-                                            <Input type="number" step="0.1" name="width_cm" value={formData.width_cm} onChange={handleChange} className="border-orange-200 bg-orange-50/20" disabled={readOnly} />
+                                            <Input type="number" step="0.1" name="width_cm" value={formData.width_cm} onChange={handleChange} className={`border-orange-200 bg-orange-50/20 ${lockedInputClass('width_cm')}`} disabled={readOnly || isFieldLocked('width_cm')} />
                                         </div>
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Fondo (cm)</Label>
-                                            <Input type="number" step="0.1" name="depth_cm" value={formData.depth_cm} onChange={handleChange} className="border-orange-200 bg-orange-50/20" disabled={readOnly} />
+                                            <Input type="number" step="0.1" name="depth_cm" value={formData.depth_cm} onChange={handleChange} className={`border-orange-200 bg-orange-50/20 ${lockedInputClass('depth_cm')}`} disabled={readOnly || isFieldLocked('depth_cm')} />
                                         </div>
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Alto (cm)</Label>
-                                            <Input type="number" step="0.1" name="height_cm" value={formData.height_cm} onChange={handleChange} className="border-orange-200 bg-orange-50/20" disabled={readOnly} />
+                                            <Input type="number" step="0.1" name="height_cm" value={formData.height_cm} onChange={handleChange} className={`border-orange-200 bg-orange-50/20 ${lockedInputClass('height_cm')}`} disabled={readOnly || isFieldLocked('height_cm')} />
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Peso Bruto (kg)</Label>
-                                            <Input type="number" step="0.1" name="weight_kg" value={formData.weight_kg} onChange={handleChange} className="border-orange-200 bg-orange-50/20" disabled={readOnly} />
+                                            <Input type="number" step="0.1" name="weight_kg" value={formData.weight_kg} onChange={handleChange} className={`border-orange-200 bg-orange-50/20 ${lockedInputClass('weight_kg')}`} disabled={readOnly || isFieldLocked('weight_kg')} />
                                         </div>
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Apilamiento Max</Label>
-                                            <Input type="number" name="stacking_max" value={formData.stacking_max} onChange={handleChange} disabled={readOnly} />
+                                            <Input type="number" name="stacking_max" value={formData.stacking_max} onChange={handleChange} disabled={readOnly || isFieldLocked('stacking_max')} />
                                         </div>
                                     </div>
 
