@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { createProductAction, updateProductAction, getUniquePropertiesAction, parseProductCodeAction, translateAction, checkProductExistsAction, getDiagnosticInfoAction, getClientsAction, checkFamilyExistsAction, upsertFamilyAction, saveGlossaryTermsAction, upsertColorAction } from './actions'
+import { createProductAction, updateProductAction, getUniquePropertiesAction, parseProductCodeAction, translateAction, checkProductExistsAction, getDiagnosticInfoAction, getClientsAction, checkFamilyExistsAction, checkVersionExistsAction, upsertFamilyAction, saveGlossaryTermsAction, upsertColorAction } from './actions'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { getColorByNameAction, getRulesAction } from '@/app/rules/actions'
@@ -138,6 +138,35 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
     const [isNewColor, setIsNewColor] = useState(false)
     const [colorData, setColorData] = useState({ name: '' })
     const [colorSaved, setColorSaved] = useState(false)
+
+    const [isNewVersion, setIsNewVersion] = useState(false)
+    const [versionSaved, setVersionSaved] = useState(false)
+    const [versionData, setVersionData] = useState({
+        version_code: '',
+        version_description: '',
+        product_types: [] as string[],
+        automatic_version_rules: {} as Record<string, string>
+    })
+
+    const OVERRIDE_FIELDS: { key: string; label: string; group: string; type: 'text' | 'number' | 'select'; options?: string[] }[] = [
+        { key: 'rh', label: 'Material RH', group: 'Material', type: 'select', options: ['NA', 'RH'] },
+        { key: 'bisagras', label: 'Bisagras', group: 'Material', type: 'text' },
+        { key: 'carb2', label: 'CARB2', group: 'Material', type: 'text' },
+        { key: 'canto_puertas', label: 'Canto Puertas', group: 'Material', type: 'text' },
+        { key: 'accessory_text', label: 'Accesorios', group: 'Material', type: 'text' },
+        { key: 'door_color_text', label: 'Color Puerta', group: 'Material', type: 'text' },
+        { key: 'armado_con_lvm', label: 'Armado con LVM', group: 'Material', type: 'text' },
+        { key: 'pur', label: 'PUR', group: 'Material', type: 'text' },
+        { key: 'special_label', label: 'Etiqueta Especial', group: 'Etiquetas', type: 'text' },
+        { key: 'version_label', label: 'Etiqueta de Versi\u00f3n', group: 'Etiquetas', type: 'text' },
+        { key: 'private_label_client_name', label: 'Cliente / Marca Propia', group: 'Marca Propia', type: 'text' },
+        { key: 'width_cm', label: 'Ancho (cm)', group: 'Dimensiones', type: 'number' },
+        { key: 'depth_cm', label: 'Fondo (cm)', group: 'Dimensiones', type: 'number' },
+        { key: 'height_cm', label: 'Alto (cm)', group: 'Dimensiones', type: 'number' },
+        { key: 'weight_kg', label: 'Peso (kg)', group: 'Dimensiones', type: 'number' },
+    ]
+
+    const OVERRIDE_GROUPS = Array.from(new Set(OVERRIDE_FIELDS.map(f => f.group)))
 
     // Cargar reglas y opciones una vez
     useEffect(() => {
@@ -331,6 +360,27 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                         setColorData({ name: parsed.color_name || '' })
                     } else {
                         setIsNewColor(false)
+                    }
+                }
+
+                // Verificación de Versión
+                if (parsed.version_code) {
+                    const versionExists = await checkVersionExistsAction(parsed.version_code)
+                    if (!versionExists) {
+                        setIsNewVersion(true)
+                        const guessedTypes = formData.product_type ? [formData.product_type] : (parsed.product_type ? [parsed.product_type] : [])
+                        const prefillRules: Record<string, string> = {}
+                        if (parsed.rh && parsed.rh !== 'NA') prefillRules.rh = parsed.rh
+                        if (parsed.version_label && parsed.version_label !== 'NA') prefillRules.version_label = parsed.version_label
+                        if (parsed.private_label_client_name) prefillRules.private_label_client_name = parsed.private_label_client_name
+                        setVersionData({
+                            version_code: parsed.version_code || '',
+                            version_description: '',
+                            product_types: guessedTypes,
+                            automatic_version_rules: prefillRules
+                        })
+                    } else {
+                        setIsNewVersion(false)
                     }
                 }
 
@@ -557,6 +607,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                 ...formData, 
                 _newFamily: isNewFamily ? familyData : undefined,
                 _newColor: isNewColor ? colorData : undefined,
+                _newVersion: isNewVersion ? versionData : undefined,
                 private_label_client_name: effectivePrivateName || null,
                 private_label_logo_id: privateLabelData.logo_id
             };
@@ -686,6 +737,14 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                 return
             }
         }
+
+        if (isNewVersion && !versionSaved) {
+            toast.error("Configuración de versión pendiente", {
+                description: "Debes aplicar la nueva versión antes de guardar el producto."
+            })
+            return
+        }
+
         // Validación de Isométrico Obligatorio
         if (!formData.isometric_path || formData.isometric_path === '') {
             toast.error("El isométrico es obligatorio", {
@@ -1177,7 +1236,197 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                         </Card>
                     )}
 
+                    {isAnalyzed && isNewVersion && (
+                        <Card className={`${versionSaved ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'} border-2 shadow-lg animate-in fade-in zoom-in-95 duration-200 transition-colors`}>
+                            <CardHeader className={`pb-3 border-b ${versionSaved ? 'border-emerald-100' : 'border-amber-100'}`}>
+                                <CardTitle className={`text-xl font-bold ${versionSaved ? 'text-emerald-900' : 'text-amber-900'} flex items-center gap-2`}>
+                                    <AlertTriangle className={`w-5 h-5 ${versionSaved ? 'text-emerald-600' : 'text-amber-600'}`}/>
+                                    {versionSaved ? 'Configuraci\u00f3n de Versi\u00f3n Guardada' : `Nueva Versi\u00f3n (${versionData.version_code})`}
+                                </CardTitle>
+                                <CardDescription className={`${versionSaved ? 'text-emerald-800/80' : 'text-amber-800/80'} font-medium`}>
+                                    {versionSaved ? 'El c\u00f3digo de versi\u00f3n ha sido registrado en el diccionario global.' : 'Este c\u00f3digo de versi\u00f3n no existe en el diccionario. Debes registrarlo para poder crear el producto.'}
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="p-6 space-y-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div className="grid gap-2">
+                                        <Label className={`text-xs font-extrabold ${versionSaved ? 'text-emerald-800' : 'text-amber-800'} uppercase tracking-wider`}>{'Código de Versión *'}</Label>
+                                        <Input
+                                            placeholder="Ej: 001, A02, Z99"
+                                            value={versionData.version_code}
+                                            onChange={(e) => {
+                                                const raw = e.target.value.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z0-9]/g, '').slice(0, 3)
+                                                setVersionData(p => ({ ...p, version_code: raw }))
+                                                setVersionSaved(false)
+                                            }}
+                                            maxLength={3}
+                                            className={`${versionSaved ? 'border-emerald-200' : 'border-amber-200'} bg-white h-11 font-bold font-mono text-lg tracking-widest text-center focus:ring-blue-500`}
+                                            disabled={readOnly || versionSaved}
+                                            required
+                                        />
+                                    </div>
+                                    <div className="grid gap-2">
+                                        <Label className={`text-xs font-extrabold ${versionSaved ? 'text-emerald-800' : 'text-amber-800'} uppercase tracking-wider`}>{'Descripción de Versión *'}</Label>
+                                        <Input
+                                            placeholder="Ej: CHILEMAT, CROMO 2 LUCES, MRH"
+                                            value={versionData.version_description}
+                                            onChange={(e) => {
+                                                setVersionData(p => ({ ...p, version_description: e.target.value.toUpperCase() }))
+                                                setVersionSaved(false)
+                                            }}
+                                            className={`${versionSaved ? 'border-emerald-200' : 'border-amber-200'} bg-white h-11 focus:ring-blue-500`}
+                                            disabled={readOnly}
+                                            required
+                                        />
+                                    </div>
+                                </div>
 
+                                <div className="grid gap-2">
+                                    <Label className={`text-xs font-extrabold ${versionSaved ? 'text-emerald-800' : 'text-amber-800'} uppercase tracking-wider`}>Tipos de Producto Asociados</Label>
+                                    <div className="flex flex-wrap gap-3 p-3 bg-white/60 rounded-xl border border-slate-200/50">
+                                        {datalistOptions.productTypes.length === 0 ? (
+                                            <span className="text-xs text-slate-400 italic">Cargando tipos...</span>
+                                        ) : (
+                                            datalistOptions.productTypes.map(pt => (
+                                                <label key={pt} className="flex items-center gap-2 cursor-pointer">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={versionData.product_types.includes(pt)}
+                                                        onChange={() => {
+                                                            setVersionData(p => ({
+                                                                ...p,
+                                                                product_types: p.product_types.includes(pt)
+                                                                    ? p.product_types.filter(t => t !== pt)
+                                                                    : [...p.product_types, pt]
+                                                            }))
+                                                            setVersionSaved(false)
+                                                        }}
+                                                        disabled={readOnly || versionSaved}
+                                                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                                    />
+                                                    <span className="text-xs font-medium text-slate-700">{pt}</span>
+                                                </label>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="border rounded-xl p-4 bg-white/40 border-slate-200 space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <Label className="text-xs font-extrabold text-indigo-800 uppercase tracking-wider">{'Reglas de Automatización (Override por Versión)'}</Label>
+                                        <select
+                                            className="text-xs h-8 px-2 border border-indigo-200 rounded-md bg-white text-indigo-700 font-medium"
+                                            value=""
+                                            disabled={readOnly || versionSaved}
+                                            onChange={(e) => {
+                                                const key = e.target.value
+                                                if (!key) return
+                                                if (versionData.automatic_version_rules[key] !== undefined) return
+                                                const field = OVERRIDE_FIELDS.find(f => f.key === key)
+                                                let defaultVal = ''
+                                                if (field?.type === 'select' && field.options) defaultVal = field.options[0]
+                                                setVersionData(p => ({
+                                                    ...p,
+                                                    automatic_version_rules: { ...p.automatic_version_rules, [key]: defaultVal }
+                                                }))
+                                            }}
+                                        >
+                                            <option value="">+ Agregar Override</option>
+                                            {OVERRIDE_GROUPS.map(group => (
+                                                <optgroup key={group} label={group}>
+                                                    {OVERRIDE_FIELDS
+                                                        .filter(f => f.group === group)
+                                                        .filter(f => versionData.automatic_version_rules[f.key] === undefined)
+                                                        .map(f => (
+                                                            <option key={f.key} value={f.key}>{f.label}</option>
+                                                        ))
+                                                    }
+                                                </optgroup>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    {Object.keys(versionData.automatic_version_rules).length === 0 && (
+                                        <p className="text-[11px] text-slate-400 italic text-center py-2">
+                                            Sin overrides. Usa el selector de arriba para agregar reglas.
+                                        </p>
+                                    )}
+                                    <div className="space-y-3">
+                                        {Object.entries(versionData.automatic_version_rules).map(([key, value]) => {
+                                            const field = OVERRIDE_FIELDS.find(f => f.key === key)
+                                            if (!field) return null
+                                            return (
+                                                <div key={key} className="flex items-center gap-3 animate-in fade-in slide-in-from-left-2 duration-200">
+                                                    <Label className="text-xs font-bold text-slate-600 w-40 shrink-0">{field.label}</Label>
+                                                    {field.type === 'select' && field.options ? (
+                                                        <select
+                                                            className="flex-1 h-9 px-2 border border-indigo-200 rounded-md bg-white text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                                                            value={String(value)}
+                                                            disabled={readOnly || versionSaved}
+                                                            onChange={(e) => setVersionData(p => ({
+                                                                ...p,
+                                                                automatic_version_rules: { ...p.automatic_version_rules, [key]: e.target.value }
+                                                            }))}
+                                                        >
+                                                            {field.options.map(opt => (
+                                                                <option key={opt} value={opt}>{opt}</option>
+                                                            ))}
+                                                        </select>
+                                                    ) : (
+                                                        <input
+                                                            type={field.type}
+                                                            className="flex-1 h-9 px-3 border border-indigo-200 rounded-md bg-white text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                                                            value={String(value)}
+                                                            disabled={readOnly || versionSaved}
+                                                            onChange={(e) => setVersionData(p => ({
+                                                                ...p,
+                                                                automatic_version_rules: { ...p.automatic_version_rules, [key]: e.target.value }
+                                                            }))}
+                                                        />
+                                                    )}
+                                                    {!versionSaved && (
+                                                        <button
+                                                            type="button"
+                                                            className="text-red-400 hover:text-red-600 text-lg leading-none px-1"
+                                                            onClick={() => {
+                                                                const { [key]: _, ...rest } = versionData.automatic_version_rules
+                                                                setVersionData(p => ({ ...p, automatic_version_rules: rest }))
+                                                            }}
+                                                        >{'×'}</button>
+                                                    )}
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                </div>
+
+                                <div className="pt-4 flex justify-end">
+                                    {!readOnly && (
+                                        <Button
+                                            type="button"
+                                            onClick={() => {
+                                                const vc = versionData.version_code
+                                                if (!vc || !/^[A-Z0-9]{3}$/.test(vc)) {
+                                                    toast.error("C\u00f3digo de versi\u00f3n inv\u00e1lido", {
+                                                        description: "Debe tener exactamente 3 caracteres alfanum\u00e9ricos (A-Z, 0-9), sin tildes ni caracteres especiales."
+                                                    })
+                                                    return
+                                                }
+                                                if (!versionData.version_description.trim()) {
+                                                    toast.error("Por favor completa la descripci\u00f3n de la versi\u00f3n.")
+                                                    return
+                                                }
+                                                setVersionSaved(true)
+                                                toast.success("Versi\u00f3n registrada. Se guardar\u00e1 definitivamente al crear el producto.")
+                                            }}
+                                            className={`${versionSaved ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'} text-white font-bold px-8 shadow-md transition-all h-12 rounded-xl`}
+                                        >
+                                            {versionSaved ? 'ACTUALIZAR Y CONTINUAR' : 'APLICAR VERSI\u00d3N Y CONTINUAR'}
+                                        </Button>
+                                    )}
+                                </div>
+                            </CardContent>
+                        </Card>
+                    )}
 
                     {isAnalyzed && (
                         <>

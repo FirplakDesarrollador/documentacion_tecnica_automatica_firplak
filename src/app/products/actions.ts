@@ -5,6 +5,7 @@ import { Product } from '@prisma/client'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
 import { resetGlossaryCache, translateProductToEnglish } from '@/lib/engine/translator'
 import { parseProductCode } from '@/lib/engine/codeParser'
+import { upsertVersionAction } from '@/app/rules/versions/actions'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { GoogleGenAI } from '@google/genai'
@@ -97,6 +98,12 @@ export async function checkFamilyExists(code: string) {
 
 export async function checkFamilyExistsAction(code: string) {
     return await checkFamilyExists(code);
+}
+
+export async function checkVersionExistsAction(versionCode: string) {
+    if (!versionCode) return true
+    const rows = await dbQuery(`SELECT version_code FROM public.global_version_rules WHERE version_code = '${versionCode.replace(/'/g, "''")}' LIMIT 1`)
+    return rows && rows.length > 0
 }
 
 export async function upsertFamilyAction(data: any) {
@@ -312,6 +319,17 @@ export async function createProductAction(data: any) {
     if (data._newColor && (data.color_code || parsed.color_code)) {
         const cCode = data.color_code || parsed.color_code
         await upsertColorAction(cCode, data._newColor.name)
+    }
+
+    if (data._newVersion) {
+        await upsertVersionAction({
+            version_code: data._newVersion.version_code,
+            version_description: data._newVersion.version_description,
+            automatic_version_rules: data._newVersion.automatic_version_rules || {},
+            product_types: data._newVersion.product_types || [],
+            status: 'ACTIVO',
+            isNew: true
+        })
     }
 
     const { data: result, error } = await (supabaseServer as any).rpc('create_product_v6_transaction', { payload })
