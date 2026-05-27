@@ -162,10 +162,33 @@ export async function upsertColorAction(code: string, name: string) {
     return rows ? rows[0] : null
 }
 
-function buildCreateProductV6Payload(data: any, parsed: any, isPrivate: boolean, clientName: string | null, sap_description_recommended: string, final_name_es: string, final_name_en: string) {
+function buildCreateProductV6Payload(data: any, parsed: any, isPrivate: boolean, clientName: string | null, sap_description_recommended: string, final_name_es: string, final_name_en: string, existingRefAttrs: Record<string, any> = {}) {
     const normalizedPrivateName = (clientName && String(clientName).trim() !== '' && String(clientName).toUpperCase() !== 'NA')
         ? String(clientName).trim()
         : null
+
+    // ref_attrs = verdad de la referencia (solo del form + existente, SIN overrides de versión)
+    const refAttrs: Record<string, any> = {
+        carb2: data.carb2 ? normalizeCarb2(data.carb2) : (existingRefAttrs.carb2 || 'NA'),
+        bisagras: data.bisagras || (existingRefAttrs.bisagras || 'NA'),
+        canto_puertas: data.canto_puertas ? normalizeCanto(data.canto_puertas) : (existingRefAttrs.canto_puertas || 'NA'),
+        accessory_text: (data.accessory_text !== undefined && data.accessory_text !== '')
+            ? data.accessory_text : (existingRefAttrs.accessory_text || null),
+        rh: data.rh || (existingRefAttrs.rh || 'NA'),
+        assembled_flag: data.assembled_flag !== undefined
+            ? !!data.assembled_flag : (existingRefAttrs.assembled_flag || false),
+        product_type: data.product_type || (existingRefAttrs.product_type || null),
+        door_color_text: data.door_color_text || (existingRefAttrs.door_color_text || 'NA'),
+    }
+
+    // version_attrs = overrides del version-code (MRH) + GVR + marca propia
+    const versionAttrs: Record<string, any> = {};
+    if (isPrivate && normalizedPrivateName) {
+        versionAttrs.private_label_client_name = normalizedPrivateName;
+    }
+    if (parsed._version_overrides) {
+        Object.assign(versionAttrs, parsed._version_overrides);
+    }
 
     const payload: any = {
         reference: {
@@ -183,15 +206,7 @@ function buildCreateProductV6Payload(data: any, parsed: any, isPrivate: boolean,
             stacking_max: data.stacking_max ? parseInt(data.stacking_max) : null,
             isometric_path: data.isometric_path || null,
             isometric_asset_id: data.isometric_asset_id || null,
-            ref_attrs: {
-                carb2: normalizeCarb2(data.carb2 || parsed.carb2 || 'NA'),
-                bisagras: data.bisagras || parsed.bisagras || 'NA',
-                canto_puertas: normalizeCanto(data.canto_puertas),
-                accessory_text: data.accessory_text || null,
-                rh: data.rh || parsed.rh || 'NA',
-                assembled_flag: data.assembled_flag || parsed.assembled_flag ? true : false,
-                product_type: data.product_type || parsed.product_type || null
-            }
+            ref_attrs: refAttrs
         },
         version: {
             version_code: parsed.version_code,
@@ -199,9 +214,7 @@ function buildCreateProductV6Payload(data: any, parsed: any, isPrivate: boolean,
             validation_status: final_name_es && final_name_en ? 'ready' : 'needs_review',
             final_base_name_es: final_name_es,
             final_base_name_en: final_name_en,
-            version_attrs: (isPrivate && normalizedPrivateName)
-                ? { private_label_client_name: normalizedPrivateName }
-                : {}
+            version_attrs: versionAttrs
         },
         sku: {
             sku_complete: data.code,
@@ -270,6 +283,12 @@ export async function createProductAction(data: any) {
         door_color_text: data.door_color_text || 'NA'
     }
 
+    // Apply version overrides (MRH, GVR) so naming rules use the version-detected values
+    if (parsed._version_overrides && Object.keys(parsed._version_overrides).length > 0) {
+        Object.assign(workingProduct, parsed._version_overrides);
+        workingProduct.rh_flag = workingProduct.rh === 'RH';
+    }
+
     const evalResult = evaluateProductRules(workingProduct as any, rules)
     const final_name_es = evalResult.finalNameEs
     const sap_description_recommended = final_name_es.toUpperCase().substring(0, 40)
@@ -314,7 +333,25 @@ export async function createProductAction(data: any) {
         }
     }
 
-    const payload = buildCreateProductV6Payload(data, parsed, isPrivate, clientName, sap_description_recommended, final_name_es, final_name_en)
+    // Consultar ref_attrs existente para preservar la verdad de la referencia
+    let existingRefAttrs: Record<string, any> = {};
+    if (parsed.familia_code && parsed.ref_code) {
+        try {
+            const refRows = await dbQuery(
+                `SELECT ref_attrs FROM public.product_references 
+                 WHERE family_code = $1 AND reference_code = $2 LIMIT 1`,
+                [parsed.familia_code, parsed.ref_code]
+            );
+            if (refRows && refRows.length > 0) {
+                const raw = refRows[0].ref_attrs;
+                existingRefAttrs = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
+            }
+        } catch (e) {
+            console.error('createProductAction: error querying existing ref_attrs', e);
+        }
+    }
+
+    const payload = buildCreateProductV6Payload(data, parsed, isPrivate, clientName, sap_description_recommended, final_name_es, final_name_en, existingRefAttrs)
 
     if (data._newColor && (data.color_code || parsed.color_code)) {
         const cCode = data.color_code || parsed.color_code
@@ -363,6 +400,11 @@ export async function updateProductAction(id: string, data: any) {
         rh_flag: data.rh === 'RH' || parsed.rh === 'RH',
         rh: data.rh || parsed.rh || 'NA'
     }
+    // Apply version overrides (MRH, GVR) so naming rules use the version-detected values
+    if (parsed._version_overrides && Object.keys(parsed._version_overrides).length > 0) {
+        Object.assign(workingProduct, parsed._version_overrides);
+        workingProduct.rh_flag = workingProduct.rh === 'RH';
+    }
     const evalResult = evaluateProductRules(workingProduct as any, rules)
     const final_name_es = evalResult.finalNameEs
     const translateResult = await translateProductToEnglish(
@@ -386,6 +428,24 @@ export async function updateProductAction(id: string, data: any) {
         }
     }
 
+    // Consultar ref_attrs existente para preservar la verdad de la referencia
+    let existingRefAttrs: Record<string, any> = {};
+    if (parsed.familia_code && parsed.ref_code) {
+        try {
+            const refRows = await dbQuery(
+                `SELECT ref_attrs FROM public.product_references 
+                 WHERE family_code = $1 AND reference_code = $2 LIMIT 1`,
+                [parsed.familia_code, parsed.ref_code]
+            );
+            if (refRows && refRows.length > 0) {
+                const raw = refRows[0].ref_attrs;
+                existingRefAttrs = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
+            }
+        } catch (e) {
+            console.error('updateProductAction: error querying existing ref_attrs', e);
+        }
+    }
+
     const payload = buildCreateProductV6Payload(
         data,
         parsed,
@@ -393,7 +453,8 @@ export async function updateProductAction(id: string, data: any) {
         isPrivate ? clientNameRaw : null,
         final_name_es.toUpperCase().substring(0, 40),
         final_name_es,
-        final_name_en
+        final_name_en,
+        existingRefAttrs
     )
 
     // Handle new color if provided
@@ -866,6 +927,10 @@ export async function batchCreateColorVariantsAction(
             }
             
             const parsed = await parseProductCode(newSkuCode, workingProduct.sap_description, workingProduct.rh === 'RH')
+            if (parsed._version_overrides && Object.keys(parsed._version_overrides).length > 0) {
+                Object.assign(workingProduct, parsed._version_overrides);
+                workingProduct.rh_flag = workingProduct.rh === 'RH';
+            }
             const evalResult = evaluateProductRules(workingProduct as any, rules)
             const final_name_es = evalResult.finalNameEs
             const sap_description_recommended = final_name_es.toUpperCase().substring(0, 40)
@@ -880,6 +945,23 @@ export async function batchCreateColorVariantsAction(
             const clientNameRaw = originalProduct.private_label_client_name ? String(originalProduct.private_label_client_name).trim() : ''
             const isPrivate = clientNameRaw !== '' && clientNameRaw.toUpperCase() !== 'NA'
             
+            let batchExistingRefAttrs: Record<string, any> = {};
+            if (parsed.familia_code && parsed.ref_code) {
+                try {
+                    const refRows = await dbQuery(
+                        `SELECT ref_attrs FROM public.product_references 
+                         WHERE family_code = $1 AND reference_code = $2 LIMIT 1`,
+                        [parsed.familia_code, parsed.ref_code]
+                    );
+                    if (refRows && refRows.length > 0) {
+                        const raw = refRows[0].ref_attrs;
+                        batchExistingRefAttrs = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
+                    }
+                } catch (e) {
+                    console.error('batchCreateColorVariantsAction: error querying existing ref_attrs', e);
+                }
+            }
+
             const payload = buildCreateProductV6Payload(
                 workingProduct, 
                 parsed, 
@@ -887,7 +969,8 @@ export async function batchCreateColorVariantsAction(
                 isPrivate ? clientNameRaw : null, 
                 sap_description_recommended, 
                 final_name_es, 
-                final_name_en
+                final_name_en,
+                batchExistingRefAttrs
             )
             
             payload.sku.barcode_text = null

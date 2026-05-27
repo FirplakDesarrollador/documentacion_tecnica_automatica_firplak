@@ -134,7 +134,12 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
 
             for (const currentProduct of productsToExport) {
                 const productId = (currentProduct as any)?.id
-                const composed = productId ? await composeProductByIdAction(String(productId)) : null
+                let composed = productId ? await composeProductByIdAction(String(productId)) : null
+                // Reintento si la vista aún no refleja los datos (race condition)
+                if (!composed && productId) {
+                    await new Promise(r => setTimeout(r, 500));
+                    composed = await composeProductByIdAction(String(productId));
+                }
                 const exportProduct = composed || (currentProduct as any)
 
                 const assetIdsFromTemplate = (Array.isArray(elements) ? elements : [])

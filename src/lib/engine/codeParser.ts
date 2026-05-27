@@ -41,6 +41,7 @@ export interface ParsedCodeResult {
 
     inheritance_sources: Record<string, string>
     warnings: string[]
+    _version_overrides: Record<string, string>
 }
 
 function findBestMatch(text: string, options: string[]) {
@@ -105,7 +106,8 @@ export async function parseProductCode(
         status: 'ACTIVO',
         version_label: null,
         inheritance_sources: {},
-        warnings: []
+        warnings: [],
+        _version_overrides: {}
     }
 
     function setInheritance(field: string, value: any, source: string) {
@@ -168,6 +170,7 @@ export async function parseProductCode(
 
         if (result.version_code?.toUpperCase() === 'MRH') {
             result.rh = 'RH'
+            result._version_overrides.rh = 'RH';
             setInheritance('rh', 'RH', 'version_code');
         }
 
@@ -179,17 +182,18 @@ export async function parseProductCode(
                     const ver = verRows[0];
                     const rules = typeof ver.automatic_version_rules === 'string' ? JSON.parse(ver.automatic_version_rules) : (ver.automatic_version_rules || {});
 
-                    if (rules.rh) {
-                        result.rh = rules.rh;
-                        setInheritance('rh', rules.rh, 'version_rule');
-                    }
-                    if (rules.private_label_client_name) {
-                        result.private_label_client_name = rules.private_label_client_name;
-                        setInheritance('private_label_client_name', rules.private_label_client_name, 'version_rule');
-                    }
-                    if (rules.version_label) {
-                        result.version_label = rules.version_label;
-                        setInheritance('version_label', rules.version_label, 'version_rule');
+                    const GVR_FIELDS = [
+                        'rh', 'bisagras', 'carb2', 'canto_puertas', 'accessory_text',
+                        'door_color_text', 'armado_con_lvm', 'pur',
+                        'special_label', 'version_label', 'private_label_client_name',
+                        'width_cm', 'depth_cm', 'height_cm', 'weight_kg'
+                    ];
+                    for (const field of GVR_FIELDS) {
+                        if (rules[field] !== undefined && rules[field] !== null && rules[field] !== '') {
+                            (result as any)[field] = rules[field];
+                            result._version_overrides[field] = String(rules[field]);
+                            setInheritance(field, rules[field], 'version_rule');
+                        }
                     }
                 }
             } catch (e) {
