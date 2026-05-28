@@ -266,6 +266,19 @@ export async function executeAddAttrToFamilies(familyCodes: string[], attrKey: s
 }
 
 export async function previewRemoveAttrFromFamilies(familyCodes: string[], attrKey: string) {
+  const errors: string[] = [];
+
+  if (!attrKey || !attrKey.trim()) {
+    errors.push('Debes seleccionar un atributo a eliminar');
+  }
+  if (!familyCodes || familyCodes.length === 0) {
+    errors.push('No hay familias seleccionadas');
+  }
+
+  if (errors.length > 0) {
+    return { success: true, data: { is_valid: false, affected_count: 0, errors, families: [] } };
+  }
+
   const { data, error } = await (supabaseServer as any).rpc('rpc_preview_remove_attr_from_families', {
     p_family_codes: familyCodes,
     p_attr_key: attrKey
@@ -275,7 +288,21 @@ export async function previewRemoveAttrFromFamilies(familyCodes: string[], attrK
     return { success: false, error: error.message };
   }
 
-  return { success: true, data };
+  const rows = (data || []) as any[];
+
+  return {
+    success: true,
+    data: {
+      is_valid: true,
+      affected_count: rows.length,
+      errors: [],
+      families: rows.map((r: any) => ({
+        family_code: r.family_code,
+        total_refs: Number(r.total_refs),
+        refs_with_key: Number(r.refs_with_key),
+      })),
+    }
+  };
 }
 
 export async function executeRemoveAttrFromFamilies(familyCodes: string[], attrKey: string) {

@@ -370,13 +370,14 @@ export default function MassEditClient() {
                   <th className="p-2 border-b font-semibold text-slate-700">Manufactura</th>
                   <th className="p-2 border-b font-semibold text-slate-700">RH</th>
                   <th className="p-2 border-b font-semibold text-slate-700">Armado</th>
+                  <th className="p-2 border-b font-semibold text-slate-700 w-[240px]">Esquema</th>
                   <th className="p-2 border-b font-semibold text-slate-700 w-[200px]">Líneas</th>
                   {editField && editType === 'normal' && <th className="p-2 border-b font-semibold text-slate-700 bg-amber-50 text-amber-800 rounded-tr-md">Valor Actual ({editField})</th>}
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {families.length === 0 && !loading && (
-                  <tr><td colSpan={editField && editType === 'normal' ? 10 : 9} className="p-8 text-center text-slate-500">Haz clic en Buscar para cargar resultados</td></tr>
+                  <tr><td colSpan={editField && editType === 'normal' ? 11 : 10} className="p-8 text-center text-slate-500">Haz clic en Buscar para cargar resultados</td></tr>
                 )}
                 {families.map((f) => {
                   let currentValue = '';
@@ -395,15 +396,29 @@ export default function MassEditClient() {
                         />
                       </td>
                       <td className="p-2 font-mono font-medium text-slate-800">{f.family_code}</td>
-                      <td className="p-2 text-slate-600 max-w-[200px] truncate" title={f.family_name}>{f.family_name}</td>
+                      <td className="p-2 text-slate-600 max-w-[240px] whitespace-normal break-words">{f.family_name}</td>
                       <td className="p-2 text-slate-600">{f.product_type || '-'}</td>
-                      <td className="p-2 text-slate-600">{f.zone_home || '-'}</td>
-                      <td className="p-2 text-slate-600">{f.manufacturing_process || '-'}</td>
+                      <td className="p-2 text-slate-600 max-w-[140px] whitespace-normal break-words">{f.zone_home || '-'}</td>
+                      <td className="p-2 text-slate-600 max-w-[200px] whitespace-normal break-words">{f.manufacturing_process || '-'}</td>
                       <td className="p-2 text-center">
                         <span className={`inline-block w-5 h-5 rounded-full ${f.rh_default ? 'bg-green-500' : 'bg-slate-200'}`} />
                       </td>
                       <td className="p-2 text-center">
                         <span className={`inline-block w-5 h-5 rounded-full ${f.assembled_default ? 'bg-green-500' : 'bg-slate-200'}`} />
+                      </td>
+                      <td className="p-2 py-3">
+                        <div className="flex items-start gap-1 flex-wrap max-w-[300px] min-h-[26px]">
+                          {(f.ref_attrs_schema && typeof f.ref_attrs_schema === 'object' && !Array.isArray(f.ref_attrs_schema)
+                            ? Object.keys(f.ref_attrs_schema)
+                            : []
+                          ).length > 0 ? (
+                            Object.keys(f.ref_attrs_schema).map(k => (
+                              <span key={k} className="px-1.5 py-0.5 bg-indigo-100 text-indigo-800 rounded text-[10px] font-medium whitespace-nowrap">{k}</span>
+                            ))
+                          ) : (
+                            <span className="text-slate-300 text-[10px] italic">Sin esquema</span>
+                          )}
+                        </div>
                       </td>
                       <td className="p-2">
                         <div className="flex items-center gap-1 flex-wrap">
@@ -678,6 +693,40 @@ export default function MassEditClient() {
                       </div>
                     )}
                   </div>
+
+                  {previewData.schemaAction === 'remove' && Array.isArray(previewData.families) && previewData.families.length > 0 && (
+                    <div className="bg-white p-4 rounded-lg border">
+                      <h4 className="font-semibold text-slate-700 mb-3 flex items-center gap-2">
+                        <Layers className="w-4 h-4 text-amber-500" />
+                        Desglose por Familia
+                      </h4>
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-slate-50">
+                          <tr>
+                            <th className="p-2 border-b font-semibold text-slate-600">Familia</th>
+                            <th className="p-2 border-b font-semibold text-slate-600 text-right">Referencias Totales</th>
+                            <th className="p-2 border-b font-semibold text-slate-600 text-right">Con este atributo</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {previewData.families.map((f: any) => (
+                            <tr key={f.family_code} className="hover:bg-slate-50">
+                              <td className="p-2 font-mono font-medium text-slate-800">{f.family_code}</td>
+                              <td className="p-2 text-right text-slate-600">{f.total_refs}</td>
+                              <td className="p-2 text-right">
+                                <span className={`font-medium ${Number(f.refs_with_key) > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                                  {f.refs_with_key}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <p className="text-xs text-slate-400 mt-2">
+                        Se eliminará el atributo <strong>{previewData.attrKey}</strong> del esquema y de todas las referencias de las familias seleccionadas.
+                      </p>
+                    </div>
+                  )}
                 </>
               )}
             </div>
