@@ -1,4 +1,4 @@
-import { Product, Rule } from '@prisma/client'
+import { Product, Rule } from '@/generated/prisma/client'
 
 export interface EvaluationTrace {
     ruleId: string

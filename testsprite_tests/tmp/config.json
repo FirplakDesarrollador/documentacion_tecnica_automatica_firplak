@@ -1,0 +1,19 @@
+{
+  "status": "commited",
+  "type": "frontend",
+  "scope": "codebase",
+  "localEndpoint": "http://localhost:3000",
+  "loginUser": "oswaldo.rivera@firplak.com",
+  "loginPassword": "Junio2026*+-",
+  "executionArgs": {
+    "projectName": "Proyecto IA - Documentacion tecnica automatica",
+    "projectPath": "C:\\Users\\oswaldo.rivera\\Desktop\\Proyecto IA - Documentacion tecnica automatica",
+    "testIds": [],
+    "additionalInstruction": "Ejecutar todas las pruebas frontend en modo producción. Usa las credenciales del .env para login.",
+    "serverMode": "production",
+    "envs": {
+      "API_KEY": "sk-user-TD5OAmc1R57E0O2UjX7QtzSDvI4WthdTNWwfSfu48nOrkllLLKlRB9cqMlf6cuYKm8qO25_w0eJN9i8tqqMCNx032zvn8M6gTCgCqKvrh1xKAiHNB1XVAe9qB41JDIXGbyA"
+    }
+  },
+  "serverPort": 64162
+}

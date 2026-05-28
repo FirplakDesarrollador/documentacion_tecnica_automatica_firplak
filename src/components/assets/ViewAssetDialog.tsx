@@ -32,16 +32,16 @@ export function ViewAssetDialog({ assetName, assetUrl, children }: Props) {
                     </Button>
                 )} 
             />
-            <DialogContent className="sm:max-w-3xl p-0 overflow-hidden bg-slate-900 border-slate-800">
-                <DialogHeader className="p-4 bg-white/10 backdrop-blur-md absolute top-0 left-0 right-0 z-10 flex flex-row items-center justify-between space-y-0">
-                    <DialogTitle className="text-white font-medium truncate pr-8">
+            <DialogContent className="sm:max-w-3xl p-0 overflow-hidden bg-white">
+                <DialogHeader className="p-4 bg-slate-100 border-b border-slate-200 flex flex-row items-center justify-between space-y-0">
+                    <DialogTitle className="text-slate-800 font-medium truncate pr-8">
                         {assetName}
                     </DialogTitle>
                     <div className="flex items-center gap-2">
                         <a 
                             href={assetUrl} 
                             download={assetName}
-                            className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-white/20 text-white hover:bg-white/30 h-8 px-3"
+                            className="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-slate-800 text-white hover:bg-slate-700 h-8 px-3"
                         >
                             <Download className="h-4 w-4 mr-2" />
                             Descargar
@@ -49,15 +49,15 @@ export function ViewAssetDialog({ assetName, assetUrl, children }: Props) {
                     </div>
                 </DialogHeader>
                 
-                <div className="relative w-full min-h-[400px] max-h-[80vh] flex items-center justify-center p-12 pt-20">
+                <div className="relative w-full min-h-[400px] max-h-[80vh] flex items-center justify-center p-12 pt-20 bg-white">
                     <img 
                         src={assetUrl} 
                         alt={assetName} 
-                        className="max-w-full max-h-full object-contain shadow-2xl"
+                        className="max-w-full max-h-full object-contain shadow-[0_0_0_1px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.15)]"
                     />
                 </div>
                 
-                <div className="p-3 bg-white/5 text-[10px] text-white/40 text-center uppercase tracking-widest pointer-events-none">
+                <div className="p-3 bg-slate-100 text-[10px] text-slate-400 text-center uppercase tracking-widest pointer-events-none border-t border-slate-200">
                     Previsualización de Recurso
                 </div>
             </DialogContent>

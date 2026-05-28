@@ -1,7 +1,7 @@
 'use server'
 
 import { dbQuery, supabaseServer } from '@/lib/supabase'
-import { Product } from '@prisma/client'
+import { Product } from '@/generated/prisma/client'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
 import { resetGlossaryCache, translateProductToEnglish } from '@/lib/engine/translator'
 import { parseProductCode } from '@/lib/engine/codeParser'

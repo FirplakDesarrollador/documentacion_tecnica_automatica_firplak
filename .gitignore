@@ -44,3 +44,5 @@ next-env.d.ts
 
 # local agent memory
 /.gemini
+
+testsprite_tests\tmp\config.json

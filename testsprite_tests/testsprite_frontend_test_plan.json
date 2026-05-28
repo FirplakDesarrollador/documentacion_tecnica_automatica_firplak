@@ -1,0 +1,1894 @@
+[
+  {
+    "id": "TC001",
+    "title": "Sign in and reach the dashboard",
+    "description": "This test verifies that a valid user can sign in and arrive at the dashboard landing page.",
+    "category": "Authentication",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the dashboard is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify KPI cards are displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC002",
+    "title": "Create a product from a parsed SKU and save it",
+    "description": "This test verifies that a user can enter a SKU, review parsed product data, and save a new product successfully.",
+    "category": "Product Creation",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /products/new"
+      },
+      {
+        "type": "action",
+        "description": "Enter a valid SKU code"
+      },
+      {
+        "type": "action",
+        "description": "Review the parsed product attributes"
+      },
+      {
+        "type": "action",
+        "description": "Save the product"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the new product is created"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the saved product appears in the product view"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC003",
+    "title": "Generate documents for filtered products and download the export",
+    "description": "This test verifies that a user can filter products, choose a template, generate documents, and complete a bulk export download.",
+    "category": "Document Generation and Export",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the document generation page"
+      },
+      {
+        "type": "action",
+        "description": "Select a family filter"
+      },
+      {
+        "type": "action",
+        "description": "Select a reference filter"
+      },
+      {
+        "type": "action",
+        "description": "Enter a product search query"
+      },
+      {
+        "type": "action",
+        "description": "Choose a template"
+      },
+      {
+        "type": "action",
+        "description": "Select one or more products"
+      },
+      {
+        "type": "action",
+        "description": "Start document generation"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify generation progress is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify generated documents are available to download"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC004",
+    "title": "Create a product from SKU parsing and save it",
+    "description": "This test verifies that a user can create a new product, parse its SKU, review the generated naming fields, and save the product successfully.",
+    "category": "Document Generation and Export",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the new product form"
+      },
+      {
+        "type": "action",
+        "description": "Fill in a valid SKU into the SKU field"
+      },
+      {
+        "type": "action",
+        "description": "Trigger SKU parsing"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the product naming fields with valid bilingual values"
+      },
+      {
+        "type": "action",
+        "description": "Save the new product"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the new product is created"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the product details are displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC005",
+    "title": "Review pending validation items and open a product for fixing",
+    "description": "This test verifies that an operator can review pending validation issues and open a product edit workflow from the report.",
+    "category": "Pending Validation Report",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the link to view pending validation items"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a list of products with pending issues is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify at least one product can be opened for editing"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC006",
+    "title": "Review pending products and resolve a blocking issue",
+    "description": "This test verifies that a user can review incomplete products in the pending queue and open a product to resolve the issue before export.",
+    "category": "Document Generation and Export",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the pending validation view"
+      },
+      {
+        "type": "action",
+        "description": "Open a pending product for review"
+      },
+      {
+        "type": "action",
+        "description": "Update the missing required product information"
+      },
+      {
+        "type": "action",
+        "description": "Save the product"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the product no longer appears as blocked for validation"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the product is ready for export"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC007",
+    "title": "Preview and confirm a bulk product import",
+    "description": "This test verifies that an operator can upload a completed import file, review the preview, and confirm execution.",
+    "category": "Mass Product Import",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the link to open mass product import"
+      },
+      {
+        "type": "action",
+        "description": "Upload a completed import file"
+      },
+      {
+        "type": "action",
+        "description": "Review the import preview"
+      },
+      {
+        "type": "action",
+        "description": "Confirm the import execution"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify import results are displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the imported products are reflected in the results"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC008",
+    "title": "Generate bilingual product naming from a SKU",
+    "description": "This test verifies that SKU parsing leads to generated Spanish and English product names before saving.",
+    "category": "Product Creation",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /products/new"
+      },
+      {
+        "type": "action",
+        "description": "Enter a valid SKU code"
+      },
+      {
+        "type": "action",
+        "description": "Review the generated Spanish product name"
+      },
+      {
+        "type": "action",
+        "description": "Translate the product name to English"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify both language names are displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the product is ready to save"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC009",
+    "title": "Save a new bilingual product naming record",
+    "description": "This test verifies that a product manager can complete a new product with Spanish and English naming and save it successfully.",
+    "category": "Pending Validation Report",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the link to create a new product"
+      },
+      {
+        "type": "action",
+        "description": "Fill in a valid SKU into the SKU field"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the product name in Spanish"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the product name in English"
+      },
+      {
+        "type": "action",
+        "description": "Save the product"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a success confirmation is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the newly created product record is displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC010",
+    "title": "Download the mass import template",
+    "description": "This test verifies that an operator can start the bulk import workflow by downloading the provided template.",
+    "category": "Mass Product Import",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the link to open mass product import"
+      },
+      {
+        "type": "action",
+        "description": "Click the control to download the import template"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the template download action is available"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC011",
+    "title": "Identify critical pending issues in the validation report",
+    "description": "This test verifies that an operator can scan the pending report and distinguish critical from warning issues before continuing.",
+    "category": "Pending Validation Report",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the link to view pending validation items"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify validation severity indicators are displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify issue reason codes are displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC012",
+    "title": "Build and save a new template",
+    "description": "This test verifies that a template designer can create a new template, set its basic properties, place elements on the canvas, bind data fields, and save the template.",
+    "category": "Template Builder",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the template builder"
+      },
+      {
+        "type": "action",
+        "description": "Create a new template"
+      },
+      {
+        "type": "action",
+        "description": "Set the template name, dimensions, and orientation"
+      },
+      {
+        "type": "action",
+        "description": "Add an element to the canvas"
+      },
+      {
+        "type": "action",
+        "description": "Bind the element to a data field"
+      },
+      {
+        "type": "action",
+        "description": "Save the template"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the template is created"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the saved template appears in the builder"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC013",
+    "title": "Search references and apply a mass update",
+    "description": "This test verifies that an operator can search references by family code, select multiple results, and confirm a mass update that is reflected in the editor.",
+    "category": "Reference Editor",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /configuration/reference-editor"
+      },
+      {
+        "type": "action",
+        "description": "Search references by family code"
+      },
+      {
+        "type": "action",
+        "description": "Select multiple references"
+      },
+      {
+        "type": "action",
+        "description": "Update reference fields and JSONB attribute values"
+      },
+      {
+        "type": "action",
+        "description": "Confirm the mass update"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the selected references reflect the updated values"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC014",
+    "title": "View dashboard metrics and recent activity",
+    "description": "This test verifies that a signed-in user can review the dashboard overview content after login.",
+    "category": "Dashboard",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify KPI cards are displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify recent product activity is displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC015",
+    "title": "Upload an asset and manage its metadata",
+    "description": "This test verifies that a user can upload a multimedia asset, find it in the gallery, edit its metadata, and save the changes.",
+    "category": "Asset Library",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /assets"
+      },
+      {
+        "type": "action",
+        "description": "Upload a file with a name and type classification"
+      },
+      {
+        "type": "action",
+        "description": "View the asset in the gallery"
+      },
+      {
+        "type": "action",
+        "description": "Edit the asset metadata"
+      },
+      {
+        "type": "action",
+        "description": "Save the changes"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the uploaded asset appears with the updated metadata"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC016",
+    "title": "Search and mass update families",
+    "description": "This test verifies that a family manager can search for families, select multiple results, apply a mass update, and see the updated families reflected in the list.",
+    "category": "Family Management",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the family management page"
+      },
+      {
+        "type": "action",
+        "description": "Search for families using a code, name, line, or zone"
+      },
+      {
+        "type": "action",
+        "description": "Select multiple families"
+      },
+      {
+        "type": "action",
+        "description": "Apply a mass update"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the selected families are updated"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the updated families remain visible in the list"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC017",
+    "title": "Manage glossary terms with bilingual values",
+    "description": "This test verifies that a catalog manager can add a glossary term with Spanish and English values and save it.",
+    "category": "Glossary Manager",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the link to open the glossary manager"
+      },
+      {
+        "type": "action",
+        "description": "Add a new glossary term"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the Spanish value field"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the English value field"
+      },
+      {
+        "type": "action",
+        "description": "Set the term category"
+      },
+      {
+        "type": "action",
+        "description": "Set the term priority"
+      },
+      {
+        "type": "action",
+        "description": "Save the glossary term"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the new glossary term is displayed in the list"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC018",
+    "title": "Import a dataset and save it",
+    "description": "This test verifies that a user can import a CSV or Excel dataset, map columns, preview the rows, and save the dataset successfully.",
+    "category": "Datasets",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /datasets"
+      },
+      {
+        "type": "action",
+        "description": "Open the dataset import flow"
+      },
+      {
+        "type": "action",
+        "description": "Upload a valid CSV or Excel file"
+      },
+      {
+        "type": "action",
+        "description": "Configure the column schema mapping"
+      },
+      {
+        "type": "action",
+        "description": "Preview the imported rows"
+      },
+      {
+        "type": "action",
+        "description": "Save the dataset"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the dataset appears in the saved datasets list"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC019",
+    "title": "Edit an existing template and save changes",
+    "description": "This test verifies that a user can open an existing template, adjust its layout and element styling, and save the updates.",
+    "category": "Template Builder",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the template builder"
+      },
+      {
+        "type": "action",
+        "description": "Open an existing template"
+      },
+      {
+        "type": "action",
+        "description": "Reposition an element on the canvas"
+      },
+      {
+        "type": "action",
+        "description": "Update the element's visual properties"
+      },
+      {
+        "type": "action",
+        "description": "Save the template changes"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the template update is saved"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the edited template remains available"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC020",
+    "title": "Add a new color code",
+    "description": "This test verifies that a user can create a new SAP color entry and see it appear in the color list.",
+    "category": "Color Manager",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /configuration/colors"
+      },
+      {
+        "type": "action",
+        "description": "Add a new color code with a valid SAP name"
+      },
+      {
+        "type": "action",
+        "description": "Save the color entry"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the new color appears in the list"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the color list remains accessible"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC021",
+    "title": "Add a schema attribute to selected families",
+    "description": "This test verifies that a user can add a JSONB schema attribute across multiple families and confirm the change is applied.",
+    "category": "Family Management",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the family management page"
+      },
+      {
+        "type": "action",
+        "description": "Search for families using a code, name, line, or zone"
+      },
+      {
+        "type": "action",
+        "description": "Select multiple families"
+      },
+      {
+        "type": "action",
+        "description": "Add a schema attribute to the selected families"
+      },
+      {
+        "type": "action",
+        "description": "Confirm the attribute change"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the attribute is added to the selected families"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the updated schema attribute is visible"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC022",
+    "title": "Keep incomplete products visible before export",
+    "description": "This test verifies that incomplete products remain flagged in pending review until the required data is corrected.",
+    "category": "Pending Validation Report",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the link to view pending validation items"
+      },
+      {
+        "type": "action",
+        "description": "Open a product that has blocking issues"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify blocking validation issues are displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the product remains pending until issues are resolved"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC023",
+    "title": "Complete optional product details before saving",
+    "description": "This test verifies that a user can fill optional product attributes on the new product form and save the record.",
+    "category": "Product Creation",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /products/new"
+      },
+      {
+        "type": "action",
+        "description": "Enter a valid SKU code"
+      },
+      {
+        "type": "action",
+        "description": "Fill in optional product attributes"
+      },
+      {
+        "type": "action",
+        "description": "Save the product"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the product is created"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the saved product includes the optional details"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC024",
+    "title": "Preview a single product render before bulk export",
+    "description": "This test verifies that a user can open a single product preview, review the live render, and return with the preview available for export decisions.",
+    "category": "Document Generation and Export",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the document generation page"
+      },
+      {
+        "type": "action",
+        "description": "Open a single product preview"
+      },
+      {
+        "type": "action",
+        "description": "Review the live template rendering"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the single product preview is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the rendered document content is displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC025",
+    "title": "Add an attribute key to selected references",
+    "description": "This test verifies that an operator can search for references, select them, add a new attribute key, and save the change successfully.",
+    "category": "Reference Editor",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /configuration/reference-editor"
+      },
+      {
+        "type": "action",
+        "description": "Search references"
+      },
+      {
+        "type": "action",
+        "description": "Select references"
+      },
+      {
+        "type": "action",
+        "description": "Add an attribute key"
+      },
+      {
+        "type": "action",
+        "description": "Save the change"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the new attribute key is visible for the selected references"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC026",
+    "title": "Add a new private label client",
+    "description": "This test verifies that a user can create a client record with a logo and see it added to the client list.",
+    "category": "Client Management",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /configuration/clients"
+      },
+      {
+        "type": "action",
+        "description": "Add a new client with a logo and required details"
+      },
+      {
+        "type": "action",
+        "description": "Save the client"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the new client appears in the list"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC027",
+    "title": "Use a dashboard quick link to continue work",
+    "description": "This test verifies that a user can open a main module from the dashboard quick links.",
+    "category": "Dashboard",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the quick link to continue into the product creation workflow"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the product creation page is displayed"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC028",
+    "title": "Remove a schema attribute from selected families",
+    "description": "This test verifies that a user can remove a JSONB schema attribute across multiple families and confirm the change is applied.",
+    "category": "Family Management",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the family management page"
+      },
+      {
+        "type": "action",
+        "description": "Search for families using a code, name, line, or zone"
+      },
+      {
+        "type": "action",
+        "description": "Select multiple families"
+      },
+      {
+        "type": "action",
+        "description": "Remove a schema attribute from the selected families"
+      },
+      {
+        "type": "action",
+        "description": "Confirm the attribute removal"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the attribute is removed from the selected families"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the families still appear in the list"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC029",
+    "title": "Review import changes before execution",
+    "description": "This test verifies that an operator can inspect the proposed changes from a bulk import before choosing to execute them.",
+    "category": "Mass Product Import",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the link to open mass product import"
+      },
+      {
+        "type": "action",
+        "description": "Upload a completed import file"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a diff preview of proposed changes is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the execution control is available after preview"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC030",
+    "title": "Remove an attribute key from selected references",
+    "description": "This test verifies that an operator can search for references, select them, remove an attribute key, and confirm the update in the editor.",
+    "category": "Reference Editor",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /configuration/reference-editor"
+      },
+      {
+        "type": "action",
+        "description": "Search references"
+      },
+      {
+        "type": "action",
+        "description": "Select references"
+      },
+      {
+        "type": "action",
+        "description": "Remove an attribute key"
+      },
+      {
+        "type": "action",
+        "description": "Confirm the update"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the removed attribute key is no longer shown for the selected references"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC031",
+    "title": "Create a naming rule",
+    "description": "This test verifies that a user can add a new system rule in the configuration hub and see it listed among the rules.",
+    "category": "Configuration Hub",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /configuration"
+      },
+      {
+        "type": "action",
+        "description": "Create a new naming rule with valid values"
+      },
+      {
+        "type": "action",
+        "description": "Save the rule"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the new rule appears in the rules list"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC032",
+    "title": "Link an imported dataset to a template",
+    "description": "This test verifies that a user can review imported dataset data and complete the wizard to link the dataset to a template.",
+    "category": "Datasets",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /datasets"
+      },
+      {
+        "type": "action",
+        "description": "Open the dataset import flow"
+      },
+      {
+        "type": "action",
+        "description": "Upload a valid CSV or Excel file"
+      },
+      {
+        "type": "action",
+        "description": "Review the imported data"
+      },
+      {
+        "type": "action",
+        "description": "Link the dataset to a template through the wizard"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the dataset is linked to a template"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC033",
+    "title": "Edit a glossary term and toggle its active state",
+    "description": "This test verifies that a catalog manager can update an existing glossary term and change whether it is active.",
+    "category": "Glossary Manager",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the link to open the glossary manager"
+      },
+      {
+        "type": "action",
+        "description": "Open an existing glossary term for editing"
+      },
+      {
+        "type": "action",
+        "description": "Toggle the active state"
+      },
+      {
+        "type": "action",
+        "description": "Save the glossary changes"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the glossary term remains visible in the list"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the updated active state is reflected"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC034",
+    "title": "Search and delete an asset",
+    "description": "This test verifies that a user can browse the asset gallery, filter or search for an existing asset, delete it, and confirm the removal.",
+    "category": "Asset Library",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /assets"
+      },
+      {
+        "type": "action",
+        "description": "Browse the categorized asset tabs"
+      },
+      {
+        "type": "action",
+        "description": "Search or filter assets"
+      },
+      {
+        "type": "action",
+        "description": "Open an asset"
+      },
+      {
+        "type": "action",
+        "description": "Delete it"
+      },
+      {
+        "type": "action",
+        "description": "Confirm removal"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the asset is removed from the gallery"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC035",
+    "title": "Edit an existing color code",
+    "description": "This test verifies that a user can update an existing SAP color entry and see the saved changes reflected in the list.",
+    "category": "Color Manager",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /configuration/colors"
+      },
+      {
+        "type": "action",
+        "description": "Select an existing color from the list"
+      },
+      {
+        "type": "action",
+        "description": "Update the color details"
+      },
+      {
+        "type": "action",
+        "description": "Save the changes"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the updated color information is shown in the list"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC036",
+    "title": "Edit a naming rule",
+    "description": "This test verifies that a user can update an existing rule and see the revised values in the configuration list.",
+    "category": "Configuration Hub",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /configuration"
+      },
+      {
+        "type": "action",
+        "description": "Select an existing rule from the list"
+      },
+      {
+        "type": "action",
+        "description": "Update the rule values"
+      },
+      {
+        "type": "action",
+        "description": "Save the changes"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the updated rule is shown in the list"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC037",
+    "title": "Edit a client record",
+    "description": "This test verifies that a user can update an existing client record and see the saved details reflected.",
+    "category": "Client Management",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /configuration/clients"
+      },
+      {
+        "type": "action",
+        "description": "Select an existing client from the list"
+      },
+      {
+        "type": "action",
+        "description": "Update the client details"
+      },
+      {
+        "type": "action",
+        "description": "Save the changes"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the updated client information is shown in the list"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC038",
+    "title": "Review isometric association suggestions",
+    "description": "This test verifies that a user can view isometric groups by reference and run smart association suggestions to see proposed matches.",
+    "category": "Asset Library",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /assets"
+      },
+      {
+        "type": "action",
+        "description": "View isometric groups by reference"
+      },
+      {
+        "type": "action",
+        "description": "Run smart association suggestions"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify suggested matches are displayed for the selected isometric group"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC039",
+    "title": "Create a product by parsing SKU details",
+    "description": "This test verifies that a product manager can create a new product by entering SKU data and seeing the derived product attributes populated.",
+    "category": "Pending Validation Report",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the link to create a new product"
+      },
+      {
+        "type": "action",
+        "description": "Fill in a valid SKU into the SKU field"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify parsed product attributes are displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the product can be saved"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC040",
+    "title": "Delete a color code",
+    "description": "This test verifies that a user can remove a color entry after confirming the deletion and no longer see it in the list.",
+    "category": "Color Manager",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /configuration/colors"
+      },
+      {
+        "type": "action",
+        "description": "Select an existing color from the list"
+      },
+      {
+        "type": "action",
+        "description": "Delete the selected color"
+      },
+      {
+        "type": "action",
+        "description": "Confirm the deletion"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the deleted color no longer appears in the list"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC041",
+    "title": "Block saving when required product data is missing",
+    "description": "This test verifies that the product form prevents saving when required fields are incomplete and shows validation feedback.",
+    "category": "Product Creation",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /products/new"
+      },
+      {
+        "type": "action",
+        "description": "Attempt to save the product without completing required fields"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a validation error is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the product is not created"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC042",
+    "title": "Delete a glossary term with confirmation",
+    "description": "This test verifies that a catalog manager can remove a glossary term and confirm the deletion in the UI.",
+    "category": "Glossary Manager",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the link to open the glossary manager"
+      },
+      {
+        "type": "action",
+        "description": "Delete a glossary term"
+      },
+      {
+        "type": "action",
+        "description": "Confirm the deletion"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the deleted term is removed from the list"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC043",
+    "title": "Delete a naming rule",
+    "description": "This test verifies that a user can remove a configuration rule after confirming deletion and no longer see it in the list.",
+    "category": "Configuration Hub",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /configuration"
+      },
+      {
+        "type": "action",
+        "description": "Select an existing rule from the list"
+      },
+      {
+        "type": "action",
+        "description": "Delete the selected rule"
+      },
+      {
+        "type": "action",
+        "description": "Confirm the deletion"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the deleted rule no longer appears in the list"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC044",
+    "title": "Reject invalid login credentials",
+    "description": "This test verifies that invalid credentials are rejected and an authentication error is shown.",
+    "category": "Authentication",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with invalid@example.com"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with wrong-password"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify an authentication error message is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the dashboard is not displayed"
+      }
+    ],
+    "priority": "Low"
+  }
+]

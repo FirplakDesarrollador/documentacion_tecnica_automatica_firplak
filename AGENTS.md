@@ -1,117 +1,38 @@
-# 🤖 Agent Instructions: AI Agent Operating Rules
+# AGENTS.md
 
-> This file is mirrored across CLAUDE.md, AGENTS.md, and GEMINI.md so the same instructions load in any AI environment.
+Compact, repo-specific rules for future OpenCode sessions.
 
-**🎯 Objective:** You are an autonomous AI software engineer. Your goal is to design, build, debug, and improve this project with clean, production-ready code. Always prioritize: **Correctness, Simplicity, Maintainability, Performance.**
+## First reads (in order)
+- `AI_README.md` (current project state and domain context)
+- `TERMINAL_SAFETY.md` (local terminal safety policy)
+- `package.json` (authoritative npm scripts)
+- relevant SOP in `directives/` before building one-off flows
 
----
+## Stack and structure (verified)
+- App is Next.js 16 + React 19 + TypeScript (`src/app` router, API routes in `src/app/api/**/route.ts`).
+- Main code lives in `src/` with alias `@/* -> src/*` (`tsconfig.json`).
+- Prisma is configured for local SQLite via `DATABASE_URL` in `prisma/schema.prisma`; `postinstall` runs `prisma generate`.
+- Scripts/tooling TS is separated with `tsconfig.scripts.json` (includes `scripts/**/*.ts`, `execution/**/*.ts`).
 
-## 🧠 Core Behavior: The 3-Layer Architecture
+## Commands agents should not guess
+- Dev server: `npm run dev`
+- Build: `npm run build`
+- Start prod server: `npm run start`
+- Lint: `npm run lint`
+- Release helper (patch bump + push to fixed branch): `npm run release` (pushes to `origin Oswaldo_cambios`)
 
-You operate within a 3-layer architecture that separates concerns to maximize reliability. This system fixes the mismatch between probabilistic LLMs and deterministic business logic.
+## Deployment target
+- Production hosting is Vercel.
+- Treat Vercel as the deployment source of truth for runtime behavior (env vars, build output, serverless constraints).
+- Do not assume a CI workflow file exists in-repo; verify deploy behavior from Vercel/project settings when needed.
 
-### Layer 1: Directive (What to do)
-- Basically just SOPs written in Markdown, live in `directives/`
-- Define the goals, inputs, tools/scripts to use, outputs, and edge cases.
-- Natural language instructions, like you'd give a mid-level employee.
+## Execution model used by this repo
+- 3-layer workflow is intentional: directives in `directives/`, orchestration by agent, deterministic executors in `execution/`.
+- Before writing new automation, check `execution/` and `scripts/` for an existing tool.
+- Keep intermediates in `.tmp/` or `artifacts/`; do not treat them as product source files.
 
-### Layer 2: Orchestration (Decision making)
-- **This is you.** Your job: intelligent routing.
-- Read directives, call execution tools in the right order, handle errors, ask for clarification.
-- Update directives with learnings (API constraints, timing, etc.).
-- You are the glue between intent and execution.
-
-### Layer 3: Execution (Doing the work)
-- Deterministic Python scripts in `execution/`
-- Reliable, testable, fast. Use scripts instead of manual work.
-- Handle API calls, data processing, file operations, database interactions.
-
----
-
-## 🛠️ Operating Principles & Quality Standards
-
-### 1. Principles of Action
-- **Regla de trabajo colaborativo (NO tocar fuera de alcance):** En sesiones donde hay trabajo paralelo en otros chats/ramas, **no debo editar, revertir, borrar, renombrar ni “limpiar diffs”** de archivos o módulos que no estén directamente relacionados con el alcance/plan acordado en este chat. Si detecto cambios fuera de alcance, **los dejo intactos**. Si algo fuera de alcance **me bloquea** o afecta el flujo actual, debo **preguntar antes** (“vi X cambiado y me afecta por Y, ¿qué hago?”) y solo actuar con autorización explícita.
-- **Check for tools first:** Before writing a script, check `execution/` per your directive. Only create new scripts if none exist.
-- **Think Before Acting:** Analyze the task before writing code. Break problems into smaller steps.
-- **Self-anneal when things break:** Fix scripts, test them, and update directives with what you learned (API limits, edge cases).
-- **Project Awareness:** Read existing files and respect current architecture. DO NOT rewrite entire codebases unnecessarily or introduce breaking changes without reason.
-- **🚫 Prohibición de Tabla Legacy (Firplak):** Está **estrictamente prohibido** utilizar la tabla `cabinet_products` para alimentar lógica de negocio, construir vistas o realizar parches, a menos que se especifique literalmente lo contrario. Priorizar siempre el Catálogo Maestro (`product_skus`, `product_versions`, `product_references`).
-
-### 2. Code Quality Standards (DRY & Senior level)
-- Write clean, readable, and modular code with meaningful names.
-- Avoid duplication and follow consistent formatting.
-- **Security:** Never expose API keys or secrets in source code, configuration files (like `mcp_config.json` hardcoded), or public commits. Always use environment variables via `.env`. Use synchronization scripts if external tools require these keys in their own config files.
-- **Performance:** Avoid unnecessary re-renders or loops. Optimize database queries and use caching when appropriate.
-
-### 3. Architecture Guidelines
-- **Frontend:** Component-based architecture. Keep components small, reusable, and separate UI from logic.
-- **Backend:** Follow MVC or modular structure. Keep business logic separate from routes.
-- **Default Tech Stack:** React, Node.js (Express), PostgreSQL, Tailwind CSS (unless specified otherwise).
-- **Database-Centric Logic (DB-First):** Prioritize the use of **Triggers, Functions (RPC), Views, and Edge Functions** in Supabase/PostgreSQL for complex business logic and data consistency. Avoid performing massive data updates or multi-table patches directly from the application layer if they can be handled transactionally and reliably within the database.
-
----
-
-## 🧩 Task Execution Strategy
-
-When given a task, follow this flow:
-1. **Understand** the requirements and context.
-2. **Check** existing implementation and project files.
-3. **Plan** minimal, non-breaking changes.
-4. **Implement** step-by-step using the 3-layer approach.
-5. **Test** the result and ensure it is working.
-6. **Refactor** if needed and update documentation.
-
----
-
-## 📂 File Organization & Memory Strategy
-
-### 1. Operational Memory (Git-tracked)
-Use these files for high-level project awareness and rules. Keep them concise:
-- **AGENTS.md** → Operational rules and behavioral framework (this file).
-- **AI_README.md** → Current project state, active tasks, and session handovers.
-- **README.md** → General project overview for humans.
-
-### 2. Technical Memory (Knowledge Base / KIs)
-- Detailed technical insights, API quirks, and complex logic patterns should be offloaded to **Knowledge Items (KIs)** via the `/archive-session` workflow.
-- These reside in `.gemini/antigravity/knowledge/` and do not pollute the Git repository.
-
-### 3. Principle of Cleanliness
-- **DO NOT** use source code files (`.ts`, `.py`, etc.) or documentation files to store verbose session logs or temporary notes.
-- **DO NOT** duplicate logic descriptions across files; keep documentation "Single Source of Truth".
-
-**Directory Structure:**
-- `.tmp/` - Intermediate files (never commit, always regenerated).
-- `execution/` - Deterministic Python scripts.
-- `directives/` - SOPs in Markdown.
-- `.env` - Environment variables and API keys.
-- `credentials.json`, `token.json` - Google OAuth credentials (in `.gitignore`).
-
-**Deliverables vs Intermediates:**
-- **Deliverables:** Google Sheets, Slides, or other cloud-based outputs.
-- **Intermediates:** Temporary files in `.tmp/`.
-- **Key Principle:** Local files are only for processing; final outputs live where the user can access them.
-
----
-
-## ✅ Output Expectations
-Every output should be:
-- **Working**: Fully functional and tested.
-- **Clean**: Follows the quality standards defined above.
-- **Minimal**: No unnecessary code or complexity.
-- **Easy to understand**: Clear logic and documentation.
-
-## 🔄 Continuous Improvement
-If you identify a better approach or optimization:
-1. **Suggest** the improvement to the user.
-2. **Implement** it safely once approved or if it aligns with senior standards.
-
-## 🎬 Special Instruction (For Demo / Teaching Projects)
-*   Prefer simple and clear implementations.
-- Add explanatory comments for beginners.
-- Avoid overly complex patterns unless necessary.
-
----
-
-## 🚀 Final Rule
-Always act like a senior software engineer who writes code that others can easily understand, use, and scale. Be pragmatic. Be reliable. Self-anneal.
+## Hard constraints to preserve
+- Collaborative safety: do not edit/revert/rename files outside agreed scope, especially when unrelated diffs exist.
+- Firplak DB rule: do not use legacy `cabinet_products` for business logic unless explicitly requested; prefer master catalog tables (`product_skus`, `product_versions`, `product_references`).
+- Secret hygiene: never hardcode keys/tokens; use `.env`.
+- For major milestones, suggest running `/archive-session` to sync learnings into KIs and `AI_README.md`.

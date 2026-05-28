@@ -73,6 +73,44 @@ function extractRequiredTemplateFields(requiredElements: TemplateElement[]) {
     return requiredDataFields
 }
 
+/**
+ * Builds a scope-aware map of required template fields.
+ * Each field tracks whether it's globally required (any Firplak template)
+ * or only required for specific private-label clients.
+ */
+function buildRequiredFieldMap(templates: any[]): Map<string, { global: boolean; byClient: Set<string> }> {
+    const map = new Map<string, { global: boolean; byClient: Set<string> }>()
+
+    for (const t of templates) {
+        let elements: TemplateElement[] = []
+        try {
+            elements = JSON.parse(t.elements_json || '[]')
+        } catch {
+            continue
+        }
+
+        const fields = extractRequiredTemplateFields(elements)
+        const brandScope = String(t.brand_scope || 'firplak')
+        const clientName = t.private_label_client_name
+            ? String(t.private_label_client_name).trim()
+            : undefined
+
+        for (const field of fields) {
+            if (!map.has(field)) {
+                map.set(field, { global: false, byClient: new Set() })
+            }
+            const entry = map.get(field)!
+            if (brandScope === 'firplak') {
+                entry.global = true
+            } else if (brandScope === 'private_label' && clientName) {
+                entry.byClient.add(clientName.toUpperCase())
+            }
+        }
+    }
+
+    return map
+}
+
 function resolveTemplateFieldValue(product: any, field: string) {
     if (field === 'isometric') {
         return product?.isometric_asset_id || product?.isometric_path
@@ -142,9 +180,9 @@ function buildNamingInputReasons(product: any, activeVariableIds: string[]): Pen
 async function validateProductPending(params: {
     product: any
     rules: any[]
-    requiredTemplateFields: Set<string>
+    requiredFieldMap: Map<string, { global: boolean; byClient: Set<string> }>
 }): Promise<{ reasons: PendingReason[]; severity: PendingSeverity | null }> {
-    const { product, rules, requiredTemplateFields } = params
+    const { product, rules, requiredFieldMap } = params
 
     if (isInactiveOrNotExportable(product)) {
         return { reasons: [], severity: null }
@@ -152,16 +190,20 @@ async function validateProductPending(params: {
 
     const reasons: PendingReason[] = []
 
-    // A) Template required fields
+    // A) Template required fields (scope-aware: fields may only apply to specific clients)
     const missingTemplateFields: string[] = []
-    requiredTemplateFields.forEach(field => {
+    for (const [field, requirement] of requiredFieldMap) {
+        const productClientName = String(product?.private_label_client_name || '').trim().toUpperCase()
+        const shouldCheck = requirement.global || requirement.byClient.has(productClientName)
+        if (!shouldCheck) continue
+
         const value = resolveTemplateFieldValue(product, field)
         if (field === 'isometric') {
             if (isPlaceholderValue(value)) missingTemplateFields.push(field)
         } else {
             if (isNullishOrEmpty(value)) missingTemplateFields.push(field)
         }
-    })
+    }
 
     if (missingTemplateFields.length > 0) {
         const hasIsometric = missingTemplateFields.includes('isometric')
@@ -254,27 +296,17 @@ export async function getPendingSummary(): Promise<PendingSummary> {
 
     const activeTemplates =
         (await dbQuery(`
-            SELECT id, elements_json
+            SELECT id, elements_json, brand_scope, private_label_client_name
             FROM public.plantillas_doc_tec
             WHERE active = true
         `)) || []
 
-    const allElements: TemplateElement[] = []
-    activeTemplates.forEach((t: any) => {
-        try {
-            const els = JSON.parse(t.elements_json || '[]')
-            allElements.push(...els)
-        } catch (e) {
-            console.error(`Error parsing elements for template ${t.id}:`, e)
-        }
-    })
-
-    const requiredTemplateFields = extractRequiredTemplateFields(allElements)
+    const requiredFieldMap = buildRequiredFieldMap(activeTemplates)
 
     const evaluatedProducts = products.filter((p: any) => !isInactiveOrNotExportable(p))
 
     const perProduct = await mapWithConcurrency(evaluatedProducts, 25, async (product: any) => {
-        const { reasons, severity } = await validateProductPending({ product, rules, requiredTemplateFields })
+        const { reasons, severity } = await validateProductPending({ product, rules, requiredFieldMap })
         return { product, reasons, severity }
     })
 

@@ -1,4 +1,4 @@
-import { Product, Rule } from '@prisma/client'
+import { Product, Rule } from '@/generated/prisma/client'
 import { evaluateProductRules } from './ruleEvaluator'
 import { TemplateElement } from '@/components/templates/TemplateCanvas'
 import { resolveBarcodeFormat, validateBarcodeValue } from '@/lib/export/barcodeUtils'
