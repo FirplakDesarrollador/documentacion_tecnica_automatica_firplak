@@ -1,5 +1,4 @@
 import { dbQuery } from '@/lib/supabase';
-import { RulesTable } from '@/components/rules/RulesTable';
 import { NomenclaturesSection } from '@/components/rules/NomenclaturesSection';
 import { MassImportSettingsSection } from '@/components/rules/MassImportSettingsSection';
 import Link from 'next/link';
@@ -102,8 +101,6 @@ export default async function ConfigurationPage() {
           initialSafeMaxRows={Number.isFinite(initialSafeMaxRows) ? initialSafeMaxRows : 15}
         />
       </div>
-      <div className="my-10 border-t border-slate-200 w-full" />
-      <RulesTable initialRules={rules} />
     </div>
   );
 }

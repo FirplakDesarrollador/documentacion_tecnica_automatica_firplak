@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Debug/legacy JS scripts (CommonJS, not part of the app)
+    "debug_*.js",
+    "update_view_v2.js",
   ]),
 ]);
 

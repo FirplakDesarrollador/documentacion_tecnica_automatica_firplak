@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { createProductAction, updateProductAction, getUniquePropertiesAction, parseProductCodeAction, translateAction, checkProductExistsAction, getDiagnosticInfoAction, getClientsAction, checkFamilyExistsAction, checkVersionExistsAction, upsertFamilyAction, saveGlossaryTermsAction, upsertColorAction } from './actions'
+import { createProductAction, getUniquePropertiesAction, parseProductCodeAction, translateAction, checkProductExistsAction, getDiagnosticInfoAction, getClientsAction, checkFamilyExistsAction, checkVersionExistsAction, upsertFamilyAction, saveGlossaryTermsAction, upsertColorAction } from './actions'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { getColorByNameAction, getRulesAction } from '@/app/rules/actions'
@@ -687,9 +687,8 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
             };
 
             if (isEdit) {
-                const res = await updateProductAction(initialData.id, payloadWithGlossary);
-                toast.success("Producto actualizado correctamente");
-                router.push('/products');
+                toast.error("La edición individual de productos está deshabilitada. Usa los editores masivos de configuración.");
+                return;
             } else {
                 const res = await createProductAction(payloadWithGlossary);
                 if (res) {
@@ -1840,14 +1839,14 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                 </Link>
                                 <Button 
                                     onClick={handleSaveClick} 
-                                    disabled={readOnly}
+                                    disabled={readOnly || isEdit}
                                     className={cn(
                                         "h-11 px-10 font-bold shadow-lg gap-2 text-white",
-                                        readOnly ? "bg-slate-300 cursor-not-allowed shadow-none" : (isEdit ? 'bg-red-600 hover:bg-red-700' : 'bg-slate-900 hover:bg-slate-800')
+                                        (readOnly || isEdit) ? "bg-slate-300 cursor-not-allowed shadow-none" : 'bg-slate-900 hover:bg-slate-800'
                                     )}
                                 >
                                     <Save className="w-4 h-4" />
-                                    {isEdit ? (readOnly ? 'Modo Consulta' : 'Sobreescribir producto') : 'Guardar Producto'}
+                                    {isEdit ? 'Modo Consulta' : 'Guardar Producto'}
                                 </Button>
                             </div>
                         </>

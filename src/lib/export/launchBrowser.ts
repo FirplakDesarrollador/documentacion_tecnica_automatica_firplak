@@ -66,8 +66,10 @@ export async function launchBrowser(): Promise<ExportBrowser> {
 
         const mergedArgs = dedupeArgs([...chromium.args, ...LOCAL_BROWSER_ARGS])
 
+        const defaultBrowserArgs = await puppeteerCore.defaultArgs({ args: mergedArgs, headless: 'shell' })
+
         return await puppeteerCore.launch({
-            args: puppeteerCore.defaultArgs({ args: mergedArgs, headless: 'shell' }),
+            args: defaultBrowserArgs,
             executablePath: await chromium.executablePath(),
             headless: 'shell',
         }) as unknown as ExportBrowser
