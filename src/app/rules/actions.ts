@@ -17,6 +17,97 @@ function revalidatePendingSweepEverywhere() {
     revalidatePath('/')
 }
 
+const NAMING_MODELS_KEY = 'naming_models_enabled_types'
+
+function normalizeProductType(raw: string) {
+    return String(raw || '').trim().toUpperCase()
+}
+
+function parseProductTypesValue(value: any): string[] {
+    if (!value) return []
+    const src = Array.isArray(value)
+        ? value
+        : typeof value === 'string'
+            ? (() => {
+                try {
+                    const parsed = JSON.parse(value)
+                    return Array.isArray(parsed) ? parsed : []
+                } catch {
+                    return []
+                }
+            })()
+            : []
+
+    const dedup = new Set<string>()
+    for (const item of src) {
+        const normalized = normalizeProductType(String(item || ''))
+        if (normalized) dedup.add(normalized)
+    }
+    return Array.from(dedup).sort((a, b) => a.localeCompare(b))
+}
+
+async function getFamiliesProductTypes(): Promise<string[]> {
+    const rows = await dbQuery(`
+        SELECT DISTINCT product_type
+        FROM public.families
+        WHERE product_type IS NOT NULL
+          AND btrim(product_type) <> ''
+        ORDER BY product_type ASC
+    `) || []
+
+    const dedup = new Set<string>()
+    for (const row of rows) {
+        const normalized = normalizeProductType(row.product_type)
+        if (normalized) dedup.add(normalized)
+    }
+    return Array.from(dedup).sort((a, b) => a.localeCompare(b))
+}
+
+async function resolveNamingModelTypesFromStorage(): Promise<string[]> {
+    const settingRow = await dbQuery(`
+        SELECT value
+        FROM public.app_settings
+        WHERE key = '${NAMING_MODELS_KEY}'
+        LIMIT 1
+    `) || []
+
+    const fromSetting = parseProductTypesValue(settingRow?.[0]?.value)
+    if (fromSetting.length > 0) return fromSetting
+
+    const rows = await dbQuery(`
+        SELECT DISTINCT target_value
+        FROM public.rules
+        WHERE rule_type = 'name_component'
+          AND target_value IS NOT NULL
+          AND btrim(target_value) <> ''
+        ORDER BY target_value ASC
+    `) || []
+
+    const fromRules = parseProductTypesValue(rows.map((r: any) => r.target_value))
+    if (fromRules.length > 0) {
+        await dbQuery(`
+            INSERT INTO public.app_settings (key, value, updated_at)
+            VALUES ('${NAMING_MODELS_KEY}', to_jsonb(${esc(JSON.stringify(fromRules))}::json), now())
+            ON CONFLICT (key) DO UPDATE
+            SET value = EXCLUDED.value,
+                updated_at = now()
+        `)
+    }
+
+    return fromRules
+}
+
+async function saveNamingModelTypesToStorage(types: string[]) {
+    const normalized = parseProductTypesValue(types)
+    await dbQuery(`
+        INSERT INTO public.app_settings (key, value, updated_at)
+        VALUES ('${NAMING_MODELS_KEY}', to_jsonb(${esc(JSON.stringify(normalized))}::json), now())
+        ON CONFLICT (key) DO UPDATE
+        SET value = EXCLUDED.value,
+            updated_at = now()
+    `)
+}
+
 export async function getRulesAction() {
     try {
         const data = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true ORDER BY priority ASC`)
@@ -283,6 +374,71 @@ export async function saveMassImportSettingsAction(input: { executeEnabled: bool
 
     revalidatePath('/rules')
     revalidatePath('/configuration')
+}
+
+export async function getNamingModelStatusAction() {
+    const [familyTypes, modelTypes] = await Promise.all([
+        getFamiliesProductTypes(),
+        resolveNamingModelTypesFromStorage(),
+    ])
+
+    const familySet = new Set(familyTypes)
+    const modelSet = new Set(modelTypes)
+
+    const orphanFamilyTypes = familyTypes.filter(type => !modelSet.has(type))
+    const orphanModelTypes = modelTypes.filter(type => !familySet.has(type))
+
+    return {
+        familyTypes,
+        modelTypes,
+        orphanFamilyTypes,
+        orphanModelTypes,
+    }
+}
+
+export async function addNamingModelAction(rawProductType: string) {
+    const productType = normalizeProductType(rawProductType)
+    if (!productType) throw new Error('Debes seleccionar un tipo de producto válido')
+
+    const [familyTypes, modelTypes] = await Promise.all([
+        getFamiliesProductTypes(),
+        resolveNamingModelTypesFromStorage(),
+    ])
+
+    if (!familyTypes.includes(productType)) {
+        throw new Error('Ese tipo de producto no existe en familias activas')
+    }
+    if (modelTypes.includes(productType)) {
+        throw new Error('Ese modelo de nomenclatura ya existe')
+    }
+
+    await saveNamingModelTypesToStorage([...modelTypes, productType])
+    revalidatePath('/configuration')
+    return { success: true }
+}
+
+export async function deleteNamingModelAction(rawProductType: string) {
+    const productType = normalizeProductType(rawProductType)
+    if (!productType) throw new Error('Tipo de producto inválido')
+
+    const [familyTypes, modelTypes] = await Promise.all([
+        getFamiliesProductTypes(),
+        resolveNamingModelTypesFromStorage(),
+    ])
+
+    if (familyTypes.includes(productType)) {
+        throw new Error('No se puede eliminar: aún existen familias usando este product_type')
+    }
+
+    await saveNamingModelTypesToStorage(modelTypes.filter(type => type !== productType))
+
+    await dbQuery(`DELETE FROM public.rules WHERE target_value = ${esc(productType)}`)
+    await dbQuery(`DELETE FROM public.naming_config_en WHERE target_entity = ${esc(productType)}`)
+
+    revalidatePath('/rules')
+    revalidatePath('/configuration')
+    revalidatePendingSweepEverywhere()
+    return { success: true }
 }
 
 export async function applyFullBulkNamingUpdateBatchAction(

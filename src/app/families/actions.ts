@@ -194,6 +194,19 @@ export async function deleteFamiliesAction(codes: string[]) {
 
   const safe = codes.map(c => `'${c.replace(/'/g, "''")}'`).join(',');
 
+  const affectedTypesRows = await dbQuery(`
+    SELECT DISTINCT product_type
+    FROM public.families
+    WHERE family_code = ANY(ARRAY[${safe}])
+      AND product_type IS NOT NULL
+      AND btrim(product_type) <> ''
+  `) || [];
+  const affectedTypes = Array.from(new Set(
+    affectedTypesRows
+      .map((r: any) => String(r.product_type || '').trim().toUpperCase())
+      .filter(Boolean)
+  ));
+
   await dbQuery(`
     DELETE FROM public.product_skus
     WHERE version_id IN (
@@ -212,8 +225,34 @@ export async function deleteFamiliesAction(codes: string[]) {
     WHERE family_code = ANY(ARRAY[${safe}]);
   `);
 
+  const orphanedProductTypes: string[] = [];
+  for (const productType of affectedTypes) {
+    const stillUsedRows = await dbQuery(`
+      SELECT COUNT(*)::int AS count
+      FROM public.families
+      WHERE upper(btrim(product_type)) = '${productType.replace(/'/g, "''")}'
+    `) || [];
+    const stillUsedCount = Number(stillUsedRows?.[0]?.count || 0);
+    if (stillUsedCount > 0) continue;
+
+    const hasRulesRows = await dbQuery(`
+      SELECT COUNT(*)::int AS count
+      FROM public.rules
+      WHERE upper(btrim(target_value)) = '${productType.replace(/'/g, "''")}'
+    `) || [];
+    const hasRules = Number(hasRulesRows?.[0]?.count || 0) > 0;
+
+    if (hasRules) orphanedProductTypes.push(productType);
+  }
+
   revalidatePath('/families');
   revalidatePath('/products/reference-editor');
+  revalidatePath('/configuration');
+
+  return {
+    success: true,
+    orphanedProductTypes,
+  };
 }
 
 // --- SCHEMA CONFIG (FLUJO A, movido desde reference-editor) ---

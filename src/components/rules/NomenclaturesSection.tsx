@@ -4,26 +4,55 @@ import { useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Settings2, ArrowRight } from 'lucide-react'
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog'
+import { Settings2, ArrowRight, Plus, AlertTriangle, Trash2 } from 'lucide-react'
 import { NamingRulesManager } from './NamingRulesManager'
 import { cn } from '@/lib/utils'
+import { addNamingModelAction, deleteNamingModelAction } from '@/app/rules/actions'
+import { toast } from 'sonner'
+import { useRouter } from 'next/navigation'
 
 interface NomenclaturesSectionProps {
-    namingRules: any[];
+    namingRules: NamingRule[];
+    namingModelTypes: string[];
+    orphanFamilyTypes: string[];
+    orphanModelTypes: string[];
 }
 
-const PRODUCT_TYPES = [
-    { value: 'MUEBLE', label: 'Muebles' },
-    { value: 'LAVAMANOS', label: 'Lavamanos' },
-    { value: 'LAVARROPAS', label: 'Lavarropas' },
-    { value: 'MESON', label: 'Mesones' },
-    { value: 'QUARTZSTONE', label: 'Quartzstone' },
-    { value: 'BAÑERA', label: 'Bañeras' },
-    { value: 'TAPA', label: 'Tapas' },
-]
+interface NamingRule {
+    target_value?: string;
+    priority?: number;
+    condition_expression?: string;
+    action_payload?: string;
+}
 
-export function NomenclaturesSection({ namingRules }: NomenclaturesSectionProps) {
+function formatProductTypeLabel(type: string) {
+    return type
+        .toLowerCase()
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (m) => m.toUpperCase())
+}
+
+export function NomenclaturesSection({
+    namingRules,
+    namingModelTypes,
+    orphanFamilyTypes,
+    orphanModelTypes,
+}: NomenclaturesSectionProps) {
     const [editingType, setEditingType] = useState<string | null>(null)
+    const [showAddDialog, setShowAddDialog] = useState(false)
+    const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+    const [selectedOrphanType, setSelectedOrphanType] = useState('')
+    const [deleteTargetType, setDeleteTargetType] = useState('')
+    const [isSaving, setIsSaving] = useState(false)
+    const router = useRouter()
 
     // Helper to generate a preview string of the structure
     const generatePreview = (type: string) => {
@@ -38,7 +67,7 @@ export function NomenclaturesSection({ namingRules }: NomenclaturesSectionProps)
                 {rulesForType.map((r, i) => (
                     <div key={i} className="flex items-center gap-1">
                         {r.condition_expression === 'true' ? (
-                            <span className="text-orange-600 font-extrabold text-sm select-none break-keep whitespace-nowrap">"{r.action_payload}"</span>
+                            <span className="text-orange-600 font-extrabold text-sm select-none break-keep whitespace-nowrap">&quot;{r.action_payload}&quot;</span>
                         ) : (
                             <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 font-bold uppercase tracking-tighter text-[10px] break-keep whitespace-nowrap">
                                 {r.action_payload.split('=')[1] || r.action_payload}
@@ -51,6 +80,53 @@ export function NomenclaturesSection({ namingRules }: NomenclaturesSectionProps)
         )
     }
 
+    const openAddDialog = () => {
+        if (orphanFamilyTypes.length === 0) {
+            toast.info('No hay product_type huérfanos para crear nuevos modelos')
+            return
+        }
+        setSelectedOrphanType(orphanFamilyTypes[0])
+        setShowAddDialog(true)
+    }
+
+    const handleCreateModel = async () => {
+        if (!selectedOrphanType) return
+        setIsSaving(true)
+        try {
+            await addNamingModelAction(selectedOrphanType)
+            toast.success(`Modelo de nomenclatura creado para ${selectedOrphanType}`)
+            setShowAddDialog(false)
+            router.refresh()
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : 'No fue posible crear el modelo'
+            toast.error(message)
+        } finally {
+            setIsSaving(false)
+        }
+    }
+
+    const openDeleteDialog = (productType: string) => {
+        setDeleteTargetType(productType)
+        setShowDeleteDialog(true)
+    }
+
+    const handleDeleteModel = async () => {
+        if (!deleteTargetType) return
+        setIsSaving(true)
+        try {
+            await deleteNamingModelAction(deleteTargetType)
+            toast.success(`Modelo ${deleteTargetType} eliminado`) 
+            if (editingType === deleteTargetType) setEditingType(null)
+            setShowDeleteDialog(false)
+            router.refresh()
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : 'No fue posible eliminar el modelo'
+            toast.error(message)
+        } finally {
+            setIsSaving(false)
+        }
+    }
+
     return (
         <div className="flex flex-col gap-6 mb-12">
             <div>
@@ -61,44 +137,134 @@ export function NomenclaturesSection({ namingRules }: NomenclaturesSectionProps)
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {PRODUCT_TYPES.map(pt => (
-                    <Card key={pt.value} className={`border-2 transition-all ${editingType === pt.value ? 'border-blue-500 shadow-md ring-4 ring-blue-50' : 'border-slate-200 hover:border-blue-300'}`}>
+                {namingModelTypes.map((productType) => {
+                    const isOrphanModel = orphanModelTypes.includes(productType)
+                    return (
+                    <Card key={productType} className={`border-2 transition-all ${editingType === productType ? 'border-blue-500 shadow-md ring-4 ring-blue-50' : 'border-slate-200 hover:border-blue-300'}`}>
                         <CardHeader className="pb-3 bg-slate-50/50">
                             <div className="flex items-center justify-between">
-                                <CardTitle className="text-sm font-bold text-slate-900 uppercase tracking-wider">{pt.label}</CardTitle>
-                                <Button 
-                                    variant={editingType === pt.value ? "default" : "secondary"} 
+                                <div className="flex flex-col gap-1">
+                                    <CardTitle className="text-sm font-bold text-slate-900 uppercase tracking-wider">{formatProductTypeLabel(productType)}</CardTitle>
+                                    {isOrphanModel && (
+                                        <Badge variant="outline" className="w-fit border-amber-300 bg-amber-50 text-amber-700">
+                                            Product type sin familias
+                                        </Badge>
+                                    )}
+                                </div>
+                                <Button
+                                    variant={editingType === productType ? "default" : "secondary"}
                                     size="sm"
-                                    onClick={() => setEditingType(editingType === pt.value ? null : pt.value)}
+                                    onClick={() => setEditingType(editingType === productType ? null : productType)}
                                     className={cn(
                                         "h-8 px-3 text-[11px] font-bold uppercase transition-all shadow-sm",
-                                        editingType === pt.value 
+                                        editingType === productType
                                             ? "bg-indigo-600 hover:bg-indigo-700 text-white" 
                                             : "bg-slate-100 text-slate-600 hover:bg-slate-200 border-none"
                                     )}
                                 >
                                     <Settings2 className="w-3.5 h-3.5 mr-1.5" />
-                                    {editingType === pt.value ? 'Cerrar' : 'Ajustar'}
+                                    {editingType === productType ? 'Cerrar' : 'Ajustar'}
                                 </Button>
                             </div>
+                            {isOrphanModel && (
+                                <CardDescription className="text-amber-700 text-xs flex items-center gap-1 mt-2">
+                                    <AlertTriangle className="w-3.5 h-3.5" />
+                                    Puedes eliminar este modelo porque no tiene familias activas.
+                                </CardDescription>
+                            )}
                         </CardHeader>
                         <CardContent className="pt-4 pb-4">
                             <div className="bg-slate-50/50 border border-slate-100 p-4 rounded-xl w-full min-h-[70px] flex items-center shadow-inner group-hover:bg-white transition-colors">
-                                {generatePreview(pt.value)}
+                                {generatePreview(productType)}
                             </div>
+                            {isOrphanModel && (
+                                <div className="mt-3 flex justify-end">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="text-rose-700 border-rose-200 hover:bg-rose-50"
+                                        onClick={() => openDeleteDialog(productType)}
+                                    >
+                                        <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Eliminar modelo
+                                    </Button>
+                                </div>
+                            )}
                         </CardContent>
 
-                        {editingType === pt.value && (
+                        {editingType === productType && (
                             <NamingRulesManager 
                                 open={true}
-                                productType={pt.value} 
+                                productType={productType}
                                 onClose={() => setEditingType(null)}
-                                initialRules={namingRules.filter(r => r.target_value === pt.value)}
+                                initialRules={namingRules.filter(r => r.target_value === productType)}
                             />
                         )}
                     </Card>
-                ))}
+                )})}
+
+                <Card
+                    className="border-2 border-dashed border-slate-300 hover:border-indigo-400 transition-all cursor-pointer min-h-[190px]"
+                    onClick={openAddDialog}
+                >
+                    <CardContent className="h-full flex flex-col items-center justify-center gap-3 text-slate-600">
+                        <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center">
+                            <Plus className="w-6 h-6" />
+                        </div>
+                        <div className="text-center">
+                            <p className="font-semibold">Añadir modelo</p>
+                            <p className="text-xs text-muted-foreground">
+                                {orphanFamilyTypes.length > 0
+                                    ? `${orphanFamilyTypes.length} product_type huérfanos disponibles`
+                                    : 'No hay product_type huérfanos disponibles'}
+                            </p>
+                        </div>
+                    </CardContent>
+                </Card>
             </div>
+
+            <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Crear modelo de nomenclatura</DialogTitle>
+                        <DialogDescription>
+                            Solo puedes crear modelos para product_type existentes en familias y que aun no tengan modelo.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-2">
+                        <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Product type huérfano</label>
+                        <select
+                            value={selectedOrphanType}
+                            onChange={(e) => setSelectedOrphanType(e.target.value)}
+                            className="w-full rounded-md border border-slate-300 bg-white p-2 text-sm"
+                        >
+                            {orphanFamilyTypes.map(type => (
+                                <option key={type} value={type}>{type}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setShowAddDialog(false)} disabled={isSaving}>Cancelar</Button>
+                        <Button onClick={handleCreateModel} disabled={isSaving || !selectedOrphanType}>Crear modelo</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Eliminar modelo de nomenclatura</DialogTitle>
+                        <DialogDescription>
+                            Se eliminaran reglas ES y configuracion EN para <strong>{deleteTargetType}</strong>. Esta accion no se puede deshacer.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setShowDeleteDialog(false)} disabled={isSaving}>Cancelar</Button>
+                        <Button variant="destructive" onClick={handleDeleteModel} disabled={isSaving || !deleteTargetType}>Eliminar</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }

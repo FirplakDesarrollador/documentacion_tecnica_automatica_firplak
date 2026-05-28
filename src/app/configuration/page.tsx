@@ -1,6 +1,7 @@
 import { dbQuery } from '@/lib/supabase';
 import { NomenclaturesSection } from '@/components/rules/NomenclaturesSection';
 import { MassImportSettingsSection } from '@/components/rules/MassImportSettingsSection';
+import { getNamingModelStatusAction } from '@/app/rules/actions';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Settings, Palette, PlusCircle, DatabaseZap, Layers, BookOpen, Users } from 'lucide-react';
@@ -10,7 +11,8 @@ export const dynamic = 'force-dynamic';
 export default async function ConfigurationPage() {
   // fetch all rules
   const rules = await dbQuery(`SELECT * FROM public.rules ORDER BY rule_type ASC, priority ASC`) || [];
-  const namingRules = rules.filter((r: any) => r.rule_type === 'name_component');
+  const namingRules = rules.filter((r: { rule_type?: string }) => r.rule_type === 'name_component');
+  const namingModelStatus = await getNamingModelStatusAction();
 
   // fetch app settings for mass import
   const settingsRows = await dbQuery(`
@@ -18,7 +20,7 @@ export default async function ConfigurationPage() {
     FROM public.app_settings
     WHERE key IN ('mass_import_execute_enabled','mass_import_safe_max_rows')
   `) || [];
-  const sByKey = new Map<string, any>();
+  const sByKey = new Map<string, unknown>();
   for (const r of settingsRows) sByKey.set(String(r.key), r.value);
   const initialExecuteEnabled = !!sByKey.get('mass_import_execute_enabled');
   const initialSafeMaxRows = Number(sByKey.get('mass_import_safe_max_rows') ?? 15);
@@ -87,7 +89,12 @@ export default async function ConfigurationPage() {
         </div>
       </div>
 
-      <NomenclaturesSection namingRules={namingRules} />
+      <NomenclaturesSection
+        namingRules={namingRules}
+        namingModelTypes={namingModelStatus.modelTypes}
+        orphanFamilyTypes={namingModelStatus.orphanFamilyTypes}
+        orphanModelTypes={namingModelStatus.orphanModelTypes}
+      />
       <div className="my-10 border-t border-slate-200 w-full" />
       <div className="flex flex-col gap-4 mb-12">
         <div>

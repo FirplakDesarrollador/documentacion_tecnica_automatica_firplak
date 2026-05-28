@@ -266,8 +266,12 @@ export default function MassEditClient() {
   const handleDeleteExecute = async () => {
     setIsDeleting(true);
     try {
-      await deleteFamiliesAction(selectedIds);
+      const result = await deleteFamiliesAction(selectedIds);
       toast.success(`Se eliminaron ${selectedIds.length} familias y todos sus datos en cascada`);
+      const orphaned = (result as any)?.orphanedProductTypes || [];
+      if (orphaned.length > 0) {
+        toast.warning(`Atencion: quedaron modelos de nomenclatura huérfanos (${orphaned.join(', ')}). Puedes revisarlos en Configuracion.`);
+      }
       setShowDeleteWizard(false);
       handleSearch();
     } catch (e: any) {
