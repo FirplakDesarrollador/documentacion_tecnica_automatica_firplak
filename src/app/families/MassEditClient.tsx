@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { 
   searchFamilies, getFamiliesFilterOptions,
   previewMassUpdateFamilies, executeMassUpdateFamilies,
+  previewProductTypeRenameImpactAction,
   getFamiliesWithSchema,
   previewAddAttrToFamilies, executeAddAttrToFamilies,
   previewRemoveAttrFromFamilies, executeRemoveAttrFromFamilies,
@@ -22,6 +23,18 @@ const NORMAL_COLS = [
   { key: 'rh_default', label: 'RH por Defecto', type: 'boolean' },
   { key: 'assembled_default', label: 'Armado por Defecto', type: 'boolean' },
 ];
+
+type RenameImpact = {
+  fromType: string | null;
+  toType: string;
+  selectedTypes: string[];
+  selectedCount: number;
+  sourceWillBeOrphan: boolean;
+  sourceModelExists: boolean;
+  targetModelExists: boolean;
+  canMigrateNamingModel: boolean;
+  reason: string | null;
+};
 
 export default function MassEditClient() {
   const [filters, setFilters] = useState({
@@ -59,6 +72,7 @@ export default function MassEditClient() {
   const [previewData, setPreviewData] = useState<any>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionProgress, setExecutionProgress] = useState<{ processed: number; total: number } | null>(null);
+  const [migrateNamingModel, setMigrateNamingModel] = useState(false);
 
   // Delete Wizard
   const [showDeleteWizard, setShowDeleteWizard] = useState(false);
@@ -166,6 +180,7 @@ export default function MassEditClient() {
         if (res.success) {
           const builtDef = JSON.stringify({ type: attrType, allowed_values: allowedValues });
           setPreviewData({ ...res.data, schemaAction: 'add', attrKey: newAttrKey.trim(), attrDef: builtDef, attrDefault: newAttrDefault });
+          setMigrateNamingModel(false);
           setShowPreview(true);
         } else {
           toast.error('Error en preview: ' + (res as any).error);
@@ -176,6 +191,7 @@ export default function MassEditClient() {
         setLoading(false);
         if (res.success) {
           setPreviewData({ ...res.data, schemaAction: 'remove', attrKey: removeAttrKey });
+          setMigrateNamingModel(false);
           setShowPreview(true);
         } else {
           toast.error('Error en preview: ' + (res as any).error);
@@ -185,9 +201,17 @@ export default function MassEditClient() {
       const parsedValue = currentFieldDef?.type === 'boolean' ? editValue === 'true' : editValue.trim();
       setLoading(true);
       const res = await previewMassUpdateFamilies(selectedIds, { [editField]: parsedValue });
+      let impact: RenameImpact | null = null;
+      if (res.success && editField === 'product_type' && typeof parsedValue === 'string') {
+        const impactRes = await previewProductTypeRenameImpactAction(selectedIds, parsedValue);
+        if (impactRes.success) {
+          impact = (impactRes.data as RenameImpact) || null;
+        }
+      }
       setLoading(false);
       if (res.success) {
-        setPreviewData({ ...res.data, parsedValue, editField, editValue });
+        setMigrateNamingModel(!!impact?.canMigrateNamingModel);
+        setPreviewData({ ...res.data, parsedValue, editField, editValue, renameImpact: impact });
         setShowPreview(true);
       } else {
         toast.error('Error generando preview: ' + (res as any).error);
@@ -214,9 +238,20 @@ export default function MassEditClient() {
         toast.success(editType === 'schema_attr' && schemaMode === 'add' ? 'Atributo agregado con éxito' : 'Atributo eliminado con éxito');
       } else {
         const parsedValue = currentFieldDef?.type === 'boolean' ? previewData.editValue === 'true' : previewData.editValue;
-        const res = await executeMassUpdateFamilies(selectedIds, { [previewData.editField]: parsedValue });
+        const migrationOptions = previewData.editField === 'product_type' && previewData.renameImpact
+          ? {
+            migrateNamingModel: migrateNamingModel && previewData.renameImpact.canMigrateNamingModel,
+            migrationFromType: previewData.renameImpact.fromType || undefined,
+          }
+          : undefined;
+
+        const res = await executeMassUpdateFamilies(selectedIds, { [previewData.editField]: parsedValue }, migrationOptions);
         if (!res.success) throw new Error((res as any).error || 'Error desconocido');
         toast.success('Familias actualizadas con éxito');
+        if ((res as any).namingMigration?.migrated) {
+          const info = (res as any).namingMigration;
+          toast.success(`Nomenclatura migrada: ${info.fromType} -> ${info.toType}`);
+        }
       }
 
       setShowPreview(false);
@@ -227,6 +262,7 @@ export default function MassEditClient() {
 
       setExecutionProgress(null);
       setIsExecuting(false);
+      setMigrateNamingModel(false);
     } catch (e: any) {
       toast.error('Error ejecutando actualización: ' + (e?.message || 'Error desconocido'));
       setIsExecuting(false);
@@ -698,6 +734,37 @@ export default function MassEditClient() {
                     )}
                   </div>
 
+                  {previewData.editField === 'product_type' && previewData.renameImpact && (
+                    <div className="bg-blue-50 text-blue-900 p-4 rounded-lg border border-blue-100">
+                      <h4 className="font-semibold flex items-center gap-2 mb-2"><Info className="w-5 h-5" /> Relación con Nomenclatura</h4>
+
+                      {previewData.renameImpact.canMigrateNamingModel ? (
+                        <div className="space-y-3">
+                          <p className="text-sm">
+                            Detectado renombre completo de product_type: <strong>{previewData.renameImpact.fromType}</strong> -&gt; <strong>{previewData.renameImpact.toType}</strong>.
+                          </p>
+                          <label className="flex items-start gap-2 text-sm cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={migrateNamingModel}
+                              onChange={(e) => setMigrateNamingModel(e.target.checked)}
+                              className="mt-0.5"
+                            />
+                            <span>
+                              Migrar configuración de nomenclatura (reglas ES + configuración EN) de
+                              <strong> {previewData.renameImpact.fromType}</strong> a
+                              <strong> {previewData.renameImpact.toType}</strong>.
+                            </span>
+                          </label>
+                        </div>
+                      ) : (
+                        <p className="text-sm">
+                          {previewData.renameImpact.reason || 'No aplica migración automática de nomenclatura para este cambio.'}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   {previewData.schemaAction === 'remove' && Array.isArray(previewData.families) && previewData.families.length > 0 && (
                     <div className="bg-white p-4 rounded-lg border">
                       <h4 className="font-semibold text-slate-700 mb-3 flex items-center gap-2">
@@ -736,7 +803,14 @@ export default function MassEditClient() {
             </div>
 
             <div className="p-6 border-t bg-white flex justify-end gap-3 shrink-0">
-              <button onClick={() => setShowPreview(false)} disabled={isExecuting} className="px-6 py-2.5 text-slate-600 hover:bg-slate-100 rounded-md font-medium">
+              <button
+                onClick={() => {
+                  setShowPreview(false);
+                  setMigrateNamingModel(false);
+                }}
+                disabled={isExecuting}
+                className="px-6 py-2.5 text-slate-600 hover:bg-slate-100 rounded-md font-medium"
+              >
                 Cerrar
               </button>
               {previewData.is_valid && (

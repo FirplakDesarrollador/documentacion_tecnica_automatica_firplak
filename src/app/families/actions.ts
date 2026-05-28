@@ -51,6 +51,216 @@ const ALLOWED_NORMAL_COLS = [
   'zone_home', 'manufacturing_process', 'rh_default', 'assembled_default'
 ];
 
+const NAMING_MODELS_KEY = 'naming_models_enabled_types';
+
+function normalizeProductType(raw: string) {
+  return String(raw || '').trim().toUpperCase();
+}
+
+function parseTypesValue(value: unknown): string[] {
+  if (!value) return [];
+  const src = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? (() => {
+        try {
+          const parsed = JSON.parse(value);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      })()
+      : [];
+
+  const dedup = new Set<string>();
+  for (const item of src) {
+    const normalized = normalizeProductType(String(item || ''));
+    if (normalized) dedup.add(normalized);
+  }
+  return Array.from(dedup).sort();
+}
+
+async function resolveNamingModelTypes(): Promise<string[]> {
+  const settingRows = await dbQuery(`
+    SELECT value
+    FROM public.app_settings
+    WHERE key = '${NAMING_MODELS_KEY}'
+    LIMIT 1
+  `) || [];
+
+  const fromSetting = parseTypesValue(settingRows?.[0]?.value);
+  if (fromSetting.length > 0) return fromSetting;
+
+  const ruleRows = await dbQuery(`
+    SELECT DISTINCT target_value
+    FROM public.rules
+    WHERE rule_type = 'name_component'
+      AND target_value IS NOT NULL
+      AND btrim(target_value) <> ''
+    ORDER BY target_value ASC
+  `) || [];
+
+  return parseTypesValue(ruleRows.map((row: { target_value?: string }) => row.target_value || ''));
+}
+
+async function saveNamingModelTypes(types: string[]) {
+  const normalized = parseTypesValue(types);
+  const payload = JSON.stringify(normalized).replace(/'/g, "''");
+  await dbQuery(`
+    INSERT INTO public.app_settings (key, value, updated_at)
+    VALUES ('${NAMING_MODELS_KEY}', to_jsonb('${payload}'::json), now())
+    ON CONFLICT (key) DO UPDATE
+    SET value = EXCLUDED.value,
+        updated_at = now()
+  `);
+}
+
+type ProductTypeImpact = {
+  fromType: string | null;
+  toType: string;
+  selectedTypes: string[];
+  selectedCount: number;
+  sourceWillBeOrphan: boolean;
+  sourceModelExists: boolean;
+  targetModelExists: boolean;
+  canMigrateNamingModel: boolean;
+  reason: string | null;
+};
+
+async function computeProductTypeRenameImpact(ids: string[], rawNextType: string): Promise<ProductTypeImpact> {
+  const nextType = normalizeProductType(rawNextType);
+  const selectedCount = ids.length;
+
+  if (!nextType) {
+    return {
+      fromType: null,
+      toType: '',
+      selectedTypes: [],
+      selectedCount,
+      sourceWillBeOrphan: false,
+      sourceModelExists: false,
+      targetModelExists: false,
+      canMigrateNamingModel: false,
+      reason: 'El nuevo product_type está vacío.',
+    };
+  }
+
+  const safeCodes = ids.map(c => `'${c.replace(/'/g, "''")}'`).join(',');
+  const selectedRows = await dbQuery(`
+    SELECT product_type, COUNT(*)::int AS selected_count
+    FROM public.families
+    WHERE family_code IN (${safeCodes})
+      AND product_type IS NOT NULL
+      AND btrim(product_type) <> ''
+    GROUP BY product_type
+    ORDER BY product_type ASC
+  `) || [];
+
+  const selectedTypes = Array.from(new Set(
+    selectedRows
+      .map((row: { product_type?: string }) => normalizeProductType(row.product_type || ''))
+      .filter(Boolean)
+  ));
+
+  if (selectedTypes.length !== 1) {
+    return {
+      fromType: selectedTypes.length === 1 ? selectedTypes[0] : null,
+      toType: nextType,
+      selectedTypes,
+      selectedCount,
+      sourceWillBeOrphan: false,
+      sourceModelExists: false,
+      targetModelExists: false,
+      canMigrateNamingModel: false,
+      reason: selectedTypes.length === 0
+        ? 'No se encontró product_type en las familias seleccionadas.'
+        : 'La selección mezcla múltiples product_type; no se puede migrar nomenclatura automáticamente.',
+    };
+  }
+
+  const fromType = selectedTypes[0];
+  if (fromType === nextType) {
+    return {
+      fromType,
+      toType: nextType,
+      selectedTypes,
+      selectedCount,
+      sourceWillBeOrphan: false,
+      sourceModelExists: false,
+      targetModelExists: false,
+      canMigrateNamingModel: false,
+      reason: 'El product_type nuevo es igual al actual.',
+    };
+  }
+
+  const remainingRows = await dbQuery(`
+    SELECT COUNT(*)::int AS count
+    FROM public.families
+    WHERE upper(btrim(product_type)) = '${fromType.replace(/'/g, "''")}'
+      AND family_code NOT IN (${safeCodes})
+  `) || [];
+  const remainingCount = Number(remainingRows?.[0]?.count || 0);
+  const sourceWillBeOrphan = remainingCount === 0;
+
+  const namingModels = await resolveNamingModelTypes();
+  const sourceModelExists = namingModels.includes(fromType);
+  const targetModelExists = namingModels.includes(nextType);
+
+  if (!sourceWillBeOrphan) {
+    return {
+      fromType,
+      toType: nextType,
+      selectedTypes,
+      selectedCount,
+      sourceWillBeOrphan,
+      sourceModelExists,
+      targetModelExists,
+      canMigrateNamingModel: false,
+      reason: `Aún quedan familias con ${fromType}; no corresponde renombrar el modelo completo.`,
+    };
+  }
+
+  if (!sourceModelExists) {
+    return {
+      fromType,
+      toType: nextType,
+      selectedTypes,
+      selectedCount,
+      sourceWillBeOrphan,
+      sourceModelExists,
+      targetModelExists,
+      canMigrateNamingModel: false,
+      reason: `No existe modelo de nomenclatura para ${fromType}.`,
+    };
+  }
+
+  if (targetModelExists) {
+    return {
+      fromType,
+      toType: nextType,
+      selectedTypes,
+      selectedCount,
+      sourceWillBeOrphan,
+      sourceModelExists,
+      targetModelExists,
+      canMigrateNamingModel: false,
+      reason: `Ya existe un modelo para ${nextType}; no se puede renombrar para evitar duplicados.`,
+    };
+  }
+
+  return {
+    fromType,
+    toType: nextType,
+    selectedTypes,
+    selectedCount,
+    sourceWillBeOrphan,
+    sourceModelExists,
+    targetModelExists,
+    canMigrateNamingModel: true,
+    reason: null,
+  };
+}
+
 export async function previewMassUpdateFamilies(ids: string[], normalUpdates: any) {
   const errors: string[] = [];
   const col = Object.keys(normalUpdates || {})[0];
@@ -77,9 +287,26 @@ export async function previewMassUpdateFamilies(ids: string[], normalUpdates: an
   };
 }
 
+export async function previewProductTypeRenameImpactAction(ids: string[], nextProductType: string) {
+  if (!ids || ids.length === 0) {
+    return { success: false, error: 'No hay familias seleccionadas' };
+  }
+
+  try {
+    const impact = await computeProductTypeRenameImpact(ids, nextProductType);
+    return { success: true, data: impact };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
 // --- EXECUTE MASS UPDATE (normal columns) ---
 
-export async function executeMassUpdateFamilies(ids: string[], normalUpdates: any) {
+export async function executeMassUpdateFamilies(
+  ids: string[],
+  normalUpdates: any,
+  options?: { migrateNamingModel?: boolean; migrationFromType?: string }
+) {
   const col = Object.keys(normalUpdates || {})[0];
   if (!col || !ALLOWED_NORMAL_COLS.includes(col)) {
     return { success: false, error: `Columna no permitida: "${col}"` };
@@ -101,13 +328,56 @@ export async function executeMassUpdateFamilies(ids: string[], normalUpdates: an
   }
 
   try {
+    let migrationImpact: ProductTypeImpact | null = null;
+    const wantsMigration = !!options?.migrateNamingModel && col === 'product_type' && typeof val === 'string';
+    if (wantsMigration) {
+      migrationImpact = await computeProductTypeRenameImpact(ids, val);
+      if (!migrationImpact.canMigrateNamingModel) {
+        return { success: false, error: migrationImpact.reason || 'No es posible migrar el modelo de nomenclatura.' };
+      }
+      if (options?.migrationFromType && migrationImpact.fromType !== normalizeProductType(options.migrationFromType)) {
+        return { success: false, error: 'El product_type origen cambió durante la validación. Repite la operación.' };
+      }
+    }
+
     await dbQuery(`
       UPDATE public.families SET ${setClause}, updated_at = now()
       WHERE family_code IN (${codes})
     `);
+
+    let namingMigration: { migrated: boolean; fromType?: string; toType?: string } = { migrated: false };
+    if (wantsMigration && migrationImpact?.fromType) {
+      const fromType = migrationImpact.fromType;
+      const toType = migrationImpact.toType;
+
+      await dbQuery(`
+        UPDATE public.rules
+        SET target_value = '${toType.replace(/'/g, "''")}',
+            updated_at = now()
+        WHERE upper(btrim(target_value)) = '${fromType.replace(/'/g, "''")}';
+
+        UPDATE public.rules
+        SET target_entity = '${toType.replace(/'/g, "''")}',
+            updated_at = now()
+        WHERE upper(btrim(target_entity)) = '${fromType.replace(/'/g, "''")}';
+
+        UPDATE public.naming_config_en
+        SET target_entity = '${toType.replace(/'/g, "''")}',
+            updated_at = now()
+        WHERE upper(btrim(target_entity)) = '${fromType.replace(/'/g, "''")}';
+      `);
+
+      const currentModels = await resolveNamingModelTypes();
+      const remapped = currentModels.map(type => (type === fromType ? toType : type));
+      await saveNamingModelTypes(remapped);
+
+      namingMigration = { migrated: true, fromType, toType };
+    }
+
     revalidatePath('/configuration/families');
     revalidatePath('/configuration/reference-editor');
-    return { success: true };
+    revalidatePath('/configuration');
+    return { success: true, namingMigration };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
