@@ -1,9 +1,9 @@
 import { dbQuery } from '@/lib/supabase'
-import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft } from 'lucide-react'
 import { PreviewClient } from '@/components/generate/PreviewClient'
+import { computeNameWithNamingComponents } from '@/lib/engine/namingComponentsEngine'
 
 export const dynamic = 'force-dynamic'
 
@@ -69,16 +69,13 @@ export default async function GeneratePreviewPage({
     }
 
     // 3. Evaluar reglas del motor
-    const rules = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true`) || []
-    const engineResult = await evaluateProductRules(product, rules)
+    const namingResult = await computeNameWithNamingComponents(product, 'final_complete_name')
+    const engineResult = namingResult.evaluation
 
     // Traducir a inglés en caliente usando el motor adaptativo
-    const { translateProductToEnglish } = await import('@/lib/engine/translator')
-    const productType = (product.product_type || 'MUEBLE').toUpperCase()
-    const translationResult = await translateProductToEnglish(product, productType, engineResult.activeVariableIds)
     const fullEngineResult = {
         ...engineResult,
-        finalNameEn: translationResult.translatedName || product.final_name_en || ''
+        finalNameEn: namingResult.finalNameEn || product.final_name_en || ''
     }
 
     // Construir el link de regreso

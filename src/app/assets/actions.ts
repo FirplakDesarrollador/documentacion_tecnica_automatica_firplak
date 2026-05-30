@@ -250,7 +250,7 @@ export async function associateIsometricAction(data: {
     }
 
     revalidatePath('/assets')
-    revalidatePath('/products')
+
     await revalidateValidationSweepEverywhere()
     
     return { success: true, updatedCount }
@@ -323,7 +323,7 @@ export async function deleteAssetAction(assetId: string) {
     await dbQuery(`DELETE FROM public.assets WHERE id = '${safeId}'`)
     
     revalidatePath('/assets')
-    revalidatePath('/products')
+
     
     return { success: true }
 }
@@ -365,7 +365,7 @@ export async function updateAssetAction(assetId: string, data: { name?: string, 
     }
 
     revalidatePath('/assets')
-    revalidatePath('/products')
+
     return { success: true }
 }
 
@@ -410,7 +410,7 @@ export async function unlinkReferenceAction(referenceId: string) {
         WHERE id = '${referenceId}'
     `)
     revalidatePath('/assets')
-    revalidatePath('/products')
+
     await revalidateValidationSweepEverywhere()
     return { success: true }
 }
@@ -423,7 +423,7 @@ export async function unlinkVersionAction(versionId: string) {
         WHERE id = '${versionId}'
     `)
     revalidatePath('/assets')
-    revalidatePath('/products')
+
     await revalidateValidationSweepEverywhere()
     return { success: true }
 }
@@ -449,7 +449,7 @@ export async function unlinkAllAssetRelationshipsAction(assetId: string) {
     `)
 
     revalidatePath('/assets')
-    revalidatePath('/products')
+
     await revalidateValidationSweepEverywhere()
     return { success: true }
 }

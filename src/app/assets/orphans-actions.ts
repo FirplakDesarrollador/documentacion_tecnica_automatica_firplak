@@ -172,7 +172,6 @@ export async function inactivateOrphanReferencesAction(referenceIds: string[]): 
 
   revalidatePath('/assets')
   revalidatePath('/pending')
-  revalidatePath('/products')
   await revalidateValidationSweepEverywhere()
 
   return { success: true, updated: unique.length }

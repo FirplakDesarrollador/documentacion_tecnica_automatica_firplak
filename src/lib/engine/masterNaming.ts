@@ -1,7 +1,7 @@
 import { dbQuery } from '@/lib/supabase'
-import { evaluateProductRules } from './ruleEvaluator'
-import { translateProductToEnglish } from './translator'
 import { mapRowToComposedProduct, type ComposedProduct } from './product_composer'
+import { DEFAULT_NAMING_TYPE } from './namingComponents'
+import { computeNameWithNamingComponents } from './namingComponentsEngine'
 
 export interface RecomputedSkuName {
     id: string
@@ -31,10 +31,6 @@ export interface RecomputeMasterNamesResult {
     versions: RecomputedVersionName[]
 }
 
-async function loadEnabledRules() {
-    return await dbQuery(`SELECT * FROM public.rules WHERE enabled = true ORDER BY priority ASC`) || []
-}
-
 function toSqlList(ids: string[]) {
     return ids.map(id => `'${id.replace(/'/g, "''")}'`).join(',')
 }
@@ -48,19 +44,23 @@ async function fetchRowsByPredicate(predicate: string) {
     `) || []
 }
 
-async function computeNames(product: ComposedProduct, rules: any[]) {
-    const evaluation = evaluateProductRules(product as any, rules)
-    const translation = await translateProductToEnglish(
-        { ...evaluation.transformedProduct, final_name_es: evaluation.finalNameEs } as any,
-        product.product_type || 'MUEBLE',
-        evaluation.activeVariableIds
-    )
+export function resetMasterNamingModelCache() {
+    // Kept as public API for callers that clear the previous rules cache.
+    // naming_components is now loaded directly per computation.
+}
+
+async function computeNames(product: ComposedProduct, namingType: string = DEFAULT_NAMING_TYPE) {
+    const result = await computeNameWithNamingComponents(product as any, namingType)
 
     return {
-        final_name_es: evaluation.finalNameEs,
-        final_name_en: translation.isValid ? translation.translatedName : '',
-        validation_status: translation.isValid ? 'ready' : 'needs_review',
+        final_name_es: result.finalNameEs,
+        final_name_en: result.storableFinalNameEn,
+        validation_status: result.validation_status,
     }
+}
+
+export async function computeMasterNamePreview(product: ComposedProduct, namingType: string = DEFAULT_NAMING_TYPE) {
+    return computeNames(product, namingType)
 }
 
 async function recomputeFromRows(rows: any[]): Promise<RecomputeMasterNamesResult> {
@@ -74,7 +74,6 @@ async function recomputeFromRows(rows: any[]): Promise<RecomputeMasterNamesResul
         }
     }
 
-    const rules = await loadEnabledRules()
     const skuProducts = rows.map(row => mapRowToComposedProduct(row, { includeSkuOverrides: true }))
 
     const versionRows = new Map<string, any>()
@@ -88,7 +87,7 @@ async function recomputeFromRows(rows: any[]): Promise<RecomputeMasterNamesResul
     const versionResults: RecomputedVersionName[] = []
     for (const row of versionRows.values()) {
         const versionProduct = mapRowToComposedProduct(row, { includeSkuOverrides: false })
-        const names = await computeNames(versionProduct, rules)
+        const names = await computeNames(versionProduct, 'final_base_name')
 
         if (versionProduct.version_id) {
             await dbQuery(
@@ -115,7 +114,7 @@ async function recomputeFromRows(rows: any[]): Promise<RecomputeMasterNamesResul
 
     const skuResults: RecomputedSkuName[] = []
     for (const product of skuProducts) {
-        const names = await computeNames(product, rules)
+        const names = await computeNames(product, 'final_complete_name')
 
         await dbQuery(
             `UPDATE public.product_skus

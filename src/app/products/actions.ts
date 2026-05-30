@@ -1,9 +1,8 @@
 'use server'
 
 import { dbQuery, supabaseServer } from '@/lib/supabase'
-import { Product } from '@/generated/prisma/client'
-import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
-import { resetGlossaryCache, translateProductToEnglish } from '@/lib/engine/translator'
+import { resetGlossaryCache } from '@/lib/engine/translator'
+import { computeNameWithNamingComponents } from '@/lib/engine/namingComponentsEngine'
 import { parseProductCode } from '@/lib/engine/codeParser'
 import { upsertVersionAction } from '@/app/rules/versions/actions'
 import { redirect } from 'next/navigation'
@@ -34,23 +33,25 @@ function formatPGArray(arr: string[] | null | undefined) {
     return `'{${escaped.join(',')}}'`
 }
 
+async function computeProductNameByNamingType(product: any, namingType: string) {
+    const result = await computeNameWithNamingComponents(product as any, namingType)
+
+    return {
+        final_name_es: result.finalNameEs,
+        final_name_en: result.storableFinalNameEn,
+        evalResult: result.evaluation,
+        translateResult: result.translation,
+    }
+}
+
 export async function parseProductCodeAction(code: string, sapDesc: string, rhFlag: boolean) {
     return await parseProductCode(code, sapDesc, rhFlag)
 }
 
 export async function translateAction(nameEs: string, ctx?: any, force: boolean = false) {
     if (ctx) {
-        // Fallback to 'MUEBLE' if product_type is missing or empty
-        const targetEntity = ctx.product_type && ctx.product_type.trim() !== '' ? ctx.product_type : 'MUEBLE'
-        // Keep EN aligned with the variables actually used by ES naming rules
-        const rules = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true ORDER BY priority ASC`) || []
-        const evalResult = evaluateProductRules(ctx as any, rules)
-        return await translateProductToEnglish(
-            { ...evalResult.transformedProduct, final_name_es: nameEs } as any,
-            targetEntity,
-            evalResult.activeVariableIds,
-            force
-        )
+        const result = await computeNameWithNamingComponents({ ...ctx, final_name_es: nameEs } as any, 'final_complete_name', force)
+        return result.translation
     }
     return { translatedName: '', missingTerms: [], isValid: false, errorReason: 'Motor adaptativo requiere el objeto producto completo.', warnings: [], fieldTranslations: {} }
 }
@@ -162,7 +163,19 @@ export async function upsertColorAction(code: string, name: string) {
     return rows ? rows[0] : null
 }
 
-function buildCreateProductV6Payload(data: any, parsed: any, isPrivate: boolean, clientName: string | null, sap_description_recommended: string, final_name_es: string, final_name_en: string, existingRefAttrs: Record<string, any> = {}) {
+function buildCreateProductV6Payload(
+    data: any,
+    parsed: any,
+    isPrivate: boolean,
+    clientName: string | null,
+    sap_description_recommended_es: string,
+    sap_description_recommended_en: string,
+    final_base_name_es: string,
+    final_base_name_en: string,
+    final_complete_name_es: string,
+    final_complete_name_en: string,
+    existingRefAttrs: Record<string, any> = {}
+) {
     const normalizedPrivateName = (clientName && String(clientName).trim() !== '' && String(clientName).toUpperCase() !== 'NA')
         ? String(clientName).trim()
         : null
@@ -211,9 +224,9 @@ function buildCreateProductV6Payload(data: any, parsed: any, isPrivate: boolean,
         version: {
             version_code: parsed.version_code,
             sku_base: parsed.sku_base,
-            validation_status: final_name_es && final_name_en ? 'ready' : 'needs_review',
-            final_base_name_es: final_name_es,
-            final_base_name_en: final_name_en,
+            validation_status: final_base_name_es && final_base_name_en && final_complete_name_es && final_complete_name_en ? 'ready' : 'needs_review',
+            final_base_name_es,
+            final_base_name_en,
             version_attrs: versionAttrs
         },
         sku: {
@@ -221,9 +234,10 @@ function buildCreateProductV6Payload(data: any, parsed: any, isPrivate: boolean,
             color_code: data.color_code || parsed.color_code,
             status: data.status || 'ACTIVO',
             sap_description_original: data.sap_description || null,
-            sap_description_recommended: sap_description_recommended,
-            final_complete_name_es: final_name_es,
-            final_complete_name_en: final_name_en,
+            sap_description_recommended_es,
+            sap_description_recommended_en,
+            final_complete_name_es,
+            final_complete_name_en,
             barcode_text: data.barcode_text || parsed.barcode_text || null,
             barcode_path: null,
             sku_attrs: {
@@ -259,8 +273,6 @@ export async function createProductAction(data: any) {
 
     const parsed = await parseProductCode(data.code, data.sap_description, data.rh_flag)
 
-    const rules = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true ORDER BY priority ASC`) || []
-
     const workingProduct = {
         code: data.code,
         sap_description: data.sap_description,
@@ -289,16 +301,13 @@ export async function createProductAction(data: any) {
         workingProduct.rh_flag = workingProduct.rh === 'RH';
     }
 
-    const evalResult = evaluateProductRules(workingProduct as any, rules)
-    const final_name_es = evalResult.finalNameEs
-    const sap_description_recommended = final_name_es.toUpperCase().substring(0, 40)
-
-    const translateResult = await translateProductToEnglish(
-        { ...evalResult.transformedProduct, final_name_es } as any,
-        workingProduct.product_type || 'MUEBLE',
-        evalResult.activeVariableIds
-    )
-    const final_name_en = translateResult.isValid ? translateResult.translatedName : ''
+    const baseName = await computeProductNameByNamingType(workingProduct, 'final_base_name')
+    const completeName = await computeProductNameByNamingType(workingProduct, 'final_complete_name')
+    const sapName = await computeProductNameByNamingType(workingProduct, 'sap_description_recommended')
+    const sap_description_recommended_es = (sapName.final_name_es || completeName.final_name_es).toUpperCase().substring(0, 40)
+    const sap_description_recommended_en = (sapName.final_name_en || completeName.final_name_en).toUpperCase().substring(0, 40)
+    const final_name_es = completeName.final_name_es
+    const final_name_en = completeName.final_name_en
     if (data._newGlossaryTerms && Array.isArray(data._newGlossaryTerms)) {
         for (const term of data._newGlossaryTerms) {
             if (!term.es || !term.en) continue
@@ -351,7 +360,19 @@ export async function createProductAction(data: any) {
         }
     }
 
-    const payload = buildCreateProductV6Payload(data, parsed, isPrivate, clientName, sap_description_recommended, final_name_es, final_name_en, existingRefAttrs)
+    const payload = buildCreateProductV6Payload(
+        data,
+        parsed,
+        isPrivate,
+        clientName,
+        sap_description_recommended_es,
+        sap_description_recommended_en,
+        baseName.final_name_es,
+        baseName.final_name_en,
+        completeName.final_name_es,
+        completeName.final_name_en,
+        existingRefAttrs
+    )
 
     if (data._newColor && (data.color_code || parsed.color_code)) {
         const cCode = data.color_code || parsed.color_code
@@ -494,16 +515,12 @@ export async function translateProductsAction(ids?: string[], mode: 'missing' | 
         let totalMissingTerms: string[] = []
         const updatedProducts: { id: string, final_name_en: string }[] = []
 
-        const rules = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true ORDER BY priority ASC`) || []
-
         for (const product of toTranslate) {
-            const evalResult = evaluateProductRules(product as any, rules)
-            const result = await translateProductToEnglish(
-                { ...evalResult.transformedProduct, final_name_es: evalResult.finalNameEs } as any,
-                product.product_type || 'MUEBLE',
-                evalResult.activeVariableIds
-            )
-            const { translatedName, missingTerms, isValid } = result
+            const baseResult = await computeNameWithNamingComponents(product as any, 'final_base_name')
+            const completeResult = await computeNameWithNamingComponents(product as any, 'final_complete_name')
+            const translatedName = completeResult.finalNameEn
+            const missingTerms = [...new Set([...baseResult.missingTerms, ...completeResult.missingTerms])]
+            const isValid = baseResult.isValid && completeResult.isValid
 
             if (missingTerms.length > 0) {
                 totalMissingTerms.push(...missingTerms)
@@ -516,8 +533,9 @@ export async function translateProductsAction(ids?: string[], mode: 'missing' | 
                 continue
             }
 
-            const status = missingTerms.length > 0 ? 'needs_review' : 'ready'
-            const safeTranslated = translatedName.replace(/'/g, "''")
+            const status = isValid ? 'ready' : 'needs_review'
+            const safeBaseTranslated = baseResult.storableFinalNameEn.replace(/'/g, "''")
+            const safeCompleteTranslated = completeResult.storableFinalNameEn.replace(/'/g, "''")
 
             await dbQuery(`
                 WITH sku AS (
@@ -525,20 +543,20 @@ export async function translateProductsAction(ids?: string[], mode: 'missing' | 
                 ),
                 upd_version AS (
                     UPDATE public.product_versions v
-                    SET final_base_name_en = '${safeTranslated}',
+                    SET final_base_name_en = '${safeBaseTranslated}',
                         validation_status = '${status}',
                         updated_at = now()
                     FROM sku
                     WHERE v.id = sku.version_id
                 )
                 UPDATE public.product_skus
-                SET final_complete_name_en = '${safeTranslated}',
+                SET final_complete_name_en = '${safeCompleteTranslated}',
                     updated_at = now()
                 WHERE id = '${product.id}'
             `)
 
             updatedCount++
-            updatedProducts.push({ id: product.id, final_name_en: translatedName })
+            updatedProducts.push({ id: product.id, final_name_en: completeResult.storableFinalNameEn || translatedName })
         }
 
         const uniqueMissing = Array.from(new Set(totalMissingTerms))
@@ -631,7 +649,7 @@ export async function checkProductExistsAction(code?: string, sapDesc?: string) 
     if (conditions.length === 0) return null
 
     const res = await dbQuery(`
-        SELECT id, sku_complete as code, sap_description_original as sap_description 
+        SELECT sku_complete as code, sap_description_original as sap_description 
         FROM public.product_skus 
         WHERE ${conditions.join(' OR ')}
         LIMIT 1
@@ -751,7 +769,7 @@ export async function saveGlossaryTermsAction(terms: { term_es: string, term_en:
             `)
         }
         resetGlossaryCache()
-        revalidatePath('/products/glossary')
+        revalidatePath('/configuration/glossary')
         revalidatePath('/pending')
         revalidatePath('/')
         return { success: true, message: `Se guardaron ${terms.length} términos correctamente.` }
@@ -767,7 +785,7 @@ export async function getDiagnosticInfoAction() {
     let rulesCount = 0;
     let error = null;
     try {
-        const res = await dbQuery(`SELECT count(*) as count FROM public.rules WHERE enabled = true`);
+        const res = await dbQuery(`SELECT count(*) as count FROM public.naming_components`);
         rulesCount = res?.[0]?.count || 0;
     } catch (e: any) {
         error = e.message;
@@ -798,8 +816,6 @@ export async function batchCreateColorVariantsAction(
     colors: { code: string, name: string, isNew: boolean }[]
 ) {
     const results = []
-    
-    const rules = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true ORDER BY priority ASC`) || []
     
     for (const color of colors) {
         try {
@@ -838,16 +854,13 @@ export async function batchCreateColorVariantsAction(
                 Object.assign(workingProduct, parsed._version_overrides);
                 workingProduct.rh_flag = workingProduct.rh === 'RH';
             }
-            const evalResult = evaluateProductRules(workingProduct as any, rules)
-            const final_name_es = evalResult.finalNameEs
-            const sap_description_recommended = final_name_es.toUpperCase().substring(0, 40)
-            
-            const translateResult = await translateProductToEnglish(
-                { ...evalResult.transformedProduct, final_name_es } as any,
-                workingProduct.product_type || 'MUEBLE',
-                evalResult.activeVariableIds
-            )
-            const final_name_en = translateResult.isValid ? translateResult.translatedName : ''
+            const baseName = await computeProductNameByNamingType(workingProduct, 'final_base_name')
+            const completeName = await computeProductNameByNamingType(workingProduct, 'final_complete_name')
+            const sapName = await computeProductNameByNamingType(workingProduct, 'sap_description_recommended')
+            const sap_description_recommended_es = (sapName.final_name_es || completeName.final_name_es).toUpperCase().substring(0, 40)
+            const sap_description_recommended_en = (sapName.final_name_en || completeName.final_name_en).toUpperCase().substring(0, 40)
+            const final_name_es = completeName.final_name_es
+            const final_name_en = completeName.final_name_en
             
             const clientNameRaw = originalProduct.private_label_client_name ? String(originalProduct.private_label_client_name).trim() : ''
             const isPrivate = clientNameRaw !== '' && clientNameRaw.toUpperCase() !== 'NA'
@@ -874,9 +887,12 @@ export async function batchCreateColorVariantsAction(
                 parsed, 
                 isPrivate, 
                 isPrivate ? clientNameRaw : null, 
-                sap_description_recommended, 
-                final_name_es, 
-                final_name_en,
+                sap_description_recommended_es,
+                sap_description_recommended_en,
+                baseName.final_name_es,
+                baseName.final_name_en,
+                completeName.final_name_es,
+                completeName.final_name_en,
                 batchExistingRefAttrs
             )
             

@@ -52,9 +52,9 @@ export default async function PendingPage() {
                 <TableRow key={productId}>
                   <TableCell>
                     <div className="flex flex-col">
-                      <Link href={`/products/${productId}`} className="font-semibold text-slate-900 hover:text-indigo-600">
+                      <span className="font-semibold text-slate-900">
                         {productCode}
-                      </Link>
+                      </span>
                       <span className="text-[10px] text-slate-500">{productName}</span>
                     </div>
                   </TableCell>

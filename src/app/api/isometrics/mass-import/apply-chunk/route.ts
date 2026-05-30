@@ -375,7 +375,6 @@ export async function POST(req: Request) {
     }
 
     revalidatePath('/assets')
-    revalidatePath('/products')
     revalidatePath('/pending')
     await revalidateValidationSweepEverywhere()
 

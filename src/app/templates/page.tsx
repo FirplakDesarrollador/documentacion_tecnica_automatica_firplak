@@ -15,6 +15,15 @@ import { DeleteTemplateButton } from '@/components/templates/DeleteTemplateButto
 import { DuplicateTemplateDialog } from '@/components/templates/DuplicateTemplateDialog'
 import { EditTemplateDialog } from '@/components/templates/EditTemplateDialog'
 
+function formatVersion(version: unknown): string {
+    const v = String(version ?? '1.0.0')
+    const parts = v.split('.')
+    if (parts.length === 3 && parts[1] === '0' && parts[2] === '0') {
+        return `v${parts[0]}`
+    }
+    return `v${v}`
+}
+
 export default async function TemplatesPage() {
     const templates = await dbQuery(`SELECT * FROM public.plantillas_doc_tec ORDER BY created_at ASC`) || []
     const datasets = await dbQuery(`SELECT id, name FROM public.custom_datasets ORDER BY created_at DESC`) || []
@@ -63,7 +72,7 @@ export default async function TemplatesPage() {
                                         {template.width_mm}mm x {template.height_mm}mm ({template.orientation})
                                     </TableCell>
                                     <TableCell>
-                                        <Badge className="bg-slate-50 text-slate-500 ring-1 ring-slate-500/10 hover:bg-slate-50 text-[10px] px-2 py-0.5 font-bold uppercase tracking-tight">v{template.version}</Badge>
+                                        <Badge className="bg-slate-50 text-slate-500 ring-1 ring-slate-500/10 hover:bg-slate-50 text-[10px] px-2 py-0.5 font-bold uppercase tracking-tight">{formatVersion(template.version)}</Badge>
                                     </TableCell>
                                     <TableCell>
                                         {template.active ? (

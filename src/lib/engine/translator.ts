@@ -2,7 +2,7 @@
  * Firplak Adaptive Translation Engine v2.0
  * ─────────────────────────────────────────
  * Arquitectura: Payload-Driven (recibe objeto producto con 15 campos nativos)
- * Configuración: Lee naming_config_en desde Supabase para determinar el comportamiento
+ * Configuración: Lee naming_components desde Supabase para determinar el comportamiento
  *                de cada variable.
  * 
  * BehaviorType:
@@ -54,7 +54,7 @@ export interface TranslationResult {
     fieldTranslations: Record<string, string>
 }
 
-interface FieldConfig {
+export interface FieldConfig {
     variable_id: string
     order_index: number
     emit: boolean
@@ -70,15 +70,18 @@ interface FieldConfig {
 
 interface GlossaryEntry { en: string; category: string }
 let cachedGlossary: Record<string, GlossaryEntry> | null = null
-let cachedConfig: Record<string, FieldConfig> | null = null
+let cachedConfigByKey: Record<string, { fetchedAt: number; config: Record<string, FieldConfig> }> = {}
 let lastGlossaryFetch = 0
-let lastConfigFetch = 0
 
 const CACHE_TTL_MS = 60_000
 
 export function resetGlossaryCache() {
     cachedGlossary = null
     lastGlossaryFetch = 0
+}
+
+export function resetTranslatorConfigCache() {
+    cachedConfigByKey = {}
 }
 
 // ─── Supabase ─────────────────────────────────────────────────────────────────
@@ -117,18 +120,49 @@ async function loadGlossary(force: boolean = false): Promise<Record<string, Glos
 }
 
 async function loadConfig(targetEntity: string): Promise<Record<string, FieldConfig>> {
-    if (cachedConfig && Date.now() - lastConfigFetch < CACHE_TTL_MS) return cachedConfig
+    const normalizedTarget = String(targetEntity || 'MUEBLE').trim().toUpperCase() || 'MUEBLE'
+    const namingType = 'final_complete_name'
+    const cacheKey = `${normalizedTarget}::${namingType}`
+    const cached = cachedConfigByKey[cacheKey]
+    if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) return cached.config
+
     const sb = getSupabase()
     const { data, error } = await sb
-        .from('naming_config_en')
-        .select('*')
-        .eq('target_entity', targetEntity)
-        .order('order_index', { ascending: true })
+        .from('naming_components')
+        .select('component_key, order_en, behavior_en')
+        .eq('product_type', normalizedTarget)
+        .eq('naming_type', namingType)
+        .not('order_en', 'is', null)
+        .order('order_en', { ascending: true })
     if (error) throw new Error('Config load error: ' + error.message)
+
     const cfg: Record<string, FieldConfig> = {}
-    data?.forEach((r: any) => { cfg[r.variable_id] = r as FieldConfig })
-    cachedConfig = cfg
-    lastConfigFetch = Date.now()
+    data?.forEach((r: any) => {
+        const variableId = String(r.component_key || '').trim()
+        if (!variableId) return
+
+        const rawBehavior = String(r.behavior_en || 'preserve')
+        const behaviorEn = variableId === 'resolved_type' && rawBehavior === 'resolved_type'
+            ? 'translate'
+            : rawBehavior
+        const isResolvedTypeInput = behaviorEn === 'resolved_type' && variableId !== 'resolved_type'
+        const isResolvedTypeOutput = behaviorEn === 'resolved_type' && variableId === 'resolved_type'
+
+        cfg[variableId] = {
+            variable_id: variableId,
+            order_index: Number(r.order_en ?? 0),
+            emit: !isResolvedTypeInput,
+            behavior: isResolvedTypeInput
+                ? 'classify_and_resolve'
+                : (behaviorEn === 'translate' || isResolvedTypeOutput ? 'translate_and_emit' : 'conditional_emit'),
+            drop_if_resolved: false,
+            resolved_by: isResolvedTypeInput ? 'resolved_type' : null,
+            fallback_strategy: behaviorEn === 'translate' ? 'translate' : 'preserve',
+            group_key: isResolvedTypeInput || isResolvedTypeOutput ? 'resolved_type' : null,
+            notes: null,
+        }
+    })
+    cachedConfigByKey[cacheKey] = { fetchedAt: Date.now(), config: cfg }
     return cfg
 }
 
@@ -489,13 +523,17 @@ export async function translateProductToEnglish(
     product: ProductPayload,
     targetEntity: string = 'MUEBLE',
     activeVariableIds?: string[],
-    forceRefresh: boolean = false
+    forceRefresh: boolean = false,
+    configOverride?: Record<string, FieldConfig>
 ): Promise<TranslationResult> {
     const missingTerms: string[] = []
     const warnings: string[] = []
     const fieldTranslations: Record<string, string> = {}
     
-    if (forceRefresh) resetGlossaryCache()
+    if (forceRefresh) {
+        resetGlossaryCache()
+        resetTranslatorConfigCache()
+    }
 
     const isActuallyActive = (varId: string) => {
         // Special case: resolved_type (the commercial type like CABINET/VANITY) 
@@ -521,7 +559,10 @@ export async function translateProductToEnglish(
         return possibleKeys.some(k => activeVariableIds.includes(k))
     }
 
-    const [glossary, config] = await Promise.all([ loadGlossary(), loadConfig(targetEntity) ])
+    const [glossary, config] = await Promise.all([
+        loadGlossary(),
+        configOverride ? Promise.resolve(configOverride) : loadConfig(targetEntity),
+    ])
     const resolvedTypeRes = resolveTypeBlock(product, glossary)
     
     let resolvedTypeName = ''

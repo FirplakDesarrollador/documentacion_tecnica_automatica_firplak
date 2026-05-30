@@ -1,7 +1,7 @@
 import { dbQuery } from '@/lib/supabase';
 import { NomenclaturesSection } from '@/components/rules/NomenclaturesSection';
 import { MassImportSettingsSection } from '@/components/rules/MassImportSettingsSection';
-import { getNamingModelStatusAction } from '@/app/rules/actions';
+import { getNamingComponentsAction, getNamingModelStatusAction } from '@/app/rules/actions';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Settings, Palette, PlusCircle, DatabaseZap, Layers, BookOpen, Users } from 'lucide-react';
@@ -9,9 +9,7 @@ import { Settings, Palette, PlusCircle, DatabaseZap, Layers, BookOpen, Users } f
 export const dynamic = 'force-dynamic';
 
 export default async function ConfigurationPage() {
-  // fetch all rules
-  const rules = await dbQuery(`SELECT * FROM public.rules ORDER BY rule_type ASC, priority ASC`) || [];
-  const namingRules = rules.filter((r: { rule_type?: string }) => r.rule_type === 'name_component');
+  const namingComponents = await getNamingComponentsAction();
   const namingModelStatus = await getNamingModelStatusAction();
 
   // fetch app settings for mass import
@@ -90,7 +88,7 @@ export default async function ConfigurationPage() {
       </div>
 
       <NomenclaturesSection
-        namingRules={namingRules}
+        namingComponents={namingComponents}
         namingModelTypes={namingModelStatus.modelTypes}
         orphanFamilyTypes={namingModelStatus.orphanFamilyTypes}
         orphanModelTypes={namingModelStatus.orphanModelTypes}

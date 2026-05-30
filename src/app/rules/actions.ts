@@ -2,7 +2,20 @@
 
 import { dbQuery } from '@/lib/supabase'
 import { revalidatePath, revalidateTag } from 'next/cache'
-import { recomputeMasterNamesByProductType } from '@/lib/engine/masterNaming'
+import { recomputeMasterNamesByProductType, resetMasterNamingModelCache } from '@/lib/engine/masterNaming'
+import { resetTranslatorConfigCache } from '@/lib/engine/translator'
+import {
+    DEFAULT_NAMING_TYPE,
+    componentsFromRulesAndEnConfig,
+    componentsToEnConfig,
+    componentsToRules,
+    componentsToTranslatorConfig,
+    loadAllRulesForNamingType,
+    loadNamingComponents,
+    loadNamingComponentsByProductType,
+    replaceNamingComponents,
+    type NamingComponent,
+} from '@/lib/engine/namingComponents'
 
 function esc(v: any) {
     if (v === null || v === undefined) return 'NULL'
@@ -64,6 +77,16 @@ async function getFamiliesProductTypes(): Promise<string[]> {
 }
 
 async function resolveNamingModelTypesFromStorage(): Promise<string[]> {
+    const componentRows = await dbQuery(`
+        SELECT DISTINCT product_type
+        FROM public.naming_components
+        WHERE product_type IS NOT NULL
+          AND btrim(product_type) <> ''
+        ORDER BY product_type ASC
+    `) || []
+    const fromComponents = parseProductTypesValue(componentRows.map((r: any) => r.product_type))
+    if (fromComponents.length > 0) return fromComponents
+
     const settingRow = await dbQuery(`
         SELECT value
         FROM public.app_settings
@@ -74,27 +97,7 @@ async function resolveNamingModelTypesFromStorage(): Promise<string[]> {
     const fromSetting = parseProductTypesValue(settingRow?.[0]?.value)
     if (fromSetting.length > 0) return fromSetting
 
-    const rows = await dbQuery(`
-        SELECT DISTINCT target_value
-        FROM public.rules
-        WHERE rule_type = 'name_component'
-          AND target_value IS NOT NULL
-          AND btrim(target_value) <> ''
-        ORDER BY target_value ASC
-    `) || []
-
-    const fromRules = parseProductTypesValue(rows.map((r: any) => r.target_value))
-    if (fromRules.length > 0) {
-        await dbQuery(`
-            INSERT INTO public.app_settings (key, value, updated_at)
-            VALUES ('${NAMING_MODELS_KEY}', to_jsonb(${esc(JSON.stringify(fromRules))}::json), now())
-            ON CONFLICT (key) DO UPDATE
-            SET value = EXCLUDED.value,
-                updated_at = now()
-        `)
-    }
-
-    return fromRules
+    return []
 }
 
 async function saveNamingModelTypesToStorage(types: string[]) {
@@ -110,8 +113,7 @@ async function saveNamingModelTypesToStorage(types: string[]) {
 
 export async function getRulesAction() {
     try {
-        const data = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true ORDER BY priority ASC`)
-        return data || []
+        return await loadAllRulesForNamingType(DEFAULT_NAMING_TYPE)
     } catch (error: any) {
         console.error("getRulesAction error:", error.message)
         return []
@@ -126,29 +128,47 @@ export async function getColorByNameAction(code4Dig: string) {
 
 export async function upsertRuleAction(data: any) {
     const { id, rule_type, target_entity, condition_expression, action_type, action_payload, priority, enabled, notes, target_value } = data
+    void rule_type
+    void action_type
+    void enabled
+    void notes
+
+    const productType = normalizeProductType(target_value || target_entity || 'MUEBLE')
+    const componentKey = String(action_payload || '').match(/\{([A-Za-z_][A-Za-z0-9_]*)\}/)?.[1]
+        || String(condition_expression || '').match(/^\s*([A-Za-z_][A-Za-z0-9_]*)/)?.[1]
+        || `component_${priority || 0}`
 
     if (id) {
         await dbQuery(`
-            UPDATE public.rules SET
-                rule_type=${esc(rule_type)},
-                target_entity=${esc(target_entity)},
+            UPDATE public.naming_components SET
+                product_type=${esc(productType)},
+                component_key=${esc(componentKey)},
                 condition_expression=${esc(condition_expression)},
-                action_type=${esc(action_type)},
-                action_payload=${esc(action_payload)},
-                priority=${priority || 0},
-                enabled=${enabled ? 'true' : 'false'},
-                notes=${esc(notes)},
-                target_value=${esc(target_value)},
+                payload_es=${esc(action_payload)},
+                order_es=${priority || 0},
                 updated_at=now()
             WHERE id='${id}'
         `)
     } else {
         await dbQuery(`
-            INSERT INTO public.rules (rule_type, target_entity, condition_expression, action_type, action_payload, priority, enabled, notes, target_value)
-            VALUES (${esc(rule_type)}, ${esc(target_entity)}, ${esc(condition_expression)}, ${esc(action_type)}, ${esc(action_payload)}, ${priority || 0}, ${enabled ? 'true' : 'false'}, ${esc(notes)}, ${esc(target_value)})
+            INSERT INTO public.naming_components (
+                naming_type, product_type, component_key, condition_expression, payload_es, order_es, behavior_en, updated_at
+            )
+            VALUES (
+                ${esc(DEFAULT_NAMING_TYPE)},
+                ${esc(productType)},
+                ${esc(componentKey)},
+                ${esc(condition_expression || 'true')},
+                ${esc(action_payload)},
+                ${priority || 0},
+                'preserve',
+                now()
+            )
         `)
     }
 
+    resetMasterNamingModelCache()
+    resetTranslatorConfigCache()
     revalidatePath('/rules')
     revalidatePath('/configuration')
     revalidatePendingSweepEverywhere()
@@ -156,7 +176,9 @@ export async function upsertRuleAction(data: any) {
 
 export async function deleteRuleAction(id: string) {
     if (!id) return
-    await dbQuery(`DELETE FROM public.rules WHERE id = '${id}'`)
+    await dbQuery(`DELETE FROM public.naming_components WHERE id = '${id}'`)
+    resetMasterNamingModelCache()
+    resetTranslatorConfigCache()
     revalidatePath('/rules')
     revalidatePath('/configuration')
     revalidatePendingSweepEverywhere()
@@ -165,11 +187,19 @@ export async function deleteRuleAction(id: string) {
 export async function revalidateRulesAndProductsAction() {
     revalidatePath('/rules')
     revalidatePath('/configuration')
-    revalidatePath('/products')
     revalidatePendingSweepEverywhere()
 }
 
 export async function previewNamingRulesAction(productType: string, pendingRules: any[]) {
+    return previewNamingComponentsAction(productType, DEFAULT_NAMING_TYPE, pendingRules)
+}
+
+export async function previewNamingComponentsAction(
+    productType: string,
+    namingType: string,
+    pendingRules: any[],
+    pendingEnConfig?: any[]
+) {
     const safeType = productType.replace(/'/g, "''")
     const rows = await dbQuery(`
         SELECT *
@@ -201,10 +231,14 @@ export async function previewNamingRulesAction(productType: string, pendingRules
         notes: r.notes || null,
         target_value: r.target_value || productType,
     }))
+    const components = pendingEnConfig
+        ? componentsFromRulesAndEnConfig(productType, namingType, rulesForEval, pendingEnConfig)
+        : await loadNamingComponents(productType, namingType)
+    const enConfigOverride = components.length > 0 ? componentsToTranslatorConfig(components) : undefined
 
     return await Promise.all(products.map(async (p: any) => {
         const resultEs = evaluateProductRules(p as any, rulesForEval as any)
-        const resultEn = await translateProductToEnglish(p as any, productType, resultEs.activeVariableIds)
+        const resultEn = await translateProductToEnglish(p as any, productType, resultEs.activeVariableIds, false, enConfigOverride)
 
         return {
             id: p.id,
@@ -248,17 +282,15 @@ export async function applyNamesToProductTypeBatchAction(productType: string, of
 }
 
 export async function getEnConfigAction(targetEntity: string) {
+    return getNamingComponentsEnConfigAction(targetEntity, DEFAULT_NAMING_TYPE)
+}
+
+export async function getNamingComponentsEnConfigAction(targetEntity: string, namingType: string) {
     try {
-        const safe = targetEntity.replace(/'/g, "''")
-        const data = await dbQuery(`
-            SELECT variable_id, order_index, emit, behavior, drop_if_resolved, resolved_by, fallback_strategy, group_key, notes
-            FROM public.naming_config_en
-            WHERE target_entity = '${safe}'
-            ORDER BY order_index ASC
-        `)
-        return data || []
+        const components = await loadNamingComponents(targetEntity, namingType)
+        return componentsToEnConfig(components)
     } catch (error: any) {
-        console.error("getEnConfigAction error:", error.message)
+        console.error("getNamingComponentsEnConfigAction error:", error.message)
         return []
     }
 }
@@ -267,43 +299,21 @@ export async function saveEnConfigAction(targetEntity: string, variable_id: stri
     order_index?: number
     emit?: boolean
     behavior?: string
+    behavior_en?: string
     fallback_strategy?: string
     drop_if_resolved?: boolean
-}) {
-    const safe = targetEntity.replace(/'/g, "''")
-    const safeVar = variable_id.replace(/'/g, "''")
-
-    const existing = await dbQuery(`
-        SELECT id FROM public.naming_config_en
-        WHERE target_entity = '${safe}' AND variable_id = '${safeVar}'
-        LIMIT 1
-    `)
-
-    if (existing && existing.length > 0) {
-        const sets: string[] = [`updated_at = now()`]
-        if (patch.order_index !== undefined) sets.push(`order_index = ${patch.order_index}`)
-        if (patch.emit !== undefined) sets.push(`emit = ${patch.emit}`)
-        if (patch.behavior !== undefined) sets.push(`behavior = '${patch.behavior.replace(/'/g, "''")}'`)
-        if (patch.fallback_strategy !== undefined) sets.push(`fallback_strategy = '${patch.fallback_strategy.replace(/'/g, "''")}'`)
-        if (patch.drop_if_resolved !== undefined) sets.push(`drop_if_resolved = ${patch.drop_if_resolved}`)
-
-        await dbQuery(`UPDATE public.naming_config_en SET ${sets.join(', ')} WHERE target_entity = '${safe}' AND variable_id = '${safeVar}'`)
-    } else {
-        const order_index = patch.order_index !== undefined ? patch.order_index : 0
-        const emit = patch.emit !== undefined ? patch.emit : true
-        const behavior = patch.behavior !== undefined ? patch.behavior : 'preserve'
-        const fallback_strategy = patch.fallback_strategy !== undefined ? patch.fallback_strategy : 'preserve'
-        const drop_if_resolved = patch.drop_if_resolved !== undefined ? patch.drop_if_resolved : false
-        const notes = `Variable creada desde ES`
-
-        await dbQuery(`
-            INSERT INTO public.naming_config_en (
-                target_entity, variable_id, order_index, emit, behavior, fallback_strategy, drop_if_resolved, notes, created_at, updated_at
-            ) VALUES (
-                '${safe}', '${safeVar}', ${order_index}, ${emit}, '${behavior.replace(/'/g, "''")}', '${fallback_strategy.replace(/'/g, "''")}', ${drop_if_resolved}, '${notes}', now(), now()
-            )
-        `)
-    }
+}, namingType: string = DEFAULT_NAMING_TYPE) {
+    const current = await loadNamingComponents(targetEntity, namingType)
+    const enConfig = componentsToEnConfig(current)
+    const existing = enConfig.find((cfg: any) => cfg.variable_id === variable_id)
+    const nextConfig = existing
+        ? enConfig.map((cfg: any) => cfg.variable_id === variable_id ? { ...cfg, ...patch } : cfg)
+        : [...enConfig, { variable_id, order_index: patch.order_index ?? enConfig.length * 10, behavior_en: patch.behavior_en ?? 'preserve', emit: patch.emit ?? true, behavior: patch.behavior ?? 'preserve', fallback_strategy: patch.fallback_strategy ?? 'preserve', drop_if_resolved: patch.drop_if_resolved ?? false }]
+    const rules = componentsToRules(current, targetEntity)
+    const nextComponents = componentsFromRulesAndEnConfig(targetEntity, namingType, rules, nextConfig)
+    await replaceNamingComponents(targetEntity, namingType, nextComponents)
+    resetMasterNamingModelCache()
+    resetTranslatorConfigCache()
 
     revalidatePath('/rules')
     revalidatePath('/configuration')
@@ -311,29 +321,40 @@ export async function saveEnConfigAction(targetEntity: string, variable_id: stri
 }
 
 export async function saveFullConfigAction(productType: string, esRules: any[], deletedEsIds: string[], enConfig: any[]) {
-    for (const id of deletedEsIds) {
-        if (id) await deleteRuleAction(id)
-    }
+    return saveNamingComponentsFullConfigAction(productType, DEFAULT_NAMING_TYPE, esRules, deletedEsIds, enConfig)
+}
 
-    for (const rule of esRules) {
-        await upsertRuleAction(rule)
-    }
+export async function saveNamingComponentsFullConfigAction(productType: string, namingType: string, esRules: any[], deletedEsIds: string[], enConfig: any[]) {
+    void deletedEsIds
+    const indexedRules = esRules.map((rule, index) => ({
+        ...rule,
+        priority: Number.isFinite(Number(rule.priority)) ? Number(rule.priority) : index * 10,
+        target_entity: productType,
+        target_value: productType,
+        rule_type: 'name_component',
+        action_type: 'append_text',
+        enabled: true,
+    }))
 
-    const safeType = productType.replace(/'/g, "''")
-    for (const cfg of enConfig) {
-        await saveEnConfigAction(safeType, cfg.variable_id, {
-            order_index: cfg.order_index,
-            emit: cfg.emit,
-            behavior: cfg.behavior,
-            fallback_strategy: cfg.fallback_strategy,
-            drop_if_resolved: cfg.drop_if_resolved
-        })
-    }
+    const components = componentsFromRulesAndEnConfig(productType, namingType, indexedRules, enConfig)
+    await replaceNamingComponents(productType, namingType, components)
+    resetMasterNamingModelCache()
+    resetTranslatorConfigCache()
 
     revalidatePath('/rules')
     revalidatePath('/configuration')
     revalidatePendingSweepEverywhere()
     return { success: true }
+}
+
+export async function getNamingComponentsAction(productType?: string) {
+    if (productType) return loadNamingComponentsByProductType(productType)
+    const rows = await dbQuery(`
+        SELECT *
+        FROM public.naming_components
+        ORDER BY product_type ASC, naming_type ASC, COALESCE(order_es, order_en, 999999), component_key ASC
+    `) || []
+    return rows as NamingComponent[]
 }
 
 export async function saveGlossaryTermsAction(terms: { es: string, en: string }[]) {
@@ -352,7 +373,7 @@ export async function saveGlossaryTermsAction(terms: { es: string, en: string }[
 
     revalidatePath('/rules')
     revalidatePath('/configuration')
-    revalidatePath('/products/glossary')
+    revalidatePath('/configuration/glossary')
     revalidatePendingSweepEverywhere()
     return { success: true }
 }
@@ -432,8 +453,9 @@ export async function deleteNamingModelAction(rawProductType: string) {
 
     await saveNamingModelTypesToStorage(modelTypes.filter(type => type !== productType))
 
-    await dbQuery(`DELETE FROM public.rules WHERE target_value = ${esc(productType)}`)
-    await dbQuery(`DELETE FROM public.naming_config_en WHERE target_entity = ${esc(productType)}`)
+    await dbQuery(`DELETE FROM public.naming_components WHERE product_type = ${esc(productType)}`)
+    resetMasterNamingModelCache()
+    resetTranslatorConfigCache()
 
     revalidatePath('/rules')
     revalidatePath('/configuration')
@@ -446,10 +468,12 @@ export async function applyFullBulkNamingUpdateBatchAction(
     offset: number,
     limit: number,
     clientEsRules?: any[],
-    clientEnConfig?: any[]
+    clientEnConfig?: any[],
+    namingType?: string
 ) {
     void clientEsRules
     void clientEnConfig
+    void namingType
 
     const recomputed = await recomputeMasterNamesByProductType(productType, offset, limit)
     return recomputed.products.map(product => ({

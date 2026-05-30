@@ -12,26 +12,34 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog'
-import { Settings2, ArrowRight, Plus, AlertTriangle, Trash2 } from 'lucide-react'
+import { ArrowRight, Plus, AlertTriangle, Trash2 } from 'lucide-react'
 import { NamingRulesManager } from './NamingRulesManager'
-import { cn } from '@/lib/utils'
 import { addNamingModelAction, deleteNamingModelAction } from '@/app/rules/actions'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 
 interface NomenclaturesSectionProps {
-    namingRules: NamingRule[];
+    namingComponents: NamingComponent[];
     namingModelTypes: string[];
     orphanFamilyTypes: string[];
     orphanModelTypes: string[];
 }
 
-interface NamingRule {
-    target_value?: string;
-    priority?: number;
+interface NamingComponent {
+    id?: string;
+    product_type?: string;
+    naming_type?: string;
+    order_es?: number | null;
     condition_expression?: string;
-    action_payload?: string;
+    payload_es?: string | null;
+    component_key?: string;
 }
+
+const NAMING_TYPE_OPTIONS = [
+    { value: 'final_base_name', label: 'Base final' },
+    { value: 'final_complete_name', label: 'Completo final' },
+    { value: 'sap_description_recommended', label: 'SAP recomendado' },
+]
 
 function formatProductTypeLabel(type: string) {
     return type
@@ -41,12 +49,12 @@ function formatProductTypeLabel(type: string) {
 }
 
 export function NomenclaturesSection({
-    namingRules,
+    namingComponents,
     namingModelTypes,
     orphanFamilyTypes,
     orphanModelTypes,
 }: NomenclaturesSectionProps) {
-    const [editingType, setEditingType] = useState<string | null>(null)
+    const [editingModel, setEditingModel] = useState<{ productType: string; namingType: string } | null>(null)
     const [showAddDialog, setShowAddDialog] = useState(false)
     const [showDeleteDialog, setShowDeleteDialog] = useState(false)
     const [selectedOrphanType, setSelectedOrphanType] = useState('')
@@ -55,10 +63,10 @@ export function NomenclaturesSection({
     const router = useRouter()
 
     // Helper to generate a preview string of the structure
-    const generatePreview = (type: string) => {
-        const rulesForType = namingRules
-            .filter(r => r.target_value === type)
-            .sort((a, b) => a.priority - b.priority)
+    const generatePreview = (type: string, namingType: string) => {
+        const rulesForType = namingComponents
+            .filter(r => r.product_type === type && r.naming_type === namingType && r.payload_es !== null && r.order_es !== null)
+            .sort((a, b) => Number(a.order_es ?? 0) - Number(b.order_es ?? 0))
         
         if (rulesForType.length === 0) return <span className="text-slate-400 italic font-mono text-sm">Sin estructura definida</span>
 
@@ -67,10 +75,10 @@ export function NomenclaturesSection({
                 {rulesForType.map((r, i) => (
                     <div key={i} className="flex items-center gap-1">
                         {r.condition_expression === 'true' ? (
-                            <span className="text-orange-600 font-extrabold text-sm select-none break-keep whitespace-nowrap">&quot;{r.action_payload}&quot;</span>
+                            <span className="text-orange-600 font-extrabold text-sm select-none break-keep whitespace-nowrap">&quot;{r.payload_es}&quot;</span>
                         ) : (
                             <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 font-bold uppercase tracking-tighter text-[10px] break-keep whitespace-nowrap">
-                                {r.action_payload.split('=')[1] || r.action_payload}
+                                {String(r.payload_es || '').split('=')[1] || r.payload_es}
                             </Badge>
                         )}
                         {i < rulesForType.length - 1 && <ArrowRight className="w-3 h-3 text-slate-300 shrink-0" />}
@@ -116,7 +124,7 @@ export function NomenclaturesSection({
         try {
             await deleteNamingModelAction(deleteTargetType)
             toast.success(`Modelo ${deleteTargetType} eliminado`) 
-            if (editingType === deleteTargetType) setEditingType(null)
+            if (editingModel?.productType === deleteTargetType) setEditingModel(null)
             setShowDeleteDialog(false)
             router.refresh()
         } catch (error: unknown) {
@@ -140,7 +148,7 @@ export function NomenclaturesSection({
                 {namingModelTypes.map((productType) => {
                     const isOrphanModel = orphanModelTypes.includes(productType)
                     return (
-                    <Card key={productType} className={`border-2 transition-all ${editingType === productType ? 'border-blue-500 shadow-md ring-4 ring-blue-50' : 'border-slate-200 hover:border-blue-300'}`}>
+                    <Card key={productType} className={`border-2 transition-all ${editingModel?.productType === productType ? 'border-blue-500 shadow-md ring-4 ring-blue-50' : 'border-slate-200 hover:border-blue-300'}`}>
                         <CardHeader className="pb-3 bg-slate-50/50">
                             <div className="flex items-center justify-between">
                                 <div className="flex flex-col gap-1">
@@ -151,20 +159,6 @@ export function NomenclaturesSection({
                                         </Badge>
                                     )}
                                 </div>
-                                <Button
-                                    variant={editingType === productType ? "default" : "secondary"}
-                                    size="sm"
-                                    onClick={() => setEditingType(editingType === productType ? null : productType)}
-                                    className={cn(
-                                        "h-8 px-3 text-[11px] font-bold uppercase transition-all shadow-sm",
-                                        editingType === productType
-                                            ? "bg-indigo-600 hover:bg-indigo-700 text-white" 
-                                            : "bg-slate-100 text-slate-600 hover:bg-slate-200 border-none"
-                                    )}
-                                >
-                                    <Settings2 className="w-3.5 h-3.5 mr-1.5" />
-                                    {editingType === productType ? 'Cerrar' : 'Ajustar'}
-                                </Button>
                             </div>
                             {isOrphanModel && (
                                 <CardDescription className="text-amber-700 text-xs flex items-center gap-1 mt-2">
@@ -174,8 +168,25 @@ export function NomenclaturesSection({
                             )}
                         </CardHeader>
                         <CardContent className="pt-4 pb-4">
+                            <div className="flex flex-wrap gap-2 mb-3">
+                                {NAMING_TYPE_OPTIONS.map(option => {
+                                    const count = namingComponents.filter(component => component.product_type === productType && component.naming_type === option.value).length
+                                    return (
+                                        <Button
+                                            key={option.value}
+                                            variant={editingModel?.productType === productType && editingModel.namingType === option.value ? 'default' : 'outline'}
+                                            size="sm"
+                                            className="h-7 px-2 text-[10px] font-bold"
+                                            onClick={() => setEditingModel({ productType, namingType: option.value })}
+                                        >
+                                            {option.label}
+                                            <Badge variant="secondary" className="ml-1 px-1 py-0 text-[9px]">{count}</Badge>
+                                        </Button>
+                                    )
+                                })}
+                            </div>
                             <div className="bg-slate-50/50 border border-slate-100 p-4 rounded-xl w-full min-h-[70px] flex items-center shadow-inner group-hover:bg-white transition-colors">
-                                {generatePreview(productType)}
+                                {generatePreview(productType, editingModel?.productType === productType ? editingModel.namingType : 'final_complete_name')}
                             </div>
                             {isOrphanModel && (
                                 <div className="mt-3 flex justify-end">
@@ -191,12 +202,28 @@ export function NomenclaturesSection({
                             )}
                         </CardContent>
 
-                        {editingType === productType && (
+                        {editingModel?.productType === productType && (
                             <NamingRulesManager 
                                 open={true}
                                 productType={productType}
-                                onClose={() => setEditingType(null)}
-                                initialRules={namingRules.filter(r => r.target_value === productType)}
+                                namingType={editingModel.namingType}
+                                onClose={() => setEditingModel(null)}
+                                initialRules={namingComponents
+                                    .filter(r => r.product_type === productType && r.naming_type === editingModel.namingType && r.payload_es !== null && r.order_es !== null)
+                                    .sort((a, b) => Number(a.order_es ?? 0) - Number(b.order_es ?? 0))
+                                    .map((component, idx) => ({
+                                        id: component.id,
+                                        component_key: component.component_key,
+                                        naming_type: component.naming_type,
+                                        rule_type: 'name_component',
+                                        target_entity: productType,
+                                        condition_expression: component.condition_expression,
+                                        action_type: 'append_text',
+                                        action_payload: component.payload_es,
+                                        priority: component.order_es ?? idx * 10,
+                                        enabled: true,
+                                        target_value: productType,
+                                    }))}
                             />
                         )}
                     </Card>

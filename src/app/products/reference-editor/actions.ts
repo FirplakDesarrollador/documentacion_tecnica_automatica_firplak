@@ -93,7 +93,6 @@ export async function deleteReferencesAction(referenceIds: string[]) {
     DELETE FROM public.product_references WHERE id IN (${ids});
   `);
   revalidatePath('/configuration/reference-editor');
-  revalidatePath('/products');
   revalidatePath('/generate');
 }
 

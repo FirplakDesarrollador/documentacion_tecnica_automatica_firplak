@@ -91,16 +91,15 @@ async function resolveNamingModelTypes(): Promise<string[]> {
   const fromSetting = parseTypesValue(settingRows?.[0]?.value);
   if (fromSetting.length > 0) return fromSetting;
 
-  const ruleRows = await dbQuery(`
-    SELECT DISTINCT target_value
-    FROM public.rules
-    WHERE rule_type = 'name_component'
-      AND target_value IS NOT NULL
-      AND btrim(target_value) <> ''
-    ORDER BY target_value ASC
+  const componentRows = await dbQuery(`
+    SELECT DISTINCT product_type
+    FROM public.naming_components
+    WHERE product_type IS NOT NULL
+      AND btrim(product_type) <> ''
+    ORDER BY product_type ASC
   `) || [];
 
-  return parseTypesValue(ruleRows.map((row: { target_value?: string }) => row.target_value || ''));
+  return parseTypesValue(componentRows.map((row: { product_type?: string }) => row.product_type || ''));
 }
 
 async function saveNamingModelTypes(types: string[]) {
@@ -156,7 +155,7 @@ async function computeProductTypeRenameImpact(ids: string[], rawNextType: string
     ORDER BY product_type ASC
   `) || [];
 
-  const selectedTypes = Array.from(new Set(
+  const selectedTypes: string[] = Array.from(new Set<string>(
     selectedRows
       .map((row: { product_type?: string }) => normalizeProductType(row.product_type || ''))
       .filter(Boolean)
@@ -351,20 +350,10 @@ export async function executeMassUpdateFamilies(
       const toType = migrationImpact.toType;
 
       await dbQuery(`
-        UPDATE public.rules
-        SET target_value = '${toType.replace(/'/g, "''")}',
+        UPDATE public.naming_components
+        SET product_type = '${toType.replace(/'/g, "''")}',
             updated_at = now()
-        WHERE upper(btrim(target_value)) = '${fromType.replace(/'/g, "''")}';
-
-        UPDATE public.rules
-        SET target_entity = '${toType.replace(/'/g, "''")}',
-            updated_at = now()
-        WHERE upper(btrim(target_entity)) = '${fromType.replace(/'/g, "''")}';
-
-        UPDATE public.naming_config_en
-        SET target_entity = '${toType.replace(/'/g, "''")}',
-            updated_at = now()
-        WHERE upper(btrim(target_entity)) = '${fromType.replace(/'/g, "''")}';
+        WHERE upper(btrim(product_type)) = '${fromType.replace(/'/g, "''")}';
       `);
 
       const currentModels = await resolveNamingModelTypes();
@@ -410,7 +399,7 @@ export async function updateFamilyLinesAction(familyCode: string, lines: string[
   `);
 
   revalidatePath('/families');
-  revalidatePath('/products/reference-editor');
+  revalidatePath('/configuration/reference-editor');
   return { success: true };
 }
 
@@ -423,7 +412,7 @@ export async function deleteLineAction(line: string) {
   `);
 
   revalidatePath('/families');
-  revalidatePath('/products/reference-editor');
+  revalidatePath('/configuration/reference-editor');
   return { success: true };
 }
 
@@ -471,7 +460,7 @@ export async function deleteFamiliesAction(codes: string[]) {
       AND product_type IS NOT NULL
       AND btrim(product_type) <> ''
   `) || [];
-  const affectedTypes = Array.from(new Set(
+  const affectedTypes: string[] = Array.from(new Set<string>(
     affectedTypesRows
       .map((r: any) => String(r.product_type || '').trim().toUpperCase())
       .filter(Boolean)
@@ -507,8 +496,8 @@ export async function deleteFamiliesAction(codes: string[]) {
 
     const hasRulesRows = await dbQuery(`
       SELECT COUNT(*)::int AS count
-      FROM public.rules
-      WHERE upper(btrim(target_value)) = '${productType.replace(/'/g, "''")}'
+      FROM public.naming_components
+      WHERE upper(btrim(product_type)) = '${productType.replace(/'/g, "''")}'
     `) || [];
     const hasRules = Number(hasRulesRows?.[0]?.count || 0) > 0;
 
@@ -516,7 +505,7 @@ export async function deleteFamiliesAction(codes: string[]) {
   }
 
   revalidatePath('/families');
-  revalidatePath('/products/reference-editor');
+  revalidatePath('/configuration/reference-editor');
   revalidatePath('/configuration');
 
   return {
@@ -570,7 +559,7 @@ export async function executeAddAttrToFamilies(familyCodes: string[], attrKey: s
   }
 
   revalidatePath('/families');
-  revalidatePath('/products/reference-editor');
+  revalidatePath('/configuration/reference-editor');
   return { success: true };
 }
 
@@ -625,6 +614,6 @@ export async function executeRemoveAttrFromFamilies(familyCodes: string[], attrK
   }
 
   revalidatePath('/families');
-  revalidatePath('/products/reference-editor');
+  revalidatePath('/configuration/reference-editor');
   return { success: true };
 }

@@ -4,6 +4,28 @@ import { dbQuery } from "@/lib/supabase"
 import { revalidatePath } from "next/cache"
 import { normalizeTemplateFontFamily } from "@/lib/templates/templateTypography"
 
+/**
+ * Bumps a semver version string (MAJOR.MINOR.PATCH) by incrementing PATCH.
+ *   1.0.0 → 1.0.1 → ... → 1.0.9 → 1.1.0 → ... → 1.9.9 → 2.0.0
+ */
+function bumpVersion(current: unknown): string {
+    const v = String(current ?? '1.0.0')
+    const parts = v.split('.').map(Number)
+    let [major, minor, patch] = parts.length === 3 ? parts : [1, 0, 0]
+
+    patch++
+    if (patch > 9) {
+        patch = 0
+        minor++
+        if (minor > 9) {
+            minor = 0
+            major++
+        }
+    }
+
+    return `${major}.${minor}.${patch}`
+}
+
 export async function createTemplate(data: {
     name: string
     width_mm: number
@@ -32,6 +54,7 @@ export async function createTemplate(data: {
                 document_type,
                 elements_json,
                 active,
+                version,
                 data_source,
                 template_font_family,
                 brand_scope,
@@ -45,6 +68,7 @@ export async function createTemplate(data: {
                 'label',
                 '[]',
                 true,
+                '1.0.0',
                 '${data.data_source.replace(/'/g, "''")}',
                 '${templateFontFamily}',
                 '${brandScope}',
@@ -88,6 +112,7 @@ export async function duplicateTemplate(id: string, newName: string, dataSource:
                 document_type,
                 elements_json,
                 active,
+                version,
                 data_source,
                 template_font_family,
                 export_formats,
@@ -104,6 +129,7 @@ export async function duplicateTemplate(id: string, newName: string, dataSource:
                 '${original.document_type}', 
                 '${safeJson}', 
                 true, 
+                '1.0.0',
                 '${dataSource.replace(/'/g, "''")}',
                 '${originalTemplateFontFamily}',
                 ${original.export_formats ? `'${original.export_formats.replace(/'/g, "''")}'` : 'NULL'},
@@ -169,6 +195,14 @@ export async function updateTemplate(id: string, data: {
                 ? `, private_label_client_name=NULL `
                 : ''
 
+        let versionClause = ''
+        if (data.elements_json) {
+            const currentRows = await dbQuery(`SELECT version FROM public.plantillas_doc_tec WHERE id='${id.replace(/'/g, "''")}' LIMIT 1`)
+            const currentVersion = currentRows?.[0]?.version || '1.0.0'
+            const newVersion = bumpVersion(currentVersion)
+            versionClause = `, version='${newVersion}' `
+        }
+
         await dbQuery(`
             UPDATE public.plantillas_doc_tec SET
                 ${elementsClause}
@@ -183,6 +217,7 @@ export async function updateTemplate(id: string, data: {
                 ${templateFontClause}
                 ${brandScopeClause}
                 ${data.brand_scope === 'firplak' ? forcePlcNullClause : plcClause}
+                ${versionClause}
             WHERE id='${id}'
         `)
 

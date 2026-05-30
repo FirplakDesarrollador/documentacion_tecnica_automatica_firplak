@@ -267,7 +267,7 @@ export async function executeMassUpdateVersions(ids: string[], normalUpdates: an
 
     await recomputeMasterNamesForVersionIds(ids);
     revalidatePath('/configuration/version-editor');
-    revalidatePath('/products');
+
     revalidatePath('/generate');
     return { success: true, data };
   } catch (error: any) {

@@ -2,6 +2,7 @@ import { dbQuery } from '@/lib/supabase'
 import { getFamilyFilters, getReferenceFilters } from '@/lib/data/filters'
 import { GenerateClient } from '@/components/generate/GenerateClient'
 import { FileOutput } from 'lucide-react'
+import { loadAllRulesForNamingType } from '@/lib/engine/namingComponents'
 
 export default async function GeneratePage({
     searchParams: searchParamsPromise,
@@ -69,8 +70,8 @@ export default async function GeneratePage({
          FROM public.plantillas_doc_tec WHERE active = true ORDER BY created_at ASC`
     ) || []
 
-    // --- Cargar reglas del motor ---
-    const rules = await dbQuery(`SELECT * FROM public.rules WHERE enabled = true`) || []
+    // --- Cargar componentes del motor de nombres ---
+    const rules = await loadAllRulesForNamingType('final_complete_name')
 
     const selectedTemplateInfo = templates.find((t: any) => t.id === templateId) || templates[0]
     const templateDataSource = selectedTemplateInfo?.data_source || 'core_firplak'

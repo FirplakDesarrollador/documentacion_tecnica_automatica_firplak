@@ -11,15 +11,13 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { 
-    upsertRuleAction, 
-    deleteRuleAction, 
-    previewNamingRulesAction, 
+    previewNamingComponentsAction,
     getProductsCountByFamilyAction, 
     applyFullBulkNamingUpdateBatchAction, 
     revalidateRulesAndProductsAction, 
-    getEnConfigAction, 
+    getNamingComponentsEnConfigAction,
     saveEnConfigAction,
-    saveFullConfigAction,
+    saveNamingComponentsFullConfigAction,
     saveGlossaryTermsAction
 } from '@/app/rules/actions'
 import { toast } from 'sonner'
@@ -132,36 +130,10 @@ function getUnusedSapText(sapDesc: string, generatedName: string): string {
 }
 
 // ─── Sub-component for controlled order index ──────────────────────────────
-function OrderIndexInput({ initialValue, onSave, disabled }: { initialValue: number, onSave: (val: number) => void, disabled?: boolean }) {
-    const [val, setVal] = useState(initialValue.toString());
-    
-    // Sync with external changes (e.g., if reordered elsewhere or reset)
-    useEffect(() => {
-        setVal(initialValue.toString());
-    }, [initialValue]);
-
-    return (
-        <Input 
-            type="number" 
-            value={val} 
-            onChange={(e) => setVal(e.target.value)}
-            onBlur={() => {
-                const num = parseInt(val);
-                if (!isNaN(num) && num !== initialValue) {
-                    onSave(num);
-                } else {
-                    setVal(initialValue.toString());
-                }
-            }}
-            disabled={disabled}
-            className="h-7 w-12 text-center text-[11px] px-1 font-mono"
-        />
-    );
-}
-
 interface NamingRulesManagerProps {
     open: boolean
     productType: string
+    namingType: string
     onClose: () => void
     initialRules: any[]
 }
@@ -181,7 +153,13 @@ interface PreviewResult {
 
 type MassApplyResult = { code: string; newName: string; newNameEn?: string; oldName: string; error?: string; status?: string }
 
-export function NamingRulesManager({ open, productType, onClose, initialRules }: NamingRulesManagerProps) {
+const NAMING_TYPE_LABELS: Record<string, string> = {
+    final_base_name: 'Nombre base final',
+    final_complete_name: 'Nombre completo final',
+    sap_description_recommended: 'Descripción SAP recomendada',
+}
+
+export function NamingRulesManager({ open, productType, namingType, onClose, initialRules }: NamingRulesManagerProps) {
     const [rules, setRules] = useState<any[]>(() => {
         const sorted = [...initialRules].sort((a: any, b: any) => a.priority - b.priority)
         return sorted.map((r, idx) => ({ ...r, priority: idx * 10 }))
@@ -230,26 +208,31 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
     }
 
     const prevProductType = useRef(productType)
+    const prevNamingType = useRef(namingType)
     const prevOpen = useRef<boolean | null>(null)
 
     useEffect(() => {
         const hasOpened = open && (prevOpen.current === null || prevOpen.current === false)
         const hasTypeChanged = productType !== prevProductType.current
+        const hasNamingTypeChanged = namingType !== prevNamingType.current
 
         // Solo pisar el estado local si el diálogo se abrió de nuevo o si cambió el tipo de producto
-        if (!savedSuccessfully && (hasOpened || hasTypeChanged)) {
+        if ((hasOpened || hasTypeChanged || hasNamingTypeChanged) && (!savedSuccessfully || hasTypeChanged || hasNamingTypeChanged)) {
             const sorted = [...initialRules].sort((a: any, b: any) => a.priority - b.priority)
             setRules(reindexRules(sorted))
+            setEnConfig([])
             setPreviewGenerated(false)
             setPreviewResults([])
             setMassApplyMode(false)
             setMassResults([])
             setDeletedIds([])
+            setActiveTab('orden_es')
         }
 
         prevProductType.current = productType
+        prevNamingType.current = namingType
         prevOpen.current = open
-    }, [initialRules, open, productType, savedSuccessfully])
+    }, [initialRules, open, productType, namingType, savedSuccessfully])
 
     const markDirty = () => {
         setPreviewGenerated(false)
@@ -269,6 +252,24 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
         markDirty()
     }
 
+    const moveEnConfig = (index: number, direction: 'up' | 'down') => {
+        const sortedConfig = [...enConfig].sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
+        const targetIndex = direction === 'up' ? index - 1 : index + 1
+        if (targetIndex < 0 || targetIndex >= sortedConfig.length) return
+
+        const temp = sortedConfig[index]
+        sortedConfig[index] = sortedConfig[targetIndex]
+        sortedConfig[targetIndex] = temp
+
+        const indexed = sortedConfig.map((config, idx) => ({
+            ...config,
+            order_index: idx * 10
+        }))
+
+        setEnConfig(indexed)
+        markDirty()
+    }
+
     const handleSaveOrder = async () => {
         // Final sync check before saving
         const issues = checkSyncIssues(enConfig)
@@ -282,7 +283,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
 
         setLoading(true)
         try {
-            await saveFullConfigAction(productType, rules, deletedIds, enConfig)
+            await saveNamingComponentsFullConfigAction(productType, namingType, rules, deletedIds, enConfig)
             toast.success("Configuración ES + EN guardada correctamente")
             setSavedSuccessfully(true)
             setDeletedIds([])
@@ -318,6 +319,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
         const newRule = {
             rule_type: 'name_component',
             target_entity: 'product',
+            naming_type: namingType,
             condition_expression: 'true',
             action_type: 'append_text',
             action_payload: 'TEXTO',
@@ -343,6 +345,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
         const newRule = {
             rule_type: 'name_component',
             target_entity: productType,
+            naming_type: namingType,
             condition_expression: condExpr,
             action_type: 'append_text',
             action_payload: `${variablePrefix}{${selectedField}}${variableSuffix}`,
@@ -382,7 +385,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
     const handleLoadPreview = async () => {
         setIsLoadingPreview(true)
         try {
-            const results = await previewNamingRulesAction(productType, rules)
+            const results = await previewNamingComponentsAction(productType, namingType, rules, enConfig)
             setPreviewResults(results as PreviewResult[])
             setPreviewGenerated(true)
         } catch (err: any) {
@@ -460,6 +463,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
             newEnConfig.push({
                 variable_id: v,
                 order_index: newEnConfig.length * 10,
+                behavior_en: (v === 'product_type' || v === 'designation' || v === 'use_destination' || v === 'resolved_type') ? 'resolved_type' : ((isTechnical || isColor) ? 'translate' : 'preserve'),
                 emit: true,
                 behavior: (isTechnical || isColor) ? 'translate_and_emit' : 'preserve',
                 fallback_strategy: (isTechnical || isColor) ? 'translate' : 'preserve',
@@ -489,7 +493,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
         } else if (tab === 'orden_en' && enConfig.length === 0) {
             setEnConfigLoading(true)
             try {
-                const cfg = await getEnConfigAction(productType) 
+                const cfg = await getNamingComponentsEnConfigAction(productType, namingType)
                 setEnConfig(cfg)
                 const issues = checkSyncIssues(cfg)
                 setSyncIssues(issues)
@@ -514,7 +518,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
 
         setEnConfigSaving(variable_id)
         try {
-            await saveEnConfigAction(productType, variable_id, { [field]: value })
+            await saveEnConfigAction(productType, variable_id, { [field]: value }, namingType)
             // Success: state already updated optimistically
             toast.success(`Configuración actualizada`)
         } catch (err: any) {
@@ -522,7 +526,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
             // For now, just toast error. 
             toast.error("Error al guardar: " + err.message)
             // Reload from server to be safe
-            const cfg = await getEnConfigAction(productType) 
+            const cfg = await getNamingComponentsEnConfigAction(productType, namingType)
             setEnConfig(cfg)
         } finally {
             setEnConfigSaving(null)
@@ -558,7 +562,8 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                     offset, 
                     BATCH_SIZE,
                     rules,
-                    enConfig
+                    enConfig,
+                    namingType
                 )
                 allResults = [...allResults, ...batchResults]
                 setMassResults([...allResults])
@@ -579,7 +584,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
         <Dialog open={open} onOpenChange={(val) => { if (!val) onClose() }}>
             <DialogContent className="sm:max-w-[720px] h-[88vh] flex flex-col p-0 overflow-hidden">
                 <DialogHeader className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 shrink-0">
-                    <DialogTitle className="text-xl">Nomenclatura: {productType}</DialogTitle>
+                    <DialogTitle className="text-xl">Nomenclatura: {productType} · {NAMING_TYPE_LABELS[namingType] || namingType}</DialogTitle>
 
                     {/* Tab switcher */}
                     <div className="flex gap-1 mt-3 bg-slate-100 p-1 rounded-lg w-fit">
@@ -751,7 +756,7 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                                             <Zap className="w-4 h-4 shrink-0 text-amber-500" />
                                             <div>
                                                 <p className="font-bold mb-1 italic">Traducción Técnica y Adaptativa</p>
-                                                El sistema toma automáticamente las variables validadas por el nombre en español. Aquí defines el orden, el tratamiento (traducir o conservar) y cómo resolver términos faltantes.
+                                                El sistema toma automáticamente las variables validadas por el nombre en español. Aquí defines el orden en inglés y el comportamiento directo de cada variable desde behavior_en.
                                             </div>
                                         </div>
                                     </div>
@@ -807,15 +812,13 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                                         <table className="w-full text-left border-collapse">
                                             <thead className="bg-slate-50 text-[10px] uppercase font-bold text-slate-500 border-b border-slate-200">
                                                 <tr>
-                                                    <th className="px-4 py-2 w-12 text-center">N°</th>
+                                                    <th className="px-4 py-2 w-12 text-center">Orden</th>
                                                     <th className="px-4 py-2">Variable</th>
-                                                    <th className="px-4 py-2 text-center">Mostrar en Nombre EN</th>
                                                     <th className="px-4 py-2">Tratamiento</th>
-                                                    <th className="px-4 py-2 text-center">Si no existe traducción</th>
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-slate-100">
-                                                {[...enConfig].sort((a, b) => a.order_index - b.order_index).map((c) => {
+                                                {[...enConfig].sort((a, b) => a.order_index - b.order_index).map((c, idx) => {
                                                     // Logic to detect if it's active in ES
                                                     const esVariables = rules.filter(r => r.condition_expression !== 'true').map(r => r.condition_expression.split('!=')[0].split('==')[0].trim())
                                                     
@@ -829,6 +832,11 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                                                     const matchKeys = mapping[c.variable_id] || [c.variable_id]
                                                     const isActiveInEs = matchKeys.some(k => esVariables.includes(k))
                                                     const isResolvedTypePart = ['product_type', 'designation', 'use_destination'].includes(c.variable_id)
+                                                    const selectedBehaviorEn = c.behavior_en || (
+                                                        c.behavior === 'classify_and_resolve'
+                                                            ? 'resolved_type'
+                                                            : (c.fallback_strategy === 'translate' || c.behavior === 'translate_and_emit' ? 'translate' : 'preserve')
+                                                    )
 
                                                     return (
                                                         <tr 
@@ -837,11 +845,14 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                                                             title={!isActiveInEs ? 'Esta variable no participa en el nombre en español actual (No pasó el filtro del motor ES)' : ''}
                                                         >
                                                             <td className="px-4 py-2">
-                                                                <OrderIndexInput 
-                                                                    initialValue={c.order_index} 
-                                                                    onSave={(val) => updateEnConfigField(c.variable_id, 'order_index', val)}
-                                                                    disabled={enConfigSaving === c.variable_id}
-                                                                />
+                                                                <div className="flex flex-col items-center gap-1">
+                                                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => moveEnConfig(idx, 'up')} disabled={idx === 0 || enConfigSaving === c.variable_id}>
+                                                                        <ArrowUp className="w-3 h-3" />
+                                                                    </Button>
+                                                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => moveEnConfig(idx, 'down')} disabled={idx === enConfig.length - 1 || enConfigSaving === c.variable_id}>
+                                                                        <ArrowDown className="w-3 h-3" />
+                                                                    </Button>
+                                                                </div>
                                                             </td>
                                                             <td className="px-4 py-2">
                                                                 <div className="flex flex-col">
@@ -859,67 +870,19 @@ export function NamingRulesManager({ open, productType, onClose, initialRules }:
                                                                     <span className="text-[10px] text-slate-400 italic max-w-[200px] truncate">{c.notes}</span>
                                                                 </div>
                                                             </td>
-                                                            <td className="px-4 py-2 text-center align-middle">
-                                                                <div className="flex justify-center">
-                                                                    <button 
-                                                                        onClick={() => updateEnConfigField(c.variable_id, 'emit', !c.emit)}
-                                                                        disabled={enConfigSaving === c.variable_id}
-                                                                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-2 ${c.emit ? 'bg-indigo-600' : 'bg-slate-200'} ${!isActiveInEs ? 'cursor-not-allowed opacity-50' : ''}`}
-                                                                    >
-                                                                        <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${c.emit ? 'translate-x-4' : 'translate-x-0'}`} />
-                                                                    </button>
-                                                                </div>
-                                                            </td>
                                                             <td className="px-4 py-2">
                                                                 <select 
-                                                                    className={`h-7 text-[11px] rounded border border-slate-200 bg-white w-full max-w-[160px] ${isResolvedTypePart ? 'bg-slate-50 cursor-not-allowed text-slate-500' : ''}`}
-                                                                    value={c.behavior || "translate_and_emit"}
-                                                                    onChange={(e) => {
-                                                                        const newBehavior = e.target.value
-                                                                        updateEnConfigField(c.variable_id, 'behavior', newBehavior)
-                                                                        
-                                                                        // Automatic fallback strategy based on treatment
-                                                                        if (newBehavior === 'translate_and_emit') {
-                                                                            updateEnConfigField(c.variable_id, 'fallback_strategy', 'translate')
-                                                                        } else {
-                                                                            updateEnConfigField(c.variable_id, 'fallback_strategy', 'preserve')
-                                                                        }
-                                                                    }}
-                                                                    disabled={enConfigSaving === c.variable_id || isResolvedTypePart}
+                                                                    className="h-7 text-[11px] rounded border border-slate-200 bg-white w-full max-w-[190px]"
+                                                                    value={selectedBehaviorEn}
+                                                                    onChange={(e) => updateEnConfigField(c.variable_id, 'behavior_en', e.target.value)}
+                                                                    disabled={enConfigSaving === c.variable_id}
                                                                 >
-                                                                    <option value="translate_and_emit">Traducir y mostrar</option>
-                                                                    <option value="preserve">Conservar sin traducir</option>
-                                                                    {isResolvedTypePart && <option value="classify_and_resolve">Usar para resolver tipo</option>}
+                                                                    <option value="translate">Traducir</option>
+                                                                    <option value="preserve">No traducir</option>
+                                                                    <option value="resolved_type">Traducción combinada</option>
                                                                 </select>
-                                                            </td>
-                                                            <td className="px-4 py-2">
-                                                                <div className="flex items-center gap-2 justify-center">
-                                                                    {c.variable_id === 'special_label' ? (
-                                                                        <select 
-                                                                            className="h-7 text-[11px] rounded border border-slate-200 bg-indigo-50 w-full max-w-[150px]"
-                                                                            value={c.fallback_strategy === 'translate' ? 'traducir' : (c.behavior === 'preserve' ? 'no_traducir' : 'solo_si_existe')}
-                                                                            onChange={(e) => {
-                                                                                const v = e.target.value;
-                                                                                if (v === 'traducir') {
-                                                                                    updateEnConfigField(c.variable_id, 'fallback_strategy', 'translate')
-                                                                                } else if (v === 'no_traducir') {
-                                                                                    updateEnConfigField(c.variable_id, 'behavior', 'preserve')
-                                                                                    updateEnConfigField(c.variable_id, 'fallback_strategy', 'preserve')
-                                                                                } else {
-                                                                                    updateEnConfigField(c.variable_id, 'behavior', 'translate_and_emit')
-                                                                                    updateEnConfigField(c.variable_id, 'fallback_strategy', 'preserve')
-                                                                                }
-                                                                            }}
-                                                                        >
-                                                                            <option value="traducir">Traducir (Obligatorio)</option>
-                                                                            <option value="no_traducir">No traducir (Original)</option>
-                                                                            <option value="solo_si_existe">Traducir solo si existe</option>
-                                                                        </select>
-                                                                    ) : (
-                                                                        <div className="text-[10px] font-medium text-slate-500 uppercase tracking-tight bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                                                                            {c.fallback_strategy === 'translate' ? 'Bloquear y pedir traducción' : 'No aplica'}
-                                                                        </div>
-                                                                    )}
+                                                                <div className="mt-1 flex items-center gap-2">
+                                                                    {isResolvedTypePart && <span className="text-[9px] text-amber-600 font-bold uppercase">Aporta a combinación</span>}
                                                                     {enConfigSaving === c.variable_id && <Loader2 className="w-3 h-3 animate-spin text-indigo-400" />}
                                                                 </div>
                                                             </td>

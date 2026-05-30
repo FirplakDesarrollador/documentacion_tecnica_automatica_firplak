@@ -1,8 +1,7 @@
 import { dbQuery } from '@/lib/supabase'
 import { TemplateElement, type TemplateElementType } from '@/components/templates/TemplateCanvas'
 import { unstable_cache } from 'next/cache'
-import { evaluateProductRules } from './ruleEvaluator'
-import { translateProductToEnglish, type ProductPayload } from './translator'
+import { computeNameWithNamingComponents } from './namingComponentsEngine'
 
 export type PendingSeverity = 'critical' | 'warning'
 export type PendingReasonCode =
@@ -179,10 +178,9 @@ function buildNamingInputReasons(product: any, activeVariableIds: string[]): Pen
 
 async function validateProductPending(params: {
     product: any
-    rules: any[]
     requiredFieldMap: Map<string, { global: boolean; byClient: Set<string> }>
 }): Promise<{ reasons: PendingReason[]; severity: PendingSeverity | null }> {
-    const { product, rules, requiredFieldMap } = params
+    const { product, requiredFieldMap } = params
 
     if (isInactiveOrNotExportable(product)) {
         return { reasons: [], severity: null }
@@ -227,25 +225,19 @@ async function validateProductPending(params: {
         }
     }
 
-    // B) Rules / naming inputs (activeVariableIds)
-    const ruleEval = evaluateProductRules(product as any, rules as any)
-    reasons.push(...buildNamingInputReasons(product, ruleEval.activeVariableIds))
+    // B) naming_components / naming inputs (activeVariableIds)
+    const completeNaming = await computeNameWithNamingComponents(product as any, 'final_complete_name')
+    reasons.push(...buildNamingInputReasons(product, completeNaming.activeVariableIds))
 
     // C) English translation health
-    const translation = await translateProductToEnglish(
-        ({ ...(ruleEval.transformedProduct as any), final_name_es: ruleEval.finalNameEs } as any) as ProductPayload,
-        product?.product_type || 'MUEBLE',
-        ruleEval.activeVariableIds
-    )
-
-    if (!translation.isValid) {
+    if (!completeNaming.isValid) {
         const parts: string[] = []
-        if (translation.errorReason) parts.push(translation.errorReason)
-        if (translation.missingTerms?.length) parts.push(`Missing terms: ${translation.missingTerms.join(', ')}`)
+        if (completeNaming.errorReason) parts.push(completeNaming.errorReason)
+        if (completeNaming.missingTerms?.length) parts.push(`Missing terms: ${completeNaming.missingTerms.join(', ')}`)
 
         reasons.push({
             code: 'EN_TRANSLATION_BLOCKED',
-            severity: 'critical',
+            severity: 'warning',
             message: parts.join(' | ') || 'Traducción EN inválida.',
         })
     }
@@ -292,7 +284,6 @@ export async function getPendingSummary(): Promise<PendingSummary> {
         `)) || []
 
     const products = rows.map((row: any) => mapRowToComposedProduct(row))
-    const rules = (await dbQuery(`SELECT * FROM public.rules WHERE enabled = true`)) || []
 
     const activeTemplates =
         (await dbQuery(`
@@ -306,7 +297,7 @@ export async function getPendingSummary(): Promise<PendingSummary> {
     const evaluatedProducts = products.filter((p: any) => !isInactiveOrNotExportable(p))
 
     const perProduct = await mapWithConcurrency(evaluatedProducts, 25, async (product: any) => {
-        const { reasons, severity } = await validateProductPending({ product, rules, requiredFieldMap })
+        const { reasons, severity } = await validateProductPending({ product, requiredFieldMap })
         return { product, reasons, severity }
     })
 

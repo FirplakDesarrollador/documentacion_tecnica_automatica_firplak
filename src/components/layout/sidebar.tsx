@@ -132,7 +132,7 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
                         </div>
                         <nav className="grid items-start px-3 text-sm font-medium gap-1">
                             {navItems.map((item) => {
-                                const isActive = pathname === item.href || (pathname.startsWith(item.href) && item.href !== '/')
+                                const isActive = pathname === item.href || (pathname.startsWith(item.href) && item.href !== '/') || (item.href === '/' && (pathname === '/new' || pathname === '/mass-import'))
                                 return (
                                     <Link
                                         key={item.name}
@@ -244,7 +244,7 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
                             </div>
                             <nav className="grid gap-1 px-3 py-6 text-sm font-medium">
                                 {navItems.map((item) => {
-                                    const isActive = pathname === item.href || (pathname.startsWith(item.href) && item.href !== '/')
+                                    const isActive = pathname === item.href || (pathname.startsWith(item.href) && item.href !== '/') || (item.href === '/' && (pathname === '/new' || pathname === '/mass-import'))
                                     return (
                                         <Link
                                             key={item.href}

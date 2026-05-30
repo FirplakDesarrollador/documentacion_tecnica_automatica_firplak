@@ -2,8 +2,7 @@ import { NextResponse } from 'next/server';
 import { dbQuery, supabaseServer } from '@/lib/supabase';
 import { readTemplateXlsx } from '@/lib/massImport/io';
 import { composeProductById } from '@/lib/engine/product_composer';
-import { evaluateProductRules } from '@/lib/engine/ruleEvaluator';
-import { translateProductToEnglish } from '@/lib/engine/translator';
+import { computeMasterNamePreview } from '@/lib/engine/masterNaming';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -308,7 +307,6 @@ export async function POST(req: Request) {
     // In safe mode, we allow reusing existing references/versions, but we must avoid writing to existing versions.
 
     // 2) Naming V6 (app-layer), persist via bulk_apply_names_v6 (no legacy)
-    const rules = (await dbQuery(`SELECT * FROM public.rules WHERE enabled = true ORDER BY priority ASC`)) || [];
 
     const updates: any[] = [];
     const clientNamesToEnsure = new Set<string>();
@@ -342,14 +340,8 @@ export async function POST(req: Request) {
         private_label_client_name: composed.private_label_client_name,
       };
 
-      const evalRes = evaluateProductRules(working, rules);
-      const finalNameEs = evalRes.finalNameEs || '';
-      const translateRes = await translateProductToEnglish(
-        { ...evalRes.transformedProduct, final_name_es: finalNameEs } as any,
-        working.product_type || 'MUEBLE',
-        evalRes.activeVariableIds
-      );
-      const finalNameEn = translateRes.isValid ? translateRes.translatedName : '';
+      const baseName = await computeMasterNamePreview(working as any, 'final_base_name');
+      const completeName = await computeMasterNamePreview(working as any, 'final_complete_name');
 
       updates.push({
         sku_id: composed.id,
@@ -359,11 +351,11 @@ export async function POST(req: Request) {
         version_id: (!safeMode || shouldUpdateVersionBySkuId.get(composed.id))
           ? (versionIdBySkuId.get(composed.id) || null)
           : null,
-        final_base_name_es: finalNameEs,
-        final_base_name_en: finalNameEn,
-        final_complete_name_es: finalNameEs,
-        final_complete_name_en: finalNameEn,
-        validation_status: finalNameEs && finalNameEn ? 'ready' : 'needs_review',
+        final_base_name_es: baseName.final_name_es,
+        final_base_name_en: baseName.final_name_en,
+        final_complete_name_es: completeName.final_name_es,
+        final_complete_name_en: completeName.final_name_en,
+        validation_status: baseName.final_name_es && baseName.final_name_en && completeName.final_name_es && completeName.final_name_en ? 'ready' : 'needs_review',
       });
     }
 

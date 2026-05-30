@@ -85,7 +85,6 @@ export async function createClientAction(input: { name: string; logo_asset_id?: 
 
   revalidatePath('/configuration/clients')
   revalidatePath('/templates')
-  revalidatePath('/products')
 
   if (hydrated) return hydrated
   if (row) return { ...row, logo_url: null }
@@ -111,7 +110,6 @@ export async function updateClientLogoAction(input: { client_id: string; logo_as
 
   revalidatePath('/configuration/clients')
   revalidatePath('/templates')
-  revalidatePath('/products')
 
   return hydrated
 }
@@ -133,7 +131,6 @@ export async function renameClientAndPropagateAction(input: { client_id: string;
 
   revalidatePath('/configuration/clients')
   revalidatePath('/templates')
-  revalidatePath('/products')
   revalidatePath('/generate')
 
   return rows[0] || { new_name: nextNameUpper }

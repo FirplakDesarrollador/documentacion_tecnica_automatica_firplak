@@ -194,7 +194,6 @@ export async function applySmartAssociationsAction(associations: {
     }
 
     revalidatePath('/assets')
-    revalidatePath('/products')
     await revalidateValidationSweepEverywhere()
 
     return { success: true, count }
@@ -354,7 +353,6 @@ export async function applyIsometricNormalizationAction(
     }
 
     revalidatePath('/assets')
-    revalidatePath('/products')
     await revalidateValidationSweepEverywhere()
 
     return { success: true }

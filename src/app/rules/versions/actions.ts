@@ -72,5 +72,4 @@ export async function deleteVersionAction(version_code: string) {
     `, [version_code])
     revalidatePath('/rules/versions')
     revalidatePath('/configuration/versions')
-    revalidatePath('/products')
 }

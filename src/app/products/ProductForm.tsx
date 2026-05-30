@@ -1,20 +1,19 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { createProductAction, getUniquePropertiesAction, parseProductCodeAction, translateAction, checkProductExistsAction, getDiagnosticInfoAction, getClientsAction, checkFamilyExistsAction, checkVersionExistsAction, upsertFamilyAction, saveGlossaryTermsAction, upsertColorAction } from './actions'
+import { createProductAction, getUniquePropertiesAction, parseProductCodeAction, translateAction, checkProductExistsAction, getClientsAction, checkFamilyExistsAction, checkVersionExistsAction, saveGlossaryTermsAction } from './actions'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { getColorByNameAction, getRulesAction } from '@/app/rules/actions'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
 import { ArrowLeft, FileBadge2, AlertTriangle, Sparkles, Building2, Image as ImageIcon, Save, Box, ShieldCheck, History, AlertCircle } from 'lucide-react'
 import { toast } from 'sonner'
-import { Product } from '@prisma/client'
+import { Product, Rule } from '@prisma/client'
 import { UploadAssetButton } from '@/components/assets/UploadAssetButton'
 import { ConfirmOverwriteModal } from '@/components/products/ConfirmOverwriteModal'
 import { IsometricAssociationDialog } from '@/components/assets/IsometricAssociationDialog'
@@ -23,7 +22,7 @@ import { MultiColorCreationModal } from '@/components/products/MultiColorCreatio
 import { cn } from '@/lib/utils'
 
 interface ProductFormProps {
-    initialData?: any
+    initialData?: Partial<Product>
     backHref?: string
     readOnly?: boolean
 }
@@ -32,16 +31,13 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
     const isEdit = !!initialData
     const router = useRouter()
     const [dupeAlertModal, setDupeAlertModal] = useState<{
-        id: string
         matchType: 'code' | 'sap_description' | 'both' | 'unknown'
-        code?: string | null
-        sap_description?: string | null
     } | null>(null)
     const [isConfirmingSave, setIsConfirmingSave] = useState(false)
-    const [savedProduct, setSavedProduct] = useState<any>(null)
+    const [savedProduct, setSavedProduct] = useState<Record<string, unknown> | null>(null)
     const [showExportModal, setShowExportModal] = useState(false)
     const [showMultiColorModal, setShowMultiColorModal] = useState(false)
-    const [allCreatedProducts, setAllCreatedProducts] = useState<any[]>([])
+    const [allCreatedProducts, setAllCreatedProducts] = useState<Record<string, unknown>[]>([])
     const [customValues, setCustomValues] = useState({ line: '', designation: '', product_type: '', use_destination: '', zone_home: '', bisagras: '', carb2: '', rh: '', special_label: '', canto_puertas: '' })
     const [clients, setClients] = useState<{id: string, name: string, logo_asset_id?: string}[]>([])
     const initialPrivateName = (initialData?.private_label_client_name && String(initialData.private_label_client_name).trim() !== '' && String(initialData.private_label_client_name).toUpperCase() !== 'NA')
@@ -54,8 +50,6 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         client_name: '',
         logo_id: initialData?.private_label_logo_id || ''
     })
-    const [missingZoneTranslation, setMissingZoneTranslation] = useState<string | null>(null)
-    const [zoneTranslation, setZoneTranslation] = useState('')
     const [missingGlossaryTerms, setMissingGlossaryTerms] = useState<string[]>([])
     const [glossaryDefinitions, setGlossaryDefinitions] = useState<Record<string, string>>({})
     const [resolvedTypeMissing, setResolvedTypeMissing] = useState<{key: string, value: string} | null>(null)
@@ -125,7 +119,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
     const [analysisSource, setAnalysisSource] = useState<'parser' | 'sku_match' | 'version_match' | 'reference_match' | 'composed' | null>(null)
     const [isNewFamily, setIsNewFamily] = useState(false)
     const [allowedLines, setAllowedLines] = useState<string[]>([])
-    const [rules, setRules] = useState<any[]>([])
+    const [rules, setRules] = useState<Rule[]>([])
     const [familyData, setFamilyData] = useState({
         name: '',
         zone_home: '',
@@ -178,7 +172,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         });
 
         getUniquePropertiesAction().then(res => {
-            setDatalistOptions(res as any);
+            setDatalistOptions(res as typeof datalistOptions);
         });
 
         getClientsAction().then(c => {
@@ -186,15 +180,6 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         })
     }, [isEdit, initialData])
     
-    // Reset familySaved state if data changes
-    useEffect(() => {
-        setFamilySaved(false);
-    }, [familyData.name, familyData.zone_home, familyData.line, familyData.product_type, familyData.use_destination]);
-
-    useEffect(() => {
-        setColorSaved(false);
-    }, [colorData.name]);
-
     const handleCheckDupe = async (onSuccess: () => void) => {
         if (isEdit) {
             onSuccess(); // No checking dupes in edit mode
@@ -314,7 +299,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
 
                 if (parsed.barcode_text) setHasBarcode(true)
                 if (!isAnalyzed) setIsAnalyzed(true)
-                setAnalysisSource((parsed as any)._source || 'parser')
+                setAnalysisSource((parsed as unknown as Record<string, unknown>)._source as 'parser' | 'sku_match' | 'version_match' | 'reference_match' | 'composed' | null || 'parser')
                 setFieldSources(parsed.inheritance_sources || {})
                 if (parsed.warnings && parsed.warnings.length > 0) {
                     setWarnings(parsed.warnings)
@@ -358,7 +343,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                 // Verificación de Color
                 if (parsed.color_code) {
                     const pCode = parsed.color_code.padStart(4, '0')
-                    const colorExists = datalistOptions.colors.some(c => (c.code || '').padStart(4, '0') === pCode) || !!parsed.color_name
+                    const colorExists = datalistOptions.colors.some(c => (c.code || '').padStart(4, '0') === pCode)
                     
                     if (!colorExists) {
                         setIsNewColor(true)
@@ -422,34 +407,34 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         })
     }
 
-    const renderCreatableSelect = (
+    const renderCreatableSelect = <T extends Record<string, unknown>>(
         name: string, 
         options: string[], 
         placeholder: string, 
-        state: any = formData, 
-        setState: any = setFormData,
-        customState: any = customValues,
-        setCustomState: any = setCustomValues
+        state: T = formData as unknown as T, 
+        setState: React.Dispatch<React.SetStateAction<T>> = setFormData as unknown as React.Dispatch<React.SetStateAction<T>>,
+        customState: Record<string, string> = customValues,
+        setCustomState: React.Dispatch<React.SetStateAction<Record<string, string>>> = setCustomValues as unknown as React.Dispatch<React.SetStateAction<Record<string, string>>>
     ) => {
-        const isCustom = state[name] === '__NEW__'
+        const isCustom = String(state[name]) === '__NEW__'
         if (isCustom) {
             return (
                 <div className="flex gap-2">
                     <Input 
                         autoFocus
                         value={customState[name] || ''} 
-                        onChange={e => setCustomState((c: any) => ({...c, [name]: e.target.value}))}
+                        onChange={e => setCustomState((c: Record<string, string>) => ({...c, [name]: e.target.value}))}
                         disabled={readOnly}
                         onBlur={() => {
                             if (customState[name]) {
-                                setState((prev: any) => ({...prev, [name]: customState[name]}))
+                                setState((prev: T) => ({...prev, [name]: customState[name]}))
                             } else {
-                                setState((prev: any) => ({...prev, [name]: ''}))
+                                setState((prev: T) => ({...prev, [name]: ''}))
                             }
                         }}
                         placeholder={`Escribe nueva ${placeholder.toLowerCase()}`}
                     />
-                    <Button variant="ghost" onClick={() => setState((p: any) => ({...p, [name]: ''}))} disabled={readOnly}>X</Button>
+                    <Button variant="ghost" onClick={() => setState((p: T) => ({...p, [name]: ''}))} disabled={readOnly}>X</Button>
                 </div>
             )
         }
@@ -470,9 +455,9 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                 value={finalOptions.includes(currentValue) ? currentValue : (currentValue ? currentValue : '')}
                 disabled={readOnly}
                 onChange={(e) => {
-                    setState((prev: any) => ({ ...prev, [name]: e.target.value }))
+                    setState((prev: T) => ({ ...prev, [name]: e.target.value }))
                     if (e.target.value !== '__NEW__') {
-                        setCustomState((c: any) => ({...c, [name]: ''}))
+                        setCustomState((c: Record<string, string>) => ({...c, [name]: ''}))
                     }
                 }}
             >
@@ -532,16 +517,66 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         return isFieldLocked(field) ? 'bg-slate-100 text-slate-500 cursor-not-allowed opacity-75' : ''
     }
 
-    // Generación de Nombres en Tiempo Real
-    useEffect(() => {
+    const getEffectiveColorName = () => {
         const ccode = formData.color_code;
         if (ccode && ccode !== '__NEW__') {
             const found = datalistOptions.colors?.find(c => c.code === ccode);
-            if (found && found.name !== formData.color_name) {
-                setFormData(p => ({ ...p, color_name: found.name }));
+            if (found && found.name !== formData.color_name) return found.name;
+        }
+        return formData.color_name;
+    };
+
+    const handleGenerateNames = useCallback(async (force: boolean = false) => {
+        if (rules.length > 0) {
+            const evalResult = evaluateProductRules(formData as unknown as Product, rules)
+            const finalEs = evalResult.finalNameEs
+
+            if (finalEs !== formData.final_name_es || force) {
+                const { translatedName, isValid, missingTerms } = await translateAction(finalEs, formData, force)
+
+                const missing = missingTerms || []
+                const rtMissing = missing.find(m => m.startsWith('RESOLVED_TYPE_MISSING:'))
+                const otherMissing = missing.filter(m => !m.startsWith('RESOLVED_TYPE_MISSING:'))
+
+                if (rtMissing) {
+                    const key = rtMissing.replace('RESOLVED_TYPE_MISSING:', '')
+                    setResolvedTypeMissing(prev => prev?.key === key ? prev : { key, value: '' })
+                } else {
+                    setResolvedTypeMissing(null)
+                }
+
+                setMissingGlossaryTerms(otherMissing)
+
+                if (!isValid && missing.length > 0 && !force) {
+                    toast.error(`Traducción técnica pendiente.`)
+                }
+
+                setFormData(prev => ({
+                    ...prev,
+                    final_name_es: finalEs,
+                    final_name_en: translatedName
+                }))
             }
         }
-    }, [formData.color_code, datalistOptions.colors])
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- individual formData fields listed below; formData itself omitted to prevent infinite loop
+    }, [
+        rules,
+        formData.product_name, formData.color_code, formData.line,
+        formData.designation, formData.commercial_measure, formData.accessory_text,
+        formData.rh, formData.assembled_flag, formData.canto_puertas,
+        formData.carb2, formData.bisagras, formData.special_label, formData.door_color_text,
+        formData.product_type, formData.zone_home, formData.use_destination,
+        formData.version_label,
+        formData.final_name_es,
+        formData.code, formData.sap_description,
+        formData.width_cm, formData.depth_cm, formData.height_cm, formData.weight_kg,
+        formData.stacking_max, formData.final_name_en,
+        formData.familia_code, formData.ref_code, formData.version_code,
+        formData.isometric_path, formData.barcode_text, formData.armado_con_lvm,
+        formData.status,
+        setFormData, setResolvedTypeMissing, setMissingGlossaryTerms,
+        evaluateProductRules, translateAction, toast
+    ])
 
     useEffect(() => {
         const timer = setTimeout(() => {
@@ -556,49 +591,17 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         formData.rh, formData.assembled_flag, formData.canto_puertas,
         formData.carb2, formData.bisagras, formData.special_label, formData.door_color_text,
         formData.product_type, formData.zone_home, formData.use_destination,
-        formData.version_label
+        formData.version_label,
+        rules.length,
+        handleGenerateNames
     ]);
-
-    const handleGenerateNames = async (force: boolean = false) => {
-        if (rules.length > 0) {
-            const evalResult = evaluateProductRules(formData as any as Product, rules)
-            const finalEs = evalResult.finalNameEs
-
-            if (finalEs !== formData.final_name_es || force) {
-                const { translatedName, isValid, missingTerms } = await translateAction(finalEs, formData, force)
-                
-                const missing = missingTerms || []
-                const rtMissing = missing.find(m => m.startsWith('RESOLVED_TYPE_MISSING:'))
-                const otherMissing = missing.filter(m => !m.startsWith('RESOLVED_TYPE_MISSING:'))
-
-                if (rtMissing) {
-                    const key = rtMissing.replace('RESOLVED_TYPE_MISSING:', '')
-                    setResolvedTypeMissing(prev => prev?.key === key ? prev : { key, value: '' })
-                } else {
-                    setResolvedTypeMissing(null)
-                }
-
-                setMissingGlossaryTerms(otherMissing)
-                
-                if (!isValid && missing.length > 0 && !force) {
-                    toast.error(`Traducción técnica pendiente.`)
-                }
-
-                setFormData(prev => ({
-                    ...prev,
-                    final_name_es: finalEs,
-                    final_name_en: translatedName
-                }))
-            }
-        }
-    }
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))
     }
 
     const handleTeachSystem = async () => {
-        const termsToSave: any[] = []
+        const termsToSave: { term_es: string; term_en: string; category: string; priority: number }[] = []
         
         // Glossary terms
         Object.entries(glossaryDefinitions).forEach(([es, en]) => {
@@ -637,8 +640,8 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
             } else {
                 toast.error(res.message)
             }
-        } catch (e: any) {
-            toast.error("Error al aprender términos: " + e.message)
+        } catch (e: unknown) {
+            toast.error("Error al aprender términos: " + (e instanceof Error ? e.message : String(e)))
         }
     }
 
@@ -656,6 +659,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
 
             const payload = { 
                 ...formData, 
+                color_name: getEffectiveColorName(),
                 _newFamily: isNewFamily ? familyData : undefined,
                 _newColor: isNewColor ? colorData : undefined,
                 _newVersion: isNewVersion ? versionData : undefined,
@@ -699,9 +703,10 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                     toast.error("Error al guardar: No se pudo crear el registro.");
                 }
             }
-        } catch (err: any) {
-            if (err.message.includes('NEXT_REDIRECT')) return; 
-            toast.error("Error al guardar: " + err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            if (message.includes('NEXT_REDIRECT')) return; 
+            toast.error("Error al guardar: " + message);
         }
     }
 
@@ -817,33 +822,33 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
 }
 
     const dupeAlertTitle = dupeAlertModal?.matchType === 'sap_description'
-        ? 'DescripciÃ³n SAP ya existe en CatÃ¡logo'
+        ? 'Descripción SAP ya existe en Catálogo'
         : dupeAlertModal?.matchType === 'both'
-            ? 'SKU y descripciÃ³n ya existen en CatÃ¡logo'
-            : 'SKU ya existe en CatÃ¡logo'
+            ? 'SKU y descripción ya existen en Catálogo'
+            : 'SKU ya existe en Catálogo'
 
     const dupeAlertMessage = dupeAlertModal?.matchType === 'sap_description'
         ? (
             <>
-                La descripciÃ³n SAP <span className="font-bold text-slate-900">{formData.sap_description}</span> ya se encuentra registrada en el sistema, asociada a otro cÃ³digo.
+                La descripción SAP <span className="font-bold text-slate-900">{formData.sap_description}</span> ya se encuentra registrada en el sistema, asociada a otro código.
             </>
         )
         : dupeAlertModal?.matchType === 'both'
             ? (
                 <>
-                    El cÃ³digo <span className="font-mono font-bold text-slate-900">{formData.code}</span> y la descripciÃ³n SAP <span className="font-bold text-slate-900">{formData.sap_description}</span> ya se encuentran registrados en el sistema.
+                    El código <span className="font-mono font-bold text-slate-900">{formData.code}</span> y la descripción SAP <span className="font-bold text-slate-900">{formData.sap_description}</span> ya se encuentran registrados en el sistema.
                 </>
             )
             : (
                 <>
-                    El cÃ³digo <span className="font-mono font-bold text-slate-900">{formData.code}</span> ya se encuentra registrado en el sistema.
+                    El código <span className="font-mono font-bold text-slate-900">{formData.code}</span> ya se encuentra registrado en el sistema.
                 </>
             )
 
     return (
         <div className="flex flex-col gap-8 w-full pb-20">
-            <MultiColorCreationModal isOpen={showMultiColorModal} originalProduct={savedProduct} availableColors={datalistOptions.colors} onComplete={(products) => { setAllCreatedProducts(products); setShowMultiColorModal(false); setShowExportModal(true); }} onSkip={() => { setAllCreatedProducts([savedProduct]); setShowMultiColorModal(false); setShowExportModal(true); }} />
-            <PostSaveExportModal isOpen={showExportModal} product={allCreatedProducts.length > 0 ? allCreatedProducts : savedProduct} onClose={() => router.push(backHref || '/products')} />
+            <MultiColorCreationModal isOpen={showMultiColorModal} originalProduct={savedProduct} availableColors={datalistOptions.colors} onComplete={(products) => { setAllCreatedProducts(products); setShowMultiColorModal(false); setShowExportModal(true); }} onSkip={() => { setAllCreatedProducts(savedProduct ? [savedProduct] : []); setShowMultiColorModal(false); setShowExportModal(true); }} />
+            <PostSaveExportModal isOpen={showExportModal} product={allCreatedProducts.length > 0 ? allCreatedProducts : savedProduct} onClose={() => router.push(backHref || '/')} />
             {dupeAlertModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
                     <Card className="max-w-md w-full shadow-2xl animate-in fade-in zoom-in-95 duration-200">
@@ -856,17 +861,21 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                         <CardContent>
                             <div className="space-y-4">
                                 <p className="text-slate-600">{dupeAlertMessage}</p>
-                                <p className="text-sm text-slate-500 italic">
-                                    En modo creación no se permite sobrescribir SKUs existentes. La edición avanzada por capas se migrará en una fase posterior.
-                                </p>
                             </div>
-                            <div className="flex justify-end gap-3 mt-8">
+                            <p className="text-base font-semibold text-slate-800 mt-6">¿Desea exportar o configurar el registro?</p>
+                            <div className="flex justify-end gap-3 mt-4">
                                 <Button variant="outline" onClick={() => setDupeAlertModal(null)}>Cerrar</Button>
                                 <Button 
-                                    className="bg-slate-700 hover:bg-slate-800 text-white" 
-                                    onClick={() => router.push(`/products/${dupeAlertModal.id}`)}
+                                    className="bg-blue-600 hover:bg-blue-700 text-white" 
+                                    onClick={() => router.push('/generate')}
                                 >
-                                    Ver producto existente
+                                    Exportar
+                                </Button>
+                                <Button 
+                                    className="bg-slate-700 hover:bg-slate-800 text-white" 
+                                    onClick={() => router.push('/configuration')}
+                                >
+                                    Configurar
                                 </Button>
                             </div>
                         </CardContent>
@@ -1121,7 +1130,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                                     <div className="grid gap-2">
                                         <Label className={`text-xs font-extrabold ${familySaved ? 'text-emerald-800' : 'text-amber-800'} uppercase tracking-wider`}>Tipo de Producto</Label>
-                                        {renderCreatableSelect('product_type', datalistOptions.productTypes || [], 'TIPO PRODUCTO', familyData, (fn: any) => {
+                                        {renderCreatableSelect('product_type', datalistOptions.productTypes || [], 'TIPO PRODUCTO', familyData, (fn: typeof familyData | ((prev: typeof familyData) => typeof familyData)) => {
                                             const updated = typeof fn === 'function' ? fn(familyData) : fn
                                             setFamilyData(updated)
                                             setFamilySaved(false)
@@ -1129,7 +1138,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                     </div>
                                     <div className="grid gap-2">
                                         <Label className={`text-xs font-extrabold ${familySaved ? 'text-emerald-800' : 'text-amber-800'} uppercase tracking-wider`}>Zona (Ambiente)</Label>
-                                        {renderCreatableSelect('zone_home', datalistOptions.zoneHomes || [], 'ZONA', familyData, (fn: any) => {
+                                        {renderCreatableSelect('zone_home', datalistOptions.zoneHomes || [], 'ZONA', familyData, (fn: typeof familyData | ((prev: typeof familyData) => typeof familyData)) => {
                                             const updated = typeof fn === 'function' ? fn(familyData) : fn
                                             setFamilyData(updated)
                                             setFamilySaved(false)
@@ -1137,7 +1146,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                     </div>
                                     <div className="grid gap-2">
                                         <Label className={`text-xs font-extrabold ${familySaved ? 'text-emerald-800' : 'text-amber-800'} uppercase tracking-wider`}>Uso / Destino</Label>
-                                        {renderCreatableSelect('use_destination', datalistOptions.useDestinations || [], 'DESTINO', familyData, (fn: any) => {
+                                        {renderCreatableSelect('use_destination', datalistOptions.useDestinations || [], 'DESTINO', familyData, (fn: typeof familyData | ((prev: typeof familyData) => typeof familyData)) => {
                                             const updated = typeof fn === 'function' ? fn(familyData) : fn
                                             setFamilyData(updated)
                                             setFamilySaved(false)
@@ -1148,7 +1157,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
                                     <div className="grid gap-2">
                                         <Label className={`text-xs font-extrabold ${familySaved ? 'text-emerald-800' : 'text-amber-800'} uppercase tracking-wider`}>Línea Comercial Autorizada</Label>
-                                        {renderCreatableSelect('line', datalistOptions.lines || [], 'LÍNEA', familyData, (fn: any) => {
+                                        {renderCreatableSelect('line', datalistOptions.lines || [], 'LÍNEA', familyData, (fn: typeof familyData | ((prev: typeof familyData) => typeof familyData)) => {
                                             const updated = typeof fn === 'function' ? fn(familyData) : fn
                                             setFamilyData(updated)
                                             setFamilySaved(false)
@@ -1185,7 +1194,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                 <div className="bg-white/40 p-4 rounded-xl border border-dashed border-slate-300">
                                     <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
                                         <ShieldCheck className="w-3 h-3 inline mr-1 mb-0.5" />
-                                        ESTOS VALORES SE HEREDARÁN AUTOMÁTICAMENTE A LOS PRODUCTOS DE ESTA FAMILIA. LAS EXCEPCIONES EN EL CÓDIGO (COMO "MRH") TENDRÁN PRIORIDAD.
+                                        ESTOS VALORES SE HEREDARÁN AUTOMÁTICAMENTE A LOS PRODUCTOS DE ESTA FAMILIA. LAS EXCEPCIONES EN EL CÓDIGO (COMO &ldquo;MRH&rdquo;) TENDRÁN PRIORIDAD.
                                     </p>
                                 </div>
 
@@ -1212,8 +1221,8 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                                     
                                                     setFamilySaved(true)
                                                     toast.success("Datos de familia aplicados al producto. Se guardarán definitivamente al finalizar.")
-                                                } catch (error: any) {
-                                                    toast.error("Error al aplicar familia: " + error.message)
+                                                } catch (error: unknown) {
+                                                    toast.error("Error al aplicar familia: " + (error instanceof Error ? error.message : String(error)))
                                                 }
                                             }}
                                             className={`${familySaved ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'} text-white font-bold px-8 shadow-md transition-all h-12 rounded-xl`}
@@ -1429,8 +1438,12 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                                             type="button"
                                                             className="text-red-400 hover:text-red-600 text-lg leading-none px-1"
                                                             onClick={() => {
-                                                                const { [key]: _, ...rest } = versionData.automatic_version_rules
-                                                                setVersionData(p => ({ ...p, automatic_version_rules: rest }))
+                                                                setVersionData(p => ({
+                                                                    ...p,
+                                                                    automatic_version_rules: Object.fromEntries(
+                                                                        Object.entries(p.automatic_version_rules).filter(([k]) => k !== key)
+                                                                    )
+                                                                }))
                                                             }}
                                                         >{'×'}</button>
                                                     )}
@@ -1492,7 +1505,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Código Color (4 dígitos)</Label>
                                             <div className="flex gap-2">
                                                 <div className="w-28 text-sm">{renderCreatableSelect('color_code', (datalistOptions.colors || []).map(c=>c.code), 'CÓDIGO COLOR')}</div>
-                                                <Input name="color_name" value={formData.color_name} onChange={handleChange} className="flex-1 bg-slate-50" readOnly />
+                                                <Input name="color_name" value={getEffectiveColorName()} onChange={handleChange} className="flex-1 bg-slate-50" readOnly />
                                             </div>
                                         </div>
                                         <div className="grid gap-2">
@@ -1834,7 +1847,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                             </Card>
 
                             <div className="flex gap-2 justify-end mt-4">
-                                <Link href="/products">
+                                <Link href="/">
                                     <Button variant="outline" type="button" className="h-11 px-8">Cancelar</Button>
                                 </Link>
                                 <Button 

@@ -86,6 +86,5 @@ export async function forceDeleteColorAction(code_4dig: string) {
   await dbQuery(`DELETE FROM public.colors WHERE code_4dig = $1`, [code_4dig])
   revalidatePath('/rules/colors')
   revalidatePath('/configuration/colors')
-  revalidatePath('/products')
   return { success: true }
 }

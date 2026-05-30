@@ -419,7 +419,7 @@ export async function buildMassImportTemplateXlsx(baseRows: { sku_complete: stri
       const col = parsedSku.color_code.padStart(4, '0');
       if (!colorExists.has(col)) warnings.push(`Color ${col} no existe: diligenciar hoja Colores_nuevos`);
       if (!famSchemaValid)
-        warnings.push(`Familia ${fam} sin schema: validar/crear schema en /products/reference-editor o crear familia con PRODUCT_TYPE`);
+        warnings.push(`Familia ${fam} sin schema: validar/crear schema en /configuration/reference-editor o crear familia con PRODUCT_TYPE`);
 
       const meta = familyMeta.get(fam);
       const isKitchenMeta =
@@ -725,7 +725,7 @@ export async function buildMassImportTemplateXlsx(baseRows: { sku_complete: stri
     '',
     'Gobernanza de atributos (REF_ATTR_*):',
     '- Las columnas REF_ATTR_<key> se validan contra families.ref_attrs_schema.',
-    '- Si una familia no tiene schema, el preview bloqueara la importacion y guiara a /products/reference-editor.',
+    '- Si una familia no tiene schema, el preview bloqueara la importacion y guiara a /configuration/reference-editor.',
     '- Si una key REF_ATTR_<key> no existe en el schema de la familia, se IGNORA (warning) y no se guarda.',
     '- Enums: se intentan mapear a allowed_values (normaliza trim/upper). Si no mapea, se guarda igual y deja warning para actualizar el schema.',
     '',

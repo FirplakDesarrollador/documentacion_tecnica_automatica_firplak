@@ -1,8 +1,7 @@
 'use server'
 
 import { dbQuery } from '@/lib/supabase'
-import { translateProductToEnglish, ProductPayload } from '@/lib/engine/translator'
-import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
+import { computeNameWithNamingComponents } from '@/lib/engine/namingComponentsEngine'
 
 /**
  * Escanea el catálogo en busca de términos faltantes en las traducciones
@@ -27,20 +26,16 @@ export async function scanMissingGlossaryTermsAction(): Promise<{ success: boole
         const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
         const products = rows.map((row: any) => mapRowToComposedProduct(row))
 
-        const rules = (await dbQuery(`SELECT * FROM public.rules WHERE enabled = true ORDER BY priority ASC`)) || []
-
         const termFrequency: Record<string, number> = {}
 
         for (const product of products) {
             try {
-                const evalResult = evaluateProductRules(product as any, (rules || []) as any)
-                const translation = await translateProductToEnglish(
-                    ({ ...evalResult.transformedProduct, final_name_es: evalResult.finalNameEs } as any) as ProductPayload,
-                    product.product_type || 'MUEBLE',
-                    evalResult.activeVariableIds
-                )
-
-                const { missingTerms } = translation
+                const results = await Promise.all([
+                    computeNameWithNamingComponents(product as any, 'final_base_name'),
+                    computeNameWithNamingComponents(product as any, 'final_complete_name'),
+                    computeNameWithNamingComponents(product as any, 'sap_description_recommended'),
+                ])
+                const missingTerms = [...new Set(results.flatMap(result => result.missingTerms))]
                 if (missingTerms.length > 0) {
                     missingTerms.forEach(t => {
                         termFrequency[t] = (termFrequency[t] || 0) + 1

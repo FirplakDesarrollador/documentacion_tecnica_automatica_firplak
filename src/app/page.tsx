@@ -89,13 +89,13 @@ export default async function Home() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <Link href="/products/new">
+          <Link href="/new">
             <Button className="h-12 px-6 shadow-md font-semibold bg-indigo-600 hover:bg-indigo-700 transition-all">
               <PlusCircle className="mr-2 h-4 w-4" />
               Agregar producto
             </Button>
           </Link>
-          <Link href="/products/mass-import">
+          <Link href="/mass-import">
             <Button variant="outline" className="h-12 px-6 shadow-md font-semibold border-indigo-200 text-indigo-700 hover:bg-indigo-50 transition-all">
               <Upload className="mr-2 h-4 w-4" />
               Carga masiva
@@ -197,9 +197,9 @@ export default async function Home() {
                 {recentProducts.length > 0 ? recentProducts.map((p: any) => (
                   <div key={p.id} className="p-4 flex flex-col gap-1 hover:bg-slate-50 transition-colors">
                     <div className="flex justify-between items-start">
-                      <Link href={`/products/${p.id}`} className="font-semibold text-sm text-slate-900 hover:text-indigo-600 truncate max-w-[180px] transition-colors">
+                      <span className="font-semibold text-sm text-slate-900 truncate max-w-[180px]">
                         {p.code}
-                      </Link>
+                      </span>
                       <Badge
                         className={cn(
                           "text-[9px] px-1.5 py-0 h-4 font-bold uppercase tracking-tight ring-1 ring-inset",
