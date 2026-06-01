@@ -3,7 +3,12 @@
 import { dbQuery } from '@/lib/supabase'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { recomputeMasterNamesByProductType, resetMasterNamingModelCache } from '@/lib/engine/masterNaming'
-import { resetTranslatorConfigCache } from '@/lib/engine/translator'
+import {
+    markAllNamingStale,
+    markNamingStaleForProductType,
+    processNamingJobsInline,
+} from '@/lib/engine/namingQueue'
+import { resetGlossaryCache, resetTranslatorConfigCache } from '@/lib/engine/translator'
 import {
     DEFAULT_NAMING_TYPE,
     componentsFromRulesAndEnConfig,
@@ -169,6 +174,8 @@ export async function upsertRuleAction(data: any) {
 
     resetMasterNamingModelCache()
     resetTranslatorConfigCache()
+    await markNamingStaleForProductType(productType, DEFAULT_NAMING_TYPE, 'naming_rule_upsert')
+    await processNamingJobsInline()
     revalidatePath('/rules')
     revalidatePath('/configuration')
     revalidatePendingSweepEverywhere()
@@ -176,9 +183,24 @@ export async function upsertRuleAction(data: any) {
 
 export async function deleteRuleAction(id: string) {
     if (!id) return
+    const rows = await dbQuery(`
+        SELECT product_type, naming_type
+        FROM public.naming_components
+        WHERE id = '${id.replace(/'/g, "''")}'
+        LIMIT 1
+    `) || []
     await dbQuery(`DELETE FROM public.naming_components WHERE id = '${id}'`)
     resetMasterNamingModelCache()
     resetTranslatorConfigCache()
+    const deleted = rows[0]
+    if (deleted?.product_type) {
+        await markNamingStaleForProductType(
+            deleted.product_type,
+            deleted.naming_type || DEFAULT_NAMING_TYPE,
+            'naming_rule_delete'
+        )
+        await processNamingJobsInline()
+    }
     revalidatePath('/rules')
     revalidatePath('/configuration')
     revalidatePendingSweepEverywhere()
@@ -314,6 +336,8 @@ export async function saveEnConfigAction(targetEntity: string, variable_id: stri
     await replaceNamingComponents(targetEntity, namingType, nextComponents)
     resetMasterNamingModelCache()
     resetTranslatorConfigCache()
+    await markNamingStaleForProductType(targetEntity, namingType, 'naming_en_config_save')
+    await processNamingJobsInline()
 
     revalidatePath('/rules')
     revalidatePath('/configuration')
@@ -340,6 +364,8 @@ export async function saveNamingComponentsFullConfigAction(productType: string, 
     await replaceNamingComponents(productType, namingType, components)
     resetMasterNamingModelCache()
     resetTranslatorConfigCache()
+    await markNamingStaleForProductType(productType, namingType, 'naming_full_config_save')
+    await processNamingJobsInline()
 
     revalidatePath('/rules')
     revalidatePath('/configuration')
@@ -371,6 +397,9 @@ export async function saveGlossaryTermsAction(terms: { es: string, en: string }[
         `)
     }
 
+    resetGlossaryCache()
+    await markAllNamingStale(null, 'glossary_update')
+    await processNamingJobsInline()
     revalidatePath('/rules')
     revalidatePath('/configuration')
     revalidatePath('/configuration/glossary')
@@ -456,6 +485,8 @@ export async function deleteNamingModelAction(rawProductType: string) {
     await dbQuery(`DELETE FROM public.naming_components WHERE product_type = ${esc(productType)}`)
     resetMasterNamingModelCache()
     resetTranslatorConfigCache()
+    await markNamingStaleForProductType(productType, null, 'naming_model_delete')
+    await processNamingJobsInline()
 
     revalidatePath('/rules')
     revalidatePath('/configuration')

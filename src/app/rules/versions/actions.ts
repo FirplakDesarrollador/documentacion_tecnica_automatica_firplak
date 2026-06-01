@@ -1,6 +1,7 @@
 'use server'
 
 import { dbQuery } from '@/lib/supabase'
+import { markNamingStaleForVersionRule, processNamingJobsInline } from '@/lib/engine/namingQueue'
 import { revalidatePath } from 'next/cache'
 
 export async function upsertVersionAction(data: {
@@ -27,6 +28,8 @@ export async function upsertVersionAction(data: {
                 status || 'ACTIVO',
             ]
         )
+        await markNamingStaleForVersionRule(version_code, null, 'version_rule_upsert')
+        await processNamingJobsInline()
         revalidatePath('/rules/versions')
         revalidatePath('/configuration/versions')
         return result[0]
@@ -45,6 +48,8 @@ export async function upsertVersionAction(data: {
                 version_code,
             ]
         )
+        await markNamingStaleForVersionRule(version_code, null, 'version_rule_update')
+        await processNamingJobsInline()
         revalidatePath('/rules/versions')
         revalidatePath('/configuration/versions')
         return result[0]

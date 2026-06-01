@@ -1,6 +1,7 @@
 'use server'
 
 import { dbQuery } from '@/lib/supabase'
+import { markNamingStaleForColor, processNamingJobsInline } from '@/lib/engine/namingQueue'
 import { revalidatePath } from 'next/cache'
 
 /** Fetch all colors */
@@ -37,6 +38,8 @@ export async function upsertColorAction(data: { code_4dig: string; name_color_sa
        RETURNING *`,
       [code, name]
     )
+    await markNamingStaleForColor(code, null, 'color_upsert')
+    await processNamingJobsInline()
     revalidatePath('/rules/colors')
     revalidatePath('/configuration/colors')
     return result[0]
@@ -48,6 +51,8 @@ export async function upsertColorAction(data: { code_4dig: string; name_color_sa
        RETURNING *`,
       [name, code]
     )
+    await markNamingStaleForColor(code, null, 'color_update')
+    await processNamingJobsInline()
     revalidatePath('/rules/colors')
     revalidatePath('/configuration/colors')
     return result[0]

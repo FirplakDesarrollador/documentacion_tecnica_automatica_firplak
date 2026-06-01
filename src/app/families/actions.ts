@@ -1,6 +1,11 @@
 'use server';
 
 import { supabaseServer, dbQuery } from '@/lib/supabase';
+import {
+  markNamingStaleForFamilies,
+  markNamingStaleForReferences,
+  processNamingJobsInline,
+} from '@/lib/engine/namingQueue';
 import { revalidatePath } from 'next/cache';
 
 // --- FILTER OPTIONS ---
@@ -363,6 +368,8 @@ export async function executeMassUpdateFamilies(
       namingMigration = { migrated: true, fromType, toType };
     }
 
+    await markNamingStaleForFamilies(ids, null, 'family_mass_update');
+    await processNamingJobsInline();
     revalidatePath('/configuration/families');
     revalidatePath('/configuration/reference-editor');
     revalidatePath('/configuration');
@@ -405,12 +412,20 @@ export async function updateFamilyLinesAction(familyCode: string, lines: string[
 
 export async function deleteLineAction(line: string) {
   const safeLine = line.replace(/'/g, "''");
+  const affectedRows = await dbQuery(`
+    SELECT id
+    FROM public.product_references
+    WHERE line = '${safeLine}'
+  `) || [];
+  const affectedReferenceIds = affectedRows.map((row: { id?: string }) => row.id).filter(Boolean) as string[];
 
   await dbQuery(`
     UPDATE public.product_references SET line = NULL WHERE line = '${safeLine}';
     UPDATE public.families SET allowed_lines = array_remove(allowed_lines, '${safeLine}') WHERE '${safeLine}' = ANY(allowed_lines);
   `);
 
+  await markNamingStaleForReferences(affectedReferenceIds, null, 'line_delete');
+  await processNamingJobsInline();
   revalidatePath('/families');
   revalidatePath('/configuration/reference-editor');
   return { success: true };
@@ -558,6 +573,8 @@ export async function executeAddAttrToFamilies(familyCodes: string[], attrKey: s
     return { success: false, error: error.message };
   }
 
+  await markNamingStaleForFamilies(familyCodes, null, 'family_attr_add');
+  await processNamingJobsInline();
   revalidatePath('/families');
   revalidatePath('/configuration/reference-editor');
   return { success: true };
@@ -613,6 +630,8 @@ export async function executeRemoveAttrFromFamilies(familyCodes: string[], attrK
     return { success: false, error: error.message };
   }
 
+  await markNamingStaleForFamilies(familyCodes, null, 'family_attr_remove');
+  await processNamingJobsInline();
   revalidatePath('/families');
   revalidatePath('/configuration/reference-editor');
   return { success: true };

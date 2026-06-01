@@ -7,7 +7,7 @@ import {
   canonicalizeOverrideAttrs,
   canonicalizeOverrideKey,
 } from '@/lib/engine/effectiveProduct';
-import { recomputeMasterNamesForSkuIds } from '@/lib/engine/masterNaming';
+import { markNamingStaleForSkus, processNamingJobsInline } from '@/lib/engine/namingQueue';
 
 function esc(value: string) {
   return value.replace(/'/g, "''");
@@ -131,7 +131,8 @@ export async function executeMassUpdateSkus(skuIds: string[], normalUpdates: any
 
   if (error) return { success: false, error: error.message };
 
-  await recomputeMasterNamesForSkuIds(skuIds);
+  await markNamingStaleForSkus(skuIds, null, 'sku_mass_update');
+  await processNamingJobsInline();
   revalidatePath('/configuration/sku-editor');
 
   revalidatePath('/generate');

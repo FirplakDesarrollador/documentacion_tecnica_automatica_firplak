@@ -4,6 +4,12 @@ import { dbQuery, supabaseServer } from '@/lib/supabase'
 import { resetGlossaryCache } from '@/lib/engine/translator'
 import { computeNameWithNamingComponents } from '@/lib/engine/namingComponentsEngine'
 import { parseProductCode } from '@/lib/engine/codeParser'
+import {
+    markAllNamingStale,
+    markNamingStaleForColor,
+    markNamingStaleForFamilies,
+    processNamingJobsInline,
+} from '@/lib/engine/namingQueue'
 import { upsertVersionAction } from '@/app/rules/versions/actions'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
@@ -139,6 +145,8 @@ export async function upsertFamilyAction(data: any) {
         RETURNING *
     `
     const rows = await dbQuery(query)
+    await markNamingStaleForFamilies([data.code], null, 'family_upsert')
+    await processNamingJobsInline()
     revalidatePath('/configuration/families')
     return rows ? rows[0] : null
 }
@@ -160,6 +168,8 @@ export async function upsertColorAction(code: string, name: string) {
         RETURNING *
     `
     const rows = await dbQuery(query)
+    await markNamingStaleForColor(code4dig, null, 'color_upsert')
+    await processNamingJobsInline()
     return rows ? rows[0] : null
 }
 
@@ -304,13 +314,15 @@ export async function createProductAction(data: any) {
     const baseName = await computeProductNameByNamingType(workingProduct, 'final_base_name')
     const completeName = await computeProductNameByNamingType(workingProduct, 'final_complete_name')
     const sapName = await computeProductNameByNamingType(workingProduct, 'sap_description_recommended')
-    const sap_description_recommended_es = (sapName.final_name_es || completeName.final_name_es).toUpperCase().substring(0, 40)
-    const sap_description_recommended_en = (sapName.final_name_en || completeName.final_name_en).toUpperCase().substring(0, 40)
+    const sap_description_recommended_es = sapName.final_name_es || completeName.final_name_es
+    const sap_description_recommended_en = sapName.final_name_en || completeName.final_name_en
     const final_name_es = completeName.final_name_es
     const final_name_en = completeName.final_name_en
+    let insertedGlossaryTerms = false
     if (data._newGlossaryTerms && Array.isArray(data._newGlossaryTerms)) {
         for (const term of data._newGlossaryTerms) {
             if (!term.es || !term.en) continue
+            insertedGlossaryTerms = true
             await dbQuery(`
                 INSERT INTO public.glossary (term_es, term_en, active, priority, category)
                 VALUES (
@@ -405,6 +417,12 @@ export async function createProductAction(data: any) {
         `)
     }
 
+    if (insertedGlossaryTerms) {
+        resetGlossaryCache()
+        await markAllNamingStale(null, 'product_create_glossary_terms')
+        await processNamingJobsInline()
+    }
+
     return { ...data, final_name_es, final_name_en, id: result?.sku_id }
 }
 
@@ -423,6 +441,8 @@ export async function updateFamilyAction(code: string, data: any) {
             updated_at=now()
         WHERE family_code='${code.replace(/'/g, "''")}'
     `)
+    await markNamingStaleForFamilies([code], null, 'family_update')
+    await processNamingJobsInline()
     revalidatePath('/configuration/families')
     redirect('/families')
 }
@@ -769,6 +789,8 @@ export async function saveGlossaryTermsAction(terms: { term_es: string, term_en:
             `)
         }
         resetGlossaryCache()
+        await markAllNamingStale(null, 'glossary_update')
+        await processNamingJobsInline()
         revalidatePath('/configuration/glossary')
         revalidatePath('/pending')
         revalidatePath('/')
@@ -857,8 +879,8 @@ export async function batchCreateColorVariantsAction(
             const baseName = await computeProductNameByNamingType(workingProduct, 'final_base_name')
             const completeName = await computeProductNameByNamingType(workingProduct, 'final_complete_name')
             const sapName = await computeProductNameByNamingType(workingProduct, 'sap_description_recommended')
-            const sap_description_recommended_es = (sapName.final_name_es || completeName.final_name_es).toUpperCase().substring(0, 40)
-            const sap_description_recommended_en = (sapName.final_name_en || completeName.final_name_en).toUpperCase().substring(0, 40)
+            const sap_description_recommended_es = sapName.final_name_es || completeName.final_name_es
+            const sap_description_recommended_en = sapName.final_name_en || completeName.final_name_en
             const final_name_es = completeName.final_name_es
             const final_name_en = completeName.final_name_en
             

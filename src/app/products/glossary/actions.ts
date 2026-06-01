@@ -1,6 +1,8 @@
 'use server'
 
 import { dbQuery } from '@/lib/supabase'
+import { markAllNamingStale, processNamingJobsInline } from '@/lib/engine/namingQueue'
+import { resetGlossaryCache } from '@/lib/engine/translator'
 import { revalidatePath, revalidateTag } from 'next/cache'
 
 export async function getGlossaryAction() {
@@ -25,6 +27,9 @@ export async function upsertGlossaryTermAction(data: { id?: string, term_es: str
             VALUES ('${termEsEsc}', '${termEnEsc}', ${categoryEsc})
         `)
     }
+    resetGlossaryCache()
+    await markAllNamingStale(null, 'glossary_update')
+    await processNamingJobsInline()
     revalidatePath('/configuration/glossary')
     revalidatePath('/pending')
     revalidatePath('/')
@@ -33,6 +38,9 @@ export async function upsertGlossaryTermAction(data: { id?: string, term_es: str
 
 export async function deleteGlossaryTermAction(id: string) {
     await dbQuery(`DELETE FROM public.glossary WHERE id = '${id}'`)
+    resetGlossaryCache()
+    await markAllNamingStale(null, 'glossary_delete')
+    await processNamingJobsInline()
     revalidatePath('/configuration/glossary')
     revalidatePath('/pending')
     revalidatePath('/')

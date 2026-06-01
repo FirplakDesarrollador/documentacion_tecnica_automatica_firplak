@@ -11,6 +11,8 @@ export interface RecomputedSkuName {
     previous_final_name_en: string | null
     final_name_es: string
     final_name_en: string
+    sap_description_recommended_es: string
+    sap_description_recommended_en: string
 }
 
 export interface RecomputedVersionName {
@@ -95,6 +97,8 @@ async function recomputeFromRows(rows: any[]): Promise<RecomputeMasterNamesResul
                  SET final_base_name_es = $1,
                      final_base_name_en = $2,
                      validation_status = $3,
+                     naming_stale = false,
+                     naming_recomputed_at = NOW(),
                      updated_at = NOW()
                  WHERE id = $4`,
                 [names.final_name_es, names.final_name_en, names.validation_status, versionProduct.version_id]
@@ -115,14 +119,27 @@ async function recomputeFromRows(rows: any[]): Promise<RecomputeMasterNamesResul
     const skuResults: RecomputedSkuName[] = []
     for (const product of skuProducts) {
         const names = await computeNames(product, 'final_complete_name')
+        const sapNames = await computeNames(product, 'sap_description_recommended')
+        const sapDescriptionRecommendedEs = sapNames.final_name_es || names.final_name_es
+        const sapDescriptionRecommendedEn = sapNames.final_name_en || names.final_name_en
 
         await dbQuery(
             `UPDATE public.product_skus
              SET final_complete_name_es = $1,
                  final_complete_name_en = $2,
+                 sap_description_recommended_es = $3,
+                 sap_description_recommended_en = $4,
+                 naming_stale = false,
+                 naming_recomputed_at = NOW(),
                  updated_at = NOW()
-             WHERE id = $3`,
-            [names.final_name_es, names.final_name_en, product.id]
+             WHERE id = $5`,
+            [
+                names.final_name_es,
+                names.final_name_en,
+                sapDescriptionRecommendedEs,
+                sapDescriptionRecommendedEn,
+                product.id,
+            ]
         )
 
         skuResults.push({
@@ -133,6 +150,8 @@ async function recomputeFromRows(rows: any[]): Promise<RecomputeMasterNamesResul
             previous_final_name_en: product.final_complete_name_en,
             final_name_es: names.final_name_es,
             final_name_en: names.final_name_en,
+            sap_description_recommended_es: sapDescriptionRecommendedEs,
+            sap_description_recommended_en: sapDescriptionRecommendedEn,
         })
     }
 

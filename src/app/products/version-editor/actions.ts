@@ -7,7 +7,7 @@ import {
   canonicalizeOverrideAttrs,
   canonicalizeOverrideKey,
 } from '@/lib/engine/effectiveProduct';
-import { recomputeMasterNamesForVersionIds } from '@/lib/engine/masterNaming';
+import { markNamingStaleForVersions, processNamingJobsInline } from '@/lib/engine/namingQueue';
 
 function esc(value: string) {
   return value.replace(/'/g, "''");
@@ -265,7 +265,8 @@ export async function executeMassUpdateVersions(ids: string[], normalUpdates: an
     });
     if (error) throw error;
 
-    await recomputeMasterNamesForVersionIds(ids);
+    await markNamingStaleForVersions(ids, null, 'version_mass_update');
+    await processNamingJobsInline();
     revalidatePath('/configuration/version-editor');
 
     revalidatePath('/generate');

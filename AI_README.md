@@ -30,6 +30,7 @@ Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
 - **Frontend/Backend**: Next.js 16+ (App Router), React 19.
 - **Autenticación**: Supabase Auth con patrón **Proxy (ex-Middleware)**.
 - **Base de Datos**: Prisma ORM con SQLite (local) y Supabase (Cloud).
+- **Supabase Source of Truth (REGLA)**: El proyecto Supabase operativo de este repo es siempre **I+D** (`nbifmxggfusipomspoly`, `https://nbifmxggfusipomspoly.supabase.co`). Toda migracion, RPC, SQL check, schema inspection o mutacion por MCP debe apuntar por defecto a ese proyecto. No tocar otros proyectos Supabase desde este workspace salvo confirmacion explicita del usuario en la misma tarea.
 - **Gobernanza de Supabase MCP**: Se prioriza la lógica DB-First: Usar Triggers, Funciones RPC y Views.
 - **Patrón JSONB Quirúrgico**: Uso de operadores `||` y `-` en RPCs para mutaciones atómicas en `ref_attrs`.
 

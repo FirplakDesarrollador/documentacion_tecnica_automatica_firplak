@@ -41,7 +41,8 @@ export const updateSession = async (request: NextRequest) => {
   const isAuthCallback = request.nextUrl.pathname.startsWith('/auth/callback');
   const isPublicAsset = request.nextUrl.pathname.startsWith('/_next') || 
                         request.nextUrl.pathname.startsWith('/favicon.ico') ||
-                        request.nextUrl.pathname.startsWith('/export-render'); // Route for headless export
+                        request.nextUrl.pathname.startsWith('/export-render') || // Route for headless export
+                        request.nextUrl.pathname.startsWith('/api/naming/process-stale');
 
   if (!user.data.user && !isLoginPage && !isAuthCallback && !isPublicAsset) {
     return NextResponse.redirect(new URL('/login', request.url));

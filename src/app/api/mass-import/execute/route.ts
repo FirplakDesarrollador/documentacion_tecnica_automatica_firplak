@@ -3,6 +3,7 @@ import { dbQuery, supabaseServer } from '@/lib/supabase';
 import { readTemplateXlsx } from '@/lib/massImport/io';
 import { composeProductById } from '@/lib/engine/product_composer';
 import { computeMasterNamePreview } from '@/lib/engine/masterNaming';
+import { markNamingStaleForSkus, processNamingJobsInline } from '@/lib/engine/namingQueue';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -368,6 +369,11 @@ export async function POST(req: Request) {
       p_test_rollback: false,
     });
     if (nameErr) return NextResponse.json({ success: false, error: nameErr.message, importResult: importRes }, { status: 500 });
+
+    if (!safeMode && createdSkuIds.length > 0) {
+      await markNamingStaleForSkus(createdSkuIds, null, 'mass_import_execute');
+      await processNamingJobsInline();
+    }
 
     // 3) Safe mode cleanup (delete created rows so nothing persists)
     let cleanupRes: any = null;

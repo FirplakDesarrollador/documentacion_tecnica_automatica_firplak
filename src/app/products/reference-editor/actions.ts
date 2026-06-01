@@ -1,6 +1,7 @@
 'use server';
 
 import { supabaseServer, dbQuery } from '@/lib/supabase';
+import { markNamingStaleForReferences, processNamingJobsInline } from '@/lib/engine/namingQueue';
 import { revalidatePath } from 'next/cache';
 
 // --- FLUJO B: MASS EDIT ---
@@ -67,7 +68,10 @@ export async function executeMassUpdateReferences(referenceIds: string[], normal
   });
 
   if (error) return { success: false, error: error.message };
+  await markNamingStaleForReferences(referenceIds, null, 'reference_mass_update');
+  await processNamingJobsInline();
   revalidatePath('/configuration/reference-editor');
+  revalidatePath('/generate');
   return { success: true, data };
 }
 

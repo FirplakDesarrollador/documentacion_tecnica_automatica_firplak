@@ -26,6 +26,13 @@ Compact, repo-specific rules for future OpenCode sessions.
 - Treat Vercel as the deployment source of truth for runtime behavior (env vars, build output, serverless constraints).
 - Do not assume a CI workflow file exists in-repo; verify deploy behavior from Vercel/project settings when needed.
 
+## Supabase source of truth
+- Primary Supabase project for this repo is always `I+D`.
+- Project ref/id: `nbifmxggfusipomspoly`.
+- Project URL: `https://nbifmxggfusipomspoly.supabase.co`.
+- Default all Supabase MCP migrations, SQL checks, RPC work, and schema inspections to this project unless the user explicitly says otherwise.
+- Do not apply migrations, RPC changes, or data mutations to any other Supabase project from this workspace without explicit user confirmation in the same task.
+
 ## Execution model used by this repo
 - 3-layer workflow is intentional: directives in `directives/`, orchestration by agent, deterministic executors in `execution/`.
 - Before writing new automation, check `execution/` and `scripts/` for an existing tool.
