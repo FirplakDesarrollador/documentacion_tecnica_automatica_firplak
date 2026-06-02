@@ -123,14 +123,19 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         [templates, selectedTemplateId]
     )
 
-    const selectedProducts = useMemo(
-        () => products.filter(p => selectedIds.includes(p.id)),
-        [products, selectedIds]
-    )
-
     const requiredFields = useMemo(
         () => selectedTemplate ? getTemplateRequiredFields(selectedTemplate.elements_json) : [],
         [selectedTemplate]
+    )
+
+    const validProducts = useMemo(() => {
+        if (!selectedTemplate || requiredFields.length === 0) return products
+        return products.filter(p => getTemplateValidationIssues(p, requiredFields).length === 0)
+    }, [products, selectedTemplate, requiredFields])
+
+    const selectedProducts = useMemo(
+        () => validProducts.filter(p => selectedIds.includes(p.id)),
+        [validProducts, selectedIds]
     )
 
     const warnings = useMemo(() =>
@@ -156,6 +161,12 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
     }, [allowedFormats, printFormat])
 
     const [hasSearched, setHasSearched] = useState(false)
+
+    const filteredOutCount = products.length - validProducts.length
+
+    useEffect(() => {
+        setSelectedIds([])
+    }, [selectedTemplateId])
 
     const handleSearch = useCallback(async () => {
         setLoading(true)
@@ -521,20 +532,28 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                 <div className="flex items-center justify-center py-20">
                     <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
                 </div>
-            ) : products.length === 0 ? (
+            ) : validProducts.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-slate-400 border-2 border-dashed border-slate-200 rounded-xl">
                     <X className="w-12 h-12 mb-3 text-slate-300" />
                     <p className="text-lg font-medium">Sin resultados</p>
-                    <p className="text-sm">Prueba con otros filtros o t&eacute;rmino de b&uacute;squeda</p>
+                    <p className="text-sm">{products.length > 0 ? `${products.length} producto(s) incompleto(s) para esta plantilla` : 'Prueba con otros filtros o término de búsqueda'}</p>
                 </div>
             ) : (
+                <>
+                {filteredOutCount > 0 && (
+                    <p className="text-xs text-amber-600 -mt-3">
+                        {filteredOutCount} producto(s) oculto(s) por no cumplir con la plantilla
+                    </p>
+                )}
+                <div className="overflow-x-auto [&_table]:w-full [&_table]:table-fixed [&_th:nth-child(1)]:w-10 [&_td:nth-child(1)]:w-10 [&_th:nth-child(2)]:w-36 [&_td:nth-child(2)]:w-36 [&_td:nth-child(2)]:whitespace-normal [&_td:nth-child(2)]:break-all [&_td:nth-child(2)]:overflow-hidden [&_th:nth-child(3)]:w-auto [&_td:nth-child(3)]:whitespace-normal [&_td:nth-child(3)]:break-words [&_td:nth-child(3)]:min-w-0 [&_th:nth-child(4)]:w-32 [&_td:nth-child(4)]:w-32 [&_td:nth-child(4)]:break-words">
                 <GenerateProductTable
-                    products={products}
+                    products={validProducts}
                     onSelectionChange={setSelectedIds}
                     selectedIds={selectedIds}
-                    templateId={selectedTemplateId}
                     hideActions
                 />
+                </div>
+                </>
             )}
 
             {/* Sticky footer with print button */}
