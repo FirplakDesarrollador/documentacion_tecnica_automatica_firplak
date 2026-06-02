@@ -60,7 +60,7 @@ export async function POST(req: Request) {
     const out: Array<{ sha256: string; storage_path: string; token: string; signed_url: string }> = []
     for (const f of list) {
       const storagePath = `assets/isometrics/${f.sha256}${f.ext}`
-      const { data, error } = await (supabaseServer as any).storage.from('assets').createSignedUploadUrl(storagePath, {
+      const { data, error } = await supabaseServer.storage.from('assets').createSignedUploadUrl(storagePath, {
         upsert: true,
       })
       if (error || !data?.token) {
@@ -75,8 +75,8 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ success: true, job_id: body.job_id || null, uploads: out })
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error('[isometrics/mass-import/prepare-uploads] error', e)
-    return NextResponse.json({ success: false, error: e?.message || 'Prepare uploads failed' }, { status: 500 })
+    return NextResponse.json({ success: false, error: (e as Error).message || 'Prepare uploads failed' }, { status: 500 })
   }
 }

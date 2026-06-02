@@ -3,8 +3,15 @@
 import React, { useEffect, useState } from 'react'
 import DocumentRenderSurface from '@/components/export/DocumentRenderSurface'
 
+interface ExportPayload {
+    elements: unknown[]
+    width: number
+    height: number
+    templateFontFamily?: string
+}
+
 export default function ExportRenderPage() {
-    const [payload, setPayload] = useState<any>(null)
+    const [payload, setPayload] = useState<ExportPayload | null>(null)
 
     useEffect(() => {
         // En cliente, intentamos recuperar la data de localStorage o del window
@@ -12,6 +19,7 @@ export default function ExportRenderPage() {
         try {
             const dataStr = window.localStorage.getItem('__EXPORT_DATA__')
             if (dataStr) {
+                // eslint-disable-next-line react-hooks/set-state-in-effect
                 setPayload(JSON.parse(dataStr))
             } else {
                 // Alternativa: Si viene por query params pero es inseguro para JSONs largos.
@@ -59,7 +67,7 @@ export default function ExportRenderPage() {
             Promise.all([imagesPromise, scalingPromise]).then(() => {
                 requestAnimationFrame(() => {
                     setTimeout(() => {
-                        (window as any).__DOCUMENT_RENDER_READY__ = true
+                        ;(window as unknown as { __DOCUMENT_RENDER_READY__?: boolean }).__DOCUMENT_RENDER_READY__ = true
                     }, 200) // Margen extra para repintado final
                 })
             })

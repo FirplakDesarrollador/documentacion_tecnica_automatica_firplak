@@ -20,7 +20,21 @@ const ZONE_FALLBACK_MAP: Record<string, string> = {
  * object BEFORE calling this function. That value takes highest priority.
  * The ZONE_FALLBACK_MAP is a last-resort safety net only.
  */
-export function enrichProductData(product: any) {
+export function enrichProductData(product: {
+    assembled_flag?: unknown;
+    zone_home?: string | null;
+    zone_home_en?: string | null;
+    width_cm?: number | null;
+    depth_cm?: number | null;
+    height_cm?: number | null;
+    weight_kg?: number | null;
+    sku_base?: string | null;
+    rh?: string | null;
+    canto_puertas?: string | null;
+    bisagras?: string | null;
+    accessory_text?: string | null;
+    [key: string]: unknown;
+}) {
     if (!product) return product;
 
     const isAssembled = !!product.assembled_flag;
@@ -72,7 +86,21 @@ export function enrichProductData(product: any) {
  * @param product  - Raw product data (or already base-enriched)
  * @param assetMap - Map of asset name/key → absolute file_path URL (from resolveAssetsAction)
  */
-export function enrichProductDataWithIcons(product: any, assetMap: Record<string, string>) {
+export function enrichProductDataWithIcons(product: {
+    assembled_flag?: unknown;
+    zone_home?: string | null;
+    zone_home_en?: string | null;
+    width_cm?: number | null;
+    depth_cm?: number | null;
+    height_cm?: number | null;
+    weight_kg?: number | null;
+    sku_base?: string | null;
+    rh?: string | null;
+    canto_puertas?: string | null;
+    bisagras?: string | null;
+    accessory_text?: string | null;
+    [key: string]: unknown;
+}, assetMap: Record<string, string>) {
     const enriched = enrichProductData(product);
 
     // --- RH Icon ---

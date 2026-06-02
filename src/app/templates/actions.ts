@@ -304,7 +304,7 @@ export async function getPreviewProduct(
 
             color: longest.color_name || longest.color_code || 'Sin Color'
         }
-    } catch (e) {
+    } catch {
         return {
             code: 'MOCK-1234',
             final_name_es: 'Error cargando datos reales - Mueble de Prueba Largo',
@@ -386,7 +386,7 @@ export async function getRandomPreviewProduct(
             name_color_sap: p.color_name || null,
             color: p.color_name || p.color_code || 'Sin Color'
         }
-    } catch (e) {
+    } catch {
         return null
     }
 }

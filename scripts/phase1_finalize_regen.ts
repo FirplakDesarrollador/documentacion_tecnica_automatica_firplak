@@ -1,6 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
 import * as dotenv from 'dotenv';
-import * as path from 'path';
 import { evaluateProductRules } from '../src/lib/engine/ruleEvaluator';
 import { translateProductToEnglish } from '../src/lib/engine/translator';
 

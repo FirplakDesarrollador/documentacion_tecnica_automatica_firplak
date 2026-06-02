@@ -19,7 +19,7 @@ async function checkSku(sku: string) {
     templates.forEach(t => {
         try {
             allRequiredElements.push(...JSON.parse(t.elements_json || '[]'));
-        } catch(e) {}
+        } catch {}
     });
 
     const p = mapRowToComposedProduct(rows[0]);

@@ -438,7 +438,7 @@ export async function previewDeleteFamiliesAction(codes: string[]) {
 
   const safe = codes.map(c => `'${c.replace(/'/g, "''")}'`).join(',');
 
-  const { data, error } = await dbQuery(`
+  const { data } = await dbQuery(`
     SELECT
       f.family_code,
       f.family_name,

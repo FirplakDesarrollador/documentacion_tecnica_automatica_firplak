@@ -20,7 +20,7 @@ function evaluateCondition(expression: string, product: any): boolean {
             }
             return false
         })
-    } catch (e) {
+    } catch {
         return false
     }
 }

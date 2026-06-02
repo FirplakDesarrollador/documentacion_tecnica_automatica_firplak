@@ -1,11 +1,9 @@
-import { dbQuery, supabaseServer } from './src/lib/supabase';
+import { dbQuery } from './src/lib/supabase';
 import * as fs from 'fs';
 
 async function runFinalValidation() {
     console.log("--- INICIANDO VALIDACIÓN FINAL POST-REMEDIACIÓN ---");
 
-    const stats = JSON.parse(fs.readFileSync('remediation_stats.json', 'utf8'));
-    
     // 1. Conteo Real
     const legCount = await dbQuery("SELECT count(*) FROM cabinet_products WHERE status = 'ACTIVO'");
     const skuCount = await dbQuery("SELECT count(*) FROM product_skus");
@@ -17,17 +15,15 @@ async function runFinalValidation() {
     const legacyData = await dbQuery("SELECT * FROM cabinet_products WHERE status = 'ACTIVO'");
     const references = await dbQuery("SELECT * FROM product_references");
     const versions = await dbQuery("SELECT * FROM product_versions");
-    const skus = await dbQuery("SELECT * FROM product_skus");
 
-    let classification = { A: 0, D: 0 };
-    let dDetails: any[] = [];
+    const classification = { A: 0, D: 0 };
+    const dDetails: any[] = [];
 
     legacyData.forEach(l => {
         const v6Ref = references.find((r: any) => r.family_code === l.familia_code && r.reference_code === l.ref_code);
         if (!v6Ref) return;
         
         const v6Ver = versions.find((v: any) => v.reference_id === v6Ref.id && v.version_code === l.version_code);
-        const v6Sku = skus.find((s: any) => s.version_id === v6Ver?.id && s.sku_complete === l.code);
 
         const refAttrs = typeof v6Ref.ref_attrs === 'string' ? JSON.parse(v6Ref.ref_attrs) : (v6Ref.ref_attrs || {});
         const verAttrs = v6Ver ? (typeof v6Ver.version_attrs === 'string' ? JSON.parse(v6Ver.version_attrs) : (v6Ver.version_attrs || {})) : {};
@@ -35,7 +31,7 @@ async function runFinalValidation() {
         const v6Acc = verAttrs.accessory_text || refAttrs.accessory_text || 'NA';
         const legAcc = l.accessory_text || 'NA';
 
-        let diffs = [];
+        const diffs = [];
         if (v6Acc !== legAcc) diffs.push({ field: 'accessory_text', leg: legAcc, v6: v6Acc });
         if (v6Ref.product_name !== l.cabinet_name) diffs.push({ field: 'product_name', leg: l.cabinet_name, v6: v6Ref.product_name });
         if (v6Ref.commercial_measure !== l.commercial_measure) diffs.push({ field: 'commercial_measure', leg: l.commercial_measure, v6: v6Ref.commercial_measure });

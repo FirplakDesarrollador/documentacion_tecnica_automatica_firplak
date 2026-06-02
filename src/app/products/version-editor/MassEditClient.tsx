@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { toast } from 'sonner';
 import { searchVersions, previewMassUpdateVersions, executeMassUpdateVersions, getVersionFilterOptions, previewDeleteVersionInstancesAction, deleteVersionInstancesAction } from './actions';
-import { Loader2, Search, CheckSquare, Edit, AlertTriangle, Info, Check, X, Layers, Trash2 } from 'lucide-react';
+import { Loader2, Search, CheckSquare, Edit, AlertTriangle, Info, Check, X, Trash2 } from 'lucide-react';
 
 const NORMAL_COLS = [
   { key: 'version_label', label: 'Etiqueta de Versión', type: 'text' },
@@ -184,6 +184,7 @@ export default function MassEditClient() {
 
   // Reset custom/clear modes and pre-select first suggestion if available
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
     setCustomValueMode(false);
     setClearOverrideMode(false);
     
@@ -193,6 +194,7 @@ export default function MassEditClient() {
       setEditValue('');
       setCustomValueMode(true);
     }
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [editField, suggestedValues]);
 
   const getEffectiveCurrentValue = (row: any, field: string) => {

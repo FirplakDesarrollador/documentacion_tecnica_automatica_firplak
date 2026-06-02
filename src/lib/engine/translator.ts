@@ -17,6 +17,7 @@
  */
 
 import { createClient } from '@supabase/supabase-js'
+import { getNamingFieldValue } from './namingFieldResolver'
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -43,6 +44,9 @@ export interface ProductPayload {
     final_name_es?: string | null
     color_name?: string | null
     zone_home?: string | null
+    color_code?: string | null
+    effective_attrs?: Record<string, unknown>
+    dynamic_attrs?: Record<string, unknown>
 }
 
 export interface TranslationResult {
@@ -58,10 +62,10 @@ export interface FieldConfig {
     variable_id: string
     order_index: number
     emit: boolean
-    behavior: 'translate_and_emit' | 'classify_and_resolve' | 'conditional_emit'
+    behavior: 'translate_and_emit' | 'classify_and_resolve' | 'conditional_emit' | 'preserve'
     drop_if_resolved: boolean
     resolved_by: string | null
-    fallback_strategy: 'preserve' | 'translate' | 'conditional_emit'
+    fallback_strategy: 'preserve' | 'translate' | 'translate_if_exists' | 'conditional_emit'
     group_key: string | null
     notes: string | null
 }
@@ -154,10 +158,10 @@ async function loadConfig(targetEntity: string): Promise<Record<string, FieldCon
             emit: !isResolvedTypeInput,
             behavior: isResolvedTypeInput
                 ? 'classify_and_resolve'
-                : (behaviorEn === 'translate' || isResolvedTypeOutput ? 'translate_and_emit' : 'conditional_emit'),
+                : (behaviorEn === 'translate' || behaviorEn === 'translate_if_exists' || isResolvedTypeOutput ? 'translate_and_emit' : 'conditional_emit'),
             drop_if_resolved: false,
             resolved_by: isResolvedTypeInput ? 'resolved_type' : null,
-            fallback_strategy: behaviorEn === 'translate' ? 'translate' : 'preserve',
+            fallback_strategy: behaviorEn === 'translate' ? 'translate' : (behaviorEn === 'translate_if_exists' ? 'translate_if_exists' : 'preserve'),
             group_key: isResolvedTypeInput || isResolvedTypeOutput ? 'resolved_type' : null,
             notes: null,
         }
@@ -330,7 +334,7 @@ function resolveTypeBlock(product: ProductPayload, glossary?: Record<string, Glo
         return n.replace(/\b(PARA|A|DE)\b/g, '').replace(/\s+/g, ' ').trim()
     }
     
-    let pType = clean(product.product_type || 'MUEBLE')
+    const pType = clean(product.product_type || 'MUEBLE')
     const desig = clean(product.designation || '')
     const dest  = clean(product.use_destination || '')
 
@@ -393,6 +397,36 @@ function translateField(
         if (!fullGlossary[es]) fullGlossary[es] = { en, category: 'TECHNICAL_TERM' }
     })
 
+    if (fieldConfig.fallback_strategy === 'translate_if_exists') {
+        if (fullGlossary[upper]) return fullGlossary[upper].en
+
+        const tokens = upper.split(/\s+/)
+        const translatedTokens: string[] = []
+        let foundAny = false
+        let i = 0
+
+        while (i < tokens.length) {
+            let found = false
+            for (let len = Math.min(5, tokens.length - i); len >= 1; len--) {
+                const phrase = tokens.slice(i, i + len).join(' ')
+                if (fullGlossary[phrase]) {
+                    translatedTokens.push(fullGlossary[phrase].en)
+                    i += len
+                    found = true
+                    foundAny = true
+                    break
+                }
+            }
+
+            if (!found) {
+                translatedTokens.push(tokens[i])
+                i++
+            }
+        }
+
+        return foundAny ? translatedTokens.join(' ') : rawValue.trim()
+    }
+
     if (fullGlossary[upper]) return fullGlossary[upper].en
     
     // ── Pre-check: Phrase reporting if missing ───────────────────────────────
@@ -404,7 +438,7 @@ function translateField(
 
     // Multi-word sliding window (up to 4 tokens) - Greedy Approach
     const tokens = upper.split(/\s+/)
-    let translatedTokens: string[] = []
+    const translatedTokens: string[] = []
     let i = 0
     
     while (i < tokens.length) {
@@ -506,7 +540,7 @@ function translateRH(value: string | null | undefined): string | null {
 
 const FORBIDDEN_TERMS = ['FURNITURE', 'PRODUCT', 'WASHBASIN FURNITURE', 'FLOOR STANDING', 'LVM', ' RH ']
 
-function validateResult(name: string, missingTerms: string[], warnings: string[]): { isValid: boolean; errorReason: string } {
+function validateResult(name: string, missingTerms: string[]): { isValid: boolean; errorReason: string } {
     if (!name) return { isValid: false, errorReason: 'Nombre en inglés vacío.' }
     if (name !== name.toUpperCase()) return { isValid: false, errorReason: 'El nombre no está en MAYÚSCULAS.' }
     if (/\bCM\b/.test(name)) return { isValid: false, errorReason: 'Medida CM no convertida a IN.' }
@@ -628,7 +662,8 @@ export async function translateProductToEnglish(
     // ── Variable processing loop (Process ALL config fields for missing terms) ──
     Object.keys(config).forEach(varId => {
         const cfg = config[varId]
-        const rawValue = (product as any)[varId] || ''
+        const rawValue = getNamingFieldValue(product, varId) ?? ''
+        const rawText = typeof rawValue === 'string' ? rawValue : String(rawValue)
         
         // Skip placeholders
         if (isPlaceholder(rawValue) && varId !== 'resolved_type') return
@@ -636,8 +671,7 @@ export async function translateProductToEnglish(
         // Step A: Term Detection (Only for string fields with 'translate' strategy)
         let resolvedFieldEn = ''
         if (cfg.fallback_strategy === 'translate' && varId !== 'assembled_flag' && varId !== 'resolved_type') {
-            const strVal = String(rawValue)
-            resolvedFieldEn = translateField(strVal, cfg, glossary, missingTerms, warnings)
+            resolvedFieldEn = translateField(rawText, cfg, glossary, missingTerms, warnings)
         } else if (varId === 'resolved_type') {
             resolvedFieldEn = resolvedTypeName
         }
@@ -659,15 +693,15 @@ export async function translateProductToEnglish(
             let valEn = ''
             
             if (varId === 'rh') {
-                valEn = translateRH(rawValue) || ''
+                valEn = translateRH(rawText) || ''
             } else if (varId === 'commercial_measure') {
-                valEn = convertMeasureToPulgadas(rawValue) || translateField(rawValue, cfg, glossary, missingTerms, warnings)
+                valEn = convertMeasureToPulgadas(rawText) || translateField(rawText, cfg, glossary, missingTerms, warnings)
             } else if (varId === 'resolved_type') {
                 valEn = resolvedTypeName
             } else if (varId === 'assembled_flag') {
-                valEn = product.assembled_flag ? 'ASSEMBLED' : ''
+                valEn = getNamingFieldValue(product, 'assembled_flag') ? 'ASSEMBLED' : ''
             } else {
-                valEn = translateField(rawValue, cfg, glossary, missingTerms, warnings)
+                valEn = translateField(rawText, cfg, glossary, missingTerms, warnings)
             }
 
             if (valEn) {
@@ -695,7 +729,7 @@ export async function translateProductToEnglish(
     }
 
     const translatedName = deduped.join(' ').trim()
-    const { isValid, errorReason } = validateResult(translatedName, missingTerms, warnings)
+    const { isValid, errorReason } = validateResult(translatedName, missingTerms)
 
     return {
         // Relaxed: return the name regardless of validity, so partial translations are shown.

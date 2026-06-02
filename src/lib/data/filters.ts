@@ -64,7 +64,7 @@ export async function getFamilyFilters(): Promise<FamilyFilterOption[]> {
          ORDER BY family_code ASC`
     ) || []
 
-    return records.map((fam: any) => ({
+    return records.map((fam: { family_code: string; family_name?: string | null }) => ({
         value: fam.family_code,
         label: fam.family_name
             ? `${fam.family_code} - ${fam.family_name}`
@@ -104,7 +104,7 @@ export async function getReferenceFilters(
          ORDER BY f.family_name, r.reference_code, r.commercial_measure`
     ) || []
 
-    return records.map((rec: any) => {
+    return records.map((rec: { family_code?: string; reference_code?: string; designation?: string; commercial_measure?: string; product_name?: string; accessory_text?: string; special_label?: string }) => {
         const parts = [
             rec.family_code || 'N/A',
             rec.reference_code || 'NA',

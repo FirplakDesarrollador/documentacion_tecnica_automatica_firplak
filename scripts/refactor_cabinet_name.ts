@@ -11,7 +11,7 @@ for (const file of files) {
     const content = fs.readFileSync(file, 'utf8');
     
     // Perform replacements
-    let newContent = content
+    const newContent = content
         .replace(/cabinet_name/g, 'product_name')
         .replace(/cabinetNames/g, 'productNames')
         .replace(/cabinetName/g, 'productName')

@@ -9,7 +9,7 @@ export default async function ConfigGlossaryPage() {
     <div className="max-w-7xl mx-auto py-8">
       <GlossaryClient
         initialData={glossary}
-        initialCategories={categories.map((c: any) => c.category)}
+        initialCategories={categories.map((c: { category: string }) => c.category)}
       />
     </div>
   );

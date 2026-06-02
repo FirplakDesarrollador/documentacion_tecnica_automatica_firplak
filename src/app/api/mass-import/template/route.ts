@@ -47,9 +47,9 @@ export async function POST(req: Request) {
         'x-mass-import-missing-colors': String(meta.missingColors.length),
       },
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error('[mass-import/template] error', e);
-    return NextResponse.json({ success: false, error: e?.message || 'Failed to generate template' }, { status: 500 });
+    return NextResponse.json({ success: false, error: (e as Error).message || 'Failed to generate template' }, { status: 500 });
   }
 }
 

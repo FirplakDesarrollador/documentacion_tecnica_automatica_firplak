@@ -4,8 +4,8 @@ import { dbQuery } from '@/lib/supabase'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { recomputeMasterNamesByProductType, resetMasterNamingModelCache } from '@/lib/engine/masterNaming'
 import {
-    markAllNamingStale,
     markNamingStaleForProductType,
+    markNamingStaleForGlossaryTerms,
     processNamingJobsInline,
 } from '@/lib/engine/namingQueue'
 import { resetGlossaryCache, resetTranslatorConfigCache } from '@/lib/engine/translator'
@@ -21,6 +21,15 @@ import {
     replaceNamingComponents,
     type NamingComponent,
 } from '@/lib/engine/namingComponents'
+import {
+    BASE_NAMING_VARIABLE_FIELDS,
+    humanizeNamingVariableKey,
+    isAllowedDynamicNamingKey,
+    mergeNamingVariableFields,
+    normalizeNamingVariableKey,
+    type NamingVariableField,
+    type NamingVariableSource,
+} from '@/lib/engine/namingVariableCatalog'
 
 function esc(v: any) {
     if (v === null || v === undefined) return 'NULL'
@@ -364,13 +373,12 @@ export async function saveNamingComponentsFullConfigAction(productType: string, 
     await replaceNamingComponents(productType, namingType, components)
     resetMasterNamingModelCache()
     resetTranslatorConfigCache()
-    await markNamingStaleForProductType(productType, namingType, 'naming_full_config_save')
-    await processNamingJobsInline()
+    const jobId = await markNamingStaleForProductType(productType, namingType, 'naming_full_config_save')
 
     revalidatePath('/rules')
     revalidatePath('/configuration')
     revalidatePendingSweepEverywhere()
-    return { success: true }
+    return { success: true, jobId }
 }
 
 export async function getNamingComponentsAction(productType?: string) {
@@ -381,6 +389,66 @@ export async function getNamingComponentsAction(productType?: string) {
         ORDER BY product_type ASC, naming_type ASC, COALESCE(order_es, order_en, 999999), component_key ASC
     `) || []
     return rows as NamingComponent[]
+}
+
+export async function getNamingVariableCatalogAction(productType: string): Promise<NamingVariableField[]> {
+    const safeType = normalizeProductType(productType).replace(/'/g, "''")
+    const dynamicRows = await dbQuery(`
+        WITH selected_families AS (
+            SELECT family_code, ref_attrs_schema
+            FROM public.families
+            WHERE upper(btrim(product_type)) = '${safeType}'
+        )
+        SELECT DISTINCT key, source
+        FROM (
+            SELECT jsonb_object_keys(COALESCE(sf.ref_attrs_schema, '{}'::jsonb)) AS key, 'ref_attrs' AS source
+            FROM selected_families sf
+
+            UNION
+
+            SELECT jsonb_object_keys(COALESCE(r.ref_attrs, '{}'::jsonb)) AS key, 'ref_attrs' AS source
+            FROM public.product_references r
+            INNER JOIN selected_families sf ON sf.family_code = r.family_code
+
+            UNION
+
+            SELECT jsonb_object_keys(COALESCE(v.version_attrs, '{}'::jsonb)) AS key, 'version_attrs' AS source
+            FROM public.product_versions v
+            INNER JOIN public.product_references r ON r.id = v.reference_id
+            INNER JOIN selected_families sf ON sf.family_code = r.family_code
+
+            UNION
+
+            SELECT jsonb_object_keys(COALESCE(s.sku_attrs, '{}'::jsonb)) AS key, 'sku_attrs' AS source
+            FROM public.product_skus s
+            INNER JOIN public.product_versions v ON v.id = s.version_id
+            INNER JOIN public.product_references r ON r.id = v.reference_id
+            INNER JOIN selected_families sf ON sf.family_code = r.family_code
+        ) discovered
+        WHERE key IS NOT NULL AND btrim(key) <> ''
+        ORDER BY source ASC, key ASC
+    `) || []
+
+    const dynamicFields: NamingVariableField[] = dynamicRows
+        .map((row: { key?: string; source?: string }) => {
+            const field = normalizeNamingVariableKey(row.key || '')
+            if (!isAllowedDynamicNamingKey(field)) return null
+            const source = ['ref_attrs', 'version_attrs', 'sku_attrs'].includes(row.source || '')
+                ? row.source as NamingVariableSource
+                : 'ref_attrs'
+            return {
+                field,
+                label: humanizeNamingVariableKey(field),
+                type: field.endsWith('_flag') ? 'boolean' : 'text',
+                source,
+            } satisfies NamingVariableField
+        })
+        .filter(Boolean) as NamingVariableField[]
+
+    return mergeNamingVariableFields([
+        ...BASE_NAMING_VARIABLE_FIELDS,
+        ...dynamicFields,
+    ])
 }
 
 export async function saveGlossaryTermsAction(terms: { es: string, en: string }[]) {
@@ -398,7 +466,10 @@ export async function saveGlossaryTermsAction(terms: { es: string, en: string }[
     }
 
     resetGlossaryCache()
-    await markAllNamingStale(null, 'glossary_update')
+    await markNamingStaleForGlossaryTerms(
+        terms.map(term => ({ termEs: term.es, category: 'TECHNICAL' })),
+        'glossary_update'
+    )
     await processNamingJobsInline()
     revalidatePath('/rules')
     revalidatePath('/configuration')
@@ -504,9 +575,8 @@ export async function applyFullBulkNamingUpdateBatchAction(
 ) {
     void clientEsRules
     void clientEnConfig
-    void namingType
 
-    const recomputed = await recomputeMasterNamesByProductType(productType, offset, limit)
+    const recomputed = await recomputeMasterNamesByProductType(productType, offset, limit, namingType)
     return recomputed.products.map(product => ({
         code: product.code,
         status: 'ACTIVO',

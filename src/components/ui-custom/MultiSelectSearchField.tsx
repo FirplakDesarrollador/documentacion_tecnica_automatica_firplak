@@ -4,7 +4,7 @@ import * as React from "react"
 import { ChevronsUpDown, Check } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { Button, buttonVariants } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
 import {
   Command,
   CommandEmpty,
@@ -45,6 +45,7 @@ export function MultiSelectSearchField({
   const [isMounted, setIsMounted] = React.useState(false)
 
   React.useEffect(() => {
+    /* eslint-disable-next-line react-hooks/set-state-in-effect */
     setIsMounted(true)
   }, [])
 

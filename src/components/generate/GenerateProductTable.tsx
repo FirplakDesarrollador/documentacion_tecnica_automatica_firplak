@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 import {
     Table,
     TableBody,
@@ -36,7 +36,7 @@ export interface GenerateProduct {
     is_exportable?: boolean
     inactive_reasons?: string[]
     ref_code: string | null
-    [key: string]: any
+    [key: string]: unknown
 }
 
 interface GenerateProductTableProps {
@@ -46,6 +46,7 @@ interface GenerateProductTableProps {
     selectedIds: string[]
     templateId: string | null
     isExternalSource?: boolean
+    hideActions?: boolean
 }
 
 export function GenerateProductTable({
@@ -55,6 +56,7 @@ export function GenerateProductTable({
     selectedIds,
     templateId,
     isExternalSource = false,
+    hideActions = false,
 }: GenerateProductTableProps) {
     const exportableProducts = products.filter(p => p.is_exportable !== false)
     const allSelected = exportableProducts.length > 0 && exportableProducts.every(p => selectedIds.includes(p.id))
@@ -116,7 +118,7 @@ export function GenerateProductTable({
                 <TableRow className="bg-slate-50/80">
                     <TableHead className="w-10">
                         <Checkbox
-                            checked={(allSelected ? true : someSelected ? 'indeterminate' : false) as any}
+                            checked={allSelected ? true : someSelected ? ('indeterminate' as unknown as boolean) : false}
                             onCheckedChange={toggleAll}
                             aria-label="Seleccionar todos"
                         />
@@ -134,7 +136,7 @@ export function GenerateProductTable({
                     )}
 
                     {templateId && <TableHead className="w-[120px]">Plantilla</TableHead>}
-                    <TableHead className="text-right w-[120px]">Acción</TableHead>
+                    {!hideActions && <TableHead className="text-right w-[120px]">Acción</TableHead>}
                 </TableRow>
             </TableHeader>
             <TableBody>
@@ -205,20 +207,22 @@ export function GenerateProductTable({
                                     )}
                                 </TableCell>
                             )}
-                            <TableCell className="text-right">
-                                <Link
-                                    href={`/generate/${product.id}?${searchParams.toString()}`}
-                                >
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        className="font-semibold text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50"
+                            {!hideActions && (
+                                <TableCell className="text-right">
+                                    <Link
+                                        href={`/generate/${product.id}?${searchParams.toString()}`}
                                     >
-                                        <Eye className="w-3.5 h-3.5 mr-1.5" />
-                                        Preview
-                                    </Button>
-                                </Link>
-                            </TableCell>
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="font-semibold text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50"
+                                        >
+                                            <Eye className="w-3.5 h-3.5 mr-1.5" />
+                                            Preview
+                                        </Button>
+                                    </Link>
+                                </TableCell>
+                            )}
                         </TableRow>
                     )
                 })}

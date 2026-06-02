@@ -31,7 +31,7 @@ async function runDiagnostic() {
     });
 
     const skuAnalysis = Object.entries(skuGroups)
-        .filter(([_, group]) => group.length > 1)
+        .filter(([, group]) => group.length > 1)
         .map(([sku, group]) => {
             const distinctWidths = new Set(group.map(p => p.width_cm)).size;
             const distinctDepths = new Set(group.map(p => p.depth_cm)).size;
@@ -64,7 +64,7 @@ async function runDiagnostic() {
     });
 
     const famRefAnalysis = Object.entries(famRefGroups)
-        .filter(([_, group]) => group.length > 1)
+        .filter(([, group]) => group.length > 1)
         .map(([key, group]) => {
             const distinctVersions = new Set(group.map(p => p.version_code)).size;
             const distinctWidths = new Set(group.map(p => p.width_cm)).size;

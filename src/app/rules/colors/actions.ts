@@ -73,7 +73,7 @@ export async function deleteColorAction(code_4dig: string) {
       success: false,
       hasSkus: true,
       skuCount: skus.length,
-      skuCodes: skus.map((s: any) => s.sku_complete),
+      skuCodes: skus.map((s: { sku_complete: string }) => s.sku_complete),
       message: `Este color está siendo usado por ${skus.length} SKU(s).`
     }
   }

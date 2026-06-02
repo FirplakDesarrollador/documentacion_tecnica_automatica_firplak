@@ -1,4 +1,4 @@
-/* eslint-disable no-console */
+ 
 // @ts-nocheck
 // Acceptance-style checks for Mass Import V6.
 // This script:
@@ -239,7 +239,7 @@ async function main() {
   const tr = await translateProductToEnglish({ ...evalRes.transformedProduct, final_name_es: finalNameEs }, working.product_type || 'MUEBLE', evalRes.activeVariableIds);
   const finalNameEn = tr.isValid ? tr.translatedName : '';
 
-  const { data: applyRes, error: applyErr } = await supabaseServer.rpc('bulk_apply_names_v6', {
+  const { error: applyErr } = await supabaseServer.rpc('bulk_apply_names_v6', {
     p_updates: [{
       sku_id: skuId,
       version_id: verId,

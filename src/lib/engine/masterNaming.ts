@@ -1,4 +1,5 @@
 import { dbQuery } from '@/lib/supabase'
+import type { ProductPayload } from './translator'
 import { mapRowToComposedProduct, type ComposedProduct } from './product_composer'
 import { DEFAULT_NAMING_TYPE } from './namingComponents'
 import { computeNameWithNamingComponents } from './namingComponentsEngine'
@@ -33,6 +34,15 @@ export interface RecomputeMasterNamesResult {
     versions: RecomputedVersionName[]
 }
 
+type RecomputeNamingType = 'final_base_name' | 'final_complete_name' | 'sap_description_recommended' | 'all'
+
+function normalizeRecomputeNamingType(namingType?: string | null): RecomputeNamingType {
+    if (namingType === 'final_base_name') return 'final_base_name'
+    if (namingType === 'final_complete_name') return 'final_complete_name'
+    if (namingType === 'sap_description_recommended') return 'sap_description_recommended'
+    return 'all'
+}
+
 function toSqlList(ids: string[]) {
     return ids.map(id => `'${id.replace(/'/g, "''")}'`).join(',')
 }
@@ -52,7 +62,7 @@ export function resetMasterNamingModelCache() {
 }
 
 async function computeNames(product: ComposedProduct, namingType: string = DEFAULT_NAMING_TYPE) {
-    const result = await computeNameWithNamingComponents(product as any, namingType)
+    const result = await computeNameWithNamingComponents(product as ProductPayload, namingType)
 
     return {
         final_name_es: result.finalNameEs,
@@ -65,7 +75,7 @@ export async function computeMasterNamePreview(product: ComposedProduct, namingT
     return computeNames(product, namingType)
 }
 
-async function recomputeFromRows(rows: any[]): Promise<RecomputeMasterNamesResult> {
+async function recomputeFromRows(rows: { version_id?: string; final_base_name_es?: string | null; final_base_name_en?: string | null; [key: string]: unknown }[], namingType?: string | null): Promise<RecomputeMasterNamesResult> {
     if (!rows.length) {
         return {
             processedSkus: 0,
@@ -76,9 +86,17 @@ async function recomputeFromRows(rows: any[]): Promise<RecomputeMasterNamesResul
         }
     }
 
-    const skuProducts = rows.map(row => mapRowToComposedProduct(row, { includeSkuOverrides: true }))
+    const recomputeType = normalizeRecomputeNamingType(namingType)
+    const shouldRecomputeVersions = recomputeType === 'all' || recomputeType === 'final_base_name'
+    const shouldRecomputeComplete = recomputeType === 'all' || recomputeType === 'final_complete_name'
+    const shouldRecomputeSap = recomputeType === 'all' || recomputeType === 'sap_description_recommended'
+    const shouldRecomputeSkus = shouldRecomputeComplete || shouldRecomputeSap
 
-    const versionRows = new Map<string, any>()
+    const skuProducts = shouldRecomputeSkus
+        ? rows.map(row => mapRowToComposedProduct(row, { includeSkuOverrides: true }))
+        : []
+
+    const versionRows = new Map<string, { version_id?: string; final_base_name_es?: string | null; final_base_name_en?: string | null; [key: string]: unknown }>()
     for (const row of rows) {
         const versionId = row.version_id ? String(row.version_id) : null
         if (versionId && !versionRows.has(versionId)) {
@@ -87,7 +105,7 @@ async function recomputeFromRows(rows: any[]): Promise<RecomputeMasterNamesResul
     }
 
     const versionResults: RecomputedVersionName[] = []
-    for (const row of versionRows.values()) {
+    if (shouldRecomputeVersions) for (const row of versionRows.values()) {
         const versionProduct = mapRowToComposedProduct(row, { includeSkuOverrides: false })
         const names = await computeNames(versionProduct, 'final_base_name')
 
@@ -97,6 +115,7 @@ async function recomputeFromRows(rows: any[]): Promise<RecomputeMasterNamesResul
                  SET final_base_name_es = $1,
                      final_base_name_en = $2,
                      validation_status = $3,
+                     naming_stale_final_base_name = false,
                      naming_stale = false,
                      naming_recomputed_at = NOW(),
                      updated_at = NOW()
@@ -118,29 +137,70 @@ async function recomputeFromRows(rows: any[]): Promise<RecomputeMasterNamesResul
 
     const skuResults: RecomputedSkuName[] = []
     for (const product of skuProducts) {
-        const names = await computeNames(product, 'final_complete_name')
-        const sapNames = await computeNames(product, 'sap_description_recommended')
+        const names = shouldRecomputeComplete
+            ? await computeNames(product, 'final_complete_name')
+            : {
+                final_name_es: product.final_complete_name_es || '',
+                final_name_en: product.final_complete_name_en || '',
+                validation_status: product.validation_status,
+            }
+        const sapNames = shouldRecomputeSap
+            ? await computeNames(product, 'sap_description_recommended')
+            : {
+                final_name_es: '',
+                final_name_en: '',
+                validation_status: product.validation_status,
+            }
         const sapDescriptionRecommendedEs = sapNames.final_name_es || names.final_name_es
         const sapDescriptionRecommendedEn = sapNames.final_name_en || names.final_name_en
 
-        await dbQuery(
-            `UPDATE public.product_skus
-             SET final_complete_name_es = $1,
-                 final_complete_name_en = $2,
-                 sap_description_recommended_es = $3,
-                 sap_description_recommended_en = $4,
-                 naming_stale = false,
-                 naming_recomputed_at = NOW(),
-                 updated_at = NOW()
-             WHERE id = $5`,
-            [
-                names.final_name_es,
-                names.final_name_en,
-                sapDescriptionRecommendedEs,
-                sapDescriptionRecommendedEn,
-                product.id,
-            ]
-        )
+        if (shouldRecomputeComplete && shouldRecomputeSap) {
+            await dbQuery(
+                `UPDATE public.product_skus
+                 SET final_complete_name_es = $1,
+                     final_complete_name_en = $2,
+                     sap_description_recommended_es = $3,
+                     sap_description_recommended_en = $4,
+                     naming_stale_final_complete_name = false,
+                     naming_stale_sap_description_recommended = false,
+                     naming_stale = false,
+                     naming_recomputed_at = NOW(),
+                     updated_at = NOW()
+                 WHERE id = $5`,
+                [
+                    names.final_name_es,
+                    names.final_name_en,
+                    sapDescriptionRecommendedEs,
+                    sapDescriptionRecommendedEn,
+                    product.id,
+                ]
+            )
+        } else if (shouldRecomputeComplete) {
+            await dbQuery(
+                `UPDATE public.product_skus
+                 SET final_complete_name_es = $1,
+                     final_complete_name_en = $2,
+                     naming_stale_final_complete_name = false,
+                     naming_stale = naming_stale_sap_description_recommended,
+                     naming_recomputed_at = NOW(),
+                     updated_at = NOW()
+                 WHERE id = $3`,
+                [names.final_name_es, names.final_name_en, product.id]
+            )
+        } else if (shouldRecomputeSap) {
+            await dbQuery(
+                `UPDATE public.product_skus
+                 SET sap_description_recommended_es = $1,
+                     sap_description_recommended_en = $2,
+                     naming_stale_sap_description_recommended = false,
+                     naming_stale = naming_stale_final_complete_name,
+                     naming_recomputed_at = NOW(),
+                     updated_at = NOW()
+                 WHERE id = $3`,
+                [sapDescriptionRecommendedEs, sapDescriptionRecommendedEn, product.id]
+            )
+        }
+
 
         skuResults.push({
             id: product.id,
@@ -164,7 +224,7 @@ async function recomputeFromRows(rows: any[]): Promise<RecomputeMasterNamesResul
     }
 }
 
-export async function recomputeMasterNamesForSkuIds(ids: string[]): Promise<RecomputeMasterNamesResult> {
+export async function recomputeMasterNamesForSkuIds(ids: string[], namingType?: string | null): Promise<RecomputeMasterNamesResult> {
     const uniqueIds = Array.from(new Set(ids.filter(Boolean)))
     if (uniqueIds.length === 0) {
         return {
@@ -177,10 +237,10 @@ export async function recomputeMasterNamesForSkuIds(ids: string[]): Promise<Reco
     }
 
     const rows = await fetchRowsByPredicate(`id IN (${toSqlList(uniqueIds)})`)
-    return recomputeFromRows(rows)
+    return recomputeFromRows(rows, namingType)
 }
 
-export async function recomputeMasterNamesForVersionIds(ids: string[]): Promise<RecomputeMasterNamesResult> {
+export async function recomputeMasterNamesForVersionIds(ids: string[], namingType?: string | null): Promise<RecomputeMasterNamesResult> {
     const uniqueIds = Array.from(new Set(ids.filter(Boolean)))
     if (uniqueIds.length === 0) {
         return {
@@ -193,13 +253,14 @@ export async function recomputeMasterNamesForVersionIds(ids: string[]): Promise<
     }
 
     const rows = await fetchRowsByPredicate(`version_id IN (${toSqlList(uniqueIds)})`)
-    return recomputeFromRows(rows)
+    return recomputeFromRows(rows, namingType)
 }
 
 export async function recomputeMasterNamesByProductType(
     productType: string,
     offset: number,
-    limit: number
+    limit: number,
+    namingType?: string | null
 ): Promise<RecomputeMasterNamesResult> {
     const safeType = productType.replace(/'/g, "''")
     const rows = await dbQuery(`
@@ -211,5 +272,5 @@ export async function recomputeMasterNamesByProductType(
         LIMIT ${limit} OFFSET ${offset}
     `) || []
 
-    return recomputeFromRows(rows)
+    return recomputeFromRows(rows, namingType)
 }

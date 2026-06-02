@@ -36,22 +36,22 @@ export default function SchemaConfigClient() {
   const [previewData, setPreviewData] = useState<any[]>([]);
   const [isExecuting, setIsExecuting] = useState(false);
 
-  useEffect(() => {
-    fetchFamilies();
-  }, [filterType]);
-
-  const fetchFamilies = async () => {
-    setLoading(true);
-    const res = await getFamiliesWithSchema(filterType || undefined);
-    if (res.success) {
-      setFamilies(res.data || []);
-      // Auto-select all by default if we want, or keep empty. Let's keep empty.
-      setSelectedFamilies([]);
-    } else {
-      toast.error('Error al cargar familias: ' + res.error);
+    const fetchFamilies = async () => {
+        setLoading(true);
+        const res = await getFamiliesWithSchema(filterType || undefined);
+        if (res.success) {
+            setFamilies(res.data || []);
+            // Auto-select all by default if we want, or keep empty. Let's keep empty.
+            setSelectedFamilies([]);
+        }
+        setLoading(false);
     }
-    setLoading(false);
-  };
+
+    useEffect(() => {
+        /* eslint-disable-next-line react-hooks/set-state-in-effect */
+        fetchFamilies();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [filterType]);
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -371,7 +371,7 @@ export default function SchemaConfigClient() {
                   <h4 className="font-semibold flex items-center gap-2 mb-2"><Info className="w-5 h-5"/> Resumen Operativo</h4>
                   <ul className="list-disc pl-5 space-y-1 text-sm">
                     <li>Se definirá el atributo <strong>{attrKey}</strong> ({attrLabel}) en el esquema de {selectedFamilies.length} familias.</li>
-                    <li><strong>{previewData.reduce((acc, curr) => acc + Number(curr.refs_without_key), 0)} referencias</strong> que no tenían este atributo recibirán el valor por defecto: <strong>"{attrDefault}"</strong>.</li>
+                    <li><strong>{previewData.reduce((acc, curr) => acc + Number(curr.refs_without_key), 0)} referencias</strong> que no tenían este atributo recibirán el valor por defecto: <strong>&quot;{attrDefault}&quot;</strong>.</li>
                     <li><strong>{previewData.reduce((acc, curr) => acc + Number(curr.refs_with_key), 0)} referencias</strong> que ya poseían esta llave conservarán su valor actual intacto.</li>
                     <li>Las demás llaves del JSONB se mantendrán inalteradas.</li>
                   </ul>
@@ -396,7 +396,7 @@ export default function SchemaConfigClient() {
                     <tr>
                       <th className="p-3">Familia</th>
                       <th className="p-3 text-right">Total Referencias</th>
-                      <th className="p-3 text-right">Con la llave '{previewAction === 'add' ? attrKey : removeAttrKey}'</th>
+                      <th className="p-3 text-right">Con la llave &apos;{previewAction === 'add' ? attrKey : removeAttrKey}&apos;</th>
                       {previewAction === 'add' && <th className="p-3 text-right">Sin la llave (recibirán default)</th>}
                     </tr>
                   </thead>

@@ -39,7 +39,7 @@ export function SmartIsometricNormalizationDialog() {
         try {
             const data = await getIsometricNormalizationGroupsAction()
             setGroups(data)
-        } catch (error) {
+        } catch {
             toast.error("Error al cargar grupos de duplicados")
         } finally {
             setLoading(false)
@@ -47,11 +47,13 @@ export function SmartIsometricNormalizationDialog() {
     }
 
     React.useEffect(() => {
+        /* eslint-disable react-hooks/set-state-in-effect */
         if (open) {
             loadGroups()
         } else {
             setGroups([])
         }
+        /* eslint-enable react-hooks/set-state-in-effect */
     }, [open])
 
     const handleUnify = async (group: IsometricNormalizationGroup, masterAssetId: string, masterPath: string) => {
@@ -62,7 +64,7 @@ export function SmartIsometricNormalizationDialog() {
             toast.success("Grupo unificado y limpieza completada")
             // Refresh groups
             loadGroups()
-        } catch (error) {
+        } catch {
             toast.error("Error al unificar el grupo")
         } finally {
             setProcessingGroupId(null)

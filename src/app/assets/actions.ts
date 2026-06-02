@@ -39,7 +39,7 @@ export async function getReferencesByFamilyAction(familyCodes: string[]) {
 export async function getMeasuresByFamilyAndRefAction(familyCodes: string[], referenceCodes: string[]) {
     if ((!familyCodes || familyCodes.length === 0) && (!referenceCodes || referenceCodes.length === 0)) return []
     
-    let whereParts = []
+    const whereParts = []
     if (referenceCodes && referenceCodes.length > 0) {
         const specificPairs = referenceCodes.map(v => {
             const [fc, rc] = v.split('|||')
@@ -66,7 +66,7 @@ export async function getMeasuresByFamilyAndRefAction(familyCodes: string[], ref
 export async function getVersionsByFamilyAndRefAction(familyCodes: string[], referenceCodes: string[]) {
     if ((!familyCodes || familyCodes.length === 0) && (!referenceCodes || referenceCodes.length === 0)) return []
     
-    let whereParts = []
+    const whereParts = []
     if (referenceCodes && referenceCodes.length > 0) {
         const specificPairs = referenceCodes.map(v => {
             const [fc, rc] = v.split('|||')

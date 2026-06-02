@@ -11,7 +11,7 @@ async function logBeforeAfter(table: string, field: string, id: string, fam: str
 
 async function runRemediation() {
     fs.writeFileSync('before_after_remediation.md', '# Reporte Before/After Final\n\n| Tabla | Campo | ID | Family | Ref | Version | SKU | Valor Actual | Valor Propuesto | Razón |\n|---|---|---|---|---|---|---|---|---|---|\n');
-    let affectedRows = { product_references: 0, product_versions: 0, product_skus: 0, families: 0 };
+    const affectedRows = { product_references: 0, product_versions: 0, product_skus: 0, families: 0 };
     const affectedSkusToRegenerate = new Set<string>();
 
     // =========================================================================
@@ -23,7 +23,7 @@ async function runRemediation() {
 
     for (const ref of references) {
         let updated = false;
-        let newRef = { ...ref };
+        const newRef = { ...ref };
         const numFields = ['commercial_measure', 'width_cm', 'depth_cm', 'height_cm', 'weight_kg'];
         
         for (const field of numFields) {

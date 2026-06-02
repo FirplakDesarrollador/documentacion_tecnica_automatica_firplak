@@ -2,7 +2,7 @@ import * as dotenv from 'dotenv';
 import path from 'path';
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 import { dbQuery } from '../src/lib/supabase';
-import { getFamilyFilters, getReferenceFilters } from '../src/lib/data/filters';
+import { getFamilyFilters } from '../src/lib/data/filters';
 
 async function runDetailedAudit() {
     console.log("=== AUDITORÍA DETALLADA DE DIFERENCIAS EN FILTROS (2%) ===\n");
@@ -22,8 +22,6 @@ async function runDetailedAudit() {
         `, [famCode]);
 
         // 2. Obtener datos Nuevos (vía getReferenceFilters que ya usa product_references)
-        const newFilters = await getReferenceFilters([famCode]);
-        
         // Mapear newFilters de vuelta a un formato comparable
         const newRowsMap = new Map();
         const newRefData = await dbQuery(`

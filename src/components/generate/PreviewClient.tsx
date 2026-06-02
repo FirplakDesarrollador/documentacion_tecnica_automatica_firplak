@@ -166,12 +166,14 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
             critical.push(`Formato ${exportFormat.toUpperCase()} no permitido para esta plantilla`)
         }
 
+        /* eslint-disable react-hooks/set-state-in-effect */
         setPreflightReport({
             missingVariables: Array.from(new Set(missingVars)),
             missingAssets: Array.from(new Set(missingAss)),
             criticalErrors: critical
         })
-    }, [hydratedElements, exportFormat, selectedTemplate])
+        /* eslint-enable react-hooks/set-state-in-effect */
+    }, [hydratedElements, exportFormat, selectedTemplate, product])
     
     // R10: Sincronizar formato de exportación cuando cambia la plantilla
     useEffect(() => {
@@ -179,7 +181,9 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
             const allowed = (selectedTemplate.export_formats ? (selectedTemplate.export_formats as string).split(',').map(f => f.trim().toLowerCase()) : ['pdf', 'jpg'])
             // Si el formato actual no está permitido por la nueva plantilla, cambiar al primero disponible
             if (!allowed.includes(exportFormat)) {
+                /* eslint-disable react-hooks/set-state-in-effect */
                 setExportFormat(allowed.length > 0 ? (allowed[0] as any) : 'pdf')
+                /* eslint-enable react-hooks/set-state-in-effect */
             }
         }
     }, [selectedTemplate, exportFormat])

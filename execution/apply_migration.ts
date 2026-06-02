@@ -19,7 +19,7 @@ async function run() {
     
     // The user's project has an exec_sql RPC already deployed to their DB. 
     // Let's try that first.
-    const { data, error } = await supabase.rpc('exec_sql', { query_text: sql });
+    const { error } = await supabase.rpc('exec_sql', { query_text: sql });
     
     if (error) {
         console.error("Error applying migration:", error);

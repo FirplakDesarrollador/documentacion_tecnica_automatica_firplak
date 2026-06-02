@@ -45,14 +45,14 @@ export async function applyNamingRulesAction(
             })
             totalProcessed += result.processedSkus
             totalUpdated += result.updatedSkus
-        } catch (err: any) {
+        } catch (err: unknown) {
             batches.push({
                 batchIndex,
                 processed: 0,
                 updated: 0,
                 warnings: 0,
                 failedIds: batchIds,
-                error: err.message || 'Error desconocido'
+                error: err instanceof Error ? err.message : 'Error desconocido'
             })
         }
     }

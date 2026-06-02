@@ -12,15 +12,15 @@ async function run() {
 
     console.log(`Loaded ${products.length} products. Processing...`)
 
-    let updates = []
+    const updates = []
 
     for (const p of products) {
         if (!p.cabinet_name) continue;
 
         let newDesignation = p.designation;
-        let originalText = p.accessory_text?.toUpperCase() || '';
+        const originalText = p.accessory_text?.toUpperCase() || '';
         
-        let extractedOriginal: string[] = []
+        const extractedOriginal: string[] = []
         
         // Preserve specific edges
         const edgeMatch = originalText.match(/CANTO\s*(\d*\.?\d+)MM/);
@@ -107,7 +107,7 @@ async function run() {
              else if (name === 'ELEVADO' || name === 'A PISO') { pushAcc('TAPA VESSEL'); }
         }
         
-        let newAcc = Array.from(finalSet).join(' ');
+        const newAcc = Array.from(finalSet).join(' ');
 
         if (newDesignation !== p.designation || newAcc !== p.accessory_text) {
             updates.push({
@@ -125,7 +125,7 @@ async function run() {
     // Batch updates en Supabase dbQuery (es uno por uno o usar un CASE enorme, 
     // pero con dbQuery podemos mandar queries individuales de manera segura)
     for (const u of updates) {
-        let sql = `UPDATE public.cabinet_products SET designation = ${u.designation ? `'${u.designation}'` : 'NULL'}, accessory_text = ${u.accessory_text ? `'${u.accessory_text}'` : 'NULL'} WHERE id = '${u.id}'`;
+        const sql = `UPDATE public.cabinet_products SET designation = ${u.designation ? `'${u.designation}'` : 'NULL'}, accessory_text = ${u.accessory_text ? `'${u.accessory_text}'` : 'NULL'} WHERE id = '${u.id}'`;
         await dbQuery(sql);
         totalUpdated++;
         if (totalUpdated % 50 === 0) console.log(`Updated ${totalUpdated} / ${updates.length}`);

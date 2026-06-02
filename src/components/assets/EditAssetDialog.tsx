@@ -20,7 +20,6 @@ import {
     Upload, 
     Link2, 
     Unlink, 
-    X, 
     Trash2,
     Info,
     ChevronRight,
@@ -39,23 +38,52 @@ import {
 } from '@/app/assets/actions'
 import { cn } from '@/lib/utils'
 
+interface AssetRow {
+    id: string;
+    name: string;
+    type: string;
+    file_path: string;
+    relation_count: number;
+}
+
+interface ReferenceRow {
+    id: string;
+    reference_code: string;
+    line_name: string;
+    product_name: string;
+    designation: string;
+    commercial_measure: string;
+    special_label: string | null;
+    accessory_text: string | null;
+}
+
+interface VersionRow {
+    id: string;
+    version_code: string;
+    reference_code: string;
+    line_name: string;
+    product_name: string;
+    designation: string;
+    commercial_measure: string;
+    special_label: string | null;
+    accessory_text: string | null;
+}
+
 interface Props {
     assetId: string;
     assetName: string;
     assetType?: string;
     isDefault?: boolean;
-    onUploadComplete?: (asset: any) => void;
+    onUploadComplete?: (asset: AssetRow) => void;
 }
 
-const ASSET_TYPES = ['isometric', 'icon', 'logo']
-
-export function EditAssetDialog({ assetId, assetName, assetType, isDefault, onUploadComplete }: Props) {
+export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Props) {
     const [name, setName] = useState(assetName)
     const [typeVal, setTypeVal] = useState(assetType || 'icon')
     const [isUpdating, setIsUpdating] = useState(false)
     const [open, setOpen] = useState(false)
     const [showRelationships, setShowRelationships] = useState(false)
-    const [relationships, setRelationships] = useState<{ references: any[], versions: any[] }>({ references: [], versions: [] })
+    const [relationships, setRelationships] = useState<{ references: ReferenceRow[], versions: VersionRow[] }>({ references: [], versions: [] })
     const [isLoadingRelationships, setIsLoadingRelationships] = useState(false)
     
     const fileInputRef = useRef<HTMLInputElement>(null)
@@ -64,27 +92,30 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault, onUp
 
     useEffect(() => {
         if (open) {
+            /* eslint-disable-next-line react-hooks/set-state-in-effect */
             setTypeVal(assetType || 'icon')
         }
     }, [open, assetType])
-
-    useEffect(() => {
-        if (open && showRelationships) {
-            loadRelationships()
-        }
-    }, [open, showRelationships])
 
     const loadRelationships = async () => {
         setIsLoadingRelationships(true)
         try {
             const data = await getAssetRelationshipsAction(assetId)
             setRelationships(data)
-        } catch (error) {
+        } catch {
             toast.error("Error al cargar relacionamientos")
         } finally {
             setIsLoadingRelationships(false)
         }
     }
+
+    useEffect(() => {
+        if (open && showRelationships) {
+            /* eslint-disable-next-line react-hooks/set-state-in-effect */
+            loadRelationships()
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open, showRelationships])
 
     const handleSave = async () => {
         setIsUpdating(true)
@@ -117,8 +148,8 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault, onUp
             } else {
                 setOpen(false)
             }
-        } catch (error: any) {
-            toast.error(error.message || 'Error al actualizar')
+        } catch {
+            toast.error('Error al actualizar')
         } finally {
             setIsUpdating(false)
         }
@@ -129,7 +160,7 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault, onUp
             await unlinkReferenceAction(refId)
             toast.success("Relación eliminada")
             loadRelationships()
-        } catch (error) {
+        } catch {
             toast.error("Error al eliminar relación")
         }
     }
@@ -139,7 +170,7 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault, onUp
             await unlinkVersionAction(vId)
             toast.success("Sobrescritura de versión eliminada")
             loadRelationships()
-        } catch (error) {
+        } catch {
             toast.error("Error al eliminar relación")
         }
     }
@@ -151,7 +182,7 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault, onUp
             toast.success("Todas las relaciones han sido eliminadas")
             loadRelationships()
             router.refresh()
-        } catch (error) {
+        } catch {
             toast.error("Error al limpiar relaciones")
         }
     }
@@ -480,7 +511,7 @@ function TypeSelector({ typeVal, onChange }: { typeVal: string; onChange: (v: st
                     </Button>
                 </div>
             )}
-            <p className="text-[10px] text-slate-400">Si el tipo no está en la lista, selecciona "Otro..." y escríbelo.</p>
+            <p className="text-[10px] text-slate-400">Si el tipo no está en la lista, selecciona &quot;Otro...&quot; y escríbelo.</p>
         </div>
     )
 }

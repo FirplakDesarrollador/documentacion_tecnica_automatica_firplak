@@ -28,7 +28,7 @@ async function run() {
             if (typeof attrs === 'string') {
                 try {
                     parsed = JSON.parse(attrs);
-                } catch (e) { parsed = {}; }
+                } catch { parsed = {}; }
             }
             if (typeof parsed === 'object' && parsed !== null) {
                 Object.keys(parsed).forEach(k => {

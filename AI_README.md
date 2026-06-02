@@ -34,17 +34,33 @@ Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
 - **Gobernanza de Supabase MCP**: Se prioriza la lógica DB-First: Usar Triggers, Funciones RPC y Views.
 - **Patrón JSONB Quirúrgico**: Uso de operadores `||` y `-` en RPCs para mutaciones atómicas en `ref_attrs`.
 
+## 🖨️ Agente de Impresión Local (Print Agent)
+- **Puerto**: `3344`. Endpoints: `POST /print`, `GET /health`, `GET /scan-usb`.
+- **Comunicación USB**: PowerShell + Win32 `CreateFile`/`WriteFile` sobre el device path del Monitor USB de Windows. No requiere administrador ni drivers adicionales.
+- **Detección**: Lee el registro `HKLM\SYSTEM\CurrentControlSet\Control\Print\Monitors\USB Monitor\Ports` para encontrar el device path por VID/PID.
+- **Impresora conocida**: `4BARCODE 4B-2054TG` (3nStar LTT334) — `VID_2D84:PID_4CFB`. Puerto USB automático `USB001`.
+- **Pipeline**: JPG → Sharp (grayscale + threshold) → ZPL `^GF` → envía raw al device path USB.
+- **Scripts**: `npm run dev` corre Next.js + agente simultáneamente; `npm run start:local` para producción local.
+- `print-agent/usbService.js` — detección y escritura USB vía PowerShell.
+- `print-agent/printService.js` — conversión JPG→ZPL con Sharp.
+- `print-agent/server.js` — Express server.
+- **ZPL máximo**: 832 dots de ancho (4"@203 DPI). La imagen gira 90° si es más ancha que alta.
+
 ## 🗝️ Información de Dominio (Firplak)
 - **Gobernanza de Esquema**: La familia (`families`) es la fuente de verdad técnica para los atributos de sus referencias.
 - **Patrón de Limpieza Profunda**: Al borrar un asset, se realiza una desconexión automática en JSONB y eliminación física del Storage.
 - **🛡️ Gobernanza de Contexto (REGLA)**: El Agente debe avisar proactivamente al usuario de archivar la sesión (`/archive-session`) tras hitos importantes.
 
 ## 🚀 Próximos Pasos (Sugerencia)
-1.  **Validar Nombres en Inglés**: Confirmar con el usuario la correcta generación de nombres en inglés en las plantillas PDF/JPG en caliente.
-2.  **Saneamiento Masivo**: Utilizar el nuevo Editor de Referencias para normalizar los campos `special_label` y `designation` en todo el catálogo.
-3.  **Integración de Atributos en Plantillas**: Configurar las plantillas de etiquetas para consumir los nuevos `dynamic_attrs` (ej. mostrar el sello PUR si existe).
-4.  **Migración de Base de Datos**: Mover los modelos de Prisma de SQLite a PostgreSQL (Supabase) para asegurar persistencia en Vercel.
-5.  **Mantenimiento de Secretos MCP**: Usar `node execution/sync_mcp_config.js` para mantener las claves de Antigravity sincronizadas con el `.env` del proyecto.
+1.  **Impresión USB en producción**: Probar impresión real con una etiqueta SamiGen desde `/print`. Verificar que el agente esté corriendo (`npm run dev`).
+2.  **Mostrar estado USB en PrintClient**: Agregar indicador visual en la UI que muestre "Impresora detectada: 4BARCODE 4B-2054TG" cuando el agente esté online.
+3.  **Reset/ZPL de inicio**: Enviar `^XA^JZ^XZ` al detectar la impresora para evitar el avance de etiquetas en blanco al conectar USB.
+4.  **Soporte PDF en agente**: Convertir PDF→JPG (con Sharp/poppler) para imprimir PDFs en la térmica.
+5.  **Validar Nombres en Inglés**: Confirmar con el usuario la correcta generación de nombres en inglés en las plantillas PDF/JPG en caliente.
+6.  **Saneamiento Masivo**: Utilizar el nuevo Editor de Referencias para normalizar los campos `special_label` y `designation` en todo el catálogo.
+7.  **Integración de Atributos en Plantillas**: Configurar las plantillas de etiquetas para consumir los nuevos `dynamic_attrs` (ej. mostrar el sello PUR si existe).
+8.  **Migración de Base de Datos**: Mover los modelos de Prisma de SQLite a PostgreSQL (Supabase) para asegurar persistencia en Vercel.
+9.  **Mantenimiento de Secretos MCP**: Usar `node execution/sync_mcp_config.js` para mantener las claves de Antigravity sincronizadas con el `.env` del proyecto.
 
 ---
 *Este archivo es mantenido autónomamente por los agentes de IA que colaboran en el proyecto.*

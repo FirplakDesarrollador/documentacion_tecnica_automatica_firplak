@@ -3,6 +3,7 @@ import { getFamilyFilters, getReferenceFilters } from '@/lib/data/filters'
 import { GenerateClient } from '@/components/generate/GenerateClient'
 import { FileOutput } from 'lucide-react'
 import { loadAllRulesForNamingType } from '@/lib/engine/namingComponents'
+import type { ComposedProduct } from '@/lib/engine/product_composer'
 
 export default async function GeneratePage({
     searchParams: searchParamsPromise,
@@ -53,7 +54,7 @@ export default async function GeneratePage({
     const hasFilter = f.length > 0 || r.length > 0 || m.length > 0 || (typeof q === 'string' && q.trim().length > 0)
 
     // --- Cargar productos filtrados ---
-    let products: any[] = []
+    let products: ComposedProduct[] = []
     let totalCount = 0
     // Se cargan después de determinar la plantilla seleccionada (para aplicar discriminación de marca).
 
@@ -73,7 +74,7 @@ export default async function GeneratePage({
     // --- Cargar componentes del motor de nombres ---
     const rules = await loadAllRulesForNamingType('final_complete_name')
 
-    const selectedTemplateInfo = templates.find((t: any) => t.id === templateId) || templates[0]
+    const selectedTemplateInfo = templates.find((t: { id: string; data_source?: string; brand_scope?: string; private_label_client_name?: string | null; name?: string }) => t.id === templateId) || templates[0]
     const templateDataSource = selectedTemplateInfo?.data_source || 'core_firplak'
 
     const isLegacySpecificDataset =
@@ -99,7 +100,7 @@ export default async function GeneratePage({
 
         // Show ALL linked datasets — synced or not — so the user can preview any associated data.
         // The sync status is visible in the DatasetConfigurator.
-        availableDatasetsForTemplate = (linkedDatasets || []).map((d: any) => ({
+        availableDatasetsForTemplate = (linkedDatasets || []).map((d: { id: string; name: string | null }) => ({
             id: String(d.id),
             name: String(d.name || ''),
         }))
@@ -139,7 +140,7 @@ export default async function GeneratePage({
             LIMIT 500
         `) || []
         
-         products = dsRows.map((r: any) => {
+         products = dsRows.map((r: { id: string; data_json: string | Record<string, unknown> }) => {
              const parsed = typeof r.data_json === 'string' ? JSON.parse(r.data_json) : r.data_json
              return {
                  ...parsed,

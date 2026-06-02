@@ -11,6 +11,14 @@ import { cn } from '@/lib/utils'
 
 import { getPendingSummaryCached } from '@/lib/engine/validationActions'
 
+interface RecentProduct {
+  id: string
+  code: string
+  final_name_es: string | null
+  validation_status: string
+  updated_at: string
+}
+
 export default async function Home() {
   // Fetch real KPIs and validation state
   const pendingSummary = await getPendingSummaryCached()
@@ -194,7 +202,7 @@ export default async function Home() {
                 <span className="text-sm font-semibold text-slate-700">Últimos Productos Editados</span>
               </div>
               <div className="divide-y divide-slate-100">
-                {recentProducts.length > 0 ? recentProducts.map((p: any) => (
+                {recentProducts.length > 0 ? recentProducts.map((p: RecentProduct) => (
                   <div key={p.id} className="p-4 flex flex-col gap-1 hover:bg-slate-50 transition-colors">
                     <div className="flex justify-between items-start">
                       <span className="font-semibold text-sm text-slate-900 truncate max-w-[180px]">

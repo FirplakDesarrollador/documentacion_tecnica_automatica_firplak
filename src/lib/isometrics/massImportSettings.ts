@@ -17,7 +17,7 @@ export async function getIsometricMassImportSettings(): Promise<{
         )
       `)) || []
 
-    const byKey = new Map<string, any>()
+    const byKey = new Map<string, unknown>()
     for (const r of rows) byKey.set(String(r.key), r.value)
 
     const execDb = byKey.get('isometric_mass_import_execute_enabled')

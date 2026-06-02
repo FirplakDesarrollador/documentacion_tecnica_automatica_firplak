@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Sparkles, Loader2, BookOpen } from 'lucide-react'
+import { Loader2, BookOpen } from 'lucide-react'
 import { translateMissingProducts } from '@/app/products/actions'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
@@ -27,7 +27,7 @@ export function AiTranslateButton() {
             } else {
                 toast.error("Error en la traducción: " + (res.message || 'Error desconocido'), { id: toastId })
             }
-        } catch (error) {
+        } catch {
             toast.error("Error al procesar la traducción.", { id: toastId })
         } finally {
             setIsTranslating(false)

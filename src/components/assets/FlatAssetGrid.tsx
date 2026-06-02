@@ -6,8 +6,16 @@ import { ViewAssetDialog } from '@/components/assets/ViewAssetDialog'
 import { EditAssetDialog } from '@/components/assets/EditAssetDialog'
 import { DeleteAssetDialog } from '@/components/assets/DeleteAssetDialog'
 
+interface AssetRow {
+    id: string;
+    name: string;
+    type: string;
+    file_path: string;
+    relation_count: number;
+}
+
 interface Props {
-    assets: any[]
+    assets: AssetRow[]
     defaultNames: string[]
 }
 
@@ -22,7 +30,7 @@ export function FlatAssetGrid({ assets, defaultNames }: Props) {
 
     return (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-            {assets.map((asset: any) => {
+            {assets.map((asset: AssetRow) => {
                 const isDefault = defaultNames.includes(asset.name)
                 return (
                     <div

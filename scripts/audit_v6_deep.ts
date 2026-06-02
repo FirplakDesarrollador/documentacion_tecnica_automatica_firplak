@@ -36,7 +36,7 @@ async function runDeepAudit() {
             const v = v6_data.find(rv => rv.sku_complete === l.code);
             if (!v) return;
 
-            let diffs = [];
+            const diffs = [];
             let highRisk = false;
 
             if (v.product_name !== l.cabinet_name) {

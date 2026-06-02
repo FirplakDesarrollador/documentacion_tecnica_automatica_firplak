@@ -236,7 +236,7 @@ export async function mergeDatasetRowsAction(
         }
 
         let merged = 0
-        let created = 0
+        const created = 0
         const notFound: string[] = []
 
         for (const row of rows) {

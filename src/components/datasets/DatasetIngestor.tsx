@@ -23,13 +23,11 @@ import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { 
     Database, 
-    Upload, 
     FileSpreadsheet, 
     ChevronRight, 
     CheckCircle2, 
     AlertCircle, 
     Loader2,
-    X,
     Filter,
     Settings,
     Layers,
@@ -201,6 +199,7 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
 
     useEffect(() => {
         if (step !== 'associate_templates') return
+        /* eslint-disable react-hooks/set-state-in-effect */
         setTemplateVarToHeader((prev) => {
             const next = { ...prev }
             for (const v of requiredTemplateVars) {
@@ -215,7 +214,9 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
             })
             return next
         })
-    }, [step, requiredTemplateVars.join('|')])
+        /* eslint-enable react-hooks/set-state-in-effect */
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [step, requiredTemplateVars])
 
     const parseFile = useCallback((file: File, enc: string) => {
         Papa.parse(file, {
@@ -229,6 +230,7 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                 autoMap(headers)
             }
         })
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -558,7 +560,7 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                                     <div className="flex items-start gap-2 p-2.5 bg-indigo-50/50 rounded-lg border border-indigo-100">
                                         <Info className="h-4 w-4 text-indigo-500 mt-0.5" />
                                         <p className="text-[10px] text-indigo-700 font-medium leading-tight">
-                                            <b>Recomendado</b> para archivos modernos. Si ves rombos con "?" en las tildes, cambia a la opción "Occidental".
+                                            <b>Recomendado</b> para archivos modernos. Si ves rombos con &quot;?&quot; en las tildes, cambia a la opción &quot;Occidental&quot;.
                                         </p>
                                     </div>
                                 ) : (
@@ -893,7 +895,7 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                                     </div>
                                     <div>
                                         <p className="font-bold text-white text-sm">Todo listo para procesar</p>
-                                        <p className="text-xs text-indigo-300/70">Pulsa el botón "Subir" para finalizar el proceso.</p>
+                                        <p className="text-xs text-indigo-300/70">Pulsa el botón &quot;Subir&quot; para finalizar el proceso.</p>
                                     </div>
                                 </div>
                             </div>

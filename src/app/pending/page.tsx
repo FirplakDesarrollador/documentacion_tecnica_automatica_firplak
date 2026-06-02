@@ -8,8 +8,7 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { AlertTriangle } from 'lucide-react'
-import Link from 'next/link'
-import { getPendingSummary } from '@/lib/engine/validationActions'
+import { getPendingSummary, type PendingDetail, type PendingReason } from '@/lib/engine/validationActions'
 
 export default async function PendingPage() {
   const pendingSummary = await getPendingSummary()
@@ -48,7 +47,7 @@ export default async function PendingPage() {
                 </TableCell>
               </TableRow>
             ) : (
-              pendingProducts.map(({ productId, productCode, productName, severity, reasons }: any) => (
+              pendingProducts.map(({ productId, productCode, productName, severity, reasons }: PendingDetail) => (
                 <TableRow key={productId}>
                   <TableCell>
                     <div className="flex flex-col">
@@ -71,7 +70,7 @@ export default async function PendingPage() {
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-col gap-1.5 py-1">
-                      {reasons.map((r: any, idx: number) => (
+                      {reasons.map((r: PendingReason, idx: number) => (
                         <div key={`${r.code}-${idx}`} className="flex flex-wrap items-center gap-2">
                           <Badge
                             className={

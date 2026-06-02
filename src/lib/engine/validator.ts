@@ -16,7 +16,7 @@ export interface ValidationIssues {
  * and ensures those variables are not empty after rule evaluations.
  */
 export function validateProductReadiness(
-    product: any, // Use any to allow flexible database objects
+    product: Partial<Product> & { effective_status?: string },
     rules: Rule[],
     templates: TemplateElement[]
 ): ValidationIssues {
@@ -53,7 +53,7 @@ export function validateProductReadiness(
 
     // 3. Verify all required fields are satisfied 
     requiredDataFields.forEach(field => {
-        let value: any = undefined
+        let value: unknown = undefined
 
         // Resolve value from product or rules
         if (field === 'final_name_es') value = ruleResults.finalNameEs

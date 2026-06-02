@@ -52,7 +52,7 @@ async function main() {
     const colorsMap = new Map(colorsQuery.map((c: any) => [c.code_4dig, c.id]));
 
     // 3. Procesar filas y calcular agrupaciones
-    let rowDataList: any[] = [];
+    const rowDataList: any[] = [];
     const referenceCounts = new Map<string, number>();
 
     // Primera pasada para contar ocurrencias

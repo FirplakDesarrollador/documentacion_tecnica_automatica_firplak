@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { MultiSelectSearchField } from "@/components/ui-custom/MultiSelectSearchField"
-import { Upload, Loader2, Image as ImageIcon, CheckCircle2, Box } from "lucide-react"
+import { Upload, Loader2, Image as ImageIcon, CheckCircle2 } from "lucide-react"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import {
@@ -68,6 +68,7 @@ export function UploadAssetDialog({ onUploadComplete, variant, className, label 
     // Load families when dialog opens
     React.useEffect(() => {
         if (open) {
+            /* eslint-disable react-hooks/set-state-in-effect */
             setSelectedFile(null)
             setName("")
             setTypeVal("isometric")
@@ -78,6 +79,7 @@ export function UploadAssetDialog({ onUploadComplete, variant, className, label 
             setSelectedVersions([])
             setReferences([])
             setVersions([])
+            /* eslint-enable react-hooks/set-state-in-effect */
 
             getFamiliesAction().then(setFamilies).catch(() => {})
         }
@@ -88,8 +90,10 @@ export function UploadAssetDialog({ onUploadComplete, variant, className, label 
         if (selectedFamilies.length > 0) {
             getReferencesByFamilyAction(selectedFamilies).then(setReferences).catch(() => {})
         } else {
+            /* eslint-disable react-hooks/set-state-in-effect */
             setReferences([])
             setSelectedReferences([])
+            /* eslint-enable react-hooks/set-state-in-effect */
         }
     }, [selectedFamilies])
 
@@ -98,8 +102,10 @@ export function UploadAssetDialog({ onUploadComplete, variant, className, label 
         if (selectedFamilies.length > 0 || selectedReferences.length > 0) {
             getVersionsByFamilyAndRefAction(selectedFamilies, selectedReferences).then(setVersions).catch(() => {})
         } else {
+            /* eslint-disable react-hooks/set-state-in-effect */
             setVersions([])
             setSelectedVersions([])
+            /* eslint-enable react-hooks/set-state-in-effect */
         }
     }, [selectedFamilies, selectedReferences])
 

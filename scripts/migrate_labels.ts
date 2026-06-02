@@ -14,7 +14,7 @@ async function migrateLabelsAndDetails() {
 
         // 2. Update product_references with data from version '000'
         console.log("Migrating reference-level data (designation, line, commercial_measure, special_label)...");
-        const refUpdateResult = await dbQuery(`
+        await dbQuery(`
             UPDATE public.product_references pr
             SET 
                 designation = cp.designation,
@@ -49,7 +49,7 @@ async function migrateLabelsAndDetails() {
 
         // 3. Update product_versions with version_label for non-'000' versions
         console.log("Migrating version-level labels to product_versions.version_label...");
-        const verUpdateResult = await dbQuery(`
+        await dbQuery(`
             UPDATE public.product_versions pv
             SET version_label = cp.special_label
             FROM public.cabinet_products cp

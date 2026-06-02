@@ -54,7 +54,7 @@ export default function BarcodeElement({
             errorMessage: result.errorMessage,
             normalizedValue: result.normalizedValue,
         }
-    }, [el.barcodeSvg, el.barcodeError, el.barcodeValue, el.width, el.height, rawValue, sampleWhenEmpty, format])
+    }, [el.barcodeSvg, el.barcodeError, el.barcodeValue, el.width, el.height, rawValue, sampleWhenEmpty, format, el.barcodeBarHeightMm, el.barcodeQuietZoneX, el.barcodeXDimensionMm])
 
     if (!computed.svgMarkup) {
         return (

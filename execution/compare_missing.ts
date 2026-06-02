@@ -18,7 +18,7 @@ async function main() {
     const uniqueSkus = Array.from(new Set(skus));
 
     // 2. Obtener SKUs existentes
-    let foundSkus: string[] = [];
+    const foundSkus: string[] = [];
     for (let i = 0; i < uniqueSkus.length; i += 500) {
         const chunk = uniqueSkus.slice(i, i + 500);
         const list = chunk.map(s => `'${s.replace(/'/g, "''")}'`).join(',');

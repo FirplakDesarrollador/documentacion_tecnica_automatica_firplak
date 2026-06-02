@@ -9,9 +9,12 @@ type NamingJob = {
     scope_type: string
     scope_id: string | null
     scope_payload: Record<string, unknown> | null
+    naming_type: string | null
     processed_count: number | null
     total_count: number | null
 }
+
+type JobNamingType = 'all' | 'final_base_name' | 'final_complete_name' | 'sap_description_recommended'
 
 type SupabaseRpcClient = {
     rpc: (
@@ -121,6 +124,46 @@ function buildSkuPredicate(job: NamingJob) {
     return 'false'
 }
 
+function normalizeJobNamingType(job: NamingJob): JobNamingType {
+    const namingType = String(job.naming_type || '').trim()
+    if (namingType === 'final_base_name') return 'final_base_name'
+    if (namingType === 'final_complete_name') return 'final_complete_name'
+    if (namingType === 'sap_description_recommended') return 'sap_description_recommended'
+    return 'all'
+}
+
+function shouldProcessVersions(job: NamingJob) {
+    const namingType = normalizeJobNamingType(job)
+    return namingType === 'all' || namingType === 'final_base_name'
+}
+
+function shouldProcessSkus(job: NamingJob) {
+    const namingType = normalizeJobNamingType(job)
+    return namingType === 'all'
+        || namingType === 'final_complete_name'
+        || namingType === 'sap_description_recommended'
+}
+
+function versionStalePredicate(job: NamingJob) {
+    return shouldProcessVersions(job)
+        ? 'v.naming_stale_final_base_name = true'
+        : 'false'
+}
+
+function skuStalePredicate(job: NamingJob) {
+    const namingType = normalizeJobNamingType(job)
+    if (namingType === 'final_complete_name') {
+        return 's.naming_stale_final_complete_name = true'
+    }
+    if (namingType === 'sap_description_recommended') {
+        return 's.naming_stale_sap_description_recommended = true'
+    }
+    if (namingType === 'all') {
+        return '(s.naming_stale_final_complete_name = true OR s.naming_stale_sap_description_recommended = true)'
+    }
+    return 'false'
+}
+
 async function claimNextJob(leaseSeconds: number): Promise<NamingJob | null> {
     const { data, error } = await (supabaseServer as unknown as SupabaseRpcClient).rpc('claim_next_naming_job', {
         p_lease_seconds: leaseSeconds,
@@ -133,24 +176,26 @@ async function claimNextJob(leaseSeconds: number): Promise<NamingJob | null> {
 async function countScopedStale(job: NamingJob) {
     const versionPredicate = buildVersionPredicate(job)
     const skuPredicate = buildSkuPredicate(job)
+    const shouldCountVersions = shouldProcessVersions(job)
+    const shouldCountSkus = shouldProcessSkus(job)
     const [versionRows, skuRows] = await Promise.all([
-        dbQuery(`
+        shouldCountVersions ? dbQuery(`
             SELECT COUNT(*)::int AS count
             FROM public.product_versions v
             JOIN public.product_references r ON v.reference_id = r.id
             JOIN public.families f ON r.family_code = f.family_code
-            WHERE v.naming_stale = true
+            WHERE ${versionStalePredicate(job)}
               AND ${versionPredicate}
-        `),
-        dbQuery(`
+        `) : Promise.resolve([]),
+        shouldCountSkus ? dbQuery(`
             SELECT COUNT(*)::int AS count
             FROM public.product_skus s
             JOIN public.product_versions v ON s.version_id = v.id
             JOIN public.product_references r ON v.reference_id = r.id
             JOIN public.families f ON r.family_code = f.family_code
-            WHERE s.naming_stale = true
+            WHERE ${skuStalePredicate(job)}
               AND ${skuPredicate}
-        `),
+        `) : Promise.resolve([]),
     ])
 
     const versionCount = Number(versionRows?.[0]?.count || 0)
@@ -168,7 +213,7 @@ async function getStaleVersionIds(job: NamingJob, limit: number) {
         FROM public.product_versions v
         JOIN public.product_references r ON v.reference_id = r.id
         JOIN public.families f ON r.family_code = f.family_code
-        WHERE v.naming_stale = true
+        WHERE ${versionStalePredicate(job)}
           AND ${buildVersionPredicate(job)}
         ORDER BY v.naming_stale_at ASC NULLS FIRST, v.id ASC
         LIMIT ${limit}
@@ -184,7 +229,7 @@ async function getStaleSkuIds(job: NamingJob, limit: number) {
         JOIN public.product_versions v ON s.version_id = v.id
         JOIN public.product_references r ON v.reference_id = r.id
         JOIN public.families f ON r.family_code = f.family_code
-        WHERE s.naming_stale = true
+        WHERE ${skuStalePredicate(job)}
           AND ${buildSkuPredicate(job)}
         ORDER BY s.naming_stale_at ASC NULLS FIRST, s.id ASC
         LIMIT ${limit}
@@ -266,9 +311,11 @@ async function processJob(
     await updateJobTotal(job.id, initialCounts.total, leaseSeconds)
 
     while (hasRuntimeLeft(deadline)) {
-        const versionIds = await getStaleVersionIds(job, batchLimit)
+        const versionIds = shouldProcessVersions(job)
+            ? await getStaleVersionIds(job, batchLimit)
+            : []
         if (versionIds.length > 0) {
-            const recomputed = await recomputeMasterNamesForVersionIds(versionIds)
+            const recomputed = await recomputeMasterNamesForVersionIds(versionIds, job.naming_type)
             const processed = recomputed.updatedVersions + recomputed.updatedSkus
             result.processedVersions += recomputed.updatedVersions
             result.processedSkus += recomputed.updatedSkus
@@ -277,9 +324,11 @@ async function processJob(
             continue
         }
 
-        const skuIds = await getStaleSkuIds(job, batchLimit)
+        const skuIds = shouldProcessSkus(job)
+            ? await getStaleSkuIds(job, batchLimit)
+            : []
         if (skuIds.length > 0) {
-            const recomputed = await recomputeMasterNamesForSkuIds(skuIds)
+            const recomputed = await recomputeMasterNamesForSkuIds(skuIds, job.naming_type)
             const processed = recomputed.updatedVersions + recomputed.updatedSkus
             result.processedVersions += recomputed.updatedVersions
             result.processedSkus += recomputed.updatedSkus

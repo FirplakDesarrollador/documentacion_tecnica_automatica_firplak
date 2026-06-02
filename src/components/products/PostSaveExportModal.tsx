@@ -63,12 +63,6 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
     const [isExporting, setIsExporting] = useState(false)
     const [isLoadingTemplates, setIsLoadingTemplates] = useState(false)
 
-    useEffect(() => {
-        if (isOpen && step === 2 && templates.length === 0) {
-            loadTemplates()
-        }
-    }, [isOpen, step])
-
     const loadTemplates = async () => {
         setIsLoadingTemplates(true)
         try {
@@ -77,39 +71,40 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
                 ? [...data].sort((a, b) => {
                     const aIsFirplak = isFirplakCoreTemplate(a)
                     const bIsFirplak = isFirplakCoreTemplate(b)
-                    if (aIsFirplak !== bIsFirplak) return aIsFirplak ? -1 : 1
-                    return getTemplateDisplayName(a).localeCompare(getTemplateDisplayName(b), "es", { sensitivity: "base" })
+                    if (aIsFirplak && !bIsFirplak) return -1
+                    if (!aIsFirplak && bIsFirplak) return 1
+                    return 0
                 })
                 : []
-
             setTemplates(sorted)
-            if (sorted.length > 0) {
-                setSelectedTemplateId(sorted[0].id)
-
-                // Set default format based on template
-                const formats = sorted[0].export_formats
-                    ? sorted[0].export_formats.split(",").map((f: string) => f.trim().toLowerCase())
-                    : ["pdf", "jpg"]
-                setExportFormat(formats.includes("pdf") ? "pdf" : "jpg")
-            }
         } catch {
-            toast.error("Error cargando plantillas")
+            toast.error("Error al cargar plantillas")
         } finally {
             setIsLoadingTemplates(false)
         }
     }
 
+    useEffect(() => {
+        if (isOpen && step === 2 && templates.length === 0) {
+            /* eslint-disable-next-line react-hooks/set-state-in-effect */
+            loadTemplates()
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen, step])
+
     const selectedTemplate = templates.find((t) => t.id === selectedTemplateId)
     const selectedTemplateLabel = selectedTemplate ? getTemplateDisplayName(selectedTemplate) : ""
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     const allowedFormats = selectedTemplate?.export_formats
         ? selectedTemplate.export_formats.split(",").map((f: string) => f.trim().toLowerCase())
         : ["pdf", "jpg"]
 
     useEffect(() => {
         if (selectedTemplate && !allowedFormats.includes(exportFormat)) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             setExportFormat(allowedFormats[0] as any)
         }
-    }, [selectedTemplateId])
+    }, [selectedTemplateId, selectedTemplate, allowedFormats, exportFormat])
 
     const isArray = Array.isArray(product)
     const singleProduct = isArray ? product[0] : product

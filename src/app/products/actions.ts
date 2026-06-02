@@ -5,15 +5,14 @@ import { resetGlossaryCache } from '@/lib/engine/translator'
 import { computeNameWithNamingComponents } from '@/lib/engine/namingComponentsEngine'
 import { parseProductCode } from '@/lib/engine/codeParser'
 import {
-    markAllNamingStale,
     markNamingStaleForColor,
     markNamingStaleForFamilies,
+    markNamingStaleForGlossaryTerms,
     processNamingJobsInline,
 } from '@/lib/engine/namingQueue'
 import { upsertVersionAction } from '@/app/rules/versions/actions'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
-import { GoogleGenAI } from '@google/genai'
 
 function normalizeCanto(val: any) {
     if (val === null || val === undefined || val === '' || val === 'false') return 'CANTO 2 MM'
@@ -319,10 +318,15 @@ export async function createProductAction(data: any) {
     const final_name_es = completeName.final_name_es
     const final_name_en = completeName.final_name_en
     let insertedGlossaryTerms = false
+    const glossaryTermsForStale: { termEs: string; category?: string | null }[] = []
     if (data._newGlossaryTerms && Array.isArray(data._newGlossaryTerms)) {
         for (const term of data._newGlossaryTerms) {
             if (!term.es || !term.en) continue
             insertedGlossaryTerms = true
+            glossaryTermsForStale.push({
+                termEs: term.es,
+                category: term.category || 'TECHNICAL_TERM',
+            })
             await dbQuery(`
                 INSERT INTO public.glossary (term_es, term_en, active, priority, category)
                 VALUES (
@@ -419,7 +423,7 @@ export async function createProductAction(data: any) {
 
     if (insertedGlossaryTerms) {
         resetGlossaryCache()
-        await markAllNamingStale(null, 'product_create_glossary_terms')
+        await markNamingStaleForGlossaryTerms(glossaryTermsForStale, 'product_create_glossary_terms')
         await processNamingJobsInline()
     }
 
@@ -445,61 +449,6 @@ export async function updateFamilyAction(code: string, data: any) {
     await processNamingJobsInline()
     revalidatePath('/configuration/families')
     redirect('/families')
-}
-
-/**
- * Validates a generated English name against Firplak SAP rules.
- * Returns the failed rule name if invalid, or null if valid.
- */
-function validateEnglishName(nameStr: string, originalProduct: any): string | null {
-    const forbiddenTerms = ['FURNITURE', 'PRODUCT', 'WASHBASIN FURNITURE']
-    const hasForbidden = forbiddenTerms.some(term => nameStr.includes(term))
-    const hasCM = nameStr.includes('CM')
-    const hasHyphen = nameStr.includes('-')
-    
-    const modelName = String(originalProduct.model || '').toUpperCase()
-    const hasModel = modelName ? nameStr.includes(modelName) : true
-    
-    // LVM -> LAV consistency check (Mandatory)
-    const needsLav = originalProduct.final_name_es?.toUpperCase().includes('LVM')
-    const hasLav = nameStr.includes('LAV')
-    
-    // Dimensions format strict check: XXIN or XXINXYYIN (no spaces)
-    const dimRegex = /\b\d+IN\b|\b\d+INX\d+IN\b/
-    const hasValidDimFormat = dimRegex.test(nameStr)
-    
-    // Dimension Parity check
-    const esNumCount = (originalProduct.final_name_es?.match(/\d+/g) || []).filter((n: string) => n.length >= 2).length
-    const enInCount = (nameStr.match(/(\d+)IN/g) || []).length
-    const dimParityFail = esNumCount > 0 && enInCount < esNumCount
- 
-    // Mandatory Elements Check
-    const typeKeywords = ['CABINET', 'VANITY', 'LAV', 'BASE', 'WALL', 'PANTRY', 'LAUNDRY', 'SINK']
-    const hasType = typeKeywords.some(tk => nameStr.includes(tk))
-    const hasInBlock = nameStr.includes('IN')
- 
-    // Consistency
-    const useDest = String(originalProduct.use_destination || '').toUpperCase()
-    let typeConsistent = true
-    if (useDest.includes('COCINA') && nameStr.includes('VANITY')) typeConsistent = false
-    if (useDest.includes('LAVAMANO') && !nameStr.includes('VANITY') && !nameStr.includes('LAV')) typeConsistent = false
- 
-    if (hasForbidden) return "forbidden_terms"
-    if (hasCM) return "contains_cm"
-    if (hasHyphen) return "contains_hyphen"
-    if (!hasModel) return "missing_model"
-    if (!hasType) return "missing_product_type"
-    if (!hasInBlock) return "missing_dimension"
-    if (!hasValidDimFormat) return "invalid_dimension_format"
-    if (dimParityFail) return "dimension_parity_fail"
-    if (needsLav && !hasLav) return "missing_lav"
-    if (!typeConsistent) return "type_consistency_fail"
- 
-    return null
-}
-
-async function sleep(ms: number) {
-    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 export async function translateProductsAction(ids?: string[], mode: 'missing' | 'repair' | 'all' = 'missing') {
@@ -532,7 +481,7 @@ export async function translateProductsAction(ids?: string[], mode: 'missing' | 
         if (toTranslate.length === 0) return { success: true, count: 0, message: "No hay productos que requieran traducción en este modo." }
 
         let updatedCount = 0
-        let totalMissingTerms: string[] = []
+        const totalMissingTerms: string[] = []
         const updatedProducts: { id: string, final_name_en: string }[] = []
 
         for (const product of toTranslate) {
@@ -659,10 +608,10 @@ export async function getUniquePropertiesAction() {
 export async function checkProductExistsAction(code?: string, sapDesc?: string) {
     if (!code && !sapDesc) return null
 
-    let codeSafe = code ? String(code).trim().replace(/'/g, "''") : ""
-    let sapDescSafe = sapDesc ? String(sapDesc).trim().replace(/'/g, "''") : ""
+    const codeSafe = code ? String(code).trim().replace(/'/g, "''") : ""
+    const sapDescSafe = sapDesc ? String(sapDesc).trim().replace(/'/g, "''") : ""
 
-    let conditions = []
+    const conditions = []
     if (codeSafe) conditions.push(`sku_complete = '${codeSafe}'`)
     if (sapDescSafe) conditions.push(`sap_description_original = '${sapDescSafe}'`)
 
@@ -777,8 +726,11 @@ export async function saveGlossaryTermsAction(terms: { term_es: string, term_en:
             return { termEs, termEn: rawEn, category, priority: t.priority }
         }
 
+        const glossaryTermsForStale: { termEs: string; category?: string | null }[] = []
+
         for (const t of terms) {
             const n = normalizeGlossaryInput(t)
+            glossaryTermsForStale.push({ termEs: n.termEs, category: n.category })
             await dbQuery(`
                 INSERT INTO public.glossary (term_es, term_en, category, priority, active)
                 VALUES ('${n.termEs.replace(/'/g, "''")}', '${n.termEn.replace(/'/g, "''")}', '${n.category.replace(/'/g, "''")}', ${n.priority}, true)
@@ -789,7 +741,7 @@ export async function saveGlossaryTermsAction(terms: { term_es: string, term_en:
             `)
         }
         resetGlossaryCache()
-        await markAllNamingStale(null, 'glossary_update')
+        await markNamingStaleForGlossaryTerms(glossaryTermsForStale, 'glossary_update')
         await processNamingJobsInline()
         revalidatePath('/configuration/glossary')
         revalidatePath('/pending')

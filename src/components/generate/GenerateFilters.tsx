@@ -12,6 +12,7 @@ interface GenerateFiltersProps {
     onChange: (family: string[], reference: string[]) => void
     textFilter: string
     onTextFilterChange: (val: string) => void
+    onSearchSubmit?: () => void
 }
 
 export function GenerateFilters({ 
@@ -21,7 +22,8 @@ export function GenerateFilters({
     referenceIds,
     onChange,
     textFilter,
-    onTextFilterChange
+    onTextFilterChange,
+    onSearchSubmit
 }: GenerateFiltersProps) {
 
     const handleFamilyChange = (vals: string[]) => {
@@ -52,9 +54,10 @@ export function GenerateFilters({
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                 <Input
                     type="text"
-                    placeholder="Buscar por nombre o color..."
+                    placeholder="Buscar por SKU, nombre o color..."
                     value={textFilter}
                     onChange={(e) => onTextFilterChange(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && onSearchSubmit) onSearchSubmit() }}
                     className="pl-9 pr-8 h-10 w-full"
                 />
                 {textFilter && (

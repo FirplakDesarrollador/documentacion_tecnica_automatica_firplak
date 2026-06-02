@@ -12,19 +12,28 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { 
     previewNamingComponentsAction,
-    getProductsCountByFamilyAction, 
-    applyFullBulkNamingUpdateBatchAction, 
     revalidateRulesAndProductsAction, 
     getNamingComponentsEnConfigAction,
-    saveEnConfigAction,
+    getNamingVariableCatalogAction,
     saveNamingComponentsFullConfigAction,
     saveGlossaryTermsAction
 } from '@/app/rules/actions'
+import {
+    enqueueProductTypeNamingWorkAction,
+    processPendingNamingWorkAction,
+} from '@/app/naming/actions'
+import {
+    BASE_NAMING_VARIABLE_FIELDS,
+    NAMING_VARIABLE_SOURCE_LABELS,
+    type NamingVariableField,
+    type NamingVariableSource,
+} from '@/lib/engine/namingVariableCatalog'
+import { getNamingFieldValue } from '@/lib/engine/namingFieldResolver'
 import { toast } from 'sonner'
-import { ArrowUp, ArrowDown, Plus, Trash2, Eye, Settings2, Loader2, RefreshCw, CheckCircle2, AlertTriangle, Zap, ChevronDown } from 'lucide-react'
+import { ArrowUp, ArrowDown, Plus, Trash2, Eye, Settings2, Loader2, RefreshCw, CheckCircle2, AlertTriangle, Zap } from 'lucide-react'
 
 // ─── Dynamic Expected Vars Helper ────────────────────────────────────────────
-function getExpectedVarsFromRules(rules: any[]) {
+function getExpectedVarsFromRules(rules: any[], availableFields: NamingVariableField[]) {
     const vars: { field: string; label: string; condition: string }[] = [];
     const seen = new Set<string>();
 
@@ -39,7 +48,7 @@ function getExpectedVarsFromRules(rules: any[]) {
         if (payloadMatches) {
             payloadMatches.forEach((m: string) => {
                 const f = m.replace(/[{}]/g, '').toLowerCase();
-                const meta = ADDABLE_FIELDS.find(af => af.field === f);
+                const meta = availableFields.find(af => af.field === f);
                 fieldsInRule.push({ 
                     field: f, 
                     condition: meta?.type === 'boolean' ? '==true' : '!=null' 
@@ -51,7 +60,7 @@ function getExpectedVarsFromRules(rules: any[]) {
         const condParts = (rule.condition_expression || '').split(/[&|!=\s<>]+/).filter(Boolean);
         condParts.forEach((t: string) => {
             const f = t.toLowerCase();
-            const meta = ADDABLE_FIELDS.find(af => af.field === f);
+            const meta = availableFields.find(af => af.field === f);
             if (meta) {
                 fieldsInRule.push({ 
                     field: f, 
@@ -64,7 +73,7 @@ function getExpectedVarsFromRules(rules: any[]) {
         fieldsInRule.forEach(item => {
             if (!seen.has(item.field)) {
                 seen.add(item.field);
-                const meta = ADDABLE_FIELDS.find(af => af.field === item.field);
+                const meta = availableFields.find(af => af.field === item.field);
                 vars.push({ 
                     field: item.field, 
                     label: meta?.label || item.field, 
@@ -103,7 +112,7 @@ const ADDABLE_FIELDS = [
 ]
 
 function getVarStatus(field: string, condition: string, product: any): 'SÍ' | 'IGNORADA' | 'FALTA' {
-    const val = product[field]
+    const val = getNamingFieldValue(product, field)
     
     if (condition === '==true') {
         if (val === null || val === undefined) return 'FALTA'
@@ -151,8 +160,6 @@ interface PreviewResult {
     missingTerms?: string[]
 }
 
-type MassApplyResult = { code: string; newName: string; newNameEn?: string; oldName: string; error?: string; status?: string }
-
 const NAMING_TYPE_LABELS: Record<string, string> = {
     final_base_name: 'Nombre base final',
     final_complete_name: 'Nombre completo final',
@@ -170,7 +177,7 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
     // EN Config tab state
     const [enConfig, setEnConfig] = useState<any[]>([])
     const [enConfigLoading, setEnConfigLoading] = useState(false)
-    const [enConfigSaving, setEnConfigSaving] = useState<string | null>(null) // variable_id being saved
+    const enConfigSaving: string | null = null
     const [showEnSyncAlert, setShowEnSyncAlert] = useState(false)
 
     // Preview state
@@ -188,6 +195,7 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
     const [massResults, setMassResults] = useState<any[]>([])
     const [massTotal, setMassTotal] = useState(0)
     const [deletedIds, setDeletedIds] = useState<string[]>([])
+    const [hasPendingNamingWork, setHasPendingNamingWork] = useState(false)
     
     // Sync issues state
     const [syncIssues, setSyncIssues] = useState<{ missing: string[], obsolete: string[] }>({ missing: [], obsolete: [] })
@@ -198,6 +206,9 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
     const [selectedCondition, setSelectedCondition] = useState('')
     const [variablePrefix, setVariablePrefix] = useState('')
     const [variableSuffix, setVariableSuffix] = useState('')
+    const [availableFields, setAvailableFields] = useState<NamingVariableField[]>(
+        () => BASE_NAMING_VARIABLE_FIELDS.length > 0 ? BASE_NAMING_VARIABLE_FIELDS : ADDABLE_FIELDS as unknown as NamingVariableField[]
+    )
 
     // ─── Helper: Normalize Priorities ────────────────────────────────────
     const reindexRules = (list: any[]) => {
@@ -234,6 +245,26 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
         prevOpen.current = open
     }, [initialRules, open, productType, namingType, savedSuccessfully])
 
+    useEffect(() => {
+        if (!open || !productType) return
+
+        let cancelled = false
+        getNamingVariableCatalogAction(productType)
+            .then(fields => {
+                if (!cancelled) setAvailableFields(fields.length > 0 ? fields : BASE_NAMING_VARIABLE_FIELDS)
+            })
+            .catch((err: any) => {
+                if (!cancelled) {
+                    setAvailableFields(BASE_NAMING_VARIABLE_FIELDS)
+                    toast.error("Error al cargar variables disponibles: " + err.message)
+                }
+            })
+
+        return () => {
+            cancelled = true
+        }
+    }, [open, productType])
+
     const markDirty = () => {
         setPreviewGenerated(false)
         setSavedSuccessfully(false)
@@ -251,6 +282,21 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
         setRules(indexed)
         markDirty()
     }
+
+    const getFieldMeta = (field: string) => availableFields.find(x => x.field === field)
+    const canUseResolvedType = (variableId: string) => ['product_type', 'designation', 'use_destination', 'resolved_type'].includes(variableId)
+    const sanitizeEnConfig = (cfg: any[]) => cfg.map(item => (
+        item.behavior_en === 'resolved_type' && !canUseResolvedType(item.variable_id)
+            ? { ...item, behavior_en: 'preserve' }
+            : item
+    ))
+
+    const groupedAvailableFields = availableFields.reduce((acc, field) => {
+        const source = field.source || 'ref_attrs'
+        if (!acc[source]) acc[source] = []
+        acc[source].push(field)
+        return acc
+    }, {} as Record<NamingVariableSource, NamingVariableField[]>)
 
     const moveEnConfig = (index: number, direction: 'up' | 'down') => {
         const sortedConfig = [...enConfig].sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
@@ -283,8 +329,9 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
 
         setLoading(true)
         try {
-            await saveNamingComponentsFullConfigAction(productType, namingType, rules, deletedIds, enConfig)
+            const result = await saveNamingComponentsFullConfigAction(productType, namingType, rules, deletedIds, enConfig)
             toast.success("Configuración ES + EN guardada correctamente")
+            setHasPendingNamingWork(Boolean(result?.jobId))
             setSavedSuccessfully(true)
             setDeletedIds([])
         } catch (err: any) {
@@ -296,7 +343,7 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
 
     const handleSaveGlossary = async () => {
         const termsToSave = Object.entries(glossaryEdits)
-            .filter(([_, en]) => en.trim() !== '')
+            .filter(([, en]) => en.trim() !== '')
             .map(([es, en]) => ({ es, en }))
             
         if (termsToSave.length === 0) return
@@ -315,27 +362,9 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
         }
     }
 
-    const addFixedText = () => {
-        const newRule = {
-            rule_type: 'name_component',
-            target_entity: 'product',
-            naming_type: namingType,
-            condition_expression: 'true',
-            action_type: 'append_text',
-            action_payload: 'TEXTO',
-            priority: rules.length * 10,
-            enabled: true,
-            target_value: productType,
-            notes: 'Texto estático'
-        }
-        const updated = reindexRules([...rules, newRule])
-        setRules(updated)
-        markDirty()
-    }
-
     const handleFieldSelect = (field: string) => {
         setSelectedField(field)
-        const f = ADDABLE_FIELDS.find(x => x.field === field)
+        const f = getFieldMeta(field)
         setSelectedCondition(f?.type === 'boolean' ? '==true' : '!=null')
     }
 
@@ -458,7 +487,7 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
         issues.missing.forEach(v => {
             // Smart defaults for new variables
             const isTechnical = ['rh', 'canto_puertas', 'rh_flag', 'edge_2mm_flag'].includes(v)
-            const isColor = v === 'door_color_text' || v === 'id_color_frente'
+            const isColor = v === 'door_color_text' || v === 'id_color_frente' || v === 'color_name'
             
             newEnConfig.push({
                 variable_id: v,
@@ -493,7 +522,7 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
         } else if (tab === 'orden_en' && enConfig.length === 0) {
             setEnConfigLoading(true)
             try {
-                const cfg = await getNamingComponentsEnConfigAction(productType, namingType)
+                const cfg = sanitizeEnConfig(await getNamingComponentsEnConfigAction(productType, namingType))
                 setEnConfig(cfg)
                 const issues = checkSyncIssues(cfg)
                 setSyncIssues(issues)
@@ -506,31 +535,32 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
         }
     }
 
-    const updateEnConfigField = async (variable_id: string, field: string, value: any) => {
-        // Optimistic update for immediate visual reordering or UI response
+    const updateEnConfigField = (variable_id: string, field: string, value: any) => {
         setEnConfig(prev => {
-            const updated = prev.map(c => c.variable_id === variable_id ? { ...c, [field]: value } : c)
+            const updated = prev.map(c => {
+                if (c.variable_id !== variable_id) return c
+                const next = { ...c, [field]: value }
+                if (field === 'behavior_en') {
+                    next.fallback_strategy = value === 'translate'
+                        ? 'translate'
+                        : value === 'translate_if_exists'
+                            ? 'translate_if_exists'
+                            : 'preserve'
+                    next.behavior = value === 'resolved_type'
+                        ? 'classify_and_resolve'
+                        : (value === 'translate' || value === 'translate_if_exists')
+                            ? 'translate_and_emit'
+                            : 'preserve'
+                    next.emit = value !== 'resolved_type' || c.variable_id === 'resolved_type'
+                }
+                return next
+            })
             if (field === 'order_index') {
                 return [...updated].sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
             }
             return updated
         })
-
-        setEnConfigSaving(variable_id)
-        try {
-            await saveEnConfigAction(productType, variable_id, { [field]: value }, namingType)
-            // Success: state already updated optimistically
-            toast.success(`Configuración actualizada`)
-        } catch (err: any) {
-            // Rollback optimistic change on error (optional, but safer)
-            // For now, just toast error. 
-            toast.error("Error al guardar: " + err.message)
-            // Reload from server to be safe
-            const cfg = await getNamingComponentsEnConfigAction(productType, namingType)
-            setEnConfig(cfg)
-        } finally {
-            setEnConfigSaving(null)
-        }
+        markDirty()
     }
 
     const handleMassApply = async () => {
@@ -540,37 +570,16 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
         }
 
         setIsApplying(true)
-        setMassApplyMode(true)
         setMassResults([])
         setMassTotal(0)
         
         try {
-            const total = await getProductsCountByFamilyAction(productType)
-            setMassTotal(total)
-            
-            if (total === 0) {
-                setIsApplying(false)
-                return
-            }
-
-            const BATCH_SIZE = 100
-            let allResults: any[] = []
-            
-            for (let offset = 0; offset < total; offset += BATCH_SIZE) {
-                const batchResults = await applyFullBulkNamingUpdateBatchAction(
-                    productType, 
-                    offset, 
-                    BATCH_SIZE,
-                    rules,
-                    enConfig,
-                    namingType
-                )
-                allResults = [...allResults, ...batchResults]
-                setMassResults([...allResults])
-            }
-            
+            const result = hasPendingNamingWork
+                ? await processPendingNamingWorkAction(5000)
+                : await enqueueProductTypeNamingWorkAction(productType, namingType)
+            setHasPendingNamingWork(result.status.hasWork)
             await revalidateRulesAndProductsAction()
-            toast.success(`Gobernanza aplicada: ${total} productos actualizados (ES + EN)`)
+            toast.success(result.status.hasWork ? 'Nomenclatura en proceso. Puedes continuar desde el panel izquierdo.' : 'Nomenclatura aplicada correctamente.')
         } catch (err: any) {
             toast.error("Error en aplicación masiva: " + err.message)
         } finally {
@@ -578,7 +587,7 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
         }
     }
 
-    const dynamicExpectedVars = getExpectedVarsFromRules(rules)
+    const dynamicExpectedVars = getExpectedVarsFromRules(rules, availableFields)
 
     return (
         <Dialog open={open} onOpenChange={(val) => { if (!val) onClose() }}>
@@ -687,9 +696,17 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
                                                 onChange={e => handleFieldSelect(e.target.value)}
                                             >
                                                 <option value="">Seleccionar campo...</option>
-                                                {ADDABLE_FIELDS.map(f => (
-                                                    <option key={f.field} value={f.field}>{f.label} ({f.field})</option>
-                                                ))}
+                                                {(Object.keys(NAMING_VARIABLE_SOURCE_LABELS) as NamingVariableSource[])
+                                                    .filter(source => groupedAvailableFields[source]?.length)
+                                                    .map(source => (
+                                                        <optgroup key={source} label={NAMING_VARIABLE_SOURCE_LABELS[source]}>
+                                                            {groupedAvailableFields[source]
+                                                                .sort((a, b) => a.label.localeCompare(b.label))
+                                                                .map(f => (
+                                                                    <option key={f.field} value={f.field}>{f.label} ({f.field})</option>
+                                                                ))}
+                                                        </optgroup>
+                                                    ))}
                                             </select>
                                         </div>
                                         <div>
@@ -712,7 +729,7 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
                                         </div>
                                         <div>
                                             <label className="text-[10px] text-slate-500 font-medium block mb-1">Condición</label>
-                                            {selectedField && ADDABLE_FIELDS.find(x => x.field === selectedField)?.type === 'boolean' ? (
+                                            {selectedField && getFieldMeta(selectedField)?.type === 'boolean' ? (
                                                 <select
                                                     className="w-full h-8 text-xs rounded-md border border-slate-200 bg-white px-2"
                                                     value={selectedCondition || ""}
@@ -832,10 +849,11 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
                                                     const matchKeys = mapping[c.variable_id] || [c.variable_id]
                                                     const isActiveInEs = matchKeys.some(k => esVariables.includes(k))
                                                     const isResolvedTypePart = ['product_type', 'designation', 'use_destination'].includes(c.variable_id)
+                                                    const canUseCombinedTranslation = canUseResolvedType(c.variable_id)
                                                     const selectedBehaviorEn = c.behavior_en || (
                                                         c.behavior === 'classify_and_resolve'
                                                             ? 'resolved_type'
-                                                            : (c.fallback_strategy === 'translate' || c.behavior === 'translate_and_emit' ? 'translate' : 'preserve')
+                                                            : (c.fallback_strategy === 'translate' || c.behavior === 'translate_and_emit' ? 'translate' : (c.fallback_strategy === 'translate_if_exists' ? 'translate_if_exists' : 'preserve'))
                                                     )
 
                                                     return (
@@ -878,8 +896,9 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
                                                                     disabled={enConfigSaving === c.variable_id}
                                                                 >
                                                                     <option value="translate">Traducir</option>
+                                                                    <option value="translate_if_exists">Traducir si existe</option>
                                                                     <option value="preserve">No traducir</option>
-                                                                    <option value="resolved_type">Traducción combinada</option>
+                                                                    <option value="resolved_type" disabled={!canUseCombinedTranslation}>Traducción combinada</option>
                                                                 </select>
                                                                 <div className="mt-1 flex items-center gap-2">
                                                                     {isResolvedTypePart && <span className="text-[9px] text-amber-600 font-bold uppercase">Aporta a combinación</span>}
@@ -924,7 +943,6 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
                                     <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
                                     <div className="flex flex-col gap-4">
                                         {previewResults.map((item) => {
-                                            const esChanged = item.sapDescription !== item.previewName;
                                             const unusedTerms = getUnusedSapText(item.sapDescription, item.previewName);
                                             const expectedVars = dynamicExpectedVars;
                                             
@@ -1013,7 +1031,7 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
                                                             <div className="flex flex-wrap gap-2">
                                                                 {expectedVars.map((v) => {
                                                                     const status = getVarStatus(v.field, v.condition, item.productData);
-                                                                    const label = ADDABLE_FIELDS.find(f => f.field === v.field)?.label || v.field;
+                                                                    const label = getFieldMeta(v.field)?.label || v.field;
                                                                     
                                                                     let colorClass = "bg-white text-slate-400 border-slate-200";
                                                                     if (status === 'SÍ') colorClass = "bg-emerald-100 text-emerald-700 border-emerald-200 shadow-sm";
@@ -1237,10 +1255,10 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
                                                 size="sm"
                                                 className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 animate-in zoom-in-95 duration-200"
                                                 onClick={handleMassApply}
-                                                disabled={!previewResults.every((r: any) => r.isValidEn)}
+                                                disabled={isApplying || !previewResults.every((r: any) => r.isValidEn)}
                                             >
-                                                <Zap className="w-3.5 h-3.5" />
-                                                Aplicar cambios masivos ES + EN
+                                                {isApplying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                                                {hasPendingNamingWork ? 'Aplicar nomenclatura pendiente' : 'Aplicar nomenclatura masivamente'}
                                             </Button>
                                         </div>
                                     </div>

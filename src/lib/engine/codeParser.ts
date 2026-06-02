@@ -423,8 +423,7 @@ export async function parseProductCode(
                 if (colorRows && colorRows.length > 0) {
                     (result as any).color_name = colorRows[0].name_color_sap;
                 }
-            } catch (e) {
-                console.error('codeParser: error querying color name', e);
+        } catch {
             }
         }
     } else {
@@ -506,8 +505,7 @@ export async function parseProductCode(
                 const matchedColor = findBestMatch(descUpper, colorNames);
                 if (matchedColor) { (result as any).color_name = matchedColor; setSap('color_name', matchedColor); }
             }
-        } catch (e) {
-            console.error('codeParser: smart matching catalog error', e);
+        } catch {
         }
 
         // Detección Genérica de Designación (Fallback)
@@ -517,7 +515,7 @@ export async function parseProductCode(
             else if (descUpper.includes(' ELEV ') || descUpper.includes('ELEVADO')) { result.designation = 'ELEVADO'; setSap('designation', 'ELEVADO'); }
         }
 
-        let foundAccessories: string[] = [];
+        const foundAccessories: string[] = [];
 
         // Detección de Puertas/Cajones (4P, 2C, etc.)
         const doorsMatch = descUpper.match(/\b(\d+)\s*(?:[Pp]|PUERTAS?)\b/);
@@ -622,7 +620,7 @@ export async function parseProductCode(
                 try {
                     const clientRows = await dbQuery(`SELECT name FROM public.clients WHERE UPPER(name) = '${matchedClient.replace(/'/g, "''")}' OR (name = 'SODIMAC CHILE' AND '${matchedClient.replace(/'/g, "''")}' LIKE 'SODIMAC%') LIMIT 1`);
                     if (clientRows && clientRows.length > 0) { result.private_label_client_name = clientRows[0].name; setSap('private_label_client_name', clientRows[0].name); }
-                } catch (e) {}
+                } catch {}
             }
         }
 

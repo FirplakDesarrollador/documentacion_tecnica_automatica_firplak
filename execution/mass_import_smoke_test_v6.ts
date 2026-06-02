@@ -1,4 +1,4 @@
-/* eslint-disable no-console */
+ 
 // Smoke test for Mass Import V6 RPCs (preview only).
 // Note: This script is intentionally CommonJS to avoid ts-node ESM resolution issues on Windows.
 

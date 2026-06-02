@@ -29,9 +29,10 @@ export async function GET(req: Request) {
       `)) || []
 
     return NextResponse.json({ success: true, job, items })
-  } catch (e: any) {
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : 'Job fetch failed'
     console.error('[isometrics/mass-import/job] error', e)
-    return NextResponse.json({ success: false, error: e?.message || 'Job fetch failed' }, { status: 500 })
+    return NextResponse.json({ success: false, error: message }, { status: 500 })
   }
 }
 

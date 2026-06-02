@@ -9,7 +9,7 @@ const sb = createClient(
 
 async function main() {
     console.log("Comprobando existencia de cabinet_products...");
-    const { data: check, error: checkErr } = await sb.rpc('exec_sql', {
+    const { data: check } = await sb.rpc('exec_sql', {
         query_text: `SELECT table_name FROM information_schema.tables WHERE table_name = 'cabinet_products';`
     });
     

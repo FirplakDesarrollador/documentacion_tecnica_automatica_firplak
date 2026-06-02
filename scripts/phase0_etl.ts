@@ -51,7 +51,7 @@ async function runETL() {
                 p.width_cm || 0, p.depth_cm || 0, p.height_cm || 0, p.weight_kg || 0,
                 p.isometric_path, p.isometric_asset_id, JSON.stringify(refAttrs), p.status || 'ACTIVO'
             ]);
-        } catch(e) {}
+        } catch {}
 
         const refObj = await dbQuery("SELECT id FROM public.product_references WHERE family_code=$1 AND reference_code=$2", [p.familia_code, p.ref_code]);
         if (!refObj || refObj.length === 0) continue;
@@ -70,7 +70,7 @@ async function runETL() {
             `, [
                 refId, p.version_code, p.sku_base, p.final_name_es, p.final_name_en, p.validation_status || 'incomplete', p.status || 'ACTIVO'
             ]);
-        } catch(e) {}
+        } catch {}
 
         const verObj = await dbQuery("SELECT id FROM public.product_versions WHERE reference_id=$1 AND version_code=$2", [refId, p.version_code]);
         if (!verObj || verObj.length === 0) continue;

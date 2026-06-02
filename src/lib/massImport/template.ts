@@ -249,7 +249,6 @@ export async function buildMassImportTemplateXlsx(baseRows: { sku_complete: stri
 
   const familiesInFile = Array.from(new Set(parsed.map(p => p.family_code))).sort();
   const colorsInFile = Array.from(new Set(parsed.map(p => p.color_code.padStart(4, '0')))).sort();
-  const referenceCodesInFile = Array.from(new Set(parsed.map(p => p.reference_code))).sort();
   const versionCodesInFile = Array.from(new Set(parsed.map(p => p.version_code))).sort();
 
   // Existing SKUs
@@ -408,9 +407,9 @@ export async function buildMassImportTemplateXlsx(baseRows: { sku_complete: stri
     let height_cm: string | number = '';
     let weight_kg: string | number = '';
     let stacking_max: string | number = '';
-    let version_label = '';
-    let version_attrs_json = '';
-    let sku_attrs_json = '';
+    const version_label = '';
+    const version_attrs_json = '';
+    const sku_attrs_json = '';
 
     if (!parsedSku) errors.push('SKU_COMPLETE invalido (formato esperado: VFAM-REF-VER-COLOR)');
 

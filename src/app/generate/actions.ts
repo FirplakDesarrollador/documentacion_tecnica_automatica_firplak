@@ -28,7 +28,7 @@ export async function resolveAssetsAction(assetIds: string[]) {
     }
 
     if (sysAssets) {
-        (sysAssets as any[]).forEach((a) => {
+        (sysAssets as { name: string | null; file_path: string | null }[]).forEach((a) => {
             if (a.name) {
                 map[a.name] = a.file_path || ''
                 // Mapeo a llaves heredadas (legacy)
@@ -59,7 +59,7 @@ export async function resolveAssetsAction(assetIds: string[]) {
     }
     
     if (customAssets) {
-        (customAssets as any[]).forEach((a) => {
+        (customAssets as { id: string; file_path: string | null }[]).forEach((a) => {
             map[a.id] = a.file_path || ''
         })
     }

@@ -148,7 +148,7 @@ function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPr
 
     useEffect(() => {
         if (!textRef.current || !isPreviewMode) {
-            // eslint-disable-next-line react-hooks/set-state-in-effect
+             
             setIsOverflowing(false)
             return
         }
@@ -1579,8 +1579,10 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
 
     useEffect(() => {
         if (dataSource !== 'custom_datasets') {
+            /* eslint-disable react-hooks/set-state-in-effect */
             setLinkedDatasets([])
             setDatasetSchema([])
+            /* eslint-enable react-hooks/set-state-in-effect */
             return
         }
         refreshLinkedDatasets()
@@ -1680,7 +1682,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         } catch {
             return false
         }
-    }, [requiredVarsForTemplate.join('|')])
+    }, [requiredVarsForTemplate])
 
     // Lista de variables disponibles (estáticas para Firplak, dinámicas para datasets externos)
     const CORE_VARIABLE_OPTS = [
@@ -1771,6 +1773,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                         barcodeQuietZoneX: el.barcodeQuietZoneX ?? 10,
                     }
                 })
+                /* eslint-disable react-hooks/set-state-in-effect */
                 setElements(migrated as any)
                 setHistory([migrated as any])
                 setHistoryIndex(0)
@@ -1783,6 +1786,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             setHistory([[]])
             setHistoryIndex(0)
         }
+        /* eslint-enable react-hooks/set-state-in-effect */
     }, [template.elements_json])
 
     // Warn before leaving if unsaved changes exist
@@ -1833,6 +1837,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         setShowExitDialog(false);
         isModifiedRef.current = false; // Synchronous bypass
         if (pendingHref) {
+            /* eslint-disable-next-line react-hooks/immutability */
             window.location.href = pendingHref;
         }
     };
@@ -2425,6 +2430,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
 
     useEffect(() => {
         if (selectedIds.length === 0) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             setPropertiesPanelTab('template')
             return
         }

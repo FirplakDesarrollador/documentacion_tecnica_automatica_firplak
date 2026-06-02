@@ -15,7 +15,7 @@ import {
 import { GenerateFilters } from '@/components/generate/GenerateFilters'
 import { TemplatePicker, type TemplateOption } from '@/components/generate/TemplatePicker'
 import { GenerateProductTable, type GenerateProduct } from '@/components/generate/GenerateProductTable'
-import { ValidationWarnings, getTemplateRequiredFields, getTemplateValidationIssues } from '@/components/generate/ValidationWarnings'
+import { getTemplateRequiredFields, getTemplateValidationIssues } from '@/components/generate/ValidationWarnings'
 import { BulkExportPanel } from '@/components/generate/BulkExportPanel'
 
 const STORAGE_KEYS = {
@@ -35,7 +35,7 @@ interface GenerateClientProps {
     datasetsForTemplate?: { id: string; name: string }[]
     initialDatasetId?: string | null
     hasFilter: boolean
-    rules: any[]
+    rules: Record<string, unknown>[]
     isExternalSource?: boolean
     totalCount?: number
     page?: number
@@ -85,7 +85,10 @@ export function GenerateClient({
 
     // 1. Cargar estados iniciales desde localStorage si la URL está vacía
     useEffect(() => {
-        // Cargar selección de productos
+        /* eslint-disable react-hooks/set-state-in-effect */
+        // Intencional: Restauración de localStorage al montar.
+        // No se puede mover a inicializadores lazy porque depende de
+        // templates/datasetsForTemplate que vienen de Supabase (asíncronos).
         const savedIds = localStorage.getItem(STORAGE_KEYS.SELECTED_IDS)
         if (savedIds) {
             try { setSelectedIds(JSON.parse(savedIds)) } catch (e) { console.error(e) }
@@ -111,7 +114,6 @@ export function GenerateClient({
                 } catch (e) { console.error(e) }
             }
             if (savedTpl && !initialTemplateId) {
-                // Solo restaurar si no hay nada en la URL que mande
                 const exists = templates.some(t => t.id === savedTpl)
                 if (exists) setSelectedTemplateId(savedTpl)
             }
@@ -121,6 +123,7 @@ export function GenerateClient({
             }
         }
         setIsLoaded(true)
+        /* eslint-enable react-hooks/set-state-in-effect */
     }, [])
 
     // 2. Sincronización Unificada con la URL (Debounced)
@@ -180,6 +183,7 @@ export function GenerateClient({
     }, [familyIds, referenceIds, selectedTemplateId, selectedDatasetId, selectedIds, textFilter, currentPage, isLoaded, router, searchParams])
 
     useEffect(() => {
+        /* eslint-disable-next-line react-hooks/set-state-in-effect */
         setSelectedIds(prev =>
             prev.filter(id => products.some(product => product.id === id && product.is_exportable !== false))
         )
@@ -187,20 +191,27 @@ export function GenerateClient({
 
     // 3. Sincronizar selección de plantilla con cambios en la URL (Navegación externa/atrás)
     // Usamos este patrón para evitar que el estado local "pelee" con la prop inicial durante el re-renderizado
+    // eslint-disable: Son efectos de sincronización props→estado. No se pueden eliminar porque el estado
+    // también se modifica internamente (usuario cambia plantilla). La alternativa sería un refactor
+    // grande a componente controlado o usar `key` (que perdería todo el estado interno).
     const [lastSyncedInitialId, setLastSyncedInitialId] = useState(initialTemplateId)
     const [lastSyncedInitialDatasetId, setLastSyncedInitialDatasetId] = useState(initialDatasetId)
     
     useEffect(() => {
         if (initialTemplateId !== lastSyncedInitialId) {
+            /* eslint-disable react-hooks/set-state-in-effect */
             setSelectedTemplateId(initialTemplateId)
             setLastSyncedInitialId(initialTemplateId)
+            /* eslint-enable react-hooks/set-state-in-effect */
         }
     }, [initialTemplateId, lastSyncedInitialId])
 
     useEffect(() => {
         if (initialDatasetId !== lastSyncedInitialDatasetId) {
+            /* eslint-disable react-hooks/set-state-in-effect */
             setSelectedDatasetId(initialDatasetId ?? null)
             setLastSyncedInitialDatasetId(initialDatasetId)
+            /* eslint-enable react-hooks/set-state-in-effect */
         }
     }, [initialDatasetId, lastSyncedInitialDatasetId])
 
@@ -208,8 +219,10 @@ export function GenerateClient({
     const [lastSyncedPage, setLastSyncedPage] = useState(page)
     useEffect(() => {
         if (page !== lastSyncedPage) {
+            /* eslint-disable react-hooks/set-state-in-effect */
             setCurrentPage(page)
             setLastSyncedPage(page)
+            /* eslint-enable react-hooks/set-state-in-effect */
         }
     }, [page, lastSyncedPage])
 

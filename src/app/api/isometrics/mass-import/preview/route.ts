@@ -17,6 +17,7 @@ import {
   extractWidthFromCommercialMeasure,
   isOneDimensionalMeasure,
   type BulkIsometricMatchOptions,
+  type ParsedIsometricDescriptor,
 } from '@/lib/isometrics/bulkMatch'
 import { assignConflictGroupCodes } from '@/lib/isometrics/conflictGroups'
 
@@ -324,7 +325,7 @@ export async function POST(req: Request) {
 
     type Planned = {
       file: PreviewFileInput
-      parsed: any | null
+      parsed: ParsedIsometricDescriptor | null
       matchStatus: string
       matchMode: string | null
       targetGranularity: 'reference' | 'version'
@@ -718,7 +719,7 @@ export async function POST(req: Request) {
     }
 
     // Insert items if stateful
-    const itemRows: any[] = []
+    const itemRows: { id: string }[] = []
     if (jobId) {
       for (let i = 0; i < planned.length; i++) {
         const p = planned[i]
@@ -832,8 +833,9 @@ export async function POST(req: Request) {
       job: { id: jobId, mode, total: body.files.length, ignored, matchOk, noMatch, ambiguous, conflicts },
       items: responseItems,
     })
-  } catch (e: any) {
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : 'Preview failed'
     console.error('[isometrics/mass-import/preview] error', e)
-    return NextResponse.json({ success: false, error: e?.message || 'Preview failed' }, { status: 500 })
+    return NextResponse.json({ success: false, error: message }, { status: 500 })
   }
 }

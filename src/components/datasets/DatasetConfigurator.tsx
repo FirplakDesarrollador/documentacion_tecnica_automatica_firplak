@@ -230,7 +230,7 @@ export function DatasetConfigurator({ datasetId, onClose, onSaved }: DatasetConf
         return linkedTemplateIds
             .map(id => byId.get(id))
             .filter(Boolean) as WizardTemplate[]
-    }, [linkedTemplateIds.join('|'), templates.length])
+    }, [linkedTemplateIds, templates])
 
     const templateSyncStatus = useMemo(() => {
         const out: Record<string, { required: string[]; ok: boolean }> = {}
@@ -240,7 +240,7 @@ export function DatasetConfigurator({ datasetId, onClose, onSaved }: DatasetConf
             out[t.id] = { required, ok }
         }
         return out
-    }, [linkedTemplates.map(t => t.id).join('|'), Array.from(datasetKeys).join('|')])
+    }, [linkedTemplates, datasetKeys])
 
     const keyErrors = useMemo(() => {
         const errors: Record<string, string> = {}

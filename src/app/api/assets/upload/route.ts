@@ -46,7 +46,7 @@ export async function POST(request: Request) {
             filePath = urlData.publicUrl
         }
 
-        let rows: any[]
+        let rows: Record<string, unknown>[]
         if (assetId) {
             // Update existing record
             rows = await dbQuery(`
@@ -67,7 +67,7 @@ export async function POST(request: Request) {
         }
 
         return NextResponse.json({ success: true, asset: rows?.[0] })
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error('Upload Error:', error)
         return NextResponse.json({ success: false, error: 'Failed to upload asset' }, { status: 500 })
     }

@@ -13,7 +13,7 @@ type ParsedGroup = {
   reference_labels: Record<string, string>
 }
 
-function asString(v: any) {
+function asString(v: unknown) {
   return String(v ?? '').trim()
 }
 
@@ -29,7 +29,7 @@ export async function POST(req: Request) {
 
     const buf = await file.arrayBuffer()
     const wb = new ExcelJS.Workbook()
-    await wb.xlsx.load(buf as any)
+    await wb.xlsx.load(buf as unknown as Buffer)
 
     const ws = wb.getWorksheet('ORPHANS') || wb.worksheets[0]
     if (!ws) return NextResponse.json({ success: false, error: 'No worksheet found' }, { status: 400 })
@@ -127,8 +127,8 @@ export async function POST(req: Request) {
       expected_filename_to_group: Object.fromEntries(expectedNameToGroup.entries()),
       warnings,
     })
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error('[assets/orphans/parse] error', e)
-    return NextResponse.json({ success: false, error: e?.message || 'Parse failed' }, { status: 500 })
+    return NextResponse.json({ success: false, error: (e as Error).message || 'Parse failed' }, { status: 500 })
   }
 }

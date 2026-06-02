@@ -268,16 +268,12 @@ export function BulkExportPanel({
         [selectedProducts]
     )
 
-    const exportableTotal = exportMode === 'all' ? totalCount : selectedProducts.length
-
     const hasWarnings = warnings.some(w => w.issues.length > 0)
 
     const done = items.filter(i => i.status === 'done').length
     const errors = items.filter(i => i.status === 'error').length
     const total = items.length
     const progress = Math.round(total > 0 ? ((done + errors) / total) * 100 : 0)
-    const estimatedSeconds = Math.round((exportMode === 'all' ? totalCount : total) * 2)
-
     const updateItem = useCallback((id: string, status: ExportStatus, error?: string) => {
         setItems(prev => prev.map(item =>
             item.product.id === id ? { ...item, status, error } : item
@@ -535,7 +531,7 @@ export function BulkExportPanel({
                             </div>
                         )}
                         <p className="text-[10px] text-slate-400 ml-1 italic leading-tight">
-                            * Si no eliges carpeta, los archivos se descargarán por defecto en "Descargas".
+                            * Si no eliges carpeta, los archivos se descargarán por defecto en &quot;Descargas&quot;.
                         </p>
                     </div>
 

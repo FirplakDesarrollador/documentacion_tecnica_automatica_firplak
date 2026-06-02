@@ -26,7 +26,7 @@ if (process.env.NODE_ENV !== 'production') globalForSupabase._supabaseServer = s
  * Ejecuta SQL crudo vía el endpoint correcto de la Management API de Supabase.
  * Para operaciones masivas usar RPCs/vistas del Catálogo Maestro, no flujos legacy.
  */
-export async function dbQuery(sql: string, values?: (string | number | boolean | null)[]): Promise<any> {
+export async function dbQuery(sql: string, values?: (string | number | boolean | null)[]) {
     let finalSql = sql
     if (values && values.length > 0) {
         let i = 0
@@ -42,7 +42,7 @@ export async function dbQuery(sql: string, values?: (string | number | boolean |
     try {
         // Usamos el RPC 'exec_sql' para ejecutar SQL crudo de forma segura y rápida
         // Esto evita depender del Management API de Supabase y sus límites/tokens inestables
-        const { data, error } = await (supabaseServer as any).rpc('exec_sql', { query_text: finalSql })
+        const { data, error } = await supabaseServer.rpc('exec_sql', { query_text: finalSql })
         
         if (error) throw error
         
@@ -52,8 +52,8 @@ export async function dbQuery(sql: string, values?: (string | number | boolean |
         }
         
         return data || []
-    } catch (err: any) {
-        throw new Error(`DB Query Error: ${err.message}`)
+    } catch (err: unknown) {
+        throw new Error(`DB Query Error: ${err instanceof Error ? err.message : String(err)}`)
     }
 }
 

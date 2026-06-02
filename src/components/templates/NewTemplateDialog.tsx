@@ -19,7 +19,7 @@ import { createTemplate } from "@/app/templates/actions"
 import { toast } from "sonner"
 import { getClientsAction } from "@/app/products/actions"
 
-export function NewTemplateDialog({ datasets = [] }: { datasets?: {id: string, name: string}[] }) {
+export function NewTemplateDialog() {
     const [open, setOpen] = useState(false)
     const [loading, setLoading] = useState(false)
     const [clients, setClients] = useState<any[]>([])

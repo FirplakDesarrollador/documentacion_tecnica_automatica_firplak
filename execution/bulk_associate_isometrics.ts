@@ -119,7 +119,7 @@ function normalize(value: unknown): string {
     if (upper === 'NA' || upper === 'N/A' || upper === 'NONE' || upper === 'NULL') return 'NA'
     return upper
         .normalize('NFD')
-        // eslint-disable-next-line no-control-regex
+         
         .replace(/\p{Diacritic}/gu, '')
         .replace(/[^\p{L}\p{N}]+/gu, ' ')
         .replace(/\s+/g, ' ')

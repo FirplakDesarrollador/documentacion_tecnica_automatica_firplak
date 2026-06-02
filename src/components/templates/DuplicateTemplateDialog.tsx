@@ -24,14 +24,12 @@ export function DuplicateTemplateDialog({
     originalDataSource,
     originalWidth,
     originalHeight,
-    datasets = [] 
 }: { 
     id: string, 
     originalName: string,
     originalDataSource: string,
     originalWidth: number,
     originalHeight: number,
-    datasets?: {id: string, name: string}[] 
 }) {
     const [open, setOpen] = useState(false)
     const [loading, setLoading] = useState(false)

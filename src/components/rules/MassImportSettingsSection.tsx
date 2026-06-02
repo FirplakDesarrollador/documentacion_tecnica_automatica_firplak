@@ -25,8 +25,8 @@ export function MassImportSettingsSection(props: { initialExecuteEnabled: boolea
       try {
         await saveMassImportSettingsAction({ executeEnabled, safeMaxRows: n })
         toast.success('Configuración de carga masiva guardada')
-      } catch (e: any) {
-        toast.error(e?.message || 'Error guardando configuración')
+      } catch (e: unknown) {
+        toast.error(e instanceof Error ? e.message : 'Error guardando configuración')
       }
     })
   }

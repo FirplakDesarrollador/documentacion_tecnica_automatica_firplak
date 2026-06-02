@@ -28,15 +28,6 @@ import {
 } from "@/components/ui/select"
 import { Label } from '@/components/ui/label'
 
-const STANDARD_CATEGORIES = [
-    { value: 'TECNICO', label: 'Técnico' },
-    { value: 'GENERAL', label: 'General' },
-    { value: 'RESOLVED_TYPE', label: 'Tipo Resuelto (Prioridad)' },
-    { value: 'MATERIAL', label: 'Material' },
-    { value: 'ACCESORIO', label: 'Accesorio' },
-    { value: 'DIMENSION', label: 'Dimensión' },
-]
-
 interface GlossaryEntry {
     id: string
     term_es: string
@@ -52,7 +43,7 @@ interface GlossaryClientProps {
 
 export default function GlossaryClient({ initialData, initialCategories }: GlossaryClientProps) {
     const [data, setData] = useState<GlossaryEntry[]>(initialData)
-    const [categories, setCategories] = useState<string[]>(() => {
+    const [categories] = useState<string[]>(() => {
         const defaults = ['TECNICO', 'GENERAL', 'RESOLVED_TYPE', 'MATERIAL', 'ACCESORIO', 'DIMENSION']
         const combined = Array.from(new Set([...defaults, ...initialCategories]))
         return combined.sort()
@@ -103,7 +94,12 @@ export default function GlossaryClient({ initialData, initialCategories }: Gloss
 
         setIsSaving(true)
         try {
-            await upsertGlossaryTermAction(editingTerm as any)
+            await upsertGlossaryTermAction({
+              id: editingTerm.id,
+              term_es: editingTerm.term_es!,
+              term_en: editingTerm.term_en!,
+              category: editingTerm.category ?? undefined,
+            })
             toast.success("Término guardado correctamente")
             setModalOpen(false)
             // Re-fetch or update local state (for now update local state optimistically or re-fetch)

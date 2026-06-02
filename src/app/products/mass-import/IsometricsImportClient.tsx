@@ -176,7 +176,7 @@ export function IsometricsImportClient(props: { families: FamilyFilterOption[] }
   const [progress, setProgress] = useState<{ phase: string; current: number; total: number } | null>(null)
 
   const [jobId, setJobId] = useState<string | null>(null)
-  const [jobMode, setJobMode] = useState<'stateful' | 'stateless'>('stateful')
+  const [, setJobMode] = useState<'stateful' | 'stateless'>('stateful')
   const [resumeJobId, setResumeJobId] = useState('')
   const [items, setItems] = useState<PreviewItem[]>([])
   const [targetSelectionByItemId, setTargetSelectionByItemId] = useState<Record<string, { refIds: string[]; verIds: string[] }>>({})

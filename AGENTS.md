@@ -15,9 +15,10 @@ Compact, repo-specific rules for future OpenCode sessions.
 - Scripts/tooling TS is separated with `tsconfig.scripts.json` (includes `scripts/**/*.ts`, `execution/**/*.ts`).
 
 ## Commands agents should not guess
-- Dev server: `npm run dev`
+- Dev server (with print agent): `npm run dev` (uses concurrently; agent runs on port 3344)
 - Build: `npm run build`
-- Start prod server: `npm run start`
+- Start prod server: `npm run start` (without print agent; for Vercel)
+- Start prod server locally (with print agent): `npm run start:local`
 - Lint: `npm run lint`
 - Release helper (patch bump + push to fixed branch): `npm run release` (pushes to `origin Oswaldo_cambios`)
 
@@ -43,3 +44,8 @@ Compact, repo-specific rules for future OpenCode sessions.
 - Firplak DB rule: do not use legacy `cabinet_products` for business logic unless explicitly requested; prefer master catalog tables (`product_skus`, `product_versions`, `product_references`).
 - Secret hygiene: never hardcode keys/tokens; use `.env`.
 - For major milestones, suggest running `/archive-session` to sync learnings into KIs and `AI_README.md`.
+
+## Print agent rules
+- **Never start/restart the agent or dev server.** The user controls that via `npm run dev`. If the agent needs a restart after code changes, say: "Cambios hechos. Reinicia el agente corriendo `npm run dev` (detenlo con Ctrl+C y vuelve a iniciarlo)."
+- **Never start background processes** (Start-Process, cmd /c, etc.) to test code. Use `node -e` one-liners that run inline and return.
+- **Never kill node processes** with taskkill. If orphaned agents exist on port 3344, ask the user to handle it.

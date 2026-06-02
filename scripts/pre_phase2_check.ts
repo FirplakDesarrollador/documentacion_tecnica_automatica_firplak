@@ -50,14 +50,6 @@ async function main() {
         WHERE sku_complete IN (${inList}) OR sku_complete LIKE '${SHAKER_PATTERN}' OR sku_complete LIKE '${VITELLI_PATTERN}'
     `);
 
-    // Get product_versions for those references
-    const verRows = await q(`
-        SELECT v.sku_base, v.final_base_name_es, v.final_base_name_en
-        FROM public.product_versions v
-        JOIN public.product_skus s ON s.version_id = v.id
-        WHERE s.sku_complete IN (${inList}) OR s.sku_complete LIKE '${SHAKER_PATTERN}' OR s.sku_complete LIKE '${VITELLI_PATTERN}'
-    `);
-
     const cpMap = new Map(cpRows.map((r: any) => [r.code, r]));
     const skuMap = new Map(skuRows.map((r: any) => [r.sku_complete, r]));
 

@@ -17,7 +17,7 @@ export interface NamingComponent {
     payload_es: string | null
     order_es: number | null
     order_en: number | null
-    behavior_en: 'preserve' | 'translate' | 'resolved_type' | string
+    behavior_en: 'preserve' | 'translate' | 'translate_if_exists' | 'resolved_type' | string
 }
 
 function esc(value: unknown) {
@@ -44,9 +44,9 @@ function extractComponentKey(rule: any, index: number) {
     return `static_${index}`
 }
 
-function behaviorEnFromLegacyConfig(cfg: any): 'preserve' | 'translate' | 'resolved_type' {
+function behaviorEnFromLegacyConfig(cfg: any): 'preserve' | 'translate' | 'translate_if_exists' | 'resolved_type' {
     if (!cfg) return 'preserve'
-    if (cfg.behavior_en === 'translate' || cfg.behavior_en === 'preserve' || cfg.behavior_en === 'resolved_type') return cfg.behavior_en
+    if (cfg.behavior_en === 'translate' || cfg.behavior_en === 'translate_if_exists' || cfg.behavior_en === 'preserve' || cfg.behavior_en === 'resolved_type') return cfg.behavior_en
     if (cfg.variable_id === 'resolved_type' || cfg.behavior === 'classify_and_resolve') return 'resolved_type'
     if (cfg.fallback_strategy === 'translate' || cfg.behavior === 'translate_and_emit') return 'translate'
     return 'preserve'
@@ -90,10 +90,10 @@ export function componentsToEnConfig(components: NamingComponent[]) {
                 order_index: Number(component.order_en ?? 0),
                 behavior_en: behaviorEn,
                 emit: !isResolvedTypeInput,
-                behavior: isResolvedTypeInput ? 'classify_and_resolve' : (behaviorEn === 'translate' || isResolvedTypeOutput ? 'translate_and_emit' : 'preserve'),
+                behavior: isResolvedTypeInput ? 'classify_and_resolve' : (behaviorEn === 'translate' || behaviorEn === 'translate_if_exists' || isResolvedTypeOutput ? 'translate_and_emit' : 'preserve'),
                 drop_if_resolved: false,
                 resolved_by: isResolvedTypeInput ? 'resolved_type' : null,
-                fallback_strategy: behaviorEn === 'translate' ? 'translate' : 'preserve',
+                fallback_strategy: behaviorEn === 'translate' ? 'translate' : (behaviorEn === 'translate_if_exists' ? 'translate_if_exists' : 'preserve'),
                 group_key: isResolvedTypeInput || isResolvedTypeOutput ? 'resolved_type' : null,
                 notes: null,
             }

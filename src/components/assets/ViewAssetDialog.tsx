@@ -9,7 +9,7 @@ import {
     DialogTrigger,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { Eye, Download, X } from 'lucide-react'
+import { Eye, Download } from 'lucide-react'
 
 interface Props {
     assetName: string;

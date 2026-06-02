@@ -2,7 +2,6 @@ import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 import { translateProductToEnglish } from '../src/lib/engine/translator';
 import * as fs from 'fs';
-import * as path from 'path';
 
 async function runMassUpdate() {
     console.log('🚀 Iniciando proceso de traducción masiva (1,167 registros)...');

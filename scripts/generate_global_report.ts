@@ -12,14 +12,14 @@ async function generateGlobalReport() {
 
     if (!legacyData || !references) return;
 
-    let classification = { A: 0, B: 0, C: 0, D: 0, E: 0 };
-    let dSample = [];
+    const classification = { A: 0, B: 0, C: 0, D: 0, E: 0 };
+    const dSample = [];
 
     legacyData.forEach(l => {
         const v6Ref = references.find(r => r.family_code === l.familia_code && r.reference_code === l.ref_code);
         if (!v6Ref) return;
 
-        let diffs = [];
+        const diffs = [];
         let highRisk = false;
 
         const refAttrs = typeof v6Ref.ref_attrs === 'string' ? JSON.parse(v6Ref.ref_attrs) : (v6Ref.ref_attrs || {});

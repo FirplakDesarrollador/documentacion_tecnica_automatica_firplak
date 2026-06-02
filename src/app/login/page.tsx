@@ -34,7 +34,7 @@ export default function LoginPage() {
 
             router.push('/')
             router.refresh()
-        } catch (err: any) {
+        } catch {
             setError('Ocurrió un error inesperado. Inténtalo de nuevo.')
         } finally {
             setLoading(false)

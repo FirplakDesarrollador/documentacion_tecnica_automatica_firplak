@@ -215,7 +215,7 @@ export async function POST(req: Request) {
 
     const parsed = await readTemplateXlsx(file);
     const basePayload = buildPayloadFromTemplate(parsed);
-    let payload: any = {
+    const payload: any = {
       rows: basePayload.rows,
       families: basePayload.families,
       colors: basePayload.colors,

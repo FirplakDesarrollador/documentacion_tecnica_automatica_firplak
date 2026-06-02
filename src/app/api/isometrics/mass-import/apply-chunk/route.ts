@@ -344,8 +344,8 @@ export async function POST(req: Request) {
           updated_versions: updatedVersions,
         })
         appliedOk++
-      } catch (err: any) {
-        const msg = err?.message || 'Apply failed'
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Apply failed'
         if (jobId && it.item_id) {
           await dbQuery(`
             UPDATE public.bulk_isometric_import_items
@@ -379,8 +379,9 @@ export async function POST(req: Request) {
     await revalidateValidationSweepEverywhere()
 
     return NextResponse.json({ success: true, job_id: jobId || null, applied_ok: appliedOk, applied_err: appliedErr, results })
-  } catch (e: any) {
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : 'Apply chunk failed'
     console.error('[isometrics/mass-import/apply-chunk] error', e)
-    return NextResponse.json({ success: false, error: e?.message || 'Apply chunk failed' }, { status: 500 })
+    return NextResponse.json({ success: false, error: message }, { status: 500 })
   }
 }

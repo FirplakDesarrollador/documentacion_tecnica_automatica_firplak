@@ -184,6 +184,7 @@ export default function MassEditClient() {
 
   // Reset custom/clear modes and pre-select first suggestion if available
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
     setCustomValueMode(false);
     setClearOverrideMode(false);
     
@@ -193,6 +194,7 @@ export default function MassEditClient() {
       setEditValue('');
       setCustomValueMode(true);
     }
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [editField, suggestedValues]);
 
   const getEffectiveCurrentValue = (row: any, field: string) => {

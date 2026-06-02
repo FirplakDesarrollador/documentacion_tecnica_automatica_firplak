@@ -5,7 +5,7 @@ import { SmartIsometricSuggestionsDialog } from '@/components/assets/SmartIsomet
 import { SmartIsometricNormalizationDialog } from '@/components/assets/SmartIsometricNormalizationDialog'
 import { OrphanProductsDialog } from '@/components/assets/OrphanProductsDialog'
 import { ResourceSearch } from '@/components/assets/ResourceSearch'
-import { AssetsGallery } from '@/components/assets/AssetsGallery'
+import { AssetsGallery, type AssetRow } from '@/components/assets/AssetsGallery'
 import { getGroupedIsometricsAction } from '@/app/assets/actions'
 
 export default async function AssetsPage({
@@ -87,8 +87,8 @@ export default async function AssetsPage({
                 </div>
                 <AssetsGallery
                     isometricRows={!query ? (await getGroupedIsometricsAction() || []) : []}
-                    icons={(assets || []).filter((a: any) => a.type?.toLowerCase() === 'icon')}
-                    logos={(assets || []).filter((a: any) => a.type?.toLowerCase() === 'logo')}
+                    icons={(assets || []).filter((a: AssetRow) => a.type?.toLowerCase() === 'icon')}
+                    logos={(assets || []).filter((a: AssetRow) => a.type?.toLowerCase() === 'logo')}
                     allAssets={assets || []}
                     defaultNames={defaultNames}
                     searchQuery={query}

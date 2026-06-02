@@ -18,7 +18,6 @@ async function main() {
     const parsed = Papa.parse(csvContent, { header: true, skipEmptyLines: true });
     const allRows = parsed.data as any[];
 
-    const excludedNoEtiqueta = allRows.filter(r => (r['Observacion'] || '').trim().toUpperCase() === 'NO NECESITA ETIQUETA');
     const rowsToProcess = allRows.filter(r => (r['Observacion'] || '').trim().toUpperCase() !== 'NO NECESITA ETIQUETA');
 
     const validSkus = rowsToProcess.map(r => r['SKU Codigo SAP']?.trim()).filter(Boolean);
@@ -65,7 +64,7 @@ async function main() {
     const uniqueReferences = new Set<string>();
     const uniqueColors = new Set<string>();
 
-    rowsToProcess.forEach((r, idx) => {
+    rowsToProcess.forEach((r) => {
         const sku = r['SKU Codigo SAP']?.trim();
         const found = foundSkusSet.has(sku);
         const parts = sku.split('-');
@@ -90,7 +89,7 @@ async function main() {
         const colorExists = colorsSet.has(col);
         if (!colorExists && !found) colorsMissingSet.add(col);
 
-        let validationNotes = [];
+        const validationNotes = [];
         if (!found && !colorExists) validationNotes.push(`COLOR_NAME requerido porque el color ${col} no existe en Supabase.`);
 
         // Fila de Diagnóstico

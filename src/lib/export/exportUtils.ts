@@ -1,5 +1,4 @@
 import { dbQuery } from '@/lib/supabase'
-import { PIXELS_PER_MM } from '@/lib/constants'
 import { buildBarcode, resolveBarcodeFormat } from './barcodeUtils'
 
 /**
@@ -138,7 +137,7 @@ export async function hydrateTemplateElements(
 
         // Resolución de activos de imagen (R8)
         if (cloned.type === 'image') {
-            let content = cloned.content || ''
+            const content = cloned.content || ''
             let src = ''
 
             // 1. Mapeo por asset id (UUID)

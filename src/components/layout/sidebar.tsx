@@ -7,25 +7,24 @@ import {
     Home,
     Menu,
     FileText,
-    Search,
     Settings,
     Image as ImageIcon,
-    BookOpen,
     LayoutTemplate,
     AlertTriangle,
     ChevronLeft,
     ChevronRight,
-    PanelLeftClose,
-    PanelLeftOpen,
     Database,
-    LogOut
+    LogOut,
+    Loader2,
+    Printer,
+    RefreshCw,
 } from 'lucide-react'
 
-import { useState, useEffect } from 'react'
+import { useCallback, useRef, useState, useEffect } from 'react'
 
 import pkg from '../../../package.json'
+import { getNamingWorkStatusAction, processPendingNamingWorkAction, type NamingWorkStatus } from '@/app/naming/actions'
 import { createClient } from '@/utils/supabase/client'
-import { Input } from '@/components/ui/input'
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
 import { Toaster } from '@/components/ui/sonner'
 import { cn } from '@/lib/utils'
@@ -34,17 +33,86 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
     const pathname = usePathname()
     const [isCollapsed, setIsCollapsed] = useState(false)
     const [mounted, setMounted] = useState(false)
+    const [namingStatus, setNamingStatus] = useState<NamingWorkStatus | null>(null)
+    const [namingBusy, setNamingBusy] = useState(false)
+    const [namingAutoProcessing, setNamingAutoProcessing] = useState(false)
+    const namingProcessingRef = useRef(false)
 
     const router = useRouter()
     const supabase = createClient()
 
     useEffect(() => {
+        /* eslint-disable react-hooks/set-state-in-effect */
         setMounted(true)
         const saved = localStorage.getItem('sidebar-collapsed')
         if (saved !== null) {
             setIsCollapsed(saved === 'true')
         }
+        /* eslint-enable react-hooks/set-state-in-effect */
     }, [])
+
+    const refreshNamingStatus = useCallback(async () => {
+        if (pathname?.startsWith('/export-render') || pathname === '/login') return
+        try {
+            const status = await getNamingWorkStatusAction()
+            setNamingStatus(status)
+        } catch (error) {
+            console.error('refreshNamingStatus error:', error)
+        }
+    }, [pathname])
+
+    useEffect(() => {
+        if (!mounted) return
+        const initialId = window.setTimeout(() => {
+            void refreshNamingStatus()
+        }, 0)
+        const intervalId = window.setInterval(() => {
+            void refreshNamingStatus()
+        }, 15000)
+        return () => {
+            window.clearTimeout(initialId)
+            window.clearInterval(intervalId)
+        }
+    }, [mounted, refreshNamingStatus])
+
+    const processNamingWork = useCallback(async (mode: 'auto' | 'manual' = 'manual') => {
+        if (namingProcessingRef.current) return
+        namingProcessingRef.current = true
+        if (mode === 'manual') setNamingBusy(true)
+        if (mode === 'auto') setNamingAutoProcessing(true)
+        try {
+            const result = await processPendingNamingWorkAction(5000)
+            setNamingStatus(result.status)
+        } catch (error) {
+            console.error('processNamingWork error:', error)
+        } finally {
+            namingProcessingRef.current = false
+            if (mode === 'manual') setNamingBusy(false)
+            if (mode === 'auto') setNamingAutoProcessing(false)
+        }
+    }, [])
+
+    useEffect(() => {
+        if (!mounted || !namingStatus?.hasWork) return
+        if (pathname?.startsWith('/export-render') || pathname === '/login') return
+
+        const initialId = window.setTimeout(() => {
+            void processNamingWork('auto')
+        }, 500)
+        const intervalId = window.setInterval(() => {
+            void processNamingWork('auto')
+        }, 7000)
+
+        return () => {
+            window.clearTimeout(initialId)
+            window.clearInterval(intervalId)
+        }
+    }, [mounted, namingStatus?.hasWork, pathname, processNamingWork])
+
+    const handleProcessNamingWork = async () => {
+        if (!namingStatus?.hasWork) return
+        await processNamingWork('manual')
+    }
 
     const handleSignOut = async () => {
         await supabase.auth.signOut()
@@ -75,6 +143,7 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
         { name: 'Bases de Datos', href: '/datasets', icon: Database },
         { name: 'Recursos', href: '/assets', icon: ImageIcon },
         { name: 'Generar', href: '/generate', icon: FileText },
+        { name: 'Impresión', href: '/print', icon: Printer },
         { name: 'Configuración', href: '/configuration', icon: Settings },
     ]
 
@@ -82,6 +151,18 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
     if (pathname?.startsWith('/export-render') || pathname === '/login') {
         return <>{children}</>
     }
+
+    const activeNamingJob = namingStatus?.activeJobs[0] ?? null
+    const namingHasWork = Boolean(namingStatus?.hasWork)
+    const namingTotal = activeNamingJob?.total_count || namingStatus?.staleTotal || 0
+    const namingProcessed = activeNamingJob?.processed_count || 0
+    const namingIsProcessing = namingBusy || namingAutoProcessing
+    const namingBadgeClass = namingHasWork
+        ? 'text-amber-500/90'
+        : 'text-emerald-500/90'
+    const namingDotClass = namingHasWork
+        ? 'bg-amber-500 animate-pulse'
+        : 'bg-emerald-500'
 
 
     return (
@@ -191,6 +272,56 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
                                     <span className="text-[10px] font-bold text-emerald-500/90 uppercase">{isCollapsed ? 'AR' : 'Conectado'}</span>
                                 </div>
                             </div>
+
+                            {/* Naming Work Status */}
+                            {isCollapsed ? (
+                                <button
+                                    type="button"
+                                    onClick={handleProcessNamingWork}
+                                    disabled={namingIsProcessing || !namingHasWork}
+                                    title={namingHasWork ? 'Aplicar nomenclatura pendiente' : 'Nomenclatura al dia'}
+                                    className="flex flex-col items-center gap-0.5 rounded-md px-2 py-1.5 text-slate-400 transition-colors hover:bg-slate-800/50 disabled:cursor-default disabled:hover:bg-transparent"
+                                >
+                                    {namingIsProcessing ? (
+                                        <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
+                                    ) : (
+                                        <div className={cn("h-1.5 w-1.5 rounded-full", namingDotClass)} />
+                                    )}
+                                    <span className={cn("text-[10px] font-bold uppercase", namingBadgeClass)}>NM</span>
+                                </button>
+                            ) : (
+                                <div className="w-full rounded-lg border border-slate-800/70 bg-slate-900/60 p-2.5">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="text-[11px] text-slate-400">Nomenclatura</span>
+                                        <div className="flex items-center gap-1.5">
+                                            <div className={cn("h-1.5 w-1.5 rounded-full", namingDotClass)} />
+                                            <span className={cn("text-[10px] font-bold uppercase", namingBadgeClass)}>
+                                                {namingIsProcessing ? 'Procesando' : (namingHasWork ? 'Pendiente' : 'Al dia')}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div className="mt-1 text-[10px] text-slate-500">
+                                        {namingHasWork
+                                            ? `${namingProcessed} / ${namingTotal} procesados${namingAutoProcessing ? ' - automatico' : ''}`
+                                            : 'Sin trabajos pendientes'}
+                                    </div>
+                                    {namingHasWork && (
+                                        <button
+                                            type="button"
+                                            onClick={handleProcessNamingWork}
+                                            disabled={namingIsProcessing}
+                                            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] font-semibold text-amber-200 transition-colors hover:bg-amber-500/20 disabled:opacity-70"
+                                        >
+                                            {namingIsProcessing ? (
+                                                <Loader2 className="h-3 w-3 animate-spin" />
+                                            ) : (
+                                                <RefreshCw className="h-3 w-3" />
+                                            )}
+                                            {namingIsProcessing ? 'Procesando...' : 'Aplicar pendiente'}
+                                        </button>
+                                    )}
+                                </div>
+                            )}
                         </div>
 
                         <div className={cn("flex flex-col gap-1", isCollapsed ? "items-center" : "gap-1.5")}>

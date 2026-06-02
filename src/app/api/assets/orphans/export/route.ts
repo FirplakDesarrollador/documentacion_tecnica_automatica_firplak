@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import ExcelJS from 'exceljs'
 import crypto from 'crypto'
-import { getOrphanReferencesAction } from '@/app/assets/orphans-actions'
+import { getOrphanReferencesAction, type OrphanReferenceRow } from '@/app/assets/orphans-actions'
 import { normalizeAccessory, normalizeLine, normalizeSpecialLabel, normalizeText, normalizeProductName, normalizeCommercialMeasure } from '@/lib/isometrics/bulkMatch'
 
 export const runtime = 'nodejs'
@@ -27,7 +27,7 @@ function buildGroupKeyNorm(r: {
   ].join('|||')
 }
 
-function buildExpectedSvgFilename(similarityCode: string, g: any) {
+function buildExpectedSvgFilename(similarityCode: string, g: OrphanReferenceRow) {
   const parts: string[] = []
   const designation = normalizeText(g.designation)
   const productNameRaw = String(g.product_name || '').trim()
@@ -119,15 +119,15 @@ export async function GET() {
 
     const buffer = await wb.xlsx.writeBuffer()
     const filename = `ORPHAN_REFERENCES_${new Date().toISOString().slice(0, 10)}.xlsx`
-    return new NextResponse(buffer as any, {
+    return new NextResponse(buffer as BodyInit, {
       status: 200,
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         'Content-Disposition': `attachment; filename="${filename}"`,
       },
     })
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error('[assets/orphans/export] error', e)
-    return NextResponse.json({ success: false, error: e?.message || 'Export failed' }, { status: 500 })
+    return NextResponse.json({ success: false, error: (e as Error).message || 'Export failed' }, { status: 500 })
   }
 }

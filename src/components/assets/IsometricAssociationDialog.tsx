@@ -62,14 +62,14 @@ export function IsometricAssociationDialog({
 }: Props) {
     const isSelectOnly = mode === 'select'
     const [open, setOpen] = React.useState(false)
-    const [loading, setLoading] = React.useState(false)
+    const [, setLoading] = React.useState(false)
     const [submitting, setSubmitting] = React.useState(false)
     const skipCleanupRef = React.useRef(false)
 
     // Data options
     const [families, setFamilies] = React.useState<Option[]>([])
     const [references, setReferences] = React.useState<Option[]>([])
-    const [measures, setMeasures] = React.useState<Option[]>([])
+    const [, setMeasures] = React.useState<Option[]>([])
     const [versions, setVersions] = React.useState<Option[]>([])
     const [assets, setAssets] = React.useState<any[]>([])
 
@@ -93,7 +93,7 @@ export function IsometricAssociationDialog({
             ])
             setFamilies(fams)
             setAssets(isometrics)
-        } catch (error) {
+        } catch {
             toast.error("Error al cargar datos maestros")
         } finally {
             setLoading(false)
@@ -103,6 +103,7 @@ export function IsometricAssociationDialog({
     const [uploadedAssetIds, setUploadedAssetIds] = React.useState<string[]>([])
 
     React.useEffect(() => {
+        /* eslint-disable react-hooks/set-state-in-effect */
         if (open) {
             skipCleanupRef.current = false
             loadInitialData()
@@ -130,12 +131,16 @@ export function IsometricAssociationDialog({
             setBlockingDiffFields([])
             setConfirmBlockingDiffs(false)
         }
+        /* eslint-enable react-hooks/set-state-in-effect */
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open, initialFamilies, initialReferences, initialMeasures])
 
     React.useEffect(() => {
         if (selectedReferences.length === 0) {
+            /* eslint-disable react-hooks/set-state-in-effect */
             setBlockingDiffFields([])
             setConfirmBlockingDiffs(false)
+            /* eslint-enable react-hooks/set-state-in-effect */
             return
         }
 
@@ -383,7 +388,7 @@ export function IsometricAssociationDialog({
                                 {uploading ? "Subiendo archivo..." : "Haz clic o arrastra para subir un SVG"}
                             </p>
                             <p className="text-[10px] text-slate-500 mt-1">
-                                Solo archivos SVG. Se guardará automáticamente como tipo 'isometric'.
+                                Solo archivos SVG. Se guardará automáticamente como tipo &apos;isometric&apos;.
                             </p>
                         </div>
 
@@ -497,7 +502,7 @@ export function IsometricAssociationDialog({
                     <div className="bg-amber-50 p-4 rounded-xl border border-amber-100">
                         <p className="text-xs text-amber-700 flex items-start gap-2">
                              <span className="font-bold text-amber-600 block mt-0.5">⚠️</span>
-                             Esta acción actualizará de forma masiva el campo "isometric_path" de todos los productos que coincidan con los filtros seleccionados.
+                             Esta acción actualizará de forma masiva el campo &quot;isometric_path&quot; de todos los productos que coincidan con los filtros seleccionados.
                         </p>
                     </div>
                     )}

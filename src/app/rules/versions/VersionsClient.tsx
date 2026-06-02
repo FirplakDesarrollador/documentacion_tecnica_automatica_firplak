@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
-import { PlusCircle, Trash2, Search, ArrowLeft, Loader2, Save, Settings, X } from 'lucide-react'
+import { PlusCircle, Trash2, Search, ArrowLeft, Loader2, Save, X } from 'lucide-react'
 import Link from 'next/link'
 import { upsertVersionAction, deleteVersionAction, previewDeleteVersionAction } from './actions'
 import { toast } from 'sonner'
@@ -22,8 +22,8 @@ import { Label } from '@/components/ui/label'
 interface VersionEntry {
     version_code: string
     version_description: string
-    automatic_version_rules: any
-    product_types: string[] | any
+    automatic_version_rules: Record<string, string>
+    product_types: string[]
     status: string | null
     created_at: string
     updated_at: string

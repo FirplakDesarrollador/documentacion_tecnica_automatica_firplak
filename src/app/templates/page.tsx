@@ -15,6 +15,18 @@ import { DeleteTemplateButton } from '@/components/templates/DeleteTemplateButto
 import { DuplicateTemplateDialog } from '@/components/templates/DuplicateTemplateDialog'
 import { EditTemplateDialog } from '@/components/templates/EditTemplateDialog'
 
+interface TemplateRow {
+  id: string
+  name: string
+  document_type: string
+  width_mm: number
+  height_mm: number
+  orientation: string
+  version: string
+  active: boolean
+  data_source: string
+}
+
 function formatVersion(version: unknown): string {
     const v = String(version ?? '1.0.0')
     const parts = v.split('.')
@@ -26,7 +38,6 @@ function formatVersion(version: unknown): string {
 
 export default async function TemplatesPage() {
     const templates = await dbQuery(`SELECT * FROM public.plantillas_doc_tec ORDER BY created_at ASC`) || []
-    const datasets = await dbQuery(`SELECT id, name FROM public.custom_datasets ORDER BY created_at DESC`) || []
 
     return (
         <div className="flex flex-col gap-8">
@@ -40,7 +51,7 @@ export default async function TemplatesPage() {
                 </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
-                    <NewTemplateDialog datasets={datasets} />
+                    <NewTemplateDialog />
                 </div>
             </div>
 
@@ -64,7 +75,7 @@ export default async function TemplatesPage() {
                                 </TableCell>
                             </TableRow>
                         ) : (
-                            templates.map((template: any) => (
+                            templates.map((template: TemplateRow) => (
                                 <TableRow key={template.id}>
                                     <TableCell className="font-medium">{template.name}</TableCell>
                                     <TableCell className="capitalize">{template.document_type}</TableCell>
@@ -98,7 +109,6 @@ export default async function TemplatesPage() {
                                                 originalDataSource={template.data_source} 
                                                 originalWidth={template.width_mm}
                                                 originalHeight={template.height_mm}
-                                                datasets={datasets} 
                                             />
                                             <DeleteTemplateButton id={template.id} />
                                         </div>

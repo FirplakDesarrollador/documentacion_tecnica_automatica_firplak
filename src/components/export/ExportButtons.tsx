@@ -10,7 +10,7 @@ import { toast } from 'sonner'
 // Instead we expect a generic product shape with a code
 interface ExpectedProduct {
     code: string
-    [key: string]: any
+    [key: string]: unknown
 }
 
 interface ExportButtonsProps {

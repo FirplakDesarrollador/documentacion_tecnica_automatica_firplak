@@ -1,5 +1,4 @@
 import * as React from "react"
-import { Check } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 // ─── Root ───────────────────────────────────────────────────────────────────
@@ -46,7 +45,7 @@ function DropdownMenuTrigger({ children, asChild }: DropdownMenuTriggerProps) {
   }, [open, setOpen])
 
   if (asChild && React.isValidElement(children)) {
-    return React.cloneElement(children as React.ReactElement<any>, {
+    return React.cloneElement(children as React.ReactElement<{ onClick: React.MouseEventHandler }>, {
       onClick: handleClick,
     })
   }
@@ -142,7 +141,7 @@ function DropdownMenuRadioItem({ value, children, className }: DropdownMenuRadio
   return (
     <button
       type="button"
-      onClick={(e) => {
+      onClick={() => {
         // Mantenemos onClick para accesibilidad (teclado: Enter/Space)
         handleSelectAction()
       }}

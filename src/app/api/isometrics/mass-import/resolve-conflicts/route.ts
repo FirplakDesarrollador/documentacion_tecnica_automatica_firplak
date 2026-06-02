@@ -61,9 +61,10 @@ export async function POST(req: Request) {
     `)
 
     return NextResponse.json({ success: true, job_id: jobId })
-  } catch (e: any) {
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : 'Resolve failed'
     console.error('[isometrics/mass-import/resolve-conflicts] error', e)
-    return NextResponse.json({ success: false, error: e?.message || 'Resolve failed' }, { status: 500 })
+    return NextResponse.json({ success: false, error: message }, { status: 500 })
   }
 }
 

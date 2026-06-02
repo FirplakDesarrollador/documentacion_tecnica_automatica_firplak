@@ -96,6 +96,7 @@ export function OrphanProductsDialog() {
 
   React.useEffect(() => {
     if (!open) {
+      /* eslint-disable react-hooks/set-state-in-effect */
       setStep('list')
       setOrphans([])
       setExcel(null)
@@ -107,6 +108,7 @@ export function OrphanProductsDialog() {
       setTargetSelectionByItemId({})
       setProgress(null)
       setSelectedOrphanIds({})
+      /* eslint-enable react-hooks/set-state-in-effect */
       return
     }
     loadOrphans()
@@ -278,7 +280,7 @@ export function OrphanProductsDialog() {
     }
 
     // Mark duplicates: if 2 files share same expected base name, require user to keep 1.
-    for (const [normBase, list] of matchedByExpected.entries()) {
+    for (const [, list] of matchedByExpected.entries()) {
       if (list.length <= 1) continue
       for (const it of list) {
         it.match_status = 'DUPLICATE_EXPECTED_NAME'

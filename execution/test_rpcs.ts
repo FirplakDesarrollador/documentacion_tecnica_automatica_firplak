@@ -26,7 +26,7 @@ async function run() {
 
     console.log(`\n--- Test 2: Add 'pur' to ${familyCode} ---`);
     const attrDef = { label: 'PUR', type: 'enum', allowed_values: ['PUR', 'NA'], default_value: 'NA' };
-    const { data: resAdd, error: err2 } = await supabase.rpc('rpc_add_attr_to_families', {
+    const { error: err2 } = await supabase.rpc('rpc_add_attr_to_families', {
         p_family_codes: [familyCode],
         p_attr_key: 'pur',
         p_attr_def: attrDef,
@@ -46,7 +46,7 @@ async function run() {
     console.log(err4 ? err4 : previewRemove);
 
     console.log(`\n--- Test 5: Remove 'pur' from ${familyCode} ---`);
-    const { data: resRemove, error: err5 } = await supabase.rpc('rpc_remove_attr_from_families', {
+    const { error: err5 } = await supabase.rpc('rpc_remove_attr_from_families', {
         p_family_codes: [familyCode],
         p_attr_key: 'pur'
     });

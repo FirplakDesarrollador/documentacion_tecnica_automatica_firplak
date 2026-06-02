@@ -62,7 +62,7 @@ export function DatasetTemplateLinkWizard({
 }: DatasetTemplateLinkWizardProps) {
     const availableTemplates = useMemo(
         () => templates.filter(t => !excludeTemplateIds.includes(t.id)),
-        [templates, excludeTemplateIds.join('|')]
+        [templates, excludeTemplateIds]
     )
 
     const [templateId, setTemplateId] = useState<string>('')
@@ -80,21 +80,24 @@ export function DatasetTemplateLinkWizard({
             .map(v => String(v || '').trim())
             .filter(Boolean)
             .sort((a, b) => a.localeCompare(b))
-    }, [selectedTemplate?.id])
+    }, [selectedTemplate])
 
     useEffect(() => {
         if (!open) return
+        /* eslint-disable react-hooks/set-state-in-effect */
         setTemplateId(editTemplateId || '')
         if (!editTemplateId) {
             setMapping({})
         }
         setSaving(false)
+        /* eslint-enable react-hooks/set-state-in-effect */
     }, [open, editTemplateId])
 
     useEffect(() => {
         if (!open) return
         if (!selectedTemplate) return
 
+        /* eslint-disable react-hooks/set-state-in-effect */
         setMapping((prev) => {
             const next = { ...prev }
             for (const v of requiredVars) {
@@ -129,7 +132,8 @@ export function DatasetTemplateLinkWizard({
             })
             return next
         })
-    }, [open, selectedTemplate?.id, requiredVars.join('|'), schema.columns.length])
+        /* eslint-enable react-hooks/set-state-in-effect */
+    }, [open, selectedTemplate, requiredVars, schema.columns])
 
     const canSync = useMemo(() => {
         if (!selectedTemplate) return false
@@ -153,7 +157,7 @@ export function DatasetTemplateLinkWizard({
         }
 
         return true
-    }, [selectedTemplate?.id, requiredVars.join('|'), JSON.stringify(mapping), schema.columns.map(c => `${c.original}:${c.key}`).join('|')])
+    }, [selectedTemplate, requiredVars, mapping, schema.columns])
 
     const handleConfirm = async () => {
         if (!selectedTemplate) return

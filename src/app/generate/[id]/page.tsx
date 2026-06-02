@@ -30,11 +30,18 @@ export default async function GeneratePreviewPage({
     ) || []
 
     const initialTemplateId = templateIdParam ?? templates[0]?.id ?? null
-    const selectedTemplate = templates.find((t: any) => t.id === initialTemplateId)
-    const dataSource = selectedTemplate?.data_source || 'core_firplak'
-    
     // 2. Cargar el producto según el origen
-    let product: any = null
+    interface PageProduct {
+        id: string
+        code: string
+        final_name_es: string | null
+        final_name_en?: string | null
+        sap_description?: string | null
+        status?: string
+        is_external?: boolean
+    }
+
+    let product: PageProduct | null = null
     
     // Intentar buscar en productos core V6.1
     const { composeProductById } = await import('@/lib/engine/product_composer')
@@ -114,7 +121,7 @@ export default async function GeneratePreviewPage({
                 product={product}
                 templates={templates}
                 initialTemplateId={initialTemplateId}
-                engineResult={fullEngineResult as any}
+                engineResult={fullEngineResult}
             />
         </div>
     )

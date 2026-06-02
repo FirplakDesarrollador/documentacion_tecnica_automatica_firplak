@@ -24,7 +24,6 @@ import {
     Lightbulb, 
     Loader2, 
     CheckCircle2, 
-    AlertCircle,
     CheckSquare,
     Square
 } from "lucide-react"
@@ -53,7 +52,7 @@ export function SmartIsometricSuggestionsDialog() {
                 data.filter(s => s.matchLevel !== 'medium').map(s => s.missingReferenceId)
             )
             setSelectedIds(initialSelected)
-        } catch (error) {
+        } catch {
             toast.error("Error al cargar sugerencias")
         } finally {
             setLoading(false)
@@ -61,12 +60,14 @@ export function SmartIsometricSuggestionsDialog() {
     }
 
     React.useEffect(() => {
+        /* eslint-disable react-hooks/set-state-in-effect */
         if (open) {
             loadSuggestions()
         } else {
             setSuggestions([])
             setSelectedIds(new Set())
         }
+        /* eslint-enable react-hooks/set-state-in-effect */
     }, [open])
 
     const toggleSelection = (id: string) => {
@@ -99,7 +100,7 @@ export function SmartIsometricSuggestionsDialog() {
             const result = await applySmartAssociationsAction(payload)
             toast.success(`Se asociaron correctamente ${result.count} isométricos`)
             setOpen(false)
-        } catch (error) {
+        } catch {
             toast.error("Error al aplicar asociaciones")
         } finally {
             setSubmitting(false)

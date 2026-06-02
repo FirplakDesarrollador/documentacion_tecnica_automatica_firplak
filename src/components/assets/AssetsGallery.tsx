@@ -16,11 +16,19 @@ interface GroupedRow {
     product_name: string | null
 }
 
+export interface AssetRow {
+    id: string;
+    name: string;
+    type: string;
+    file_path: string;
+    relation_count: number;
+}
+
 interface Props {
     isometricRows: GroupedRow[]
-    icons: any[]
-    logos: any[]
-    allAssets: any[]
+    icons: AssetRow[]
+    logos: AssetRow[]
+    allAssets: AssetRow[]
     defaultNames: string[]
     searchQuery: string
 }

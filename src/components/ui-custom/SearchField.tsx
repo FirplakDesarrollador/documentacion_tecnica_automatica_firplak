@@ -32,7 +32,7 @@ interface SearchFieldProps {
   className?: string
 }
 
-import { Button, buttonVariants } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
 
 export function SearchField({
   options,

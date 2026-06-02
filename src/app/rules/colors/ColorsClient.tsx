@@ -90,9 +90,9 @@ export default function ColorsClient({ initialData }: ColorsClientProps) {
             } else {
                 setData(prev => [saved, ...prev])
             }
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error(error)
-            toast.error(error.message || "Error al guardar el color")
+            toast.error(error instanceof Error ? error.message : "Error al guardar el color")
         } finally {
             setIsSaving(false)
         }
@@ -103,12 +103,11 @@ export default function ColorsClient({ initialData }: ColorsClientProps) {
         setIsDeleting(code_4dig)
         try {
             const res = await deleteColorAction(code_4dig)
-            if (!res.success && (res as any).hasSkus) {
-                const conflict = res as any
+            if (!res.success && 'hasSkus' in res && res.hasSkus) {
                 setDeleteConflict({
                     code_4dig,
-                    skuCount: conflict.skuCount,
-                    skuCodes: conflict.skuCodes
+                    skuCount: res.skuCount,
+                    skuCodes: res.skuCodes
                 })
                 return
             }

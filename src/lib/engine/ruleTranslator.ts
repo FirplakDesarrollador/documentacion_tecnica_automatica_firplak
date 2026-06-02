@@ -1,7 +1,7 @@
 /**
  * Traduce una regla técnica a lenguaje natural en español.
  */
-export function ruleToSpanishDescription(rule: any): string {
+export function ruleToSpanishDescription(rule: { condition_expression?: string; action_type?: string; action_payload?: string }): string {
     if (!rule) return 'Sin descripción'
 
     let condition = ''
@@ -21,7 +21,7 @@ export function ruleToSpanishDescription(rule: any): string {
         } else {
             condition = `Si se cumple la condición: "${expr}"`
         }
-    } catch (e) {
+    } catch {
         condition = `Si [error en condición]`
     }
 
@@ -63,7 +63,7 @@ export function ruleToSpanishDescription(rule: any): string {
             default:
                 action = `entonces ejecutar acción: ${type} (${payload})`
         }
-    } catch (e) {
+    } catch {
         action = `entonces [error en acción]`
     }
 

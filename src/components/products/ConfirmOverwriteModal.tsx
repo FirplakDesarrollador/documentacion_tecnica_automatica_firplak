@@ -17,8 +17,8 @@ interface ConfirmOverwriteModalProps {
   isOpen: boolean
   onClose: () => void
   onConfirm: () => void
-  initialData: any
-  currentData: any
+  initialData: Record<string, unknown> | null
+  currentData: Record<string, unknown>
 }
 
 export function ConfirmOverwriteModal({
@@ -38,7 +38,7 @@ export function ConfirmOverwriteModal({
     const valCurr = currentData[key]
     
     // Normalización básica para comparación
-    const normalize = (v: any) => (v === null || v === undefined || v === '' ? '' : String(v).trim())
+    const normalize = (v: unknown) => (v === null || v === undefined || v === '' ? '' : String(v).trim())
     
     return normalize(valInit) !== normalize(valCurr)
   }) : []
@@ -90,7 +90,7 @@ export function ConfirmOverwriteModal({
           <DialogDescription className="text-xl font-bold text-slate-900 border-b pb-4">
             ¿ESTÁS TOTALMENTE SEGURO DE LO QUE VAS A HACER? 
             <span className="block text-sm font-normal text-slate-500 mt-1 italic">
-              "Un gran poder conlleva una gran responsabilidad... y no queremos que explote la base maestra."
+              &quot;Un gran poder conlleva una gran responsabilidad... y no queremos que explote la base maestra.&quot;
             </span>
           </DialogDescription>
         </DialogHeader>

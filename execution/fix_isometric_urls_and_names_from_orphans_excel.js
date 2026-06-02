@@ -237,69 +237,59 @@ async function run() {
     return
   }
 
-  let updatedAssetsUrl = 0
   for (const c of chunk(assetUrlFixCandidates, 500)) {
     const filter = `(${c.map(id => `'${id.replace(/'/g, "''")}'`).join(',')})`
-    const rows =
-      (await execSql(`
-        WITH u AS (
-          UPDATE public.assets
-          SET file_path = '${prefix.replace(/'/g, "''")}' || file_path,
-              updated_at = now()
-          WHERE id IN ${filter}
-            AND UPPER(type) = 'ISOMETRIC'
-            AND file_path IS NOT NULL
-            AND file_path LIKE 'assets/%'
-          RETURNING 1
-        )
-        SELECT COUNT(*)::int AS c FROM u
-      `)) || []
-    updatedAssetsUrl += Number(rows?.[0]?.c || 0)
+    await execSql(`
+      WITH u AS (
+        UPDATE public.assets
+        SET file_path = '${prefix.replace(/'/g, "''")}' || file_path,
+            updated_at = now()
+        WHERE id IN ${filter}
+          AND UPPER(type) = 'ISOMETRIC'
+          AND file_path IS NOT NULL
+          AND file_path LIKE 'assets/%'
+        RETURNING 1
+      )
+      SELECT COUNT(*)::int AS c FROM u
+    `)
   }
 
-  let updatedRefsUrl = 0
   for (const c of chunk(referenceIds, 500)) {
     const filter = `(${c.map(id => `'${id.replace(/'/g, "''")}'`).join(',')})`
-    const rows =
-      (await execSql(`
-        WITH u AS (
-          UPDATE public.product_references
-          SET isometric_path = '${prefix.replace(/'/g, "''")}' || isometric_path,
-              updated_at = now()
-          WHERE id IN ${filter}
-            AND isometric_path IS NOT NULL
-            AND isometric_path LIKE 'assets/%'
-          RETURNING 1
-        )
-        SELECT COUNT(*)::int AS c FROM u
-      `)) || []
-    updatedRefsUrl += Number(rows?.[0]?.c || 0)
+    await execSql(`
+      WITH u AS (
+        UPDATE public.product_references
+        SET isometric_path = '${prefix.replace(/'/g, "''")}' || isometric_path,
+            updated_at = now()
+        WHERE id IN ${filter}
+          AND isometric_path IS NOT NULL
+          AND isometric_path LIKE 'assets/%'
+        RETURNING 1
+      )
+      SELECT COUNT(*)::int AS c FROM u
+    `)
   }
 
-  let updatedVersUrl = 0
   for (const c of chunk(referenceIds, 500)) {
     const filter = `(${c.map(id => `'${id.replace(/'/g, "''")}'`).join(',')})`
-    const rows =
-      (await execSql(`
-        WITH u AS (
-          UPDATE public.product_versions v
-          SET version_attrs = jsonb_set(
-              COALESCE(v.version_attrs, '{}'::jsonb),
-              '{isometric_path}',
-              to_jsonb('${prefix.replace(/'/g, "''")}' || (v.version_attrs->>'isometric_path'))
-          ),
-          updated_at = now()
-          WHERE v.reference_id IN ${filter}
-            AND v.version_attrs ? 'isometric_path'
-            AND (v.version_attrs->>'isometric_path') LIKE 'assets/%'
-          RETURNING 1
-        )
-        SELECT COUNT(*)::int AS c FROM u
-      `)) || []
-    updatedVersUrl += Number(rows?.[0]?.c || 0)
+    await execSql(`
+      WITH u AS (
+        UPDATE public.product_versions v
+        SET version_attrs = jsonb_set(
+            COALESCE(v.version_attrs, '{}'::jsonb),
+            '{isometric_path}',
+            to_jsonb('${prefix.replace(/'/g, "''")}' || (v.version_attrs->>'isometric_path'))
+        ),
+        updated_at = now()
+        WHERE v.reference_id IN ${filter}
+          AND v.version_attrs ? 'isometric_path'
+          AND (v.version_attrs->>'isometric_path') LIKE 'assets/%'
+        RETURNING 1
+      )
+      SELECT COUNT(*)::int AS c FROM u
+    `)
   }
 
-  let updatedNames = 0
   const byId = new Map()
   for (const r of renames) byId.set(r.asset_id, normalizeExpectedName(r.new_name))
   const renameEntries = Array.from(byId.entries())
@@ -307,22 +297,20 @@ async function run() {
     const ids = c.map(([id]) => id)
     const filter = `(${ids.map(id => `'${id.replace(/'/g, "''")}'`).join(',')})`
     const cases = c.map(([id, name]) => `WHEN '${id.replace(/'/g, "''")}' THEN '${String(name).replace(/'/g, "''")}'`).join('\n')
-    const rows =
-      (await execSql(`
-        WITH u AS (
-          UPDATE public.assets
-          SET name = CASE id
-            ${cases}
-            ELSE name
-          END,
-          updated_at = now()
-          WHERE id IN ${filter}
-            AND UPPER(type) = 'ISOMETRIC'
-          RETURNING 1
-        )
-        SELECT COUNT(*)::int AS c FROM u
-      `)) || []
-    updatedNames += Number(rows?.[0]?.c || 0)
+    await execSql(`
+      WITH u AS (
+        UPDATE public.assets
+        SET name = CASE id
+          ${cases}
+          ELSE name
+        END,
+        updated_at = now()
+        WHERE id IN ${filter}
+          AND UPPER(type) = 'ISOMETRIC'
+        RETURNING 1
+      )
+      SELECT COUNT(*)::int AS c FROM u
+    `)
   }
 
   // Verify renames (exec_sql may return a generic success object for DML; we validate by querying back).

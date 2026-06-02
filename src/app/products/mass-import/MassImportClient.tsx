@@ -21,7 +21,7 @@ function summarizeRows(rows: RpcRow[]) {
   return { total: rows.length, withErrors, withWarnings }
 }
 
-export function MassImportClient(_props: { families: FamilyFilterOption[] }) {
+export function MassImportClient({}: { families: FamilyFilterOption[] }) {
   return <ProductsImportClient />
 }
 

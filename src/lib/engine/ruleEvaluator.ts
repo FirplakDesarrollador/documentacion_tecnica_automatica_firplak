@@ -1,4 +1,10 @@
 import { Product, Rule } from '@/generated/prisma/client'
+import {
+    getNamingFieldValue,
+    isMeaningfulNamingValue,
+    isNamingValueFalse,
+    isNamingValueTrue,
+} from './namingFieldResolver'
 
 export interface EvaluationTrace {
     ruleId: string
@@ -24,32 +30,34 @@ export interface RuleEngineResult {
  */
 function evaluateCondition(expression: string, product: Product): boolean {
     try {
+        if (expression.trim().toLowerCase() === 'true') return true
+
         // Support AND conditions with &&
         const parts = expression.replace(/ /g, '').split('&&')
         
         return parts.every(expr => {
             if (expr.includes('!=null')) {
-                const field = expr.split('!=null')[0].toLowerCase() as keyof Product
-                const val = product[field]
+                const field = expr.split('!=null')[0].toLowerCase()
+                const val = getNamingFieldValue(product, field)
                 // 'NA' means "No Aplica" — treat as falsy (omit from name)
-                return val !== null && val !== undefined && val !== '' && String(val).trim().toUpperCase() !== 'NA'
+                return isMeaningfulNamingValue(val)
             }
 
             if (expr.includes('==true')) {
-                const field = expr.split('==true')[0].toLowerCase() as keyof Product
-                return product[field] === true
+                const field = expr.split('==true')[0].toLowerCase()
+                return isNamingValueTrue(getNamingFieldValue(product, field))
             }
 
             if (expr.includes('==false')) {
-                const field = expr.split('==false')[0].toLowerCase() as keyof Product
-                return product[field] === false
+                const field = expr.split('==false')[0].toLowerCase()
+                return isNamingValueFalse(getNamingFieldValue(product, field))
             }
 
             if (expr.includes('==')) {
                 const [fieldRaw, valRaw] = expr.split('==') 
-                const field = fieldRaw.toLowerCase() as keyof Product
+                const field = fieldRaw.toLowerCase()
                 const val = valRaw.replace(/['"]/g, '') 
-                return String(product[field]) === val
+                return String(getNamingFieldValue(product, field)) === val
             }
             
             return false
@@ -62,7 +70,7 @@ function evaluateCondition(expression: string, product: Product): boolean {
 
 function hydratePayload(payload: string, product: Product): string {
     return payload.replace(/{([^}]+)}/g, (_, field) => {
-        const value = product[field.toLowerCase() as keyof Product]
+        const value = getNamingFieldValue(product, field)
         return value ? String(value) : ''
     })
 }
@@ -83,7 +91,7 @@ export function evaluateProductRules(product: Product, rules: Rule[]): RuleEngin
 
     const sortedRules = [...rules]
         .filter(r => r.enabled)
-        .filter((r: any) => {
+        .filter((r: Rule) => {
             // Filter by product type if the rule is specific to one
             if (r.target_entity && r.target_entity !== 'product' && r.rule_type === 'name_component') {
                 const requiredType = r.target_entity.trim().toUpperCase()
@@ -114,7 +122,7 @@ export function evaluateProductRules(product: Product, rules: Rule[]): RuleEngin
 
         if (passed && rule.action_type === 'set_attribute') {
             const [field, rawValue] = rule.action_payload.split(':') as [keyof Product, string]
-            let value: any = rawValue.trim()
+            let value: string | boolean | number = rawValue.trim()
             
             const isNum = /^-?\d+\.?\d*$/.test(value);
             if (value === 'true') value = true;
@@ -122,7 +130,7 @@ export function evaluateProductRules(product: Product, rules: Rule[]): RuleEngin
             else if (isNum) value = +value;
             
             // Apply modification to product working copy
-            (result.transformedProduct as any)[field] = value;
+            (result.transformedProduct as Record<string, string | boolean | number>)[field] = value;
             
             traceRecord.actionTaken = 'set_attribute'
             traceRecord.payload = `${field}:${value}`

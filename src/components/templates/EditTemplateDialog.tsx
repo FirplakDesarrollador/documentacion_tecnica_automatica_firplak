@@ -1,7 +1,6 @@
 "use client"
 
 import { useState } from "react"
-import { useRouter } from "next/navigation"
 import {
     Dialog,
     DialogContent,
@@ -31,7 +30,6 @@ export function EditTemplateDialog({
 }) {
     const [open, setOpen] = useState(false)
     const [loading, setLoading] = useState(false)
-    const router = useRouter()
 
     async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault()

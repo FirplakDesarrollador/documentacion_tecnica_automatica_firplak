@@ -40,8 +40,8 @@ export function DeleteAssetDialog({ assetId, assetName }: Props) {
                 toast.success('Recurso destruido. Espero que estés feliz con lo que has hecho.')
                 setOpen(false)
             }
-        } catch (error: any) {
-            toast.error(error.message || 'Error al eliminar')
+        } catch (error: unknown) {
+            toast.error(error instanceof Error ? error.message : 'Error al eliminar')
         } finally {
             setIsDeleting(false)
         }

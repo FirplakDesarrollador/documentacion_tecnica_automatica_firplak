@@ -4,6 +4,13 @@ import { launchBrowser, resolveExportBrowserMode } from '@/lib/export/launchBrow
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
+type TemplateElement = {
+  type?: string
+  required?: boolean
+  barcodeError?: string
+  dataField?: string
+}
+
 export async function POST(req: Request) {
     let browser: Awaited<ReturnType<typeof launchBrowser>> | null = null
 
@@ -24,13 +31,13 @@ export async function POST(req: Request) {
         }
 
         const invalidRequiredBarcodes = Array.isArray(elements)
-            ? elements.filter((el: any) => el?.type === 'barcode' && el?.required === true && !!el?.barcodeError)
+            ? elements.filter((el: TemplateElement) => el?.type === 'barcode' && el?.required === true && !!el?.barcodeError)
             : []
 
         if (invalidRequiredBarcodes.length > 0) {
             return NextResponse.json({
                 error: 'Invalid required barcode data',
-                details: invalidRequiredBarcodes.map((el: any) => ({
+                details: invalidRequiredBarcodes.map((el: TemplateElement) => ({
                     dataField: el?.dataField || null,
                     message: el?.barcodeError || 'Barcode inválido',
                 })),

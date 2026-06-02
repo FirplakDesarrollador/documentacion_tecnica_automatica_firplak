@@ -469,7 +469,7 @@ export default function MassEditClient() {
                     {previewData.errors.map((err: string, i: number) => <li key={i}>{err}</li>)}
                   </ul>
                   <p className="mt-3 text-sm font-medium bg-red-100 p-2 rounded inline-block">
-                    Para forzar un valor nuevo, debes agregarlo primero en los "Valores Permitidos" de la Configuración de Esquema.
+                    Para forzar un valor nuevo, debes agregarlo primero en los &quot;Valores Permitidos&quot; de la Configuración de Esquema.
                   </p>
                 </div>
               )}
@@ -491,7 +491,7 @@ export default function MassEditClient() {
                     <h4 className="font-semibold flex items-center gap-2 mb-2"><Info className="w-5 h-5"/> Resumen Quirúrgico</h4>
                     <p className="text-sm">A las <strong>{previewData.affected_count} referencias</strong> se les aplicará la siguiente mutación:</p>
                     <div className="mt-3 bg-white p-3 rounded border font-mono text-sm text-slate-700">
-                      <strong>{editField}</strong> = <span className="text-green-600 font-bold">"{editValue}"</span>
+                      <strong>{editField}</strong> = <span className="text-green-600 font-bold">&quot;{editValue}&quot;</span>
                     </div>
                   </div>
                 </>

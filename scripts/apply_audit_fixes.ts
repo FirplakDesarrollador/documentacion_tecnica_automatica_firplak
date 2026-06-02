@@ -45,7 +45,7 @@ async function main() {
 
     // ── 4. VBAN12-0049-*: cabinet_name "VITELI" → "VITELLI" ──
     console.log('4. VBAN12-0049-*: cabinet_name "VITELI" → "VITELLI"');
-    const result4 = await execSql(`UPDATE public.cabinet_products SET cabinet_name = 'VITELLI' WHERE code LIKE 'VBAN12-0049-%' AND cabinet_name = 'VITELI'`);
+    await execSql(`UPDATE public.cabinet_products SET cabinet_name = 'VITELLI' WHERE code LIKE 'VBAN12-0049-%' AND cabinet_name = 'VITELI'`);
     console.log(`   ✅ Actualizado\n`);
 
     // ── 5. VBAN05-0090-000-0452: special_label → "LONDON" ──
