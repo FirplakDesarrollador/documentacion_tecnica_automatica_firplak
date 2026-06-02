@@ -15,6 +15,25 @@ type RpcRow = {
   created_ids?: { sku_id?: string, version_id?: string, reference_id?: string }
 }
 
+interface PreviewResultData {
+    rows?: RpcRow[]
+}
+
+interface ExecuteResultData {
+    success: boolean
+    safeMode?: boolean
+    cleanupResult?: {
+        deleted_skus: number
+        deleted_versions: number
+        deleted_references: number
+    }
+    summary?: {
+        created_skus: number
+        created_version_variants: number
+        created_reference_variants: number
+    }
+}
+
 function summarizeRows(rows: RpcRow[]) {
   const withErrors = rows.filter(r => (r.errors || []).length > 0).length
   const withWarnings = rows.filter(r => (r.warnings || []).length > 0).length
@@ -33,8 +52,8 @@ function ProductsImportClient() {
   const [isPreviewing, setIsPreviewing] = useState(false)
   const [isExecuting, setIsExecuting] = useState(false)
 
-  const [previewResult, setPreviewResult] = useState<any>(null)
-  const [executeResult, setExecuteResult] = useState<any>(null)
+  const [previewResult, setPreviewResult] = useState<PreviewResultData | null>(null)
+  const [executeResult, setExecuteResult] = useState<ExecuteResultData | null>(null)
 
   const generateTemplate = async () => {
     if (!baseFile) return
@@ -71,9 +90,9 @@ function ProductsImportClient() {
       a.remove()
       URL.revokeObjectURL(url)
       toast.success('Plantilla V6 generada.')
-    } catch (e: any) {
+    } catch (e: unknown) {
       // Avoid console.error here; Next.js overlays it as a red error even when it's an expected validation error.
-      toast.error(e?.message || 'Error generando plantilla.')
+      toast.error(e instanceof Error ? e.message : 'Error generando plantilla.')
     } finally {
       setIsGenerating(false)
     }
@@ -95,8 +114,8 @@ function ProductsImportClient() {
       const s = summarizeRows(rows)
       if (s.withErrors > 0) toast.error(`Preview con errores: ${s.withErrors} filas bloqueadas.`)
       else toast.success(`Preview OK (${s.total} filas).`)
-    } catch (e: any) {
-      toast.error(e?.message || 'Preview fallo.')
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Preview fallo.')
     } finally {
       setIsPreviewing(false)
     }
@@ -114,8 +133,8 @@ function ProductsImportClient() {
       if (!res.ok || !j?.success) throw new Error(j?.error || 'Execute fallo')
       setExecuteResult(j)
       toast.success(j.safeMode ? 'Ejecucion completada (modo seguro: cleanup aplicado).' : 'Ejecucion completada.')
-    } catch (e: any) {
-      toast.error(e?.message || 'Execute fallo.')
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Execute fallo.')
     } finally {
       setIsExecuting(false)
     }

@@ -32,7 +32,7 @@ function emptyEvaluation(product: ProductPayload): RuleEngineResult {
         activeIcons: [],
         trace: [],
         activeVariableIds: [],
-        transformedProduct: { ...(product as any) },
+        transformedProduct: { ...product } as unknown as RuleEngineResult['transformedProduct'],
     }
 }
 
@@ -77,14 +77,18 @@ export async function computeNameWithNamingComponents(
     }
 
     const rules = componentsToRules(components, productType)
-    const evaluation = evaluateProductRules(product as any, rules as any)
+    const evaluation = evaluateProductRules(
+        product as unknown as Parameters<typeof evaluateProductRules>[0],
+        rules as unknown as Parameters<typeof evaluateProductRules>[1]
+    )
     const finalNameEs = evaluation.finalNameEs
     const translation = await translateProductToEnglish(
-        { ...(evaluation.transformedProduct as any), final_name_es: finalNameEs } as ProductPayload,
+        { ...evaluation.transformedProduct, final_name_es: finalNameEs } as ProductPayload,
         productType,
         evaluation.activeVariableIds,
         forceGlossaryRefresh,
-        componentsToTranslatorConfig(components)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        componentsToTranslatorConfig(components) as any
     )
     const isValid = Boolean(finalNameEs) && translation.isValid
     const missingTerms = [...new Set(translation.missingTerms || [])]

@@ -113,6 +113,7 @@ export function GenerateProductTable({
     }
 
     return (
+        <div className="overflow-x-auto">
         <Table>
             <TableHeader>
                 <TableRow className="bg-slate-50/80">
@@ -135,7 +136,6 @@ export function GenerateProductTable({
                         <TableHead className="w-[120px]">Color</TableHead>
                     )}
 
-                    {templateId && <TableHead className="w-[120px]">Plantilla</TableHead>}
                     {!hideActions && <TableHead className="text-right w-[120px]">Acción</TableHead>}
                 </TableRow>
             </TableHeader>
@@ -171,7 +171,7 @@ export function GenerateProductTable({
                             <TableCell className="font-mono font-semibold text-slate-800 text-sm">
                                 {product.code}
                             </TableCell>
-                            <TableCell className="text-slate-600 text-sm">
+                            <TableCell className="text-slate-600 text-sm whitespace-normal break-words max-w-sm">
                                 {product.final_name_es || <span className="text-slate-400 italic">Sin nombre</span>}
                             </TableCell>
                             
@@ -188,25 +188,7 @@ export function GenerateProductTable({
                                 </TableCell>
                             )}
 
-                            {templateId && (
-                                <TableCell>
-                                    {isInactive ? (
-                                        <div className="flex items-center gap-1 text-rose-600 text-xs bg-rose-50 border border-rose-200 rounded-full px-2 py-0.5 w-fit">
-                                            <AlertTriangle className="w-3 h-3 shrink-0" />
-                                            <span>Bloqueado</span>
-                                        </div>
-                                    ) : hasMissing ? (
-                                        <div className="flex items-center gap-1 text-amber-600 text-xs bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 w-fit">
-                                            <AlertTriangle className="w-3 h-3 shrink-0" />
-                                            <span>{missing.length} campo(s)</span>
-                                        </div>
-                                    ) : (
-                                        <div className="flex items-center gap-1 text-green-600 text-xs bg-green-50 border border-green-200 rounded-full px-2 py-0.5 w-fit">
-                                            <span>✓ Completo</span>
-                                        </div>
-                                    )}
-                                </TableCell>
-                            )}
+
                             {!hideActions && (
                                 <TableCell className="text-right">
                                     <Link
@@ -228,5 +210,6 @@ export function GenerateProductTable({
                 })}
             </TableBody>
         </Table>
+        </div>
     )
 }

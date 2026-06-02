@@ -41,28 +41,33 @@ const normalizeString = (str: string) => {
 
 const PLACEHOLDERS = ['NA', 'N/A', 'NULL', 'VACÍO', 'UNDEFINED']
 
-export const getVariableValue = (context: any, field: string) => {
+const getString = (context: Record<string, unknown>, key: string): string | undefined => {
+    const v = context[key]
+    return v !== undefined && v !== null ? String(v) : undefined
+}
+
+export const getVariableValue = (context: Record<string, unknown>, field: string) => {
     if (!context || !field) return ''
     
     // 1. Try exact match
-    if (context[field] !== undefined && context[field] !== null) {
-        const val = String(context[field])
-        return PLACEHOLDERS.includes(val.toUpperCase().trim()) ? '' : val
+    const exact = getString(context, field)
+    if (exact !== undefined) {
+        return PLACEHOLDERS.includes(exact.toUpperCase().trim()) ? '' : exact
     }
 
     // 2. Special technical mappings
     const fieldUpper = field.toUpperCase().trim()
     if (['COLOR', 'COLOR_NAME', 'NAME_COLOR_SAP', 'DESC_COLOR', 'COLOR_DESC'].includes(fieldUpper)) {
-        return context.color_name || context.name_color_sap || ''
+        return getString(context, 'color_name') || getString(context, 'name_color_sap') || ''
     }
     if (fieldUpper === 'COLOR_CODE' || fieldUpper === 'CODIGO_COLOR') {
-        return context.color_code || ''
+        return getString(context, 'color_code') || ''
     }
     if (fieldUpper === 'SKU' || fieldUpper === 'CODE' || fieldUpper === 'CÓDIGO') {
-        return context.code || ''
+        return getString(context, 'code') || ''
     }
     if (fieldUpper === 'NOMBRE' || fieldUpper === 'DESCRIPTION' || fieldUpper === 'DESCRIPCION') {
-        return context.final_name_es || context.sap_description || ''
+        return getString(context, 'final_name_es') || getString(context, 'sap_description') || ''
     }
 
     // 3. Normalized search (case-insensitive, tilde-insensitive)
@@ -71,16 +76,15 @@ export const getVariableValue = (context: any, field: string) => {
     const matchingKey = Object.keys(context).find(key => normalizeString(key) === normalizedTarget)
     
     if (matchingKey) {
-        const val = context[matchingKey]
-        if (val === null || val === undefined) return ''
-        const strVal = String(val)
-        return PLACEHOLDERS.includes(strVal.toUpperCase().trim()) ? '' : strVal
+        const val = getString(context, matchingKey)
+        if (val === undefined) return ''
+        return PLACEHOLDERS.includes(val.toUpperCase().trim()) ? '' : val
     }
 
     return ''
 }
 
-export const hydrateText = (text: string, context: any) => {
+export const hydrateText = (text: string, context: Record<string, unknown>) => {
     if (!text) return ''
     const hydrated = text.replace(/{([^}]+)}/g, (_: string, field: string) => {
         return getVariableValue(context, field)
@@ -101,10 +105,10 @@ export const hydrateText = (text: string, context: any) => {
  * Se usa tanto en Preview (React) como en Export (HTML).
  */
 export async function hydrateTemplateElements(
-    elements: any[], 
-    product: any, 
+    elements: Record<string, unknown>[], 
+    product: Record<string, unknown>, 
     assetMap: Record<string, string>
-): Promise<any[]> {
+): Promise<Record<string, unknown>[]> {
     const baseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
     
     // 1. Enriquecer producto con iconos dinámicos (R1, R2)
@@ -113,7 +117,7 @@ export async function hydrateTemplateElements(
     // Resolver la traducción de la zona desde el Glosario ANTES de enriquecer.
     // Esto garantiza que technical_description_en siempre use el valor real del glosario
     // y no un fallback estático. Todos los pipelines (export, preview, bulk) pasan por aquí.
-    const zoneEnFromGlossary = await resolveZoneHomeEn(product.zone_home)
+    const zoneEnFromGlossary = await resolveZoneHomeEn(product.zone_home as string | null | undefined)
     const productWithZone = zoneEnFromGlossary
         ? { ...product, zone_home_en: zoneEnFromGlossary }
         : product
@@ -132,12 +136,13 @@ export async function hydrateTemplateElements(
         return `${baseUrl}/storage/v1/object/public/assets/${cleanPath}`
     }
 
-    return elements.map(el => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return elements.map((el: any) => {
         const cloned = { ...el }
 
         // Resolución de activos de imagen (R8)
         if (cloned.type === 'image') {
-            const content = cloned.content || ''
+            const content: string = String(cloned.content || '')
             let src = ''
 
             // 1. Mapeo por asset id (UUID)
@@ -147,15 +152,16 @@ export async function hydrateTemplateElements(
             // 2. Mapeo de assets de sistema y lógica de Marca Propia
             else if (content === 'logo_empresa' || content === 'Logo Empresa Pordefecto') {
                 // Si es Marca Propia y hay un logo específico, lo priorizamos
-                if (product.private_label_client_name && product.private_label_logo_id && assetMap[product.private_label_logo_id]) {
-                    src = assetMap[product.private_label_logo_id]
+                const privLabelLogoId = String(product.private_label_logo_id || '')
+                if (product.private_label_client_name && privLabelLogoId && assetMap[privLabelLogoId]) {
+                    src = assetMap[privLabelLogoId]
                 } else {
                     src = assetMap['Logo Empresa Pordefecto'] || assetMap['logo_empresa'] || ''
                 }
             }
             // 3. Mapeo de isométrico (R8)
             else if (['isometrico_placeholder', 'Isométrico', 'Isométrico (Placeholder)', 'isometric_path', 'image'].includes(content) || cloned.dataField === 'isometric_path') {
-                src = product.isometric_path || ''
+                src = String(product.isometric_path || '')
             }
             else {
                 src = content
@@ -166,7 +172,8 @@ export async function hydrateTemplateElements(
 
         // Resolución de íconos dinámicos / RH / Canto (R1, R3)
         if (cloned.type === 'dynamic_image') {
-            const iconUrl = cloned.dataField ? (enrichedProduct[`${cloned.dataField}_url`] || null) : null
+            const df: string = cloned.dataField || ''
+            const iconUrl = df ? (enrichedProduct[`${df}_url`] || null) : null
             cloned.resolvedSrc = iconUrl ? ensureAbsolute(iconUrl) : null
             
             // Hidratar el caption si existe (ej: {caption_es})
@@ -175,8 +182,8 @@ export async function hydrateTemplateElements(
                 // como icon_canto_caption_es que se mapean a {caption_es} en el builder
                 const captionContext = {
                     ...enrichedProduct,
-                    caption_es: enrichedProduct[`${cloned.dataField}_caption_es`] || '',
-                    caption_en: enrichedProduct[`${cloned.dataField}_caption_en`] || ''
+                    caption_es: df ? enrichedProduct[`${df}_caption_es`] || '' : '',
+                    caption_en: df ? enrichedProduct[`${df}_caption_en`] || '' : ''
                 }
                 cloned.caption = hydrateText(cloned.caption, captionContext)
             }
@@ -184,9 +191,9 @@ export async function hydrateTemplateElements(
 
         // Hidratación de contenido de texto y dynamic_text (R4, R5)
         if (cloned.type === 'text' || cloned.type === 'dynamic_text') {
-            let rawContent = cloned.content || ''
+            let rawContent = String(cloned.content || '')
             if (cloned.type === 'dynamic_text' && cloned.dataField) {
-                rawContent = `{${cloned.dataField}}`
+                rawContent = `{${String(cloned.dataField)}}`
             }
             let hydrated = hydrateText(rawContent, enrichedProduct)
             // Limpieza de artefactos visuales inyectados por el Template Builder en variables técnicas (punteados, cursores)
@@ -199,11 +206,11 @@ export async function hydrateTemplateElements(
             const format = resolveBarcodeFormat(cloned)
             const rawBarcodeValue = cloned.dataField ? getVariableValue(enrichedProduct, cloned.dataField) : ''
             const barcode = buildBarcode(rawBarcodeValue, format, {
-                width: cloned.width,
-                height: cloned.height,
-                xDimensionMm: cloned.barcodeXDimensionMm,
-                barHeightMm: cloned.barcodeBarHeightMm,
-                quietZoneX: cloned.barcodeQuietZoneX,
+                width: Number(cloned.width) || undefined,
+                height: Number(cloned.height) || undefined,
+                xDimensionMm: Number(cloned.barcodeXDimensionMm) || undefined,
+                barHeightMm: Number(cloned.barcodeBarHeightMm) || undefined,
+                quietZoneX: Number(cloned.barcodeQuietZoneX) || undefined,
             })
 
             cloned.barcodeFormatResolved = format
@@ -220,7 +227,7 @@ export async function hydrateTemplateElements(
  * @deprecated Use hydrateTemplateElements instead for a unified logic.
  * Mantener temporalmente para evitar rupturas mientras migramos el resto de archivos.
  */
-export async function resolveTemplateAssets(elements: any[], product: any, assetMap: Record<string, string>): Promise<any[]> {
+export async function resolveTemplateAssets(elements: Record<string, unknown>[], product: Record<string, unknown>, assetMap: Record<string, string>): Promise<Record<string, unknown>[]> {
     return hydrateTemplateElements(elements, product, assetMap)
 }
 

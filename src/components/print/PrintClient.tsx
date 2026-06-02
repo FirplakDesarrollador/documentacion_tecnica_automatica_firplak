@@ -24,7 +24,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog'
-import { GenerateFilters } from '@/components/generate/GenerateFilters'
+
 import { TemplatePicker, type TemplateOption } from '@/components/generate/TemplatePicker'
 import { GenerateProductTable, type GenerateProduct } from '@/components/generate/GenerateProductTable'
 import { getTemplateRequiredFields, getTemplateValidationIssues } from '@/components/generate/ValidationWarnings'
@@ -39,8 +39,6 @@ import { getFilteredProducts } from '@/app/print/actions'
 interface PrintClientProps {
     templates: TemplateOption[]
     rules: Record<string, unknown>[]
-    families: { value: string; label: string }[]
-    references: { value: string; label: string }[]
 }
 
 type PrintStatus = 'pending' | 'printing' | 'done' | 'error'
@@ -56,20 +54,16 @@ const PRINTER_CONFIG_KEY = 'samiGen-printer-config'
 type PrintFormat = 'pdf' | 'jpg'
 
 interface PrinterConfig {
-    type: 'local_agent' | 'browser'
     agentUrl: string
     printerName: string
 }
 
 const defaultPrinterConfig: PrinterConfig = {
-    type: 'local_agent',
     agentUrl: 'http://localhost:3344',
     printerName: '3nStar LTT334',
 }
 
-export function PrintClient({ templates, rules, families, references }: PrintClientProps) {
-    const [familyIds, setFamilyIds] = useState<string[]>([])
-    const [referenceIds, setReferenceIds] = useState<string[]>([])
+export function PrintClient({ templates, rules }: PrintClientProps) {
     const [textFilter, setTextFilter] = useState('')
     const [products, setProducts] = useState<GenerateProduct[]>([])
     const [loading, setLoading] = useState(false)
@@ -100,7 +94,6 @@ export function PrintClient({ templates, rules, families, references }: PrintCli
     }, [printerConfig])
 
     const checkAgent = useCallback(async () => {
-        if (printerConfig.type !== 'local_agent') return
         try {
             const res = await fetch(`${printerConfig.agentUrl}/health`, { signal: AbortSignal.timeout(3000) })
             if (res.ok) {
@@ -117,7 +110,7 @@ export function PrintClient({ templates, rules, families, references }: PrintCli
             setAgentPrinters([])
             setPrinterDetected(false)
         }
-    }, [printerConfig.agentUrl, printerConfig.type])
+    }, [printerConfig.agentUrl])
 
     useEffect(() => {
         checkAgent()
@@ -168,7 +161,7 @@ export function PrintClient({ templates, rules, families, references }: PrintCli
         setLoading(true)
         setHasSearched(true)
         try {
-            const result = await getFilteredProducts(familyIds, referenceIds, [], textFilter || null, 1, 500)
+            const result = await getFilteredProducts(textFilter || null, 1, 500)
             setProducts(result.products as unknown as GenerateProduct[])
             setSelectedIds([])
         } catch (err: unknown) {
@@ -176,7 +169,7 @@ export function PrintClient({ templates, rules, families, references }: PrintCli
         } finally {
             setLoading(false)
         }
-    }, [familyIds, referenceIds, textFilter])
+    }, [textFilter])
 
     const handlePrintProduct = async (product: GenerateProduct): Promise<boolean> => {
         if (!selectedTemplate) return false
@@ -206,7 +199,7 @@ export function PrintClient({ templates, rules, families, references }: PrintCli
         const translationResult = await translateProductToEnglish(product as unknown as ProductPayload, productType, engineResult.activeVariableIds)
         const finalNameEn = translationResult.translatedName || product.final_name_en || ''
 
-        const zoneEn = await resolveZoneHomeEnAction(product.zone_home)
+        const zoneEn = await resolveZoneHomeEnAction(product.zone_home as string | null | undefined)
         const updatedProduct = {
             ...product,
             final_name_es: finalNameEs,
@@ -215,27 +208,50 @@ export function PrintClient({ templates, rules, families, references }: PrintCli
         }
 
         const hydrated = await hydrateTemplateElements(elements, updatedProduct, assetMap)
+        const widthPx = Math.round((selectedTemplate.width_mm || 200) * PIXELS_PER_MM)
+        const heightPx = Math.round((selectedTemplate.height_mm || 100) * PIXELS_PER_MM)
 
-        if (printerConfig.type === 'local_agent' && printerConfig.agentUrl) {
-            const agentResponse = await fetch(`${printerConfig.agentUrl}/print-zpl`, {
+        if (printerConfig.agentUrl) {
+            const imageResponse = await fetch('/api/print', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    productId: product.id,
+                    isExternalSource: product.is_external === true,
+                    format: 'jpg',
                     elements: hydrated,
-                    width_mm: selectedTemplate.width_mm || 104,
-                    height_mm: selectedTemplate.height_mm || 100,
+                    width: widthPx,
+                    height: heightPx,
+                    templateFontFamily: selectedTemplate.template_font_family,
                     copies,
                 }),
             })
+
+            if (!imageResponse.ok) {
+                const payload = await imageResponse.json().catch(() => null)
+                throw new Error(payload?.error || `Error al generar imagen para ${product.code}`)
+            }
+
+            const blob = await imageResponse.blob()
+            if (!blob || blob.size <= 0) {
+                throw new Error(`Imagen vacía para ${product.code}`)
+            }
+
+            const formData = new FormData()
+            formData.append('file', new File([blob], `${product.code || 'etiqueta'}.jpg`, { type: 'image/jpeg' }))
+            formData.append('copies', String(copies))
+
+            const agentResponse = await fetch(`${printerConfig.agentUrl}/print`, {
+                method: 'POST',
+                body: formData,
+            })
+
             if (!agentResponse.ok) {
                 const payload = await agentResponse.json().catch(() => null)
                 throw new Error(payload?.error || 'Error al enviar a la impresora local')
             }
             return true
         }
-
-        const widthPx = Math.round((selectedTemplate.width_mm || 200) * PIXELS_PER_MM)
-        const heightPx = Math.round((selectedTemplate.height_mm || 100) * PIXELS_PER_MM)
 
         const response = await fetch('/api/print', {
             method: 'POST',
@@ -260,14 +276,6 @@ export function PrintClient({ templates, rules, families, references }: PrintCli
         const blob = await response.blob()
         if (!blob || blob.size <= 0) {
             throw new Error(`Documento vacío para ${product.code}`)
-        }
-
-        const ext = printFormat === 'pdf' ? 'pdf' : 'jpg'
-
-        if (printerConfig.type === 'browser') {
-            const url = URL.createObjectURL(blob)
-            window.open(url, '_blank')
-            setTimeout(() => URL.revokeObjectURL(url), 60000)
         }
 
         return true
@@ -337,27 +345,36 @@ export function PrintClient({ templates, rules, families, references }: PrintCli
                 </div>
             )}
 
-            {/* Filters + Search button */}
-            <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col gap-3">
-                <GenerateFilters
-                    families={families}
-                    references={references}
-                    familyIds={familyIds}
-                    referenceIds={referenceIds}
-                    onChange={(f, r) => { setFamilyIds(f); setReferenceIds(r) }}
-                    textFilter={textFilter}
-                    onTextFilterChange={setTextFilter}
-                    onSearchSubmit={handleSearch}
-                />
-                <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs text-slate-400">
-                        Busca por <strong className="text-slate-500">SKU_complete</strong>, nombre o color de familia
-                    </p>
+            {/* Single text search */}
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+                <div className="flex items-center gap-3">
+                    <div className="relative flex-1 max-w-lg">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                        <Input
+                            type="text"
+                            placeholder="Buscar por código, nombre, color..."
+                            value={textFilter}
+                            onChange={(e) => setTextFilter(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') handleSearch() }}
+                            className="pl-9 pr-8 h-10 w-full"
+                        />
+                        {textFilter && (
+                            <button
+                                onClick={() => setTextFilter('')}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 focus:outline-none"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        )}
+                    </div>
                     <Button onClick={handleSearch} disabled={loading} className="shrink-0">
                         {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Search className="w-4 h-4 mr-2" />}
                         Buscar
                     </Button>
                 </div>
+                <p className="text-xs text-slate-400 mt-2">
+                    Busca en código, nombre, color, referencia, medida comercial
+                </p>
             </div>
 
             {/* Printer settings */}
@@ -407,54 +424,42 @@ export function PrintClient({ templates, rules, families, references }: PrintCli
 
                     {showPrinterConfig && (
                         <div className="flex flex-col gap-3 pt-2 border-t border-slate-100">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div className="grid grid-cols-1 gap-3">
                                 <div className="flex flex-col gap-2">
                                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                                        M&eacute;todo
+                                        Agente local de impresi&oacute;n
                                     </label>
-                                    <select
-                                        value={printerConfig.type}
-                                        onChange={(e) => {
-                                            const newType = e.target.value as PrinterConfig['type'];
-                                            setPrinterConfig(prev => ({ ...prev, type: newType }));
-                                            if (newType === 'local_agent') checkAgent();
-                                        }}
-                                        className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white"
-                                    >
-                                        <option value="local_agent">Agente local (USB directo)</option>
-                                        <option value="browser">Navegador (Ctrl+P)</option>
-                                    </select>
+                                    <div className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-slate-50 text-slate-600">
+                                        USB directo con agente local
+                                    </div>
                                 </div>
 
-                                {printerConfig.type === 'local_agent' && (
-                                    <div className="flex flex-col gap-2">
-                                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                                            URL del agente
-                                        </label>
-                                        <div className="flex gap-2">
-                                            <Input
-                                                value={printerConfig.agentUrl}
-                                                onChange={(e) => setPrinterConfig(prev => ({ ...prev, agentUrl: e.target.value }))}
-                                                placeholder="http://localhost:3344"
-                                                className="text-sm font-mono flex-1"
-                                            />
-                                            <Button variant="outline" size="sm" onClick={checkAgent}>
-                                                Probar
-                                            </Button>
-                                        </div>
+                                <div className="flex flex-col gap-2">
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                                        URL del agente
+                                    </label>
+                                    <div className="flex gap-2">
+                                        <Input
+                                            value={printerConfig.agentUrl}
+                                            onChange={(e) => setPrinterConfig(prev => ({ ...prev, agentUrl: e.target.value }))}
+                                            placeholder="http://localhost:3344"
+                                            className="text-sm font-mono flex-1"
+                                        />
+                                        <Button variant="outline" size="sm" onClick={checkAgent}>
+                                            Probar
+                                        </Button>
                                     </div>
-                                )}
+                                </div>
                             </div>
 
                             {/* Agent status */}
-                            {printerConfig.type === 'local_agent' && (
-                                <div className={`rounded-xl px-4 py-3 text-sm border ${
-                                    agentOnline === true
-                                        ? 'bg-green-50 border-green-200 text-green-700'
-                                        : agentOnline === false
-                                        ? 'bg-amber-50 border-amber-200 text-amber-700'
-                                        : 'bg-slate-50 border-slate-200 text-slate-500'
-                                }`}>
+                            <div className={`rounded-xl px-4 py-3 text-sm border ${
+                                agentOnline === true
+                                    ? 'bg-green-50 border-green-200 text-green-700'
+                                    : agentOnline === false
+                                    ? 'bg-amber-50 border-amber-200 text-amber-700'
+                                    : 'bg-slate-50 border-slate-200 text-slate-500'
+                            }`}>
                                     {agentOnline === true ? (
                                         printerDetected ? (
                                             <div className="flex items-center gap-2">
@@ -499,8 +504,7 @@ export function PrintClient({ templates, rules, families, references }: PrintCli
                                     ) : (
                                         <span>Verificando conexi&oacute;n...</span>
                                     )}
-                                </div>
-                            )}
+                            </div>
                         </div>
                     )}
                 </div>
@@ -574,11 +578,11 @@ export function PrintClient({ templates, rules, families, references }: PrintCli
                                 disabled={
                                     isPrinting ||
                                     selectedProducts.length === 0 ||
-                                    (printerConfig.type === 'local_agent' && agentOnline === true && !printerDetected)
+                                    (agentOnline === true && !printerDetected)
                                 }
                                 className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
                                 title={
-                                    printerConfig.type === 'local_agent' && agentOnline === true && !printerDetected
+                                    agentOnline === true && !printerDetected
                                         ? 'Conecta la impresora USB para imprimir'
                                         : undefined
                                 }

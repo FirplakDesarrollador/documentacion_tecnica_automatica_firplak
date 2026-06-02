@@ -17,7 +17,7 @@ import { resolveZoneHomeEnAction } from '@/app/products/actions'
 
 
 interface PreviewClientProps {
-    product: Record<string, any>
+    product: Record<string, unknown>
     templates: TemplateOption[]
     initialTemplateId: string | null
     engineResult: {
@@ -35,7 +35,7 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
     const [isExporting, setIsExporting] = useState(false)
     const [exportFormat, setExportFormat] = useState<'pdf' | 'jpg'>('pdf')
     const [assetMap, setAssetMap] = useState<Record<string, string>>({})
-    const [hydratedElements, setHydratedElements] = useState<any[]>([])
+    const [hydratedElements, setHydratedElements] = useState<Record<string, unknown>[]>([])
     const [preflightReport, setPreflightReport] = useState<{
         missingVariables: string[],
         missingAssets: string[],
@@ -49,7 +49,7 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
             ...base,
             final_name_es: engineResult.finalNameEs || base.final_name_es,
             final_name_en: engineResult.finalNameEn || base.final_name_en
-        } as any
+        }
     }, [rawProduct, engineResult])
 
     const selectedTemplate = useMemo(
@@ -105,12 +105,12 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
 
             // 1. Identificar UUIDs de assets
             const assetIds = elements
-                .filter((el: any) => 
+                .filter((el: Record<string, unknown>) => 
                     (el.type === 'image' || el.type === 'dynamic_image') && 
                     el.content && 
-                    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(el.content)
+                    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(el.content))
                 )
-                .map((el: any) => el.content)
+                .map((el: Record<string, unknown>) => el.content) as string[]
             
             const mapping = await resolveAssetsAction(assetIds)
             setAssetMap(mapping)
@@ -130,6 +130,7 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
         const missingAss: string[] = []
         const critical: string[] = []
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         hydratedElements.forEach((el: any) => {
             // Check for unresolved variables in text
             if (el.type === 'text' || el.type === 'dynamic_text') {
@@ -147,7 +148,8 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                 if (!el.resolvedSrc || el.resolvedSrc.includes('placeholder')) {
                     if (iconKey) {
                         // Solo reportar si el producto TIENE un valor para este icono pero falló la resolución
-                        const hasProductValue = product?.[iconKey as keyof typeof product]
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const hasProductValue = (product as any)[iconKey]
                         if (hasProductValue) {
                             missingAss.push(`${el.name || iconKey} (Falla de resolución)`)
                         }
@@ -182,7 +184,7 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
             // Si el formato actual no está permitido por la nueva plantilla, cambiar al primero disponible
             if (!allowed.includes(exportFormat)) {
                 /* eslint-disable react-hooks/set-state-in-effect */
-                setExportFormat(allowed.length > 0 ? (allowed[0] as any) : 'pdf')
+                setExportFormat(allowed.length > 0 ? (allowed[0] as 'pdf' | 'jpg') : 'pdf')
                 /* eslint-enable react-hooks/set-state-in-effect */
             }
         }
@@ -198,8 +200,11 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
         [product, requiredFields]
     )
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const p = product as any
+
     const warnings = validationIssues.length > 0
-        ? [{ productCode: product.code, productName: product.final_name_es || '', issues: validationIssues }]
+        ? [{ productCode: p.code, productName: p.final_name_es || '', issues: validationIssues }]
         : []
 
     const canvasW = selectedTemplate ? Math.round(selectedTemplate.width_mm * PIXELS_PER_MM) : 0
@@ -207,10 +212,10 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
 
     const handleExport = async () => {
         if (!selectedTemplate) return
-        if (product.is_exportable === false) {
+        if (p.is_exportable === false) {
             toast.error(
-                product.inactive_reasons?.length
-                    ? `Producto inactivo: ${product.inactive_reasons.join(', ')}`
+                p.inactive_reasons?.length
+                    ? `Producto inactivo: ${p.inactive_reasons.join(', ')}`
                     : 'Producto inactivo para exportacion'
             )
             return
@@ -227,7 +232,7 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
 
             // Usar la misma lógica de hidratación que el preview (R6)
             const hydrated = await hydrateTemplateElements(elements, product, assetMap)
-            const zoneEn = await resolveZoneHomeEnAction(product.zone_home)
+            const zoneEn = await resolveZoneHomeEnAction(p.zone_home)
             const productWithZone = zoneEn ? { ...product, zone_home_en: zoneEn } : product
             const enrichedProduct = enrichProductDataWithIcons(productWithZone, assetMap)
 
@@ -238,14 +243,14 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
-                    productId: product.id,
-                    isExternalSource: product.is_external === true,
+                    productId: p.id,
+                    isExternalSource: p.is_external === true,
                     elements: hydrated, 
                     format: exportFormat, 
                     width: widthPx, 
                     height: heightPx,
                     templateFontFamily: selectedTemplate.template_font_family,
-                    filename: hydrateText((selectedTemplate as any).export_filename_format || '{sku_base}_{final_name_es}', enrichedProduct)
+                    filename: hydrateText(selectedTemplate.export_filename_format || '{sku_base}_{final_name_es}', enrichedProduct)
                 }),
             })
 
@@ -255,7 +260,7 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
             const url = window.URL.createObjectURL(blob)
             const a = document.createElement('a')
             a.href = url
-            const downloadName = hydrateText((selectedTemplate as any).export_filename_format || '{sku_base}_{final_name_es}', enrichedProduct)
+            const downloadName = hydrateText(selectedTemplate.export_filename_format || '{sku_base}_{final_name_es}', enrichedProduct)
             a.download = `${downloadName}.${exportFormat}`
             document.body.appendChild(a)
             a.click()
@@ -387,11 +392,11 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                     </div>
                 )}
 
-                {product.is_exportable === false && (
+                {p.is_exportable === false && (
                     <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
                         <p className="font-semibold">Producto inactivo para exportacion.</p>
-                        {product.inactive_reasons?.length > 0 && (
-                            <p className="mt-1 text-xs">{product.inactive_reasons.join(', ')}</p>
+                        {p.inactive_reasons?.length > 0 && (
+                            <p className="mt-1 text-xs">{p.inactive_reasons.join(', ')}</p>
                         )}
                     </div>
                 )}
@@ -400,9 +405,9 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                 <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col gap-3">
                     <h3 className="font-semibold text-slate-800 text-sm">Datos del Producto</h3>
                     <div className="flex flex-col gap-2 text-sm">
-                        <div className="flex justify-between"><span className="text-slate-500">Código:</span><span className="font-mono font-semibold">{product.code}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">Familia:</span><span>{product.familia_code || '—'}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">Medida:</span><span>{product.commercial_measure || '—'}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Código:</span><span className="font-mono font-semibold">{p.code}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Familia:</span><span>{p.familia_code || '—'}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Medida:</span><span>{p.commercial_measure || '—'}</span></div>
                         <div className="flex justify-between"><span className="text-slate-500">Nombre derivado:</span><span className="text-right max-w-[160px]">{engineResult.finalNameEs || '—'}</span></div>
                     </div>
                 </div>
@@ -418,7 +423,7 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                                 {(selectedTemplate.export_formats ? (selectedTemplate.export_formats as string).split(',').map((f: string) => f.trim().toLowerCase()) : ['pdf', 'jpg']).map((fmt: string) => (
                                     <button
                                         key={fmt}
-                                        onClick={() => setExportFormat(fmt as any)}
+                                        onClick={() => setExportFormat(fmt as 'pdf' | 'jpg')}
                                         className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${exportFormat === fmt ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                                     >
                                         {fmt.toUpperCase()}
@@ -428,14 +433,14 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
 
                             <Button 
                                 className={`w-full h-12 text-sm font-bold transition-all duration-300 ${
-                                    (preflightReport.criticalErrors.length > 0 || validationIssues.length > 0 || product.is_exportable === false)
+                                    (preflightReport.criticalErrors.length > 0 || validationIssues.length > 0 || p.is_exportable === false)
                                         ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300' 
                                         : (preflightReport.missingVariables.length > 0 || preflightReport.missingAssets.length > 0)
                                             ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-lg shadow-amber-200'
                                             : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-200'
-                                }`}
-                                onClick={handleExport}
-                                disabled={isExporting || preflightReport.criticalErrors.length > 0 || validationIssues.length > 0 || product.is_exportable === false}
+                                    }`}
+                                    onClick={handleExport}
+                                    disabled={isExporting || preflightReport.criticalErrors.length > 0 || validationIssues.length > 0 || p.is_exportable === false}
                             >
                                 {isExporting ? (
                                     <>
@@ -446,7 +451,7 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                                     <>
                                         <Download className="mr-2 h-4 w-4" />
                                         <span>
-                                            {(preflightReport.criticalErrors.length > 0 || validationIssues.length > 0 || product.is_exportable === false)
+                                            {(preflightReport.criticalErrors.length > 0 || validationIssues.length > 0 || p.is_exportable === false)
                                                 ? 'Exportación Bloqueada'
                                                 : (preflightReport.missingVariables.length > 0 || preflightReport.missingAssets.length > 0)
                                                     ? `Exportar con Avisos (${exportFormat.toUpperCase()})`

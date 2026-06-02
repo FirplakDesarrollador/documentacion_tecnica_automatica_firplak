@@ -7,7 +7,7 @@ import { revalidatePath } from 'next/cache'
 export async function upsertVersionAction(data: {
     version_code: string
     version_description: string
-    automatic_version_rules?: any
+    automatic_version_rules?: Record<string, unknown>
     status?: string
     product_types?: string[]
     isNew?: boolean

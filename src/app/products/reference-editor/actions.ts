@@ -6,7 +6,16 @@ import { revalidatePath } from 'next/cache';
 
 // --- FLUJO B: MASS EDIT ---
 
-export async function searchReferences(filters: any) {
+interface SearchFilters {
+    productType: string
+    familyCode: string
+    referenceCode: string
+    productName: string
+    refAttrsKey: string
+    refAttrsValue: string
+}
+
+export async function searchReferences(filters: SearchFilters) {
   // Construir query. supabaseServer
   // Note: Si hay que cruzar con product_type, haremos join con families
   let query = supabaseServer.from('product_references').select(`
@@ -49,7 +58,8 @@ export async function searchReferences(filters: any) {
   return { success: true, data };
 }
 
-export async function previewMassUpdateReferences(referenceIds: string[], normalUpdates: any, refAttrsUpdates: any) {
+export async function previewMassUpdateReferences(referenceIds: string[], normalUpdates: Record<string, string>, refAttrsUpdates: Record<string, string>) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (supabaseServer as any).rpc('rpc_preview_mass_update', {
     p_reference_ids: referenceIds,
     p_normal_updates: normalUpdates,
@@ -60,7 +70,8 @@ export async function previewMassUpdateReferences(referenceIds: string[], normal
   return { success: true, data };
 }
 
-export async function executeMassUpdateReferences(referenceIds: string[], normalUpdates: any, refAttrsUpdates: any) {
+export async function executeMassUpdateReferences(referenceIds: string[], normalUpdates: Record<string, string>, refAttrsUpdates: Record<string, string>) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (supabaseServer as any).rpc('rpc_mass_update_references', {
     p_reference_ids: referenceIds,
     p_normal_updates: normalUpdates,
@@ -102,12 +113,14 @@ export async function deleteReferencesAction(referenceIds: string[]) {
 
 export async function getFilterOptions() {
   // Fetch distinct product_type from families
-  const { data: famsRaw } = await supabaseServer.from('families').select('product_type, family_code');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: famsRaw } = await (supabaseServer.from('families').select('product_type, family_code') as any) as { data: any[]; error: any };
   // Fetch distinct reference_code, product_name from product_references
-  const { data: refsRaw } = await supabaseServer.from('product_references').select('reference_code, product_name, family_code, ref_attrs');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: refsRaw } = await (supabaseServer.from('product_references').select('reference_code, product_name, family_code, ref_attrs') as any) as { data: any[]; error: any };
 
-  const fams = (famsRaw || []) as any[];
-  const refs = (refsRaw || []) as any[];
+  const fams = famsRaw || [];
+  const refs = refsRaw || [];
 
   const productTypes = Array.from(new Set(fams.map(f => f.product_type).filter(Boolean))).sort();
   const familyCodes = Array.from(new Set(fams.map(f => f.family_code).filter(Boolean))).sort();

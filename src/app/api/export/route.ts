@@ -112,7 +112,7 @@ export async function POST(req: Request) {
         const pageTitle = await page.title()
         const finalUrlLower = finalUrl.toLowerCase()
         const pageTitleLower = pageTitle.toLowerCase()
-        const pageText = (await page.evaluate(() => document.body?.innerText || '')).toLowerCase()
+        const pageText = String(await page.evaluate(() => document.body?.innerText || '')).toLowerCase()
         const looksProtected =
             pageTitleLower.includes('log in to vercel') ||
             pageTitleLower.includes('login to vercel') ||

@@ -2,17 +2,15 @@
 
 import { UploadAssetDialog } from '@/components/assets/UploadAssetDialog'
 
-interface AssetRow {
+interface Asset {
     id: string;
-    name: string;
-    type: string;
-    file_path: string;
-    relation_count: number;
 }
 
+type ButtonVariant = 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link'
+
 interface Props {
-    onUploadComplete?: (asset: AssetRow) => void;
-    variant?: string;
+    onUploadComplete?: (asset: Asset) => void;
+    variant?: ButtonVariant;
     className?: string;
     label?: string;
     type?: string;

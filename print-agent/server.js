@@ -67,18 +67,22 @@ app.post('/print', upload.single('file'), async (req, res) => {
 
     try {
         // Convert JPG/ZPL to ZPL and send via USB
-        const ext = path.extname(filePath).toLowerCase();
+        const ext = path.extname(originalName).toLowerCase();
         let zpl;
 
-        if (ext === '.jpg' || ext === '.jpeg') {
-            console.log(`[print] Convirtiendo JPG a ZPL...`);
+        if (ext === '.jpg' || ext === '.jpeg' || ext === '.png') {
+            console.log(`[print] Convirtiendo imagen a ZPL...`);
             zpl = await convertJpgToZpl(filePath);
         } else {
             zpl = fs.readFileSync(filePath, 'utf-8');
         }
 
         console.log(`[print] Enviando ${copies} copia(s)...`);
-        const result = await printViaUsb(zpl);
+        let result;
+        for (let i = 0; i < copies; i++) {
+            console.log(`[print] Enviando copia ${i + 1}/${copies}...`);
+            result = await printViaUsb(zpl);
+        }
 
         console.log(`[print] Listo: ${copies} copia(s) enviada(s) via ${result.method}`);
         res.json({

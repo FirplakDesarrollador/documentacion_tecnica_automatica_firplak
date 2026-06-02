@@ -44,11 +44,16 @@ import { linkDatasetToTemplatesAction, revalidateDatasetsPathsAction } from '@/a
 import { getDatasetModeTemplatesAction } from '@/app/templates/actions'
 import { extractTemplateVariables } from '@/lib/templates/templateVariables'
 
+interface ExistingDataset {
+    id: string
+    name: string
+}
+
 interface DatasetIngestorProps {
     mode: 'new' | { id: string; name: string }
-    existingDatasets: any[]
+    existingDatasets: ExistingDataset[]
     onClose: () => void
-    onDone: (updated: any[]) => void
+    onDone: (updated: Record<string, unknown>[]) => void
 }
 
 type Step = 'name_file' | 'strategy' | 'mapping' | 'associate_templates' | 'preview'
@@ -61,7 +66,7 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
     const [strategy, setStrategy] = useState<'overwrite' | 'append' | 'merge'>('overwrite')
     
     const [csvHeaders, setCsvHeaders] = useState<string[]>([])
-    const [csvRows, setCsvRows] = useState<any[]>([])
+    const [csvRows, setCsvRows] = useState<Record<string, string>[]>([])
     const [encoding, setEncoding] = useState<string>('UTF-8')
     const [selectedFile, setSelectedFile] = useState<File | null>(null)
     
@@ -226,7 +231,7 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
             complete: (results) => {
                 const headers = results.meta.fields || []
                 setCsvHeaders(headers)
-                setCsvRows(results.data)
+                setCsvRows(results.data as Record<string, string>[])
                 autoMap(headers)
             }
         })
@@ -406,7 +411,7 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
 
             // 2. Preparar filas
             const rowsToInsert = csvRows.map(row => {
-                const data: Record<string, any> = {}
+                const data: Record<string, string> = {}
                 
                 // Campos técnicos internos (copia redundante para compatibilidad del motor)
                 if (fieldMap.code) {
@@ -468,8 +473,8 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
             const normalized = (updated || []).map(d => ({ ...d, row_count: d.row_count?.[0]?.count || 0 }))
             onDone(normalized)
             onClose()
-        } catch (error: any) {
-            toast.error(error.message || 'Error al procesar datos')
+        } catch (error: unknown) {
+            toast.error(error instanceof Error ? error.message : 'Error al procesar datos')
         } finally {
             setLoading(false)
         }
@@ -587,13 +592,13 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                         <div className="grid grid-cols-1 gap-4 animate-in fade-in slide-in-from-right-4 duration-300">
                             <Label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 ml-1">¿Qué deseas hacer con los datos?</Label>
                             {[
-                                { id: 'overwrite', icon: RotateCcw, title: 'Sobrescribir todo', desc: 'Borra los datos actuales y carga el nuevo archivo completo.' },
-                                { id: 'append', icon: PlusCircle, title: 'Añadir al final', desc: 'Agrega las nuevas filas sin tocar lo que ya existe.' },
-                                { id: 'merge', icon: Combine, title: 'Fusionar / Actualizar', desc: 'Actualiza registros existentes usando el ID como llave.' }
-                            ].map((opt: any) => (
+                                { id: 'overwrite' as const, icon: RotateCcw, title: 'Sobrescribir todo', desc: 'Borra los datos actuales y carga el nuevo archivo completo.' },
+                                { id: 'append' as const, icon: PlusCircle, title: 'Añadir al final', desc: 'Agrega las nuevas filas sin tocar lo que ya existe.' },
+                                { id: 'merge' as const, icon: Combine, title: 'Fusionar / Actualizar', desc: 'Actualiza registros existentes usando el ID como llave.' }
+                            ].map((opt: { id: 'overwrite' | 'append' | 'merge'; icon: React.ComponentType<{ className?: string }>; title: string; desc: string }) => (
                                 <button
                                     key={opt.id}
-                                    onClick={() => setStrategy(opt.id as any)}
+                                    onClick={() => setStrategy(opt.id)}
                                     className={`flex items-start gap-4 p-5 rounded-2xl border-2 transition-all group ${
                                         strategy === opt.id 
                                             ? 'border-indigo-600 bg-indigo-50 shadow-md ring-4 ring-indigo-50' 

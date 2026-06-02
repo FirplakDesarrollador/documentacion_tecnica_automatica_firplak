@@ -146,9 +146,10 @@ export async function parseProductCode(
         }
 
         try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const rows = await dbQuery(
                 `SELECT family_code, product_type, use_destination, zone_home, assembled_default, rh_default, allowed_lines FROM public.families WHERE family_code = '${lookupFamilia.replace(/'/g, "''")}' LIMIT 1`
-            )
+            ) as any[]
             if (rows && rows.length > 0) {
                 const familia = rows[0]
                 result.product_type = familia.product_type
@@ -177,7 +178,8 @@ export async function parseProductCode(
         // --- Detección de Versión desde Diccionario ---
         if (result.version_code) {
             try {
-                const verRows = await dbQuery(`SELECT version_code, version_description, automatic_version_rules FROM public.global_version_rules WHERE version_code = '${result.version_code.toUpperCase().replace(/'/g, "''")}' AND COALESCE(status, 'ACTIVO') <> 'INACTIVO' LIMIT 1`);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const verRows = await dbQuery(`SELECT version_code, version_description, automatic_version_rules FROM public.global_version_rules WHERE version_code = '${result.version_code.toUpperCase().replace(/'/g, "''")}' AND COALESCE(status, 'ACTIVO') <> 'INACTIVO' LIMIT 1`) as any[];
                 if (verRows && verRows.length > 0) {
                     const ver = verRows[0];
                     const rules = typeof ver.automatic_version_rules === 'string' ? JSON.parse(ver.automatic_version_rules) : (ver.automatic_version_rules || {});
@@ -258,7 +260,8 @@ export async function parseProductCode(
                 setInheritance('version_label', result.version_label, 'historic_sku');
             } else {
                 // 2. Intentar por SKU BASE (Misma Familia-Ref-Version)
-                const skuBaseRows = await dbQuery(`
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const skuBaseRows: any[] = await dbQuery(`
                     SELECT v.*, r.family_code, r.reference_code, r.product_name, r.designation, r.line,
                            r.commercial_measure, r.special_label, r.width_cm, r.depth_cm, r.height_cm,
                            r.weight_kg, r.stacking_max, r.isometric_path, r.isometric_asset_id, r.ref_attrs,
@@ -281,7 +284,8 @@ export async function parseProductCode(
                     source = 'version_match';
                 } else {
                     // 3. Intentar por FAMILIA + REFERENCIA (Mismo mueble, distinta versión)
-                    const famRefRows = await dbQuery(`
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const famRefRows: any[] = await dbQuery(`
                         SELECT r.*, f.product_type, f.zone_home, f.use_destination, f.assembled_default, f.rh_default,
                                r.status AS ref_status,
                                'ACTIVO'::text AS family_status
@@ -290,7 +294,7 @@ export async function parseProductCode(
                         WHERE r.family_code = '${result.familia_code.replace(/'/g, "''")}'
                           AND r.reference_code = '${result.ref_code.replace(/'/g, "''")}'
                         LIMIT 1
-                    `);
+                    `) as any[];
                     if (famRefRows && famRefRows.length > 0) {
                         foundData = famRefRows[0];
                         source = 'reference_match';
@@ -419,7 +423,8 @@ export async function parseProductCode(
         if (result.color_code && !(result as any).color_name) {
             try {
                 const paddedColorCode = result.color_code.padStart(4, '0');
-                const colorRows = await dbQuery(`SELECT name_color_sap FROM public.colors WHERE code_4dig = '${paddedColorCode.replace(/'/g, "''")}' LIMIT 1`);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const colorRows: any[] = await dbQuery(`SELECT name_color_sap FROM public.colors WHERE code_4dig = '${paddedColorCode.replace(/'/g, "''")}' LIMIT 1`) as any[];
                 if (colorRows && colorRows.length > 0) {
                     (result as any).color_name = colorRows[0].name_color_sap;
                 }
@@ -466,7 +471,8 @@ export async function parseProductCode(
 
         // --- SMART MATCHING FROM CATALOG (V6.2) ---
         try {
-            const [nameRows, desigRows, lineRows, destRows, zoneRows, colorRows] = await Promise.all([
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const [nameRows, desigRows, lineRows, destRows, zoneRows, colorRows]: any = await Promise.all([
                 dbQuery(`SELECT DISTINCT product_name FROM public.product_references WHERE product_name IS NOT NULL AND product_name != ''`),
                 dbQuery(`SELECT DISTINCT designation FROM public.product_references WHERE designation IS NOT NULL AND designation != ''`),
                 dbQuery(`SELECT DISTINCT line FROM public.product_references WHERE line IS NOT NULL AND line != ''`),
@@ -618,7 +624,8 @@ export async function parseProductCode(
             }
             if (matchedClient) {
                 try {
-                    const clientRows = await dbQuery(`SELECT name FROM public.clients WHERE UPPER(name) = '${matchedClient.replace(/'/g, "''")}' OR (name = 'SODIMAC CHILE' AND '${matchedClient.replace(/'/g, "''")}' LIKE 'SODIMAC%') LIMIT 1`);
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const clientRows: any[] = await dbQuery(`SELECT name FROM public.clients WHERE UPPER(name) = '${matchedClient.replace(/'/g, "''")}' OR (name = 'SODIMAC CHILE' AND '${matchedClient.replace(/'/g, "''")}' LIKE 'SODIMAC%') LIMIT 1`) as any[];
                     if (clientRows && clientRows.length > 0) { result.private_label_client_name = clientRows[0].name; setSap('private_label_client_name', clientRows[0].name); }
                 } catch {}
             }

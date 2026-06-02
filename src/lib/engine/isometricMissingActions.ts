@@ -32,11 +32,12 @@ function buildMissingIsometricWhere() {
 export async function getMissingIsometricCount(): Promise<number> {
     noStore()
     const where = buildMissingIsometricWhere()
-    const rows = await dbQuery(`
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows: any[] = await dbQuery(`
         SELECT COUNT(*)::int AS missing_isometric_count
         FROM public.v_ui_generate_list
         WHERE ${where}
-    `)
+    `) as any[]
     return Number(rows?.[0]?.missing_isometric_count || 0)
 }
 

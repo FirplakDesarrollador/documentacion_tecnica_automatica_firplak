@@ -29,7 +29,8 @@ export async function POST(req: Request) {
 
     const buf = await file.arrayBuffer()
     const wb = new ExcelJS.Workbook()
-    await wb.xlsx.load(buf as unknown as Buffer)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await wb.xlsx.load(buf as any)
 
     const ws = wb.getWorksheet('ORPHANS') || wb.worksheets[0]
     if (!ws) return NextResponse.json({ success: false, error: 'No worksheet found' }, { status: 400 })

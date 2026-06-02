@@ -5,6 +5,39 @@ import { buildEffectiveProductContext, type EffectiveContextOptions } from './ef
 // PHASE 1A: COMPOSITION LAYER
 // ============================================================================
 
+interface ViewProductRow {
+    [key: string]: unknown
+    id: string
+    version_id: string | null
+    reference_id: string | null
+    sku_complete: string
+    family_code: string
+    reference_code: string
+    version_code: string
+    color_code: string
+    sku_base: string
+    product_type: string | null
+    zone_home: string | null
+    use_destination: string | null
+    assembled_default: boolean | null
+    allowed_lines: string | string[] | null
+    product_name: string | null
+    designation: string | null
+    line: string | null
+    commercial_measure: string | null
+    version_label: string | null
+    final_base_name_es: string | null
+    final_base_name_en: string | null
+    validation_status: string | null
+    sap_description_original: string | null
+    final_complete_name_es: string | null
+    final_complete_name_en: string | null
+    barcode_text: string | null
+    barcode_path: string | null
+    isometric_path: string | null
+    isometric_asset_id: string | null
+}
+
 export interface ComposedProduct {
     // === Identity ===
     id: string;
@@ -77,13 +110,13 @@ export interface ComposedProduct {
 
     // === Metadata ===
     _source: 'composed';
-    effective_attrs: Record<string, any>;
-    dynamic_attrs: Record<string, any>;
+    effective_attrs: Record<string, unknown>;
+    dynamic_attrs: Record<string, unknown>;
 }
 
 const BASE_QUERY = `SELECT * FROM public.v_ui_generate_list`;
 
-export function mapRowToComposedProduct(row: any, options: EffectiveContextOptions = {}): ComposedProduct {
+export function mapRowToComposedProduct(row: ViewProductRow, options: EffectiveContextOptions = {}): ComposedProduct {
     const effectiveContext = buildEffectiveProductContext(row, options);
     const effectiveAttrs = effectiveContext.effective_attrs;
 
@@ -173,13 +206,15 @@ export function mapRowToComposedProduct(row: any, options: EffectiveContextOptio
 }
 
 export async function composeProductBySku(skuComplete: string): Promise<ComposedProduct | null> {
-    const rows = await dbQuery(`${BASE_QUERY} WHERE sku_complete = $1 LIMIT 1`, [skuComplete]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows: any[] = await dbQuery(`${BASE_QUERY} WHERE sku_complete = $1 LIMIT 1`, [skuComplete]) as any[];
     if (!rows || rows.length === 0) return null;
     return mapRowToComposedProduct(rows[0]);
 }
 
 export async function composeProductById(id: string): Promise<ComposedProduct | null> {
-    const rows = await dbQuery(`${BASE_QUERY} WHERE id = $1 LIMIT 1`, [id]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows: any[] = await dbQuery(`${BASE_QUERY} WHERE id = $1 LIMIT 1`, [id]) as any[];
     if (!rows || rows.length === 0) return null;
     return mapRowToComposedProduct(rows[0]);
 }
@@ -213,8 +248,12 @@ export async function composeProductsByFilters(
         query = query.in('commercial_measure', filters.measures)
     }
     if (filters.search) {
-        const searchVal = filters.search.toLowerCase().trim()
-        query = query.or(`sku_complete.ilike.%${searchVal}%,final_base_name_es.ilike.%${searchVal}%,color_code.ilike.%${searchVal}%,resolved_color_name.ilike.%${searchVal}%,name_color_sap.ilike.%${searchVal}%,reference_code.ilike.%${searchVal}%`)
+        const words = filters.search.toLowerCase().trim().split(/\s+/).filter(Boolean)
+        const searchableFields = ['sku_complete', 'final_base_name_es', 'color_code', 'resolved_color_name', 'name_color_sap', 'reference_code']
+        for (const word of words) {
+            const orClauses = searchableFields.map(f => `${f}.ilike.%${word}%`).join(',')
+            query = query.or(orClauses)
+        }
     }
 
     if (filters.brandFilter) {
@@ -244,7 +283,7 @@ export async function composeProductsByFilters(
     
     if (!data || !Array.isArray(data)) return { products: [], totalCount: 0 };
     return {
-        products: data.map((row: any) => mapRowToComposedProduct(row)),
+        products: data.map((row: ViewProductRow) => mapRowToComposedProduct(row)),
         totalCount: count ?? 0
     };
 }

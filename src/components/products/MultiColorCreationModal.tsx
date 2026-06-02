@@ -9,11 +9,21 @@ import { Loader2, Plus, X, PaintBucket, AlertCircle } from "lucide-react"
 import { batchCreateColorVariantsAction } from "@/app/products/actions"
 import { toast } from "sonner"
 
+interface ProductInput {
+    code: string
+    color_code: string
+    color_name: string
+    product_type?: string
+    rh?: string
+    sap_description?: string
+    [key: string]: unknown
+}
+
 interface MultiColorCreationModalProps {
     isOpen: boolean
-    originalProduct: any
+    originalProduct: ProductInput
     availableColors: {code: string, name: string}[]
-    onComplete: (createdProducts: any[]) => void
+    onComplete: (createdProducts: ProductInput[]) => void
     onSkip: () => void
 }
 
@@ -25,7 +35,7 @@ export function MultiColorCreationModal({ isOpen, originalProduct, availableColo
     const [newColorCode, setNewColorCode] = useState('')
     const [newColorName, setNewColorName] = useState('')
     const [isProcessing, setIsProcessing] = useState(false)
-    const [results, setResults] = useState<any[] | null>(null)
+    const [results, setResults] = useState<{ success: boolean; code_color?: string; color_code: string; color_name: string; sku?: string; error?: string; product?: unknown }[] | null>(null)
 
     if (!originalProduct) return null
 
@@ -51,8 +61,8 @@ export function MultiColorCreationModal({ isOpen, originalProduct, availableColo
         try {
             const res = await batchCreateColorVariantsAction(originalProduct, selectedColors)
             setResults(res.results)
-        } catch (e: any) {
-            toast.error("Error al procesar: " + e.message)
+        } catch (e: unknown) {
+            toast.error("Error al procesar: " + (e instanceof Error ? e.message : String(e)))
         } finally {
             setIsProcessing(false)
         }
@@ -68,7 +78,7 @@ export function MultiColorCreationModal({ isOpen, originalProduct, availableColo
         const successfulProducts = results 
             ? results.filter(r => r.success).map(r => r.product)
             : []
-        onComplete([originalProduct, ...successfulProducts])
+        onComplete([originalProduct, ...successfulProducts as ProductInput[]])
     }
 
     return (

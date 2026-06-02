@@ -66,10 +66,11 @@ export default async function GeneratePage({
     // Las medidas ya van integradas en el label de referencias — no se exponen como filtro separado.
 
     // --- Cargar plantillas activas ---
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const templates = await dbQuery(
         `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json, export_formats, export_filename_format, data_source, template_font_family, brand_scope, private_label_client_name
          FROM public.plantillas_doc_tec WHERE active = true ORDER BY created_at ASC`
-    ) || []
+    ) as any[] || []
 
     // --- Cargar componentes del motor de nombres ---
     const rules = await loadAllRulesForNamingType('final_complete_name')
@@ -90,17 +91,18 @@ export default async function GeneratePage({
     if (isLegacySpecificDataset) {
         effectiveDatasetId = String(templateDataSource)
     } else if (isGenericDatasets && selectedTemplateInfo?.id) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const linkedDatasets = await dbQuery(`
             SELECT d.id, d.name, d.schema_json, d.created_at
             FROM public.template_dataset_links l
             JOIN public.custom_datasets d ON d.id = l.dataset_id
             WHERE l.template_id = '${String(selectedTemplateInfo.id).replace(/'/g, "''")}'
             ORDER BY d.created_at DESC
-        `) || []
+        `) as any[] || []
 
         // Show ALL linked datasets — synced or not — so the user can preview any associated data.
         // The sync status is visible in the DatasetConfigurator.
-        availableDatasetsForTemplate = (linkedDatasets || []).map((d: { id: string; name: string | null }) => ({
+        availableDatasetsForTemplate = linkedDatasets.map((d: { id: string; name: string | null }) => ({
             id: String(d.id),
             name: String(d.name || ''),
         }))
@@ -133,12 +135,13 @@ export default async function GeneratePage({
     // (no aplican los filtros de Familia/Referencia)
     if (isDataSourceExternal && effectiveDatasetId) {
         effectiveHasFilter = true 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const dsRows = await dbQuery(`
             SELECT id, data_json 
             FROM public.custom_dataset_rows 
             WHERE dataset_id = '${effectiveDatasetId.replace(/'/g, "''")}'
             LIMIT 500
-        `) || []
+        `) as any[] || []
         
          products = dsRows.map((r: { id: string; data_json: string | Record<string, unknown> }) => {
              const parsed = typeof r.data_json === 'string' ? JSON.parse(r.data_json) : r.data_json
@@ -204,7 +207,8 @@ export default async function GeneratePage({
             </div>
 
             <GenerateClient
-                products={products}
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                products={products as any}
                 templates={templates}
                 rules={rules}
                 families={families}

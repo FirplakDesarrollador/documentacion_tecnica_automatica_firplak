@@ -27,15 +27,51 @@ export default function MassEditClient() {
     refAttrsValue: ''
   });
   
-  const [references, setReferences] = useState<any[]>([]);
+interface ReferenceRow {
+  id: string
+  family_code: string
+  reference_code: string
+  product_name: string
+  commercial_measure?: string
+  width_cm?: number
+  depth_cm?: number
+  height_cm?: number
+  weight_kg?: number
+  special_label?: string
+  designation?: string
+  ref_attrs: Record<string, string>
+}
+
+interface RawDataItem {
+  fc: string | null
+  rc: string | null
+  pn: string | null
+  pt: string | null
+  attrs: Record<string, string>
+}
+
+interface SchemaData {
+  family_code: string
+  product_type?: string
+  ref_attrs_schema?: Record<string, { allowed_values?: string[] }>
+}
+
+interface PreviewData {
+  is_valid: boolean
+  errors?: string[]
+  affected_count?: number
+  families?: string[]
+}
+
+  const [references, setReferences] = useState<ReferenceRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingOpts, setLoadingOpts] = useState(true);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   
   // Base Data for relational filters and edit panel
-  const [rawData, setRawData] = useState<any[]>([]);
+  const [rawData, setRawData] = useState<RawDataItem[]>([]);
   const [refAttrsKeys, setRefAttrsKeys] = useState<string[]>([]);
-  const [schemasData, setSchemasData] = useState<any[]>([]); // To know allowed values per family
+  const [schemasData, setSchemasData] = useState<SchemaData[]>([]); // To know allowed values per family
 
   // Edit Panel State
   const [editType, setEditType] = useState<'normal' | 'ref_attr'>('ref_attr');
@@ -44,7 +80,7 @@ export default function MassEditClient() {
 
   // Preview Modal
   const [showPreview, setShowPreview] = useState(false);
-  const [previewData, setPreviewData] = useState<any>(null);
+  const [previewData, setPreviewData] = useState<PreviewData | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionProgress, setExecutionProgress] = useState<{ processed: number; total: number } | null>(null);
 
@@ -72,7 +108,7 @@ export default function MassEditClient() {
       }
 
       if (schemaRes.success) {
-        setSchemasData((schemaRes.data as any[]) || []);
+        setSchemasData((schemaRes.data || []) as SchemaData[]);
       }
       setLoadingOpts(false);
     }
@@ -96,10 +132,10 @@ export default function MassEditClient() {
   }, [rawData, filters]);
 
   // Derive options from the filtered data (relational)
-  const productTypesOpt = Array.from(new Set(filteredData.map(d => d.pt).filter(Boolean))).sort();
-  const familyCodesOpt = Array.from(new Set(filteredData.map(d => d.fc).filter(Boolean))).sort();
-  const referenceCodesOpt = Array.from(new Set(filteredData.map(d => d.rc).filter(Boolean))).sort();
-  const productNamesOpt = Array.from(new Set(filteredData.map(d => d.pn).filter(Boolean))).sort();
+  const productTypesOpt = Array.from(new Set(filteredData.map(d => d.pt).filter((v): v is string => !!v))).sort();
+  const familyCodesOpt = Array.from(new Set(filteredData.map(d => d.fc).filter((v): v is string => !!v))).sort();
+  const referenceCodesOpt = Array.from(new Set(filteredData.map(d => d.rc).filter((v): v is string => !!v))).sort();
+  const productNamesOpt = Array.from(new Set(filteredData.map(d => d.pn).filter((v): v is string => !!v))).sort();
   
   // JSONB Values specific to the selected Key
   const refAttrsValuesOpt = useMemo(() => {
@@ -138,7 +174,7 @@ export default function MassEditClient() {
     setLoading(true);
     const res = await searchReferences(filters);
     if (res.success) {
-      setReferences(res.data || []);
+      setReferences((res.data || []) as ReferenceRow[]);
       setSelectedIds([]);
     } else {
       toast.error('Error al buscar referencias: ' + res.error);
@@ -173,7 +209,8 @@ export default function MassEditClient() {
     setLoading(false);
 
     if (res.success) {
-      setPreviewData(res.data);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setPreviewData(res.data as any);
       setShowPreview(true);
     } else {
       toast.error('Error generando preview: ' + res.error);
@@ -194,7 +231,7 @@ export default function MassEditClient() {
       for (let start = 0; start < total; start += batchSize) {
         const batchIds = selectedIds.slice(start, start + batchSize);
         const res = await executeMassUpdateReferences(batchIds, normalUpdates, refAttrsUpdates);
-        if (!res.success) throw new Error((res as any).error || 'Error desconocido');
+        if (!res.success) throw new Error(res.error || 'Error desconocido');
         setExecutionProgress({ processed: Math.min(start + batchIds.length, total), total });
       }
 
@@ -203,9 +240,9 @@ export default function MassEditClient() {
       handleSearch();
       // To keep schemas updated in case we bypassed validation (not possible directly, but good to refresh)
       const schemaRes = await getFamiliesWithSchema();
-      if (schemaRes.success) setSchemasData((schemaRes.data as any[]) || []);
-    } catch (e: any) {
-      toast.error('Error ejecutando actualización: ' + (e?.message || 'Error desconocido'));
+      if (schemaRes.success) setSchemasData((schemaRes.data || []) as SchemaData[]);
+    } catch (e: unknown) {
+      toast.error('Error ejecutando actualización: ' + (e instanceof Error ? e.message : 'Error desconocido'));
     } finally {
       setIsExecuting(false);
       setExecutionProgress(null);
@@ -228,8 +265,8 @@ export default function MassEditClient() {
       setDeletePreview(null);
       setSelectedIds([]);
       await handleSearch();
-    } catch (e: any) {
-      toast.error('Error eliminando referencias: ' + (e?.message || 'Error desconocido'));
+    } catch (e: unknown) {
+      toast.error('Error eliminando referencias: ' + (e instanceof Error ? e.message : 'Error desconocido'));
     } finally {
       setIsDeleting(false);
     }
@@ -336,7 +373,7 @@ export default function MassEditClient() {
                 {references.map((r) => {
                   let currentValue = '';
                   if (editField) {
-                    currentValue = editType === 'normal' ? String(r[editField] ?? '') : String(r.ref_attrs?.[editField] ?? '');
+                    currentValue = editType === 'normal' ? String((r as unknown as Record<string, unknown>)[editField] ?? '') : String(r.ref_attrs?.[editField] ?? '');
                   }
                   
                   return (
@@ -389,7 +426,7 @@ export default function MassEditClient() {
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Tipo de Campo</label>
-              <select value={editType} onChange={e => { setEditType(e.target.value as any); setEditField(''); setEditValue(''); }} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
+              <select value={editType} onChange={e => { setEditType(e.target.value as 'normal' | 'ref_attr'); setEditField(''); setEditValue(''); }} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
                 <option value="ref_attr">Llave (JSONB)</option>
                 <option value="normal">Columna Normal</option>
               </select>
@@ -466,7 +503,7 @@ export default function MassEditClient() {
                 <div className="bg-red-50 text-red-800 p-4 rounded-lg border border-red-200">
                   <h4 className="font-bold mb-2">Supabase RPC rechazó la operación:</h4>
                   <ul className="list-disc pl-5 space-y-1 text-sm">
-                    {previewData.errors.map((err: string, i: number) => <li key={i}>{err}</li>)}
+                    {previewData.errors?.map((err: string, i: number) => <li key={i}>{err}</li>)}
                   </ul>
                   <p className="mt-3 text-sm font-medium bg-red-100 p-2 rounded inline-block">
                     Para forzar un valor nuevo, debes agregarlo primero en los &quot;Valores Permitidos&quot; de la Configuración de Esquema.

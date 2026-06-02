@@ -24,10 +24,11 @@ export default async function GeneratePreviewPage({
     }
 
     // 1. Cargar plantillas activas
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const templates = await dbQuery(
         `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json, export_formats, export_filename_format, data_source, template_font_family, brand_scope, private_label_client_name
          FROM public.plantillas_doc_tec WHERE active = true ORDER BY updated_at DESC`
-    ) || []
+    ) as any[] || []
 
     const initialTemplateId = templateIdParam ?? templates[0]?.id ?? null
     // 2. Cargar el producto según el origen
@@ -51,12 +52,13 @@ export default async function GeneratePreviewPage({
         product = coreProduct
     } else {
         // Buscar en datasets externos
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const dRows = await dbQuery(
             `SELECT r.*, d.schema_json 
              FROM public.custom_dataset_rows r
              LEFT JOIN public.custom_datasets d ON r.dataset_id = d.id
              WHERE r.id = '${id}' LIMIT 1`
-        )
+        ) as any[]
         if (dRows && dRows[0]) {
             const row = dRows[0]
             const parsed = typeof row.data_json === 'string' ? JSON.parse(row.data_json) : row.data_json
@@ -118,7 +120,8 @@ export default async function GeneratePreviewPage({
 
             {/* Preview interactivo */}
             <PreviewClient
-                product={product}
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                product={product as any}
                 templates={templates}
                 initialTemplateId={initialTemplateId}
                 engineResult={fullEngineResult}

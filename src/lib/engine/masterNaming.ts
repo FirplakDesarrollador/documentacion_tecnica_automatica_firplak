@@ -93,7 +93,8 @@ async function recomputeFromRows(rows: { version_id?: string; final_base_name_es
     const shouldRecomputeSkus = shouldRecomputeComplete || shouldRecomputeSap
 
     const skuProducts = shouldRecomputeSkus
-        ? rows.map(row => mapRowToComposedProduct(row, { includeSkuOverrides: true }))
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ? rows.map(row => mapRowToComposedProduct(row as any, { includeSkuOverrides: true }))
         : []
 
     const versionRows = new Map<string, { version_id?: string; final_base_name_es?: string | null; final_base_name_en?: string | null; [key: string]: unknown }>()
@@ -106,7 +107,8 @@ async function recomputeFromRows(rows: { version_id?: string; final_base_name_es
 
     const versionResults: RecomputedVersionName[] = []
     if (shouldRecomputeVersions) for (const row of versionRows.values()) {
-        const versionProduct = mapRowToComposedProduct(row, { includeSkuOverrides: false })
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const versionProduct = mapRowToComposedProduct(row as any, { includeSkuOverrides: false })
         const names = await computeNames(versionProduct, 'final_base_name')
 
         if (versionProduct.version_id) {

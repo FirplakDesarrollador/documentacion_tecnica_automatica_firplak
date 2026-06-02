@@ -19,7 +19,8 @@ export default async function ConfigurationPage() {
     WHERE key IN ('mass_import_execute_enabled','mass_import_safe_max_rows')
   `) || [];
   const sByKey = new Map<string, unknown>();
-  for (const r of settingsRows) sByKey.set(String(r.key), r.value);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const r of (settingsRows as any[])) sByKey.set(String(r.key), r.value);
   const initialExecuteEnabled = !!sByKey.get('mass_import_execute_enabled');
   const initialSafeMaxRows = Number(sByKey.get('mass_import_safe_max_rows') ?? 15);
 

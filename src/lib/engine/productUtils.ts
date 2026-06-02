@@ -101,7 +101,8 @@ export function enrichProductDataWithIcons(product: {
     accessory_text?: string | null;
     [key: string]: unknown;
 }, assetMap: Record<string, string>) {
-    const enriched = enrichProductData(product);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const enriched = enrichProductData(product) as any;
 
     // --- RH Icon ---
     // Source column: product.rh

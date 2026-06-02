@@ -180,7 +180,7 @@ export function DatasetTemplateLinkWizard({
 
                 const { error } = await supabase
                     .from('custom_datasets')
-                    .update({ schema_json: nextSchema as any })
+                    .update({ schema_json: nextSchema as unknown })
                     .eq('id', datasetId)
                 if (error) throw error
 
@@ -198,8 +198,8 @@ export function DatasetTemplateLinkWizard({
             toast.success(canSync ? 'Plantilla asociada y sincronizada' : 'Plantilla asociada (pendiente de sincronizar)')
             onLinked?.(selectedTemplate.id)
             onClose()
-        } catch (e: any) {
-            toast.error(e?.message || 'Error al asociar plantilla')
+        } catch (e: unknown) {
+            toast.error(e instanceof Error ? e.message : 'Error al asociar plantilla')
         } finally {
             setSaving(false)
         }

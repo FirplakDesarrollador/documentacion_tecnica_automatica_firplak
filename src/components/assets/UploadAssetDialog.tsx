@@ -32,9 +32,15 @@ interface Option {
 
 const ASSET_TYPES = ['isometric', 'icon', 'logo']
 
+interface Asset {
+    id: string
+}
+
+type ButtonVariant = 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link'
+
 interface Props {
-    onUploadComplete?: (asset: any) => void
-    variant?: string
+    onUploadComplete?: (asset: Asset) => void
+    variant?: ButtonVariant
     className?: string
     label?: string
 }
@@ -161,8 +167,8 @@ export function UploadAssetDialog({ onUploadComplete, variant, className, label 
                         versionCodes: selectedVersions,
                     })
                     toast.success("Isométrico subido y asociado correctamente")
-                } catch (assocError: any) {
-                    toast.error(`Archivo subido, pero falló la asociación: ${assocError.message}`)
+                } catch (e: unknown) {
+                    toast.error(`Archivo subido, pero falló la asociación: ${e instanceof Error ? e.message : String(e)}`)
                 } finally {
                     setSubmitting(false)
                 }
@@ -176,8 +182,8 @@ export function UploadAssetDialog({ onUploadComplete, variant, className, label 
             } else {
                 router.refresh()
             }
-        } catch (error: any) {
-            toast.error(error.message || 'Error al subir el recurso')
+        } catch (e: unknown) {
+            toast.error(e instanceof Error ? e.message : 'Error al subir el recurso')
         } finally {
             setUploading(false)
             setSubmitting(false)
@@ -191,7 +197,7 @@ export function UploadAssetDialog({ onUploadComplete, variant, className, label 
             <DialogTrigger
                 render={
                     <Button
-                        variant={(variant as any) || "default"}
+                        variant={variant || "default"}
                         className={className}
                     >
                         <Upload className="mr-2 h-4 w-4" />

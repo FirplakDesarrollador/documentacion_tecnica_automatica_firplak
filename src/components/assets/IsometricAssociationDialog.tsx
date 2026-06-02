@@ -38,6 +38,14 @@ interface Option {
     }
 }
 
+interface AssetItem {
+    id: string
+    name: string
+    file_path: string
+    relation_count: number
+    type?: string
+}
+
 interface Props {
     /** 'select' = solo elegir asset (productos nuevos), 'associate' = buscar refs en BD y asociar (default) */
     mode?: 'select' | 'associate'
@@ -45,7 +53,7 @@ interface Props {
     initialReferences?: string[]
     initialMeasures?: string[]
     initialVersions?: string[]
-    onAssociationComplete?: (asset: any) => void
+    onAssociationComplete?: (asset: AssetItem | undefined) => void
     trigger?: React.ReactElement
 }
 
@@ -71,7 +79,7 @@ export function IsometricAssociationDialog({
     const [references, setReferences] = React.useState<Option[]>([])
     const [, setMeasures] = React.useState<Option[]>([])
     const [versions, setVersions] = React.useState<Option[]>([])
-    const [assets, setAssets] = React.useState<any[]>([])
+    const [assets, setAssets] = React.useState<AssetItem[]>([])
 
     // Selection state
     const [selectedFamilies, setSelectedFamilies] = React.useState<string[]>([])
@@ -244,8 +252,8 @@ export function IsometricAssociationDialog({
             setAssets(prev => [newAsset, ...prev])
             setSelectedAssetId(newAsset.id)
             setUploadedAssetIds(prev => [...prev, newAsset.id])
-        } catch (error: any) {
-            toast.error(error.message || 'Error al subir archivo')
+        } catch (error: unknown) {
+            toast.error(error instanceof Error ? error.message : 'Error al subir archivo')
         } finally {
             setUploading(false)
             if (fileInputRef.current) fileInputRef.current.value = ''
@@ -295,7 +303,7 @@ export function IsometricAssociationDialog({
                 measureCodes: selectedMeasures,
                 versionCodes: selectedVersions
             })
-            const count = (result as any)?.updatedCount
+            const count = result.updatedCount
             toast.success(typeof count === 'number' ? `Isométrico asociado a ${count} registro(s)` : "Isométrico asociado correctamente")
             
             if (onAssociationComplete) {
@@ -307,8 +315,8 @@ export function IsometricAssociationDialog({
             skipCleanupRef.current = true
             setUploadedAssetIds([])
             setOpen(false)
-        } catch (error: any) {
-            toast.error(error.message || "Error al asociar isométrico")
+        } catch (error: unknown) {
+            toast.error(error instanceof Error ? error.message : "Error al asociar isométrico")
         } finally {
             setSubmitting(false)
         }
@@ -361,7 +369,7 @@ export function IsometricAssociationDialog({
                                 const file = e.dataTransfer.files?.[0]
                                 if (file && (file.type === 'image/svg+xml' || file.name.endsWith('.svg'))) {
                                     // Manually construct the change event or call upload directly
-                                    const mockEvent = { target: { files: [file] } } as any
+                                    const mockEvent = { target: { files: [file] } } as unknown as React.ChangeEvent<HTMLInputElement>
                                     handleFileUpload(mockEvent)
                                 } else {
                                     toast.error("Por favor suelta un archivo SVG válido")

@@ -4,7 +4,45 @@ import React from 'react'
 import { getTemplateFontCssStack } from '@/lib/templates/templateTypography'
 const PIXELS_PER_MM = 4
 
-function AutoScalingText({ el }: { el: any }) {
+type TextTransform = React.CSSProperties['textTransform']
+
+interface TemplateElement {
+    id?: string
+    type?: string
+    x?: number
+    y?: number
+    width?: number
+    height?: number
+    fontSize?: number
+    fontWeight?: string
+    fontStyle?: string
+    color?: string
+    backgroundColor?: string
+    textTransform?: TextTransform
+    content?: string
+    verticalAlign?: string
+    textAlign?: React.CSSProperties['textAlign']
+    lineHeight?: number
+    letterSpacing?: number
+    groupId?: string
+    groupGapMM?: number
+    groupAlign?: string
+    groupWrap?: boolean
+    barcodeSvg?: string
+    barcodeError?: string
+    barcodeOrientation?: string
+    lineOrientation?: string
+    borderStyle?: string
+    borderWidth?: number
+    resolvedSrc?: string
+    iconSizeMM?: number
+    captionGapMM?: number
+    caption?: string
+    captionFontSize?: number
+    captionTextAlign?: React.CSSProperties['textAlign']
+}
+
+function AutoScalingText({ el }: { el: TemplateElement }) {
     const textRef = React.useRef<HTMLDivElement>(null)
     const [adjustedFontSize, setAdjustedFontSize] = React.useState(el.fontSize || 12)
     const [isScaling, setIsScaling] = React.useState(true)
@@ -71,7 +109,7 @@ function AutoScalingText({ el }: { el: any }) {
     )
 }
 
-function AutoScalingIconContent({ el }: { el: any }) {
+function AutoScalingIconContent({ el }: { el: TemplateElement }) {
     const containerRef = React.useRef<HTMLDivElement>(null)
     const [adjustedCaptionFontSize, setAdjustedCaptionFontSize] = React.useState(el.captionFontSize || 6.5)
     const [isScaling, setIsScaling] = React.useState(true)
@@ -142,7 +180,7 @@ export default function DocumentRenderSurface({
     height,
     templateFontFamily,
 }: { 
-    elements: any[], 
+    elements: TemplateElement[], 
     width: number, 
     height: number
     templateFontFamily?: string
@@ -150,7 +188,7 @@ export default function DocumentRenderSurface({
     const effectiveFontFamily = getTemplateFontCssStack(templateFontFamily)
     const rootElements = elements.filter(el => !el.groupId)
 
-    const renderElementInner = (el: any) => {
+    const renderElementInner = (el: TemplateElement) => {
         if (el.type === 'barcode') {
             if (!el.barcodeSvg) {
                 return (
@@ -190,20 +228,21 @@ export default function DocumentRenderSurface({
 
         if (el.type === 'dashed_line') {
             const orientation = (el.lineOrientation || 'horizontal') as 'horizontal' | 'vertical'
+            const borderStyle = (el.borderStyle || 'solid') as React.CSSProperties['borderLeftStyle']
             return (
                 <div
                     className="w-full h-full"
                     style={{
                         ...(orientation === 'vertical'
                             ? {
-                                borderLeftStyle: el.borderStyle || 'solid',
+                                borderLeftStyle: borderStyle,
                                 borderLeftWidth: el.borderWidth || 2,
                                 height: '100%',
                                 width: 0,
                                 margin: '0 auto',
                             }
                             : {
-                                borderBottomStyle: el.borderStyle || 'solid',
+                                borderBottomStyle: borderStyle,
                                 borderBottomWidth: el.borderWidth || 2,
                                 height: 0,
                                 width: '100%',
@@ -243,7 +282,7 @@ export default function DocumentRenderSurface({
         return null
     }
 
-    const renderElement = (el: any) => {
+    const renderElement = (el: TemplateElement) => {
         const isText = el.type === 'text' || el.type === 'dynamic_text'
         const style: React.CSSProperties = {
             position: 'absolute',
@@ -257,7 +296,7 @@ export default function DocumentRenderSurface({
             fontFamily: effectiveFontFamily,
             color: el.color || '#000000',
             backgroundColor: el.type === 'icon_group' ? 'transparent' : (el.backgroundColor || 'transparent'),
-            textTransform: (el.textTransform as any) || 'none',
+            textTransform: el.textTransform || 'none',
             overflow: 'hidden'
         }
 

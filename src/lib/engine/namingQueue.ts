@@ -322,13 +322,14 @@ export async function markNamingStaleForGlossaryTerms(
         let offset = 0
 
         while (true) {
-            const rows = await dbQuery(`
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const rows: any[] = await dbQuery(`
                 SELECT *
                 FROM public.v_ui_generate_list
                 WHERE upper(btrim(COALESCE(product_type, ''))) = ${sqlString(model.productType)}
                 ORDER BY sku_complete ASC
                 LIMIT ${batchSize} OFFSET ${offset}
-            `) || []
+            `) as any[] || []
 
             if (rows.length === 0) break
 

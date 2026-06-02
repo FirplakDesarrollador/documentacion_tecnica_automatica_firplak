@@ -4,6 +4,7 @@ async function convertJpgToZpl(jpgPath) {
     const meta = await sharp(jpgPath).metadata();
     let widthPx = meta.width;
     let heightPx = meta.height;
+    console.log(`[zpl] Imagen recibida: ${widthPx}x${heightPx}`);
 
     // Thermal printer max width: 104mm (4") at 203 DPI = 832 dots
     const PRINTER_MAX_DOTS = 832;
@@ -43,6 +44,7 @@ async function convertJpgToZpl(jpgPath) {
     const bytesPerRow = Math.ceil(widthPx / 8);
     const threshold = 128;
     let hex = '';
+    let blackPixels = 0;
 
     for (let y = 0; y < heightPx; y++) {
         for (let x = 0; x < widthPx; x += 8) {
@@ -51,6 +53,7 @@ async function convertJpgToZpl(jpgPath) {
                 if (x + b < widthPx) {
                     const gray = imgBuffer[y * widthPx + (x + b)];
                     if (gray < threshold) {
+                        blackPixels++;
                         byteVal |= (1 << (7 - b));
                     }
                 }
@@ -60,6 +63,11 @@ async function convertJpgToZpl(jpgPath) {
     }
 
     const totalBytes = bytesPerRow * heightPx;
+    const blackPct = widthPx && heightPx ? (blackPixels / (widthPx * heightPx) * 100) : 0;
+    console.log(`[zpl] GFA final: ${widthPx}x${heightPx}, negro=${blackPct.toFixed(2)}%`);
+    if (blackPct < 0.05) {
+        throw new Error('La imagen generada está prácticamente en blanco. Revisa el render /api/print antes de imprimir.');
+    }
     return `^XA^PW${printWidthDots}^LL${heightPx}^FO0,0^GFA,${totalBytes},${totalBytes},${bytesPerRow},${hex}^FS^XZ`;
 }
 

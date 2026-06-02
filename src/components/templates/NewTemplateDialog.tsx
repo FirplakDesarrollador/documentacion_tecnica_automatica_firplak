@@ -19,10 +19,15 @@ import { createTemplate } from "@/app/templates/actions"
 import { toast } from "sonner"
 import { getClientsAction } from "@/app/products/actions"
 
+interface ClientRow {
+    id: string
+    name: string
+}
+
 export function NewTemplateDialog() {
     const [open, setOpen] = useState(false)
     const [loading, setLoading] = useState(false)
-    const [clients, setClients] = useState<any[]>([])
+    const [clients, setClients] = useState<ClientRow[]>([])
     const [dataSource, setDataSource] = useState<string>('core_firplak')
     const [brandScope, setBrandScope] = useState<'firplak' | 'private_label'>('firplak')
     const [privateLabelClientName, setPrivateLabelClientName] = useState<string>('')
@@ -31,7 +36,7 @@ export function NewTemplateDialog() {
     useEffect(() => {
         if (!open) return
         getClientsAction()
-            .then((res: any) => setClients(Array.isArray(res) ? res : []))
+            .then((res: ClientRow[]) => setClients(Array.isArray(res) ? res : []))
             .catch(() => setClients([]))
     }, [open])
 
@@ -124,7 +129,7 @@ export function NewTemplateDialog() {
                                 name="brand_scope"
                                 value={dataSource === 'core_firplak' ? brandScope : 'firplak'}
                                 onChange={(e) => {
-                                    const next = (e.target.value as any) || 'firplak'
+                                    const next = (e.target.value as 'firplak' | 'private_label') || 'firplak'
                                     setBrandScope(next)
                                     if (next === 'firplak') setPrivateLabelClientName('')
                                 }}
@@ -149,7 +154,7 @@ export function NewTemplateDialog() {
                                     required
                                 >
                                     <option value="" disabled>-- Selecciona un cliente --</option>
-                                    {clients.map((c: any) => (
+                                    {clients.map((c: ClientRow) => (
                                         <option key={c.id || c.name} value={c.name}>{c.name}</option>
                                     ))}
                                 </select>

@@ -26,6 +26,7 @@ export default async function AssetsPage({
         whereClause = `WHERE ${conditions}`
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const assets = await dbQuery(`
         WITH asset_counts AS (
             SELECT 
@@ -45,7 +46,7 @@ export default async function AssetsPage({
         ORDER BY 
             (CASE WHEN ac.total_relations = 0 AND UPPER(a.type) = 'ISOMETRIC' THEN 0 ELSE 1 END) ASC,
             a.created_at DESC
-    `) || []
+    `) as any[] || []
 
     const defaultNames = [
         'Logo Empresa Pordefecto',

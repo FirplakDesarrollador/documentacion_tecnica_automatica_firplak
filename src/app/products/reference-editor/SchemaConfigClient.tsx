@@ -11,8 +11,11 @@ import {
 } from '@/app/families/actions';
 import { Loader2, Plus, Trash2, Search, AlertTriangle, Info } from 'lucide-react';
 
+type FamilySchemaRow = { family_code: string; product_type: string; ref_attrs_schema: Record<string, unknown> | null }
+type PreviewFamilyRow = { family_code: string; total_refs: number; refs_with_key: number; refs_without_key?: number }
+
 export default function SchemaConfigClient() {
-  const [families, setFamilies] = useState<any[]>([]);
+  const [families, setFamilies] = useState<FamilySchemaRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterType, setFilterType] = useState('MUEBLE');
   const [selectedFamilies, setSelectedFamilies] = useState<string[]>([]);
@@ -33,7 +36,7 @@ export default function SchemaConfigClient() {
   const [removeAttrKey, setRemoveAttrKey] = useState('');
 
   // Preview data
-  const [previewData, setPreviewData] = useState<any[]>([]);
+  const [previewData, setPreviewData] = useState<PreviewFamilyRow[]>([]);
   const [isExecuting, setIsExecuting] = useState(false);
 
     const fetchFamilies = async () => {

@@ -83,7 +83,8 @@ export default function ExportRenderPage() {
     return (
         <div style={{ width: '100vw', height: '100vh', display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-start', background: '#fff' }}>
             <DocumentRenderSurface 
-                elements={payload.elements} 
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                elements={payload.elements as any} 
                 width={payload.width} 
                 height={payload.height} 
                 templateFontFamily={payload.templateFontFamily}

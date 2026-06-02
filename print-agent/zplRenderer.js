@@ -6,6 +6,8 @@ const https = require('https');
 
 const DOTS_PER_MM = 8;
 const PRINTER_MAX_DOTS = 832;
+const PRINTER_MAX_MM = 104;
+const PIXELS_PER_MM = 4;
 const FONTS_DIR = 'C:\\Windows\\Fonts';
 
 const FONT_MAP = {
@@ -79,6 +81,25 @@ const FONT_MAP = {
 
 function mmToDots(mm) {
     return Math.round(mm * DOTS_PER_MM);
+}
+
+function pxToMm(value) {
+    return typeof value === 'number' ? value / PIXELS_PER_MM : value;
+}
+
+function normalizeElementUnits(el) {
+    const normalized = { ...el };
+    for (const key of ['x', 'y', 'width', 'height']) {
+        if (typeof normalized[key] === 'number') normalized[key] = pxToMm(normalized[key]);
+    }
+    if (typeof normalized.borderWidth === 'number') {
+        normalized.borderWidth = Math.max(0.1, pxToMm(normalized.borderWidth));
+    }
+    return normalized;
+}
+
+function normalizeElementsForPrint(elements) {
+    return elements.map(normalizeElementUnits);
 }
 
 function fetchImage(url, timeoutMs = 10000) {
@@ -258,7 +279,21 @@ function svgBarcode(el) {
     const svgMatch = barcodeSvg.match(/<svg[^>]*>([\s\S]*)<\/svg>/i);
     if (svgMatch) inner = svgMatch[1];
 
-    return `<g transform="translate(${x},${y})">${inner}</g>`;
+    const viewBoxMatch = barcodeSvg.match(/viewBox="([^"]+)"/i);
+    let viewW = 0;
+    let viewH = 0;
+    if (viewBoxMatch) {
+        const parts = viewBoxMatch[1].trim().split(/[\s,]+/).map(Number);
+        if (parts.length === 4) {
+            viewW = parts[2];
+            viewH = parts[3];
+        }
+    }
+
+    const scaleX = viewW > 0 ? el.width / viewW : 1;
+    const scaleY = viewH > 0 ? el.height / viewH : 1;
+
+    return `<g transform="translate(${x},${y}) scale(${scaleX},${scaleY})">${inner}</g>`;
 }
 
 function svgBox(el) {
@@ -403,6 +438,7 @@ async function imageToGfa(imgBuffer, targetW, targetH) {
     const bytesPerRow = Math.ceil(info.width / 8);
     const totalBytes = bytesPerRow * info.height;
     let hex = '';
+    let blackPixels = 0;
 
     for (let row = 0; row < info.height; row++) {
         for (let col = 0; col < info.width; col += 8) {
@@ -410,23 +446,46 @@ async function imageToGfa(imgBuffer, targetW, targetH) {
             for (let bit = 0; bit < 8; bit++) {
                 if (col + bit < info.width) {
                     const pixel = data[row * info.width + col + bit];
-                    if (pixel < 128) byte |= (1 << (7 - bit));
+                    if (pixel < 128) {
+                        blackPixels++;
+                        byte |= (1 << (7 - bit));
+                    }
                 }
             }
             hex += byte.toString(16).toUpperCase().padStart(2, '0');
         }
     }
 
-    return { hex, totalBytes, bytesPerRow, widthDots: info.width, heightDots: info.height };
+    return { hex, totalBytes, bytesPerRow, widthDots: info.width, heightDots: info.height, blackPixels, totalPixels: info.width * info.height };
 }
 
 async function renderElements(elements, widthMm, heightMm) {
-    const widthDots = mmToDots(Math.min(widthMm, 104));
-    const heightDots = mmToDots(heightMm);
+    const normalizedElements = normalizeElementsForPrint(elements);
+    const shouldRotate = widthMm > PRINTER_MAX_MM && heightMm <= PRINTER_MAX_MM;
+    const sourceWidthDots = mmToDots(widthMm);
+    const sourceHeightDots = mmToDots(heightMm);
+    const widthDots = shouldRotate ? sourceHeightDots : mmToDots(Math.min(widthMm, PRINTER_MAX_MM));
+    const heightDots = shouldRotate ? sourceWidthDots : mmToDots(heightMm);
 
-    const svg = await buildSvg(elements, widthMm, heightMm);
-    const pngBuffer = await sharp(Buffer.from(svg), { density: 203 }).png().toBuffer();
-    const { hex, totalBytes, bytesPerRow } = await imageToGfa(pngBuffer, widthDots, heightDots);
+    const svg = await buildSvg(normalizedElements, widthMm, heightMm);
+    // density=121 renders SVG ~801x480 for 100x60mm → resized to 800x480 (1px diff)
+    let pngBuffer = await sharp(Buffer.from(svg), { density: 121 }).png().toBuffer();
+
+    if (shouldRotate) {
+        pngBuffer = await sharp(pngBuffer)
+            .resize(sourceWidthDots, sourceHeightDots, { fit: 'fill' })
+            .rotate(90)
+            .png()
+            .toBuffer();
+    }
+
+    const { hex, totalBytes, bytesPerRow, blackPixels, totalPixels } = await imageToGfa(pngBuffer, widthDots, heightDots);
+    const blackPct = totalPixels > 0 ? (blackPixels / totalPixels * 100) : 0;
+    console.log(`[zpl] ${normalizedElements.length} elementos, ${widthDots}x${heightDots} dots, rotado=${shouldRotate ? 'si' : 'no'}, negro=${blackPct.toFixed(2)}%`);
+
+    if (blackPct < 0.05) {
+        throw new Error('La etiqueta generada está prácticamente en blanco. Revisa contenido, posiciones y dimensiones de la plantilla.');
+    }
 
     let zpl = `^XA^PW${widthDots}^LL${heightDots}^LH0,0\r\n`;
     zpl += `^FO0,0^GFA,${totalBytes},${totalBytes},${bytesPerRow},${hex}^FS\r\n`;
@@ -435,4 +494,4 @@ async function renderElements(elements, widthMm, heightMm) {
     return zpl;
 }
 
-module.exports = { renderElements };
+module.exports = { renderElements, buildSvg };

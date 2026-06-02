@@ -847,7 +847,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
 
     return (
         <div className="flex flex-col gap-8 w-full pb-20">
-            <MultiColorCreationModal isOpen={showMultiColorModal} originalProduct={savedProduct} availableColors={datalistOptions.colors} onComplete={(products) => { setAllCreatedProducts(products); setShowMultiColorModal(false); setShowExportModal(true); }} onSkip={() => { setAllCreatedProducts(savedProduct ? [savedProduct] : []); setShowMultiColorModal(false); setShowExportModal(true); }} />
+            <MultiColorCreationModal isOpen={showMultiColorModal} originalProduct={savedProduct as any} availableColors={datalistOptions.colors} onComplete={(products) => { setAllCreatedProducts(products); setShowMultiColorModal(false); setShowExportModal(true); }} onSkip={() => { setAllCreatedProducts(savedProduct ? [savedProduct as any] : []); setShowMultiColorModal(false); setShowExportModal(true); }} />
             <PostSaveExportModal isOpen={showExportModal} product={allCreatedProducts.length > 0 ? allCreatedProducts : savedProduct} onClose={() => router.push(backHref || '/')} />
             {dupeAlertModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
@@ -1671,14 +1671,15 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                                              initialReferences={formData.ref_code ? [`${formData.ref_code}|||${formData.commercial_measure || ''}`] : []}
                                                              initialMeasures={formData.commercial_measure ? [formData.commercial_measure] : []}
                                                              initialVersions={formData.version_code ? [formData.version_code] : []}
-                                                             onAssociationComplete={(asset) => {
-                                                                 setFormData(p => ({ 
-                                                                     ...p, 
-                                                                     isometric_path: asset.file_path || 'exists',
-                                                                     isometric_asset_id: asset.id,
-                                                                     isometric_from_different_version: false
-                                                                 }))
-                                                             }}
+                                                              onAssociationComplete={(asset) => {
+                                                                  if (!asset) return;
+                                                                  setFormData(p => ({ 
+                                                                      ...p, 
+                                                                      isometric_path: asset.file_path || 'exists',
+                                                                      isometric_asset_id: asset.id,
+                                                                      isometric_from_different_version: false
+                                                                  }))
+                                                              }}
                                                              trigger={
                                                                  <Button variant="outline" className={cn(
                                                                      "w-full lg:w-auto gap-2 h-10 shadow-sm border-2",

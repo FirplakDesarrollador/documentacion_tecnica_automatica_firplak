@@ -87,8 +87,8 @@ export function OrphanProductsDialog() {
       const data = await getOrphanReferencesAction()
       setOrphans(Array.isArray(data) ? data : [])
       setLastLoadedAt(new Date())
-    } catch (e: any) {
-      toast.error(e?.message || 'No se pudieron cargar los huérfanos')
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'No se pudieron cargar los huérfanos')
     } finally {
       setLoading(false)
     }
@@ -144,8 +144,8 @@ export function OrphanProductsDialog() {
       toast.success(`Inactivadas: ${res.updated}`)
       setSelectedOrphanIds({})
       await loadOrphans()
-    } catch (e: any) {
-      toast.error(e?.message || 'No se pudieron inactivar referencias')
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'No se pudieron inactivar referencias')
     } finally {
       setLoading(false)
     }
@@ -167,8 +167,8 @@ export function OrphanProductsDialog() {
       a.click()
       a.remove()
       URL.revokeObjectURL(url)
-    } catch (e: any) {
-      toast.error(e?.message || 'Error exportando Excel')
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Error exportando Excel')
     }
   }
 
@@ -179,16 +179,16 @@ export function OrphanProductsDialog() {
       const fd = new FormData()
       fd.append('file', file)
       const res = await fetch('/api/assets/orphans/parse', { method: 'POST', body: fd })
-      const j = (await res.json().catch(() => null)) as any
-      if (!res.ok || !j?.success) throw new Error(j?.error || 'No se pudo leer el Excel')
+      const j = (await res.json().catch(() => null)) as Record<string, unknown> | null
+      if (!res.ok || !j?.success) throw new Error(String(j?.error || 'No se pudo leer el Excel'))
       const parsed = j as ParsedExcel & { success: true }
       setExcel(parsed)
       if (Array.isArray(parsed.warnings) && parsed.warnings.length > 0) {
         toast.message(`Excel leído con warnings: ${parsed.warnings.length}`)
       } else toast.success('Excel leído correctamente.')
       setStep('associate')
-    } catch (e: any) {
-      toast.error(e?.message || 'No se pudo leer el Excel')
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo leer el Excel')
     } finally {
       setParsingExcel(false)
     }
@@ -202,7 +202,7 @@ export function OrphanProductsDialog() {
     setIgnoredAiCount(aiFiles)
     const m = new Map<string, File>()
     for (const f of list) {
-      const rel = (f as any).webkitRelativePath ? String((f as any).webkitRelativePath) : f.name
+      const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name
       m.set(rel, f)
     }
     setFileByRelativePath(m)
@@ -241,7 +241,7 @@ export function OrphanProductsDialog() {
     const previewItems: WizardItem[] = []
 
     for (const f of selectedFiles) {
-      const rel = (f as any).webkitRelativePath ? String((f as any).webkitRelativePath) : f.name
+      const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name
       const { base, ext } = stripExtension(f.name)
       const normBase = normalizeText(base)
       const sim = expectedToGroup[normBase]
@@ -414,8 +414,8 @@ export function OrphanProductsDialog() {
 
       toast.success('Asociación completada.')
       setOpen(false)
-    } catch (e: any) {
-      toast.error(e?.message || 'Apply failed')
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Apply failed')
     } finally {
       setIsApplying(false)
       setProgress(null)

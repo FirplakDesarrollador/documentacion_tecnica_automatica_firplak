@@ -101,7 +101,7 @@ async function exportOneProduct(
     const translationResult = await translateProductToEnglish(product as any, productType, engineResult.activeVariableIds)
     const final_name_en = translationResult.translatedName || product.final_name_en || ''
     
-    const zoneEn = await resolveZoneHomeEnAction(product.zone_home)
+    const zoneEn = await resolveZoneHomeEnAction(product.zone_home as string | null | undefined)
     
     // Crear el producto actualizado con los nombres calculados en caliente
     const updatedProduct = { 
@@ -313,7 +313,7 @@ export function BulkExportPanel({
                     exportBrandScope,
                     exportPrivateLabelClientName
                 )
-                exportItems = allProducts.map(p => ({ product: p, status: 'pending' as ExportStatus }))
+                exportItems = allProducts.map(p => ({ product: p as unknown as GenerateProduct, status: 'pending' as ExportStatus }))
                 setItems(exportItems)
             } catch (err: any) {
                 toast.error('Error al cargar todos los productos: ' + (err?.message || 'Error desconocido'))

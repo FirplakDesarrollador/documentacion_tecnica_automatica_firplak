@@ -9,7 +9,8 @@ export default async function ConfigGlossaryPage() {
     <div className="max-w-7xl mx-auto py-8">
       <GlossaryClient
         initialData={glossary}
-        initialCategories={categories.map((c: { category: string }) => c.category)}
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        initialCategories={(categories as any[]).map((c: { category: string }) => c.category)}
       />
     </div>
   );

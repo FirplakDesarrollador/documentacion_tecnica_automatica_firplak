@@ -1,5 +1,4 @@
 import { dbQuery } from '@/lib/supabase'
-import { getFamilyFilters, getReferenceFilters } from '@/lib/data/filters'
 import { loadAllRulesForNamingType } from '@/lib/engine/namingComponents'
 import { PrintClient } from '@/components/print/PrintClient'
 import { Printer } from 'lucide-react'
@@ -7,9 +6,6 @@ import { Printer } from 'lucide-react'
 export const dynamic = 'force-dynamic'
 
 export default async function PrintPage() {
-    const families = await getFamilyFilters()
-    const references = await getReferenceFilters([])
-
     const templates = await dbQuery(
         `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json, export_formats, export_filename_format, data_source, template_font_family, brand_scope, private_label_client_name
          FROM public.plantillas_doc_tec WHERE active = true ORDER BY created_at ASC`
@@ -41,8 +37,6 @@ export default async function PrintPage() {
             <PrintClient
                 templates={templates}
                 rules={rules}
-                families={families}
-                references={references}
             />
         </div>
     )

@@ -55,10 +55,26 @@ export type IsometricNormalizationGroup = {
     totalReferences: number
 }
 
+interface ProductRow {
+    id: string
+    reference_code: string
+    product_name: string
+    family_code: string
+    designation: string
+    commercial_measure: string
+    special_label: string | null
+    ref_attrs: { accessory_text?: string } | null
+    sku_complete: string
+    final_complete_name_es: string | null
+    isometric_asset_id?: string
+    isometric_path?: string
+    reference_id?: string
+}
+
 /**
  * Compares two products to determine their compatibility level for reusing an isometric.
  */
-function calculateMatchLevel(missing: any, existing: any): IsometricSuggestion['matchLevel'] | null {
+function calculateMatchLevel(missing: ProductRow, existing: ProductRow): IsometricSuggestion['matchLevel'] | null {
     // Basic requirements: Family, Designation, Measure, Name MUST match
     if (
         missing.family_code !== existing.family_code ||
@@ -90,6 +106,7 @@ function calculateMatchLevel(missing: any, existing: any): IsometricSuggestion['
  */
 export async function getIsometricSuggestionsAction(): Promise<IsometricSuggestion[]> {
     // 1. Get products missing isometrics
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const missingRows = await dbQuery(`
         SELECT 
             id, reference_code, product_name, family_code, designation, 
@@ -99,9 +116,10 @@ export async function getIsometricSuggestionsAction(): Promise<IsometricSuggesti
         WHERE (status IS NULL OR status <> 'INACTIVO')
           AND COALESCE(effective_version_attrs->>'isometric_path','') = ''
           AND (isometric_path IS NULL OR isometric_path = '')
-    `) || []
+    `) as any[] || []
 
     // 2. Get products that HAVE isometrics
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const existingRows = await dbQuery(`
         SELECT 
             id, reference_code, product_name, family_code, designation, 
@@ -111,13 +129,13 @@ export async function getIsometricSuggestionsAction(): Promise<IsometricSuggesti
         FROM public.v_ui_generate_list
         WHERE (status IS NULL OR status <> 'INACTIVO')
           AND (isometric_path IS NOT NULL AND isometric_path <> '')
-    `) || []
+    `) as any[] || []
 
     const suggestions: IsometricSuggestion[] = []
 
     // 3. For each missing, look for the best existing match
     for (const m of missingRows) {
-        let bestMatch: any = null
+        let bestMatch: ProductRow | null = null
         let bestLevel: IsometricSuggestion['matchLevel'] | null = null
 
         for (const e of existingRows) {
@@ -141,8 +159,8 @@ export async function getIsometricSuggestionsAction(): Promise<IsometricSuggesti
                 missingReferenceId: m.id,
                 missingCode: m.sku_complete,
                 missingName: m.final_complete_name_es || m.product_name || 'Sin nombre',
-                suggestedAssetId: bestMatch.isometric_asset_id,
-                suggestedPath: bestMatch.isometric_path,
+                suggestedAssetId: bestMatch.isometric_asset_id || '',
+                suggestedPath: bestMatch.isometric_path || '',
                 suggestedSourceName: bestMatch.final_complete_name_es || bestMatch.product_name,
                 suggestedSourceCode: bestMatch.sku_complete,
                 matchLevel: bestLevel
@@ -166,12 +184,13 @@ export async function applySmartAssociationsAction(associations: {
     // Since we want to update the REFERENCE level (per user request), 
     // we first need to find the reference_id for each SKU.
     const skuIds = associations.map(a => `'${a.skuId}'`).join(',')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mapping = await dbQuery(`
         SELECT s.id as sku_id, v.reference_id
         FROM public.product_skus s
         JOIN public.product_versions v ON s.version_id = v.id
         WHERE s.id IN (${skuIds})
-    `) || []
+    `) as any[] || []
 
     const refUpdates = new Map<string, { assetId: string, path: string }>()
     for (const m of mapping) {
@@ -204,6 +223,7 @@ export async function applySmartAssociationsAction(associations: {
  */
 export async function getIsometricNormalizationGroupsAction(): Promise<IsometricNormalizationGroup[]> {
     // 1. Find the groups based on ALL core attributes including special_label
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const groups = await dbQuery(`
         SELECT 
             r.family_code, f.family_name, r.product_name, r.designation, r.commercial_measure, 
@@ -217,12 +237,13 @@ export async function getIsometricNormalizationGroupsAction(): Promise<Isometric
             r.family_code, f.family_name, r.product_name, r.designation, r.commercial_measure, 
             COALESCE(r.ref_attrs->>'accessory_text', ''), COALESCE(r.special_label, '')
         HAVING COUNT(DISTINCT r.isometric_asset_id) > 1
-    `) || []
+    `) as any[] || []
 
     const result: IsometricNormalizationGroup[] = []
 
     for (const g of groups) {
         // 2. Fetch references for this group to get details, including the final constructed name
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const refs = await dbQuery(`
             SELECT 
                 r.id as reference_id, r.isometric_asset_id, r.isometric_path,
@@ -238,7 +259,7 @@ export async function getIsometricNormalizationGroupsAction(): Promise<Isometric
               AND COALESCE(r.ref_attrs->>'accessory_text', '') = '${g.accessory_text.replace(/'/g, "''")}'
               AND COALESCE(r.special_label, '') = '${g.special_label.replace(/'/g, "''")}'
               AND s.id IS NOT NULL
-        `) || []
+        `) as any[] || []
 
         // 3. Map to options (unique assets in this group)
         const assetsMap = new Map<string, { path: string, references: { sku: string, name: string }[] }>()
@@ -281,7 +302,7 @@ export async function getIsometricNormalizationGroupsAction(): Promise<Isometric
                 specialLabel: g.special_label
             },
             options,
-            totalReferences: new Set(refs.map((r: any) => r.reference_id)).size
+            totalReferences: new Set((refs as any[]).map((r: { reference_id: string }) => r.reference_id)).size
         })
     }
 
@@ -303,6 +324,7 @@ export async function applyIsometricNormalizationAction(
     const [familyCode, name, designation, measure, accessory, specialLabel] = parts
 
     // 2. Identify all references in this group
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const refs = await dbQuery(`
         SELECT id FROM public.product_references
         WHERE family_code = '${familyCode}'
@@ -311,9 +333,9 @@ export async function applyIsometricNormalizationAction(
           AND commercial_measure = '${measure.replace(/'/g, "''")}'
           AND COALESCE(ref_attrs->>'accessory_text', '') = '${accessory.replace(/'/g, "''")}'
           AND COALESCE(special_label, '') = '${specialLabel.replace(/'/g, "''")}'
-    `) || []
+    `) as any[] || []
 
-    const refIds = refs.map((r: any) => r.id)
+    const refIds = refs.map((r: { id: string }) => r.id)
     if (refIds.length === 0) return { success: false, message: 'No references found' }
 
     // 3. Update all references to the master asset
@@ -332,16 +354,18 @@ export async function applyIsometricNormalizationAction(
 
     for (const assetId of assetsToCheck) {
         // Verify if the asset is still used by ANY other reference outside this group
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const usage = await dbQuery(`
             SELECT count(*) as count FROM public.product_references 
             WHERE isometric_asset_id = '${assetId}'
-        `)
+        `) as any[]
         
         if (usage && usage[0] && parseInt(usage[0].count) === 0) {
             console.log(`Asset ${assetId} is now orphaned. Deleting...`)
             
             // Get path for storage deletion
-            const assetData = await dbQuery(`SELECT path FROM public.assets WHERE id = '${assetId}'`)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const assetData = await dbQuery(`SELECT path FROM public.assets WHERE id = '${assetId}'`) as any[]
             if (assetData && assetData[0]) {
                 const storagePath = assetData[0].path
                 // Delete from storage (bucket: assets)

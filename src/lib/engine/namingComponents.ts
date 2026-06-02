@@ -31,7 +31,28 @@ export function normalizeNamingProductType(value: string) {
     return String(value || '').trim().toUpperCase()
 }
 
-function extractComponentKey(rule: any, index: number) {
+interface LegacyRule {
+    id?: string
+    component_key?: string
+    action_payload?: string
+    condition_expression?: string
+    priority?: number
+}
+
+interface EnConfigItem {
+    variable_id: string
+    order_index: number
+    behavior_en: string
+    emit: boolean
+    behavior: string
+    drop_if_resolved: boolean
+    resolved_by: string | null
+    fallback_strategy: string
+    group_key: string | null
+    notes: null
+}
+
+function extractComponentKey(rule: LegacyRule, index: number) {
     const explicit = String(rule.component_key || '').trim()
     if (explicit) return explicit
 
@@ -44,7 +65,7 @@ function extractComponentKey(rule: any, index: number) {
     return `static_${index}`
 }
 
-function behaviorEnFromLegacyConfig(cfg: any): 'preserve' | 'translate' | 'translate_if_exists' | 'resolved_type' {
+function behaviorEnFromLegacyConfig(cfg: { behavior_en?: string; variable_id?: string; behavior?: string; fallback_strategy?: string } | null | undefined): 'preserve' | 'translate' | 'translate_if_exists' | 'resolved_type' {
     if (!cfg) return 'preserve'
     if (cfg.behavior_en === 'translate' || cfg.behavior_en === 'translate_if_exists' || cfg.behavior_en === 'preserve' || cfg.behavior_en === 'resolved_type') return cfg.behavior_en
     if (cfg.variable_id === 'resolved_type' || cfg.behavior === 'classify_and_resolve') return 'resolved_type'
@@ -101,7 +122,7 @@ export function componentsToEnConfig(components: NamingComponent[]) {
 }
 
 export function componentsToTranslatorConfig(components: NamingComponent[]) {
-    const config: Record<string, any> = {}
+    const config: Record<string, EnConfigItem> = {}
     for (const item of componentsToEnConfig(components)) {
         config[item.variable_id] = item
     }
@@ -111,11 +132,11 @@ export function componentsToTranslatorConfig(components: NamingComponent[]) {
 export function componentsFromRulesAndEnConfig(
     productType: string,
     namingType: string,
-    rules: any[],
-    enConfig: any[]
+    rules: LegacyRule[],
+    enConfig: EnConfigItem[]
 ): NamingComponent[] {
     const normalizedType = normalizeNamingProductType(productType)
-    const enByVariable = new Map<string, any>()
+    const enByVariable = new Map<string, EnConfigItem>()
     for (const cfg of enConfig || []) {
         if (cfg?.variable_id) enByVariable.set(String(cfg.variable_id), cfg)
     }

@@ -2,6 +2,7 @@
 
 import { dbQuery } from '@/lib/supabase'
 import { computeNameWithNamingComponents } from '@/lib/engine/namingComponentsEngine'
+import type { ProductPayload } from '@/lib/engine/translator'
 
 /**
  * Escanea el catálogo en busca de términos faltantes en las traducciones
@@ -31,9 +32,9 @@ export async function scanMissingGlossaryTermsAction(): Promise<{ success: boole
         for (const product of products) {
             try {
                 const results = await Promise.all([
-                    computeNameWithNamingComponents(product as any, 'final_base_name'),
-                    computeNameWithNamingComponents(product as any, 'final_complete_name'),
-                    computeNameWithNamingComponents(product as any, 'sap_description_recommended'),
+                    computeNameWithNamingComponents(product as ProductPayload, 'final_base_name'),
+                    computeNameWithNamingComponents(product as ProductPayload, 'final_complete_name'),
+                    computeNameWithNamingComponents(product as ProductPayload, 'sap_description_recommended'),
                 ])
                 const missingTerms = [...new Set(results.flatMap(result => result.missingTerms))]
                 if (missingTerms.length > 0) {
@@ -51,8 +52,9 @@ export async function scanMissingGlossaryTermsAction(): Promise<{ success: boole
             .sort((a, b) => b.count - a.count)
 
         return { success: true, missingTerms: missingTermsArray }
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("Scan Missing Terms Error:", error)
-        return { success: false, error: error.message || 'Error al escanear conflictos' }
+        const errorMessage = error instanceof Error ? error.message : 'Error al escanear conflictos'
+        return { success: false, error: errorMessage }
     }
 }

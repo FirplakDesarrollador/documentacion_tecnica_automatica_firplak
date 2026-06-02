@@ -275,13 +275,14 @@ async function mapWithConcurrency<T, R>(items: T[], concurrency: number, fn: (it
 export async function getPendingSummary(): Promise<PendingSummary> {
     const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
 
-    const rows =
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows: any[] =
         (await dbQuery(`
             SELECT *
             FROM public.v_ui_generate_list
             WHERE COALESCE(is_exportable, true) = true
             ORDER BY sku_complete ASC
-        `)) || []
+        `)) as any[] || []
 
     const products = rows.map((row: any) => mapRowToComposedProduct(row))
 
@@ -393,11 +394,12 @@ export async function syncValidationStatus(): Promise<{ updated: number }> {
     // Or better, iterate through sweep results
     
     // Get all product IDs to handle 'ready' state
-    const allSkus = await dbQuery(`
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allSkus: any[] = await dbQuery(`
         SELECT id, version_id
         FROM public.v_ui_generate_list
         WHERE COALESCE(is_exportable, true) = true
-    `) || []
+    `) as any[] || []
     
     // Create a map of exceptions for fast lookup
     const pendingMap = new Map(sweep.details.map(d => [d.productId, d.severity]))

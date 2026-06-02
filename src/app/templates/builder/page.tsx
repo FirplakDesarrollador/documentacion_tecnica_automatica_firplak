@@ -32,10 +32,11 @@ export default async function TemplateBuilderPage({
     const isSpecificDataset = UUID_RE.test(dataSource)
     const isGenericDatasets = dataSource === 'custom_datasets'
 
-    const parseSchemaColumns = (raw: any, codeField?: string | null) => {
-        if (raw && typeof raw === 'object' && Array.isArray((raw as any).columns)) {
-            return (raw as any).columns
-                .map((c: any) => ({
+    const parseSchemaColumns = (raw: unknown, codeField?: string | null) => {
+        if (raw && typeof raw === 'object' && Array.isArray((raw as Record<string, unknown>).columns)) {
+            const columns = (raw as Record<string, unknown>).columns as Record<string, unknown>[]
+            return columns
+                .map((c: Record<string, unknown>) => ({
                     key: String(c?.key ?? c?.original ?? ''),
                     label: String(c?.label ?? c?.key ?? c?.original ?? '').replace(/_/g, ' '),
                     original: String(c?.original ?? c?.key ?? ''),
@@ -43,15 +44,17 @@ export default async function TemplateBuilderPage({
                         Boolean(c?.is_identifier) ||
                         (codeField ? String(c?.original ?? '') === codeField : false)
                 }))
-                .filter((c: any) => c.key && c.original)
+                .filter((c) => c.key && c.original)
         }
         if (Array.isArray(raw)) {
-            return raw.map((c: any) => ({
-                key: String(c?.key ?? c?.original ?? ''),
-                label: String(c?.label ?? c?.key ?? c?.original ?? '').replace(/_/g, ' '),
-                original: String(c?.original ?? c?.key ?? ''),
-                is_identifier: Boolean(c?.is_identifier),
-            })).filter((c: any) => c.key && c.original)
+            return (raw as Record<string, unknown>[])
+                .map((c) => ({
+                    key: String(c?.key ?? c?.original ?? ''),
+                    label: String(c?.label ?? c?.key ?? c?.original ?? '').replace(/_/g, ' '),
+                    original: String(c?.original ?? c?.key ?? ''),
+                    is_identifier: Boolean(c?.is_identifier),
+                }))
+                .filter((c) => c.key && c.original)
         }
         return []
     }

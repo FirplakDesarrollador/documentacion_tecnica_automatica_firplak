@@ -112,7 +112,7 @@ export function ConfirmOverwriteModal({
               </TableHeader>
               <TableBody>
                 {diffs.map((key) => {
-                  const before = initialData[key] === null || initialData[key] === undefined || initialData[key] === '' ? 'VACÍO' : String(initialData[key])
+                  const before = initialData![key] === null || initialData![key] === undefined || initialData![key] === '' ? 'VACÍO' : String(initialData![key])
                   const after = currentData[key] === null || currentData[key] === undefined || currentData[key] === '' ? 'VACÍO' : String(currentData[key])
                   
                   return (

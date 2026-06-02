@@ -16,7 +16,7 @@ export interface ValidationIssues {
  * and ensures those variables are not empty after rule evaluations.
  */
 export function validateProductReadiness(
-    product: Partial<Product> & { effective_status?: string },
+    product: Partial<Product> & { effective_status?: string; is_exportable?: boolean },
     rules: Rule[],
     templates: TemplateElement[]
 ): ValidationIssues {

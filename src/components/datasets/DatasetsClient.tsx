@@ -46,8 +46,8 @@ export function DatasetsClient({ initialDatasets }: DatasetsClientProps) {
         setConfigDatasetId(ds.id)
     }
 
-    const handleIngestDone = (updated: CustomDataset[]) => {
-        setDatasets(updated)
+    const handleIngestDone = (updated: Record<string, unknown>[]) => {
+        setDatasets(updated as CustomDataset[])
         setShowIngestor(false)
     }
 
@@ -88,17 +88,21 @@ export function DatasetsClient({ initialDatasets }: DatasetsClientProps) {
                                     <TableCell>
                                         <div className="flex flex-wrap gap-1 max-w-sm">
                                             {(() => {
-                                                const schema = ds.schema_json as any || {}
+                                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                                const schema = (ds.schema_json || {}) as any
                                                 // Nueva estructura enriquecida { fieldMap, selectedColumns, columns: [...] }
                                                 if (schema.columns && Array.isArray(schema.columns)) {
                                                     const cols = schema.columns.slice(0, 5)
                                                     return (
                                                         <>
-                                                            {cols.map((col: any) => (
-                                                                <Badge key={col.key || col.original} className="text-[10px] bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-50 font-mono">
-                                                                    {col.label || col.key || col.original}
+                                                            {cols.map((col: unknown) => {
+                                                                const c = col as { key?: string; original?: string; label?: string }
+                                                                return (
+                                                                <Badge key={c.key || c.original} className="text-[10px] bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-50 font-mono">
+                                                                    {c.label || c.key || c.original}
                                                                 </Badge>
-                                                            ))}
+                                                                )
+                                                            })}
                                                             {schema.columns.length > 5 && (
                                                                 <Badge className="text-[10px] bg-slate-100 text-slate-500 ring-1 ring-slate-200 hover:bg-slate-100">
                                                                     +{schema.columns.length - 5} más
@@ -131,11 +135,14 @@ export function DatasetsClient({ initialDatasets }: DatasetsClientProps) {
                                                     const fields = schema.slice(0, 4)
                                                     return (
                                                         <>
-                                                            {fields.map((f: any) => (
-                                                                <Badge key={f.key || f} className="text-[10px] bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-50 font-mono">
-                                                                    {f.label || f}
+                                                            {fields.map((f) => {
+                                                                const field = f as { key?: string; label?: string }
+                                                                return (
+                                                                <Badge key={field.key || String(field)} className="text-[10px] bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-50 font-mono">
+                                                                    {field.label || String(field)}
                                                                 </Badge>
-                                                            ))}
+                                                                )
+                                                            })}
                                                             {schema.length > 4 && (
                                                                 <Badge className="text-[10px] bg-slate-100 text-slate-500 ring-1 ring-slate-200 hover:bg-slate-100">
                                                                     +{schema.length - 4} más
@@ -205,7 +212,7 @@ export function DatasetsClient({ initialDatasets }: DatasetsClientProps) {
                     onSaved={(updated) => {
                         setDatasets(prev => prev.map(d => (
                             d.id === updated.id
-                                ? { ...d, name: updated.name, schema_json: updated.schema_json as any }
+                                ? { ...d, name: updated.name, schema_json: updated.schema_json }
                                 : d
                         )))
                     }}

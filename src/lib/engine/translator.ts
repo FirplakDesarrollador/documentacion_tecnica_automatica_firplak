@@ -112,7 +112,7 @@ async function loadGlossary(force: boolean = false): Promise<Record<string, Glos
         .order('priority', { ascending: false })
     if (error) throw new Error('Glossary load error: ' + error.message)
     const g: Record<string, GlossaryEntry> = {}
-    data?.forEach((r: any) => { 
+    data?.forEach((r: { term_es: string; term_en: string; category?: string | null }) => { 
         g[r.term_es.toUpperCase().trim()] = { 
             en: r.term_en.toUpperCase().trim(),
             category: (r.category || 'TECHNICAL_TERM').toUpperCase()
@@ -141,7 +141,7 @@ async function loadConfig(targetEntity: string): Promise<Record<string, FieldCon
     if (error) throw new Error('Config load error: ' + error.message)
 
     const cfg: Record<string, FieldConfig> = {}
-    data?.forEach((r: any) => {
+    data?.forEach((r: { component_key: string; behavior_en?: string | null; order_en?: number | null }) => {
         const variableId = String(r.component_key || '').trim()
         if (!variableId) return
 
@@ -172,7 +172,7 @@ async function loadConfig(targetEntity: string): Promise<Record<string, FieldCon
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function normalizeTechnicalText(val: any): string {
+function normalizeTechnicalText(val: unknown): string {
     if (val === undefined || val === null) return ''
     const upper = String(val).toUpperCase().trim()
     if (!upper) return ''
@@ -196,7 +196,7 @@ function normalizeTechnicalText(val: any): string {
 
 const PLACEHOLDERS = ['NA', 'N/A', 'NULL', 'NONE', 'VACÍO', '-', '.', 'UNDEFINED']
 
-function isPlaceholder(val: any): boolean {
+function isPlaceholder(val: unknown): boolean {
     if (val === undefined || val === null) return true
     if (typeof val === 'boolean') return false // Booleans are not placeholders
     const str = String(val).toUpperCase().trim()
@@ -610,7 +610,7 @@ export async function translateProductToEnglish(
     const slots: Slot[] = []
     
     // ── SlotTracker (Smarter Deduplication) ──────────────────────────────────
-    const trackAndAdd = (varId: string, val: any, order: number) => {
+    const trackAndAdd = (varId: string, val: string, order: number) => {
         if (!val || isPlaceholder(val)) return
         const cleanVal = String(val).trim()
         
@@ -749,10 +749,10 @@ export async function translateProductToEnglish(
 
 export async function translateSpanishToEnglish(
     nameEs: string,
-    productContext?: any
+    productContext?: unknown
 ): Promise<Omit<TranslationResult, 'warnings'>> {
     // If a full product context is provided, use the new engine
-    if (productContext && productContext.product_type) {
+    if (productContext && typeof productContext === 'object' && 'product_type' in productContext) {
         const result = await translateProductToEnglish(productContext as ProductPayload)
         return {
             translatedName: result.translatedName,

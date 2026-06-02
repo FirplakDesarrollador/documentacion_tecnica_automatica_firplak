@@ -1,17 +1,17 @@
 export type ExportBrowserMode = 'local' | 'vercel'
 export interface ExportBrowser {
     newPage(): Promise<{
-        setViewport: (...args: any[]) => Promise<void>
-        setExtraHTTPHeaders: (...args: any[]) => Promise<void>
-        evaluateOnNewDocument: (...args: any[]) => Promise<void>
-        evaluate: (...args: any[]) => Promise<any>
-        goto: (...args: any[]) => Promise<unknown>
+        setViewport: (...args: unknown[]) => Promise<void>
+        setExtraHTTPHeaders: (...args: unknown[]) => Promise<void>
+        evaluateOnNewDocument: (...args: unknown[]) => Promise<void>
+        evaluate: (...args: unknown[]) => Promise<unknown>
+        goto: (...args: unknown[]) => Promise<unknown>
         url: () => string
         title: () => Promise<string>
-        waitForFunction: (...args: any[]) => Promise<unknown>
-        evaluateHandle: (...args: any[]) => Promise<unknown>
-        pdf: (...args: any[]) => Promise<Uint8Array>
-        screenshot: (...args: any[]) => Promise<Uint8Array>
+        waitForFunction: (...args: unknown[]) => Promise<unknown>
+        evaluateHandle: (...args: unknown[]) => Promise<unknown>
+        pdf: (...args: unknown[]) => Promise<Uint8Array>
+        screenshot: (...args: unknown[]) => Promise<Uint8Array>
     }>
     close(): Promise<void>
 }

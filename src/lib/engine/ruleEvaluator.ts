@@ -130,7 +130,8 @@ export function evaluateProductRules(product: Product, rules: Rule[]): RuleEngin
             else if (isNum) value = +value;
             
             // Apply modification to product working copy
-            (result.transformedProduct as Record<string, string | boolean | number>)[field] = value;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (result.transformedProduct as any)[field] = value;
             
             traceRecord.actionTaken = 'set_attribute'
             traceRecord.payload = `${field}:${value}`

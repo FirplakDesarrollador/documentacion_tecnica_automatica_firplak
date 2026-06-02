@@ -139,7 +139,8 @@ export default function ClientsClient({
       const nameChanged = originalName && originalName.toUpperCase() !== nextName.toUpperCase()
 
       if (nameChanged) {
-        const summary = await renameClientAndPropagateAction({ client_id: clientId, new_name: nextName })
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const summary = await renameClientAndPropagateAction({ client_id: clientId, new_name: nextName }) as any
         syncUpsertLocal({ id: clientId, name: summary?.new_name || nextName, logo_asset_id: editing.logo_asset_id })
         toast.success('Cliente renombrado y propagado correctamente.')
       }
@@ -353,8 +354,10 @@ export default function ClientsClient({
                       p
                         ? {
                             ...p,
-                            logo_asset_id: asset?.id ? String(asset.id) : p.logo_asset_id,
-                            logo_url: asset?.file_path ? String(asset.file_path) : p.logo_url,
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            logo_asset_id: (asset as any)?.id ? String((asset as any).id) : p.logo_asset_id,
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            logo_url: (asset as any)?.file_path ? String((asset as any).file_path) : p.logo_url,
                           }
                         : p
                     )

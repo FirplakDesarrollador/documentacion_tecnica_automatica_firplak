@@ -142,11 +142,18 @@ export function ValidationWarnings({ warnings, compact = false }: ValidationWarn
     )
 }
 
-export function hasIsometric(product: Record<string, any>): boolean {
+interface TemplateRequirement {
+    type?: string
+    dataField?: string
+    content?: string
+    required?: boolean
+}
+
+export function hasIsometric(product: Record<string, unknown>): boolean {
     return Boolean(product.isometric_asset_id || product.isometric_path)
 }
 
-export function getTemplateValidationIssues(product: Record<string, any>, requirements: any[]): TemplateValidationIssue[] {
+export function getTemplateValidationIssues(product: Record<string, unknown>, requirements: TemplateRequirement[]): TemplateValidationIssue[] {
     const issues: TemplateValidationIssue[] = []
 
     for (const req of requirements) {
@@ -196,13 +203,13 @@ export function getTemplateValidationIssues(product: Record<string, any>, requir
     )
 }
 
-export function getMissingFields(product: Record<string, any>, requirements: any[]): string[] {
+export function getMissingFields(product: Record<string, unknown>, requirements: TemplateRequirement[]): string[] {
     return getTemplateValidationIssues(product, requirements).map(issue => issue.field)
 }
 
-export function getTemplateRequiredFields(elementsJson: string): any[] {
+export function getTemplateRequiredFields(elementsJson: string): TemplateRequirement[] {
     try {
-        const elements: any[] = JSON.parse(elementsJson)
+        const elements: TemplateRequirement[] = JSON.parse(elementsJson)
         return elements.filter(el => el.required === true)
     } catch {
         return []
