@@ -212,6 +212,7 @@ function buildCreateProductV6Payload(
         Object.assign(versionAttrs, parsed._version_overrides);
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const payload: any = {
         reference: {
             reference_code: parsed.ref_code,
@@ -540,11 +541,11 @@ export async function translateProductsAction(ids?: string[], mode: 'missing' | 
                 : `Se tradujeron ${updatedCount} productos correctamente.`
         }
 
-    } catch (error: any) {
+    } catch (error) {
         console.error("Translation Action Error:", error)
         return { 
             success: false, 
-            message: `Error en el motor de traducción: ${error.message || 'Error desconocido'}` 
+            message: `Error en el motor de traducción: ${(error as Error).message || 'Error desconocido'}` 
         }
     }
 }
@@ -645,6 +646,7 @@ export async function checkProductExistsAction(code?: string, sapDesc?: string) 
 }
 
 export async function getClientsAction() {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let fromClients: any[] = []
     try {
         fromClients = await dbQuery(`SELECT id, name, logo_asset_id FROM public.clients ORDER BY name ASC`) || []
@@ -747,9 +749,9 @@ export async function saveGlossaryTermsAction(terms: { term_es: string, term_en:
         revalidatePath('/pending')
         revalidatePath('/')
         return { success: true, message: `Se guardaron ${terms.length} términos correctamente.` }
-    } catch (error: any) {
+    } catch (error) {
         console.error("Error saving glossary terms:", error)
-        return { success: false, message: `Error al guardar términos: ${error.message}` }
+        return { success: false, message: `Error al guardar términos: ${(error as Error).message}` }
     }
 }
 
@@ -761,8 +763,8 @@ export async function getDiagnosticInfoAction() {
     try {
         const res = await dbQuery(`SELECT count(*) as count FROM public.naming_components`);
         rulesCount = res?.[0]?.count || 0;
-    } catch (e: any) {
-        error = e.message;
+    } catch (e) {
+        error = (e as Error).message;
     }
     return { 
         hasToken, 
@@ -779,9 +781,9 @@ export async function executeMassImportAction(payload: any[]) {
         const query = `SELECT bulk_import_products('${JSON.stringify(payload).replace(/'/g, "''")}'::jsonb)`;
         const res = await dbQuery(query);
         return { success: true, data: res };
-    } catch (error: any) {
+    } catch (error) {
         console.error('Error in executeMassImportAction:', error);
-        return { success: false, error: error.message };
+        return { success: false, error: (error as Error).message };
     }
 }
 
@@ -883,8 +885,8 @@ export async function batchCreateColorVariantsAction(
                 product: { ...workingProduct, final_name_es, final_name_en, id: result?.sku_id }
             })
             
-        } catch (error: any) {
-            results.push({ color_code: color.code, color_name: color.name, sku: '', success: false, error: error.message })
+        } catch (error) {
+            results.push({ color_code: color.code, color_name: color.name, sku: '', success: false, error: (error as Error).message })
         }
     }
     

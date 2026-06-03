@@ -35,10 +35,15 @@ async function rasterizeImage(imagePath) {
     return { imgBuffer, widthPx, heightPx };
 }
 
-function packTsplBitmap(imgBuffer, widthPx, heightPx) {
+function normalizeColorMode(value) {
+    return value === 'inverted' ? 'inverted' : 'normal';
+}
+
+function packTsplBitmap(imgBuffer, widthPx, heightPx, colorMode = 'normal') {
     const bytesPerRow = Math.ceil(widthPx / 8);
     const packed = Buffer.alloc(bytesPerRow * heightPx, 0);
     const threshold = 128;
+    const isInverted = normalizeColorMode(colorMode) === 'inverted';
     let blackPixels = 0;
 
     for (let y = 0; y < heightPx; y++) {
@@ -52,7 +57,8 @@ function packTsplBitmap(imgBuffer, widthPx, heightPx) {
                 if (gray < threshold) blackPixels++;
 
                 // TSPL BITMAP mode used by this printer interprets 1 bits as white.
-                if (gray >= threshold) {
+                const shouldSetBit = isInverted ? gray < threshold : gray >= threshold;
+                if (shouldSetBit) {
                     byteVal |= (1 << (7 - bit));
                 }
             }
@@ -63,13 +69,14 @@ function packTsplBitmap(imgBuffer, widthPx, heightPx) {
     return { packed, bytesPerRow, blackPixels };
 }
 
-async function convertImageToTspl(imagePath, copies = 1) {
+async function convertImageToTspl(imagePath, copies = 1, options = {}) {
+    const colorMode = normalizeColorMode(options.colorMode);
     const { imgBuffer, widthPx, heightPx } = await rasterizeImage(imagePath);
-    const { packed, bytesPerRow, blackPixels } = packTsplBitmap(imgBuffer, widthPx, heightPx);
+    const { packed, bytesPerRow, blackPixels } = packTsplBitmap(imgBuffer, widthPx, heightPx, colorMode);
     const safeCopies = Math.max(1, parseInt(copies, 10) || 1);
     const blackPct = widthPx && heightPx ? (blackPixels / (widthPx * heightPx) * 100) : 0;
 
-    console.log(`[tspl] BITMAP final: ${widthPx}x${heightPx}, bytes/row=${bytesPerRow}, negro=${blackPct.toFixed(2)}%, copias=${safeCopies}`);
+    console.log(`[tspl] BITMAP final: ${widthPx}x${heightPx}, bytes/row=${bytesPerRow}, negro=${blackPct.toFixed(2)}%, copias=${safeCopies}, color=${colorMode}`);
     if (blackPct < 0.05) {
         throw new Error('La imagen generada está prácticamente en blanco. Revisa el render /api/print antes de imprimir.');
     }

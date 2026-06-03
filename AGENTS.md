@@ -40,7 +40,7 @@ Compact, repo-specific rules for future OpenCode sessions.
 - Keep intermediates in `.tmp/` or `artifacts/`; do not treat them as product source files.
 
 ## Hard constraints to preserve
-- Collaborative safety: do not edit/revert/rename files outside agreed scope, especially when unrelated diffs exist.
+- **Collaborative safety (CRITICAL):** Before reverting, checking out, or touching any file, ALWAYS run `git diff --name-only` first. If a file has unstaged changes from BEFORE this session, LEAVE IT ALONE — those belong to another chat session. Never use `git checkout --` on files you did not personally create or modify in THIS session. Prefer surgical edits (`edit` tool) over bulk git reverts.
 - Firplak DB rule: do not use legacy `cabinet_products` for business logic unless explicitly requested; prefer master catalog tables (`product_skus`, `product_versions`, `product_references`).
 - Secret hygiene: never hardcode keys/tokens; use `.env`.
 - For major milestones, suggest running `/archive-session` to sync learnings into KIs and `AI_README.md`.

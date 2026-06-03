@@ -61,8 +61,9 @@ app.post('/print', upload.single('file'), async (req, res) => {
     const filePath = req.file.path;
     const originalName = req.file.originalname;
     const copies = parseInt(req.body.copies, 10) || 1;
+    const colorMode = req.body.colorMode === 'inverted' ? 'inverted' : 'normal';
 
-    console.log(`[print] Recibido: ${originalName} (${copies} copias)`);
+    console.log(`[print] Recibido: ${originalName} (${copies} copias, color=${colorMode})`);
 
     try {
         const ext = path.extname(originalName).toLowerCase();
@@ -71,7 +72,7 @@ app.post('/print', upload.single('file'), async (req, res) => {
         }
 
         console.log(`[print] Convirtiendo imagen a TSPL...`);
-        const tspl = await convertImageToTspl(filePath, copies);
+        const tspl = await convertImageToTspl(filePath, copies, { colorMode });
         console.log(`[print] Enviando trabajo único TSPL con ${copies} copia(s)...`);
         const result = await printViaUsb(tspl);
 

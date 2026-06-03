@@ -35,6 +35,7 @@ import { resolveZoneHomeEnAction } from '@/app/products/actions'
 import type { ProductPayload } from '@/lib/engine/translator'
 import { PIXELS_PER_MM } from '@/lib/constants'
 import { getFilteredProducts } from '@/app/print/actions'
+import { defaultPrintSettings, normalizePrintColorMode, PRINT_SETTINGS_KEY } from '@/lib/printSettings'
 
 interface PrintClientProps {
     templates: TemplateOption[]
@@ -61,6 +62,18 @@ interface PrinterConfig {
 const defaultPrinterConfig: PrinterConfig = {
     agentUrl: 'http://localhost:3344',
     printerName: '3nStar LTT334',
+}
+
+function getSavedPrintColorMode() {
+    if (typeof window === 'undefined') return defaultPrintSettings.colorMode
+    const saved = window.localStorage.getItem(PRINT_SETTINGS_KEY)
+    if (!saved) return defaultPrintSettings.colorMode
+
+    try {
+        return normalizePrintColorMode(JSON.parse(saved)?.colorMode)
+    } catch {
+        return defaultPrintSettings.colorMode
+    }
 }
 
 export function PrintClient({ templates, rules }: PrintClientProps) {
@@ -251,6 +264,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
             const formData = new FormData()
             formData.append('file', new File([blob], `${product.code || 'etiqueta'}.jpg`, { type: 'image/jpeg' }))
             formData.append('copies', String(copies))
+            formData.append('colorMode', getSavedPrintColorMode())
 
             const agentResponse = await fetch(`${printerConfig.agentUrl}/print`, {
                 method: 'POST',

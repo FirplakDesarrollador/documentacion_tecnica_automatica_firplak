@@ -56,7 +56,10 @@ export async function dbQuery(sql: string, values?: (string | number | boolean |
         
         return (d || []) as Record<string, unknown>[]
     } catch (err: unknown) {
-        throw new Error(`DB Query Error: ${err instanceof Error ? err.message : String(err)}`)
+        const detail = err instanceof Error ? err.message
+            : typeof err === 'object' && err !== null ? JSON.stringify(err)
+            : String(err)
+        throw new Error(`DB Query Error: ${detail}`)
     }
 }
 

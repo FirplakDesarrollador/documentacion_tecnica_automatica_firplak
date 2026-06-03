@@ -205,6 +205,7 @@ export async function parseProductCode(
 
         // --- BÚSQUEDA JERÁRQUICA DE HISTORIAL (SMART LOOKUP V6.1) ---
         try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             let foundData: any = null;
             let source = 'parser';
 
