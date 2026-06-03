@@ -32,6 +32,8 @@ interface ViewProductRow {
     sap_description_original: string | null
     final_complete_name_es: string | null
     final_complete_name_en: string | null
+    sap_description_recommended_es?: string | null
+    sap_description_recommended_en?: string | null
     barcode_text: string | null
     barcode_path: string | null
     isometric_path: string | null
@@ -84,6 +86,8 @@ export interface ComposedProduct {
 
     // === Version-level ===
     version_label: string | null;
+    final_base_name_es: string | null;
+    final_base_name_en: string | null;
     final_name_es: string | null;
     final_name_en: string | null;
     validation_status: string;
@@ -92,6 +96,8 @@ export interface ComposedProduct {
     sap_description: string | null;
     final_complete_name_es: string | null;
     final_complete_name_en: string | null;
+    sap_description_recommended_es?: string | null;
+    sap_description_recommended_en?: string | null;
     barcode_text: string | null;
     barcode_path: string | null;
     status: string;
@@ -174,6 +180,8 @@ export function mapRowToComposedProduct(row: ViewProductRow, options: EffectiveC
         version_label: (effectiveAttrs.version_label !== undefined && effectiveAttrs.version_label !== null)
             ? effectiveAttrs.version_label
             : row.version_label,
+        final_base_name_es: row.final_base_name_es,
+        final_base_name_en: row.final_base_name_en,
         final_name_es: row.final_base_name_es,
         final_name_en: row.final_base_name_en,
         validation_status: row.validation_status || 'incomplete',
@@ -182,6 +190,8 @@ export function mapRowToComposedProduct(row: ViewProductRow, options: EffectiveC
         sap_description: row.sap_description_original,
         final_complete_name_es: row.final_complete_name_es,
         final_complete_name_en: row.final_complete_name_en,
+        sap_description_recommended_es: row.sap_description_recommended_es ?? null,
+        sap_description_recommended_en: row.sap_description_recommended_en ?? null,
         barcode_text: row.barcode_text,
         barcode_path: row.barcode_path,
         status: effectiveContext.sku_status,

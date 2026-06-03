@@ -393,13 +393,15 @@ export async function getNamingComponentsAction(productType?: string) {
     return rows as NamingComponent[]
 }
 
-export async function getNamingVariableCatalogAction(productType: string): Promise<NamingVariableField[]> {
-    const safeType = normalizeProductType(productType).replace(/'/g, "''")
+export async function getNamingVariableCatalogAction(productType?: string): Promise<NamingVariableField[]> {
+    const normalizedType = productType ? normalizeProductType(productType) : ''
+    const safeType = normalizedType.replace(/'/g, "''")
+    const familyFilter = safeType ? `WHERE upper(btrim(product_type)) = '${safeType}'` : ''
     const dynamicRows = await dbQuery(`
         WITH selected_families AS (
             SELECT family_code, ref_attrs_schema
             FROM public.families
-            WHERE upper(btrim(product_type)) = '${safeType}'
+            ${familyFilter}
         )
         SELECT DISTINCT key, source
         FROM (

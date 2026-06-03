@@ -1,74 +1,99 @@
 const sharp = require('sharp');
 
-async function convertJpgToZpl(jpgPath) {
-    const meta = await sharp(jpgPath).metadata();
+const DOTS_PER_MM = 8;
+const PRINTER_MAX_DOTS = 832;
+const GAP_MM = 3;
+
+async function rasterizeImage(imagePath) {
+    const meta = await sharp(imagePath).metadata();
     let widthPx = meta.width;
     let heightPx = meta.height;
-    console.log(`[zpl] Imagen recibida: ${widthPx}x${heightPx}`);
+    console.log(`[tspl] Imagen recibida: ${widthPx}x${heightPx}`);
 
-    // Thermal printer max width: 104mm (4") at 203 DPI = 832 dots
-    const PRINTER_MAX_DOTS = 832;
-
-    // If image is wider than printer AND wider than tall, rotate 90°
-    let needsRotate = false;
+    let image = sharp(imagePath);
     if (widthPx > PRINTER_MAX_DOTS && widthPx > heightPx) {
-        needsRotate = true;
-    }
-
-    let imgBuffer;
-    if (needsRotate) {
-        imgBuffer = await sharp(jpgPath).rotate(90).grayscale().raw().toBuffer();
+        image = image.rotate(90);
         [widthPx, heightPx] = [heightPx, widthPx];
-        console.log(`[zpl] Rotada a ${widthPx}x${heightPx}`);
-    } else {
-        imgBuffer = await sharp(jpgPath).grayscale().raw().toBuffer();
+        console.log(`[tspl] Rotada a ${widthPx}x${heightPx}`);
     }
 
-    // Scale down if still wider than printer
+    let imgBuffer = await image.grayscale().raw().toBuffer();
     const printWidthDots = Math.min(widthPx, PRINTER_MAX_DOTS);
     const scale = printWidthDots / widthPx;
 
     if (scale < 1) {
-        const h = Math.round(heightPx * scale);
-        const resized = await sharp(imgBuffer, { raw: { width: widthPx, height: heightPx, channels: 1 } })
-            .resize(printWidthDots, h, { fit: 'fill' })
+        const resizedHeight = Math.round(heightPx * scale);
+        imgBuffer = await sharp(imgBuffer, { raw: { width: widthPx, height: heightPx, channels: 1 } })
+            .resize(printWidthDots, resizedHeight, { fit: 'fill' })
             .raw()
             .toBuffer();
-        imgBuffer = resized;
         widthPx = printWidthDots;
-        heightPx = h;
-        console.log(`[zpl] Redimensionada a ${widthPx}x${heightPx}`);
+        heightPx = resizedHeight;
+        console.log(`[tspl] Redimensionada a ${widthPx}x${heightPx}`);
     }
 
-    // Pack 8 pixels per byte, MSB = leftmost pixel
+    return { imgBuffer, widthPx, heightPx };
+}
+
+function packTsplBitmap(imgBuffer, widthPx, heightPx) {
     const bytesPerRow = Math.ceil(widthPx / 8);
+    const packed = Buffer.alloc(bytesPerRow * heightPx, 0);
     const threshold = 128;
-    let hex = '';
     let blackPixels = 0;
 
     for (let y = 0; y < heightPx; y++) {
         for (let x = 0; x < widthPx; x += 8) {
             let byteVal = 0;
-            for (let b = 0; b < 8; b++) {
-                if (x + b < widthPx) {
-                    const gray = imgBuffer[y * widthPx + (x + b)];
-                    if (gray < threshold) {
-                        blackPixels++;
-                        byteVal |= (1 << (7 - b));
-                    }
+            for (let bit = 0; bit < 8; bit++) {
+                const pixelX = x + bit;
+                if (pixelX >= widthPx) continue;
+
+                const gray = imgBuffer[y * widthPx + pixelX];
+                if (gray < threshold) blackPixels++;
+
+                // TSPL BITMAP mode used by this printer interprets 1 bits as white.
+                if (gray >= threshold) {
+                    byteVal |= (1 << (7 - bit));
                 }
             }
-            hex += byteVal.toString(16).padStart(2, '0').toUpperCase();
+            packed[y * bytesPerRow + Math.floor(x / 8)] = byteVal;
         }
     }
 
-    const totalBytes = bytesPerRow * heightPx;
+    return { packed, bytesPerRow, blackPixels };
+}
+
+async function convertImageToTspl(imagePath, copies = 1) {
+    const { imgBuffer, widthPx, heightPx } = await rasterizeImage(imagePath);
+    const { packed, bytesPerRow, blackPixels } = packTsplBitmap(imgBuffer, widthPx, heightPx);
+    const safeCopies = Math.max(1, parseInt(copies, 10) || 1);
     const blackPct = widthPx && heightPx ? (blackPixels / (widthPx * heightPx) * 100) : 0;
-    console.log(`[zpl] GFA final: ${widthPx}x${heightPx}, negro=${blackPct.toFixed(2)}%`);
+
+    console.log(`[tspl] BITMAP final: ${widthPx}x${heightPx}, bytes/row=${bytesPerRow}, negro=${blackPct.toFixed(2)}%, copias=${safeCopies}`);
     if (blackPct < 0.05) {
         throw new Error('La imagen generada está prácticamente en blanco. Revisa el render /api/print antes de imprimir.');
     }
-    return `^XA^PW${printWidthDots}^LL${heightPx}^FO0,0^GFA,${totalBytes},${totalBytes},${bytesPerRow},${hex}^FS^XZ`;
+
+    const widthMm = (widthPx / DOTS_PER_MM).toFixed(1);
+    const heightMm = (heightPx / DOTS_PER_MM).toFixed(1);
+    const header = Buffer.from(
+        `<xpml><page quantity='0' pitch='${heightMm} mm'></xpml>` +
+        `SIZE ${widthMm} mm, ${heightMm} mm\r\n` +
+        `GAP ${GAP_MM} mm, 0 mm\r\n` +
+        `DIRECTION 0,0\r\n` +
+        `REFERENCE 0,0\r\n` +
+        `OFFSET 0 mm\r\n` +
+        `SET PEEL OFF\r\n` +
+        `SET CUTTER OFF\r\n` +
+        `<xpml></page></xpml><xpml><page quantity='${safeCopies}' pitch='${heightMm} mm'></xpml>` +
+        `SET TEAR ON\r\n` +
+        `CLS\r\n` +
+        `BITMAP 0,0,${bytesPerRow},${heightPx},1,`,
+        'ascii'
+    );
+    const footer = Buffer.from(`\r\nPRINT 1,${safeCopies}\r\n<xpml></page></xpml>`, 'ascii');
+
+    return Buffer.concat([header, packed, footer]);
 }
 
-module.exports = { convertJpgToZpl };
+module.exports = { convertImageToTspl };

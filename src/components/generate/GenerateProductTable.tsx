@@ -44,7 +44,7 @@ interface GenerateProductTableProps {
     missingFieldsByProduct?: Record<string, string[]>
     onSelectionChange: (selected: string[]) => void
     selectedIds: string[]
-    templateId: string | null
+    templateId?: string | null
     isExternalSource?: boolean
     hideActions?: boolean
 }

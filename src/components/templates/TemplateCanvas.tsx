@@ -16,6 +16,13 @@ import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { PIXELS_PER_MM } from '@/lib/constants'
 import { hydrateText, getVariableValue } from '@/lib/export/exportUtils'
 import { resolveZoneHomeEnAction, getClientsAction } from '@/app/products/actions'
+import { getNamingVariableCatalogAction } from '@/app/rules/actions'
+import {
+    BASE_NAMING_VARIABLE_FIELDS,
+    NAMING_VARIABLE_SOURCE_LABELS,
+    type NamingVariableField,
+    type NamingVariableSource,
+} from '@/lib/engine/namingVariableCatalog'
 import { getTemplateFontCssStack, getTemplateFontLabel, normalizeTemplateFontFamily, TEMPLATE_FONT_OPTIONS, type TemplateFontFamily } from '@/lib/templates/templateTypography'
 import Image from 'next/image'
 import BarcodeElement from '@/components/export/BarcodeElement'
@@ -77,6 +84,66 @@ export interface TemplateElement {
 const MAX_HISTORY = 10
 
 type PreviewData = Record<string, unknown>
+
+type VariableOption = {
+    key: string
+    label: string
+}
+
+type VariableOptionGroup = {
+    group: string
+    options: VariableOption[]
+}
+
+const TEMPLATE_RESULT_VARIABLE_FIELDS: NamingVariableField[] = [
+    { field: 'final_base_name_es', label: 'Nombre base final ES', type: 'text', source: 'version' },
+    { field: 'final_base_name_en', label: 'Nombre base final EN', type: 'text', source: 'version' },
+    { field: 'final_complete_name_es', label: 'Nombre completo final ES', type: 'text', source: 'sku' },
+    { field: 'final_complete_name_en', label: 'Nombre completo final EN', type: 'text', source: 'sku' },
+    { field: 'sap_description_recommended_es', label: 'Descripcion SAP recomendada ES', type: 'text', source: 'sku' },
+    { field: 'sap_description_recommended_en', label: 'Descripcion SAP recomendada EN', type: 'text', source: 'sku' },
+]
+
+const TEMPLATE_COMPATIBILITY_VARIABLE_GROUP: VariableOptionGroup = {
+    group: 'Compatibilidad',
+    options: [
+        { key: 'final_name_es', label: 'Alias: final_name_es' },
+        { key: 'final_name_en', label: 'Alias: final_name_en' },
+        { key: 'sap_description', label: 'Alias: sap_description' },
+        { key: 'color', label: 'Alias: color' },
+        { key: 'name_color_sap', label: 'Alias: name_color_sap' },
+    ],
+}
+
+function buildTemplateVariableGroups(fields: NamingVariableField[]): VariableOptionGroup[] {
+    const fieldsBySource = fields.reduce((acc, field) => {
+        const source = field.source || 'ref_attrs'
+        if (!acc[source]) acc[source] = []
+        acc[source].push(field)
+        return acc
+    }, {} as Record<NamingVariableSource, NamingVariableField[]>)
+
+    const groups = (Object.keys(NAMING_VARIABLE_SOURCE_LABELS) as NamingVariableSource[])
+        .map(source => ({
+            group: NAMING_VARIABLE_SOURCE_LABELS[source],
+            options: (fieldsBySource[source] || [])
+                .map(field => ({ key: field.field, label: field.label }))
+                .sort((a, b) => a.label.localeCompare(b.label, 'es')),
+        }))
+        .filter(group => group.options.length > 0)
+
+    return [...groups, TEMPLATE_COMPATIBILITY_VARIABLE_GROUP]
+}
+
+function renderVariableOptionGroups(groups: VariableOptionGroup[]) {
+    return groups.map(group => (
+        <optgroup key={group.group} label={group.group}>
+            {group.options.map(opt => (
+                <option key={opt.key} value={opt.key}>{opt.label}</option>
+            ))}
+        </optgroup>
+    ))
+}
 
 type AssetItem = {
     id?: string
@@ -330,7 +397,19 @@ function DynamicImageElement({
 }
 
 
-function RichTextEditor({ content, onChange, isExternalDataSource = false, datasetSchema = [] }: { content: string, onChange: (val: string) => void, isExternalDataSource?: boolean, datasetSchema?: FieldDef[] }) {
+function RichTextEditor({
+    content,
+    onChange,
+    isExternalDataSource = false,
+    datasetSchema = [],
+    variableGroups = [],
+}: {
+    content: string,
+    onChange: (val: string) => void,
+    isExternalDataSource?: boolean,
+    datasetSchema?: FieldDef[],
+    variableGroups?: VariableOptionGroup[],
+}) {
     const editorRef = useRef<HTMLDivElement>(null);
     const lastRangeRef = useRef<Range | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
@@ -906,6 +985,8 @@ function RichTextEditor({ content, onChange, isExternalDataSource = false, datas
                                 <option key={f.key} value={f.key}>{f.label}</option>
                             ))}
                         </optgroup>
+                    ) : variableGroups.length > 0 ? (
+                        renderVariableOptionGroups(variableGroups)
                     ) : (
                         <>
                         <optgroup label="Producto">
@@ -1429,6 +1510,10 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     const [availableDatasets, setAvailableDatasets] = useState<{ id: string, name?: string, schema_json?: unknown }[]>([])
     const [linkedDatasets, setLinkedDatasets] = useState<{ id: string, name?: string, schema_json?: unknown }[]>([])
     const [propertiesPanelTab, setPropertiesPanelTab] = useState<PropertiesPanelTab>('template')
+    const [templateVariableFields, setTemplateVariableFields] = useState<NamingVariableField[]>([
+        ...BASE_NAMING_VARIABLE_FIELDS,
+        ...TEMPLATE_RESULT_VARIABLE_FIELDS,
+    ])
 
     const [brandScope, setBrandScope] = useState<TemplateBrandScope>(
         template?.brand_scope === 'private_label' ? 'private_label' : 'firplak'
@@ -1538,6 +1623,33 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     useEffect(() => {
         getDatasetsAction().then(res => setAvailableDatasets(res))
     }, [])
+
+    useEffect(() => {
+        if (dataSource !== 'core_firplak') return
+
+        let cancelled = false
+        const productType = typeof previewData?.product_type === 'string' ? previewData.product_type : ''
+
+        getNamingVariableCatalogAction(productType)
+            .then(fields => {
+                if (cancelled) return
+                const merged = new Map<string, NamingVariableField>()
+                for (const field of [...fields, ...TEMPLATE_RESULT_VARIABLE_FIELDS]) {
+                    if (!field.field || merged.has(field.field)) continue
+                    merged.set(field.field, field)
+                }
+                setTemplateVariableFields(Array.from(merged.values()))
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setTemplateVariableFields([...BASE_NAMING_VARIABLE_FIELDS, ...TEMPLATE_RESULT_VARIABLE_FIELDS])
+                }
+            })
+
+        return () => {
+            cancelled = true
+        }
+    }, [dataSource, previewData?.product_type])
 
     const refreshLinkedDatasets = useCallback(async () => {
         const tid = String((template as any)?.id || '').trim()
@@ -1657,6 +1769,10 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     // Determinar si es fuente externa o core Firplak
     const isExternalDataSource = Boolean(dataSource) && dataSource !== 'core_firplak'
     const requiredVarsForTemplate = React.useMemo(() => extractTemplateVariables(JSON.stringify(elements)), [elements])
+    const templateVariableGroups = React.useMemo(
+        () => buildTemplateVariableGroups(templateVariableFields),
+        [templateVariableFields]
+    )
 
     const isSchemaSyncedToTemplate = useCallback((schema_json: any) => {
         try {
@@ -2889,13 +3005,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                                 ))}
                                             </optgroup>
                                         ) : (
-                                            CORE_VARIABLE_OPTS.map(group => (
-                                                <optgroup key={group.group} label={group.group}>
-                                                    {group.options.map(opt => (
-                                                        <option key={opt.key} value={opt.key}>{opt.label}</option>
-                                                    ))}
-                                                </optgroup>
-                                            ))
+                                            renderVariableOptionGroups(templateVariableGroups.length > 0 ? templateVariableGroups : CORE_VARIABLE_OPTS)
                                         )}
                                     </select>
 
@@ -2910,6 +3020,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                         onChange={(val) => updateSelectedElements({ content: val })}
                                         isExternalDataSource={isExternalDataSource}
                                         datasetSchema={datasetSchema}
+                                        variableGroups={templateVariableGroups}
                                     />
                                     <span className="text-[10px] text-gray-500 mt-1 block">Puedes seleccionar una palabra y usar los botones para ponerla en <b>Negrita</b>, <i>Cursiva</i>, etc.</span>
                                 </div>
@@ -3480,13 +3591,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                                 <option key={f.key} value={f.key}>{f.label}</option>
                                             ))
                                         ) : (
-                                            CORE_VARIABLE_OPTS.map(group => (
-                                                <optgroup key={group.group} label={group.group}>
-                                                    {group.options.map(o => (
-                                                        <option key={o.key} value={o.key}>{o.label}</option>
-                                                    ))}
-                                                </optgroup>
-                                            ))
+                                            renderVariableOptionGroups(templateVariableGroups.length > 0 ? templateVariableGroups : CORE_VARIABLE_OPTS)
                                         )}
                                     </select>
                                 </div>

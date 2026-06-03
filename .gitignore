@@ -45,4 +45,8 @@ next-env.d.ts
 # local agent memory
 /.gemini
 
+# print agent generated artifacts
+/print-agent/.tmp-ps-*.ps1
+/print-agent/debug-last-print/
+
 testsprite_tests\tmp\config.json
