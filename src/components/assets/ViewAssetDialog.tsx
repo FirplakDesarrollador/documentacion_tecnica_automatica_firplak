@@ -33,11 +33,11 @@ export function ViewAssetDialog({ assetName, assetUrl, children }: Props) {
                 )} 
             />
             <DialogContent className="sm:max-w-3xl p-0 overflow-hidden bg-white">
-                <DialogHeader className="p-4 bg-slate-100 border-b border-slate-200 flex flex-row items-center justify-between space-y-0">
-                    <DialogTitle className="text-slate-800 font-medium truncate pr-8">
+                <DialogHeader className="flex flex-row items-start justify-between gap-3 space-y-0 border-b border-slate-200 bg-slate-100 p-4 pr-12">
+                    <DialogTitle className="min-w-0 flex-1 break-words pr-2 text-slate-800 font-medium leading-snug">
                         {assetName}
                     </DialogTitle>
-                    <div className="flex items-center gap-2">
+                    <div className="flex shrink-0 items-center gap-2">
                         <a 
                             href={assetUrl} 
                             download={assetName}
@@ -49,7 +49,7 @@ export function ViewAssetDialog({ assetName, assetUrl, children }: Props) {
                     </div>
                 </DialogHeader>
                 
-                <div className="relative w-full min-h-[400px] max-h-[80vh] flex items-center justify-center p-12 pt-20 bg-white">
+                <div className="relative flex w-full items-center justify-center bg-white p-6 sm:min-h-[400px] sm:p-12">
                     <img 
                         src={assetUrl} 
                         alt={assetName} 

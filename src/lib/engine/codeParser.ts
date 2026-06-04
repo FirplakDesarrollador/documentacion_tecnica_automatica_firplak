@@ -463,7 +463,7 @@ export async function parseProductCode(
 
         // Detección de Medida Comercial (solo si no fue definido por herencia)
         if (shouldOverride('commercial_measure')) {
-            const measureMatch = descUpper.match(/\b(\d+(?:[.,]\d+)?)\s*[Xx]\s*(\d+(?:[.,]\d+)?)\b/);
+            const measureMatch = descUpper.match(/\b(\d+(?:[.,]\d+)?)\s*[Xx]\s*(\d+(?:[.,]\d+)?)(?:\s*CM)?\b/);
             if (measureMatch) {
                 result.commercial_measure = `${measureMatch[1]}X${measureMatch[2]}`.replace(',', '.');
                 setSap('commercial_measure', result.commercial_measure);

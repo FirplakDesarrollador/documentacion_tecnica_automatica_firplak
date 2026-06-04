@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import { Textarea } from '@/components/ui/textarea'
 import { 
     Edit2, 
     Loader2, 
@@ -229,12 +230,13 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Pr
                             <div className="p-6 space-y-6">
                                 <div className="space-y-2">
                                     <Label htmlFor="name" className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Nombre del Recurso</Label>
-                                    <Input
+                                    <Textarea
                                         id="name"
                                         value={name}
                                         onChange={(e) => setName(e.target.value)}
                                         disabled={isDefault}
-                                        className="h-11 bg-slate-50 border-slate-200 focus:bg-white focus:ring-indigo-500 transition-all font-medium"
+                                        rows={3}
+                                        className="min-h-[88px] resize-none break-words whitespace-pre-wrap bg-slate-50 border-slate-200 focus:bg-white focus:ring-indigo-500 transition-all font-medium"
                                     />
                                     {isDefault && (
                                         <p className="text-[10px] text-amber-600 flex items-center gap-1.5 font-medium mt-1">
@@ -258,15 +260,15 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Pr
                                             className="hidden"
                                             accept="image/png, image/jpeg, image/svg+xml"
                                         />
-                                        <Button 
-                                            variant="outline" 
-                                            className="w-full h-24 border-dashed border-2 border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/50 flex flex-col gap-2 transition-all group-hover:shadow-sm"
-                                            onClick={() => fileInputRef.current?.click()}
-                                        >
+                                         <Button 
+                                             variant="outline" 
+                                            className="h-auto min-h-24 w-full border-dashed border-2 border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/50 flex flex-col gap-2 px-4 py-4 text-center transition-all group-hover:shadow-sm"
+                                             onClick={() => fileInputRef.current?.click()}
+                                         >
                                             <div className="p-2 bg-slate-100 rounded-full group-hover:bg-indigo-100 transition-colors">
                                                 <Upload className="h-5 w-5 text-slate-500 group-hover:text-indigo-600" />
                                             </div>
-                                            <span className="text-xs font-semibold text-slate-600">
+                                            <span className="max-w-full break-words whitespace-normal text-xs font-semibold leading-snug text-slate-600">
                                                 {selectedFile ? selectedFile.name : 'Click para subir nueva versión'}
                                             </span>
                                         </Button>

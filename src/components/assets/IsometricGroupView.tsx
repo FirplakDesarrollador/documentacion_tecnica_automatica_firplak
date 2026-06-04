@@ -24,7 +24,7 @@ interface Props {
 
 function AssetItem({ asset, isDefault }: { asset: GroupedRow; isDefault: boolean }) {
     return (
-        <div className="flex items-center gap-3 p-2.5 rounded-lg border border-slate-100 bg-white hover:border-indigo-200 hover:shadow-sm transition-all">
+        <div className="flex items-start gap-3 p-2.5 rounded-lg border border-slate-100 bg-white hover:border-indigo-200 hover:shadow-sm transition-all">
             <ViewAssetDialog assetName={asset.name} assetUrl={asset.file_path}>
                 <div className="h-10 w-10 rounded-lg bg-slate-50 flex items-center justify-center overflow-hidden border border-slate-200 cursor-pointer shrink-0 hover:ring-2 hover:ring-indigo-500/50 transition-all">
                     {asset.file_path ? (
@@ -35,8 +35,8 @@ function AssetItem({ asset, isDefault }: { asset: GroupedRow; isDefault: boolean
                 </div>
             </ViewAssetDialog>
             <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                    <p className="text-sm font-bold text-slate-900 truncate">{asset.name}</p>
+                <div className="flex flex-wrap items-start gap-2">
+                    <p className="min-w-0 flex-1 break-words text-sm font-bold leading-snug text-slate-900">{asset.name}</p>
                     {asset.relation_count === 0 && (
                         <Badge className="bg-rose-500 text-white border-none text-[8px] h-4 font-bold animate-pulse shrink-0">HUÉRFANO</Badge>
                     )}
@@ -45,7 +45,7 @@ function AssetItem({ asset, isDefault }: { asset: GroupedRow; isDefault: boolean
                     )}
                 </div>
                 {asset.file_path && (
-                    <p className="text-[9px] text-slate-400 truncate mt-0.5">{asset.file_path}</p>
+                    <p className="mt-0.5 break-all text-[9px] text-slate-400">{asset.file_path}</p>
                 )}
             </div>
             <div className="flex items-center gap-1 shrink-0">
