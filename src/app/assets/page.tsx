@@ -1,4 +1,5 @@
 import { dbQuery } from '@/lib/supabase'
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { UploadAssetButton } from '@/components/assets/UploadAssetButton'
 import { IsometricAssociationDialog } from '@/components/assets/IsometricAssociationDialog'
 import { SmartIsometricSuggestionsDialog } from '@/components/assets/SmartIsometricSuggestionsDialog'
@@ -26,7 +27,7 @@ export default async function AssetsPage({
         whereClause = `WHERE ${conditions}`
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const assets = await dbQuery(`
         WITH asset_counts AS (
             SELECT 

@@ -1,4 +1,5 @@
 import { dbQuery } from '@/lib/supabase'
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { getFamilyFilters, getReferenceFilters } from '@/lib/data/filters'
 import { GenerateClient } from '@/components/generate/GenerateClient'
 import { FileOutput } from 'lucide-react'
@@ -66,7 +67,7 @@ export default async function GeneratePage({
     // Las medidas ya van integradas en el label de referencias — no se exponen como filtro separado.
 
     // --- Cargar plantillas activas ---
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const templates = await dbQuery(
         `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json, export_formats, export_filename_format, data_source, template_font_family, brand_scope, private_label_client_name
          FROM public.plantillas_doc_tec WHERE active = true ORDER BY created_at ASC`
@@ -91,7 +92,7 @@ export default async function GeneratePage({
     if (isLegacySpecificDataset) {
         effectiveDatasetId = String(templateDataSource)
     } else if (isGenericDatasets && selectedTemplateInfo?.id) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         const linkedDatasets = await dbQuery(`
             SELECT d.id, d.name, d.schema_json, d.created_at
             FROM public.template_dataset_links l
@@ -135,7 +136,7 @@ export default async function GeneratePage({
     // (no aplican los filtros de Familia/Referencia)
     if (isDataSourceExternal && effectiveDatasetId) {
         effectiveHasFilter = true 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         const dsRows = await dbQuery(`
             SELECT id, data_json 
             FROM public.custom_dataset_rows 
@@ -207,7 +208,7 @@ export default async function GeneratePage({
             </div>
 
             <GenerateClient
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                 
                 products={products as any}
                 templates={templates}
                 rules={rules}

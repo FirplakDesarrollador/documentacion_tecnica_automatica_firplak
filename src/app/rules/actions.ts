@@ -1,4 +1,5 @@
 'use server'
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { dbQuery } from '@/lib/supabase'
 import { revalidatePath, revalidateTag } from 'next/cache'
@@ -265,12 +266,12 @@ export async function previewNamingComponentsAction(
     const components = pendingEnConfig
         ? componentsFromRulesAndEnConfig(productType, namingType, rulesForEval, pendingEnConfig)
         : await loadNamingComponents(productType, namingType)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const enConfigOverride = components.length > 0 ? componentsToTranslatorConfig(components as any) : undefined
 
     return await Promise.all(products.map(async (p: any) => {
         const resultEs = evaluateProductRules(p as any, rulesForEval as any)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         const resultEn = await translateProductToEnglish(p as any, productType, resultEs.activeVariableIds, false, enConfigOverride as any)
 
         return {

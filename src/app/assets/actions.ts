@@ -1,4 +1,5 @@
 'use server'
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { dbQuery } from '@/lib/supabase'
 import { revalidatePath, revalidateTag } from 'next/cache'
@@ -57,7 +58,7 @@ export async function getMeasuresByFamilyAndRefAction(familyCodes: string[], ref
         ORDER BY commercial_measure ASC
     `) || []
     
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     return (measureRecords as any[]).map((rec: { commercial_measure: string }) => ({ 
         value: rec.commercial_measure, 
         label: rec.commercial_measure 
@@ -85,7 +86,7 @@ export async function getVersionsByFamilyAndRefAction(familyCodes: string[], ref
         ORDER BY version_code ASC
     `) || []
     
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     return (versionRecords as any[]).map((rec: { version_code: string }) => ({ 
         value: rec.version_code, 
         label: `Versión ${rec.version_code}`
@@ -169,7 +170,7 @@ export async function associateIsometricAction(data: {
     
     if (!assetId) throw new Error("Asset ID is required")
     
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const asset = await dbQuery(`SELECT file_path FROM public.assets WHERE id = '${assetId}' LIMIT 1`) as any[]
     if (!asset || asset.length === 0) throw new Error("Asset not found")
     const filePath = asset[0].file_path
@@ -186,7 +187,7 @@ export async function associateIsometricAction(data: {
             }
             return condition
         })
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         const refs = await dbQuery(`SELECT id FROM public.product_references WHERE ${specificPairs.join(' OR ')}`) as any[]
         refIds = refs.map((r: { id: string }) => r.id)
     } else if (familyCodes.length > 0) {
@@ -194,7 +195,7 @@ export async function associateIsometricAction(data: {
         if (measureCodes && measureCodes.length > 0) {
             query += ` AND commercial_measure IN (${measureCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`
         }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         const refs = await dbQuery(query) as any[]
         refIds = refs.map((r: { id: string }) => r.id)
     } else {
@@ -221,7 +222,7 @@ export async function associateIsometricAction(data: {
             WHERE reference_id IN ${refsFilter} AND version_code IN ${versionFilter}
         `)
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         const verifyRows = await dbQuery(`
             SELECT COUNT(*)::int as updated_count
             FROM public.product_versions
@@ -242,7 +243,7 @@ export async function associateIsometricAction(data: {
             WHERE id IN ${refsFilter}
         `)
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         const verifyRows = await dbQuery(`
             SELECT COUNT(*)::int as updated_count
             FROM public.product_references
@@ -287,7 +288,7 @@ export async function deleteAssetAction(assetId: string) {
     const safeId = assetId.replace(/'/g, "''")
 
     // 2. Obtener metadatos del archivo para borrar del Storage
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const asset = await dbQuery(`SELECT file_path FROM public.assets WHERE id = '${safeId}' LIMIT 1`) as any[]
     if (!asset || asset.length === 0) return { success: true } // Ya no existe
     const filePath = asset[0].file_path

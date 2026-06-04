@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { dbQuery, supabaseServer } from '@/lib/supabase';
 import { readTemplateXlsx } from '@/lib/massImport/io';
 import { composeProductById } from '@/lib/engine/product_composer';

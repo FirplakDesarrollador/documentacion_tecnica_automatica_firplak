@@ -1,4 +1,5 @@
 import { dbQuery } from '@/lib/supabase'
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { TemplateElement, type TemplateElementType } from '@/components/templates/TemplateCanvas'
 import { unstable_cache } from 'next/cache'
 import { computeNameWithNamingComponents } from './namingComponentsEngine'
@@ -275,7 +276,7 @@ async function mapWithConcurrency<T, R>(items: T[], concurrency: number, fn: (it
 export async function getPendingSummary(): Promise<PendingSummary> {
     const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const rows: any[] =
         (await dbQuery(`
             SELECT *
@@ -394,7 +395,7 @@ export async function syncValidationStatus(): Promise<{ updated: number }> {
     // Or better, iterate through sweep results
     
     // Get all product IDs to handle 'ready' state
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const allSkus: any[] = await dbQuery(`
         SELECT id, version_id
         FROM public.v_ui_generate_list

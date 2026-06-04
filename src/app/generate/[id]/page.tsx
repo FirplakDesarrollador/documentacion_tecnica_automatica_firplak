@@ -1,4 +1,5 @@
 import { dbQuery } from '@/lib/supabase'
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft } from 'lucide-react'
@@ -24,7 +25,7 @@ export default async function GeneratePreviewPage({
     }
 
     // 1. Cargar plantillas activas
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const templates = await dbQuery(
         `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json, export_formats, export_filename_format, data_source, template_font_family, brand_scope, private_label_client_name
          FROM public.plantillas_doc_tec WHERE active = true ORDER BY updated_at DESC`
@@ -52,7 +53,7 @@ export default async function GeneratePreviewPage({
         product = coreProduct
     } else {
         // Buscar en datasets externos
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         const dRows = await dbQuery(
             `SELECT r.*, d.schema_json 
              FROM public.custom_dataset_rows r
@@ -120,7 +121,7 @@ export default async function GeneratePreviewPage({
 
             {/* Preview interactivo */}
             <PreviewClient
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                 
                 product={product as any}
                 templates={templates}
                 initialTemplateId={initialTemplateId}

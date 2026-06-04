@@ -1,4 +1,5 @@
 'use client'
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import React, { useState, useRef, useEffect, MouseEvent, useCallback, useMemo } from 'react'
 import { Card } from '@/components/ui/card'

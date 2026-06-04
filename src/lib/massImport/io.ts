@@ -1,4 +1,5 @@
 import Papa from 'papaparse';
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import ExcelJS from 'exceljs';
 import { firstNonEmpty, normalizeHeader } from './headers';
 

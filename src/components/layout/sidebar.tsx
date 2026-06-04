@@ -255,24 +255,6 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
                                 </div>
                             </div>
 
-                            {/* AI Status */}
-                            <div className={cn("flex items-center justify-between w-full", isCollapsed && "justify-center")}>
-                                {!isCollapsed && <span className="text-[11px] text-slate-400">I. Artificial</span>}
-                                <div className={cn("flex items-center gap-1.5", isCollapsed && "flex-col gap-0.5")}>
-                                    <div className="h-1.5 w-1.5 rounded-full bg-amber-500/50" />
-                                    <span className="text-[10px] font-bold text-amber-500/70 uppercase">{isCollapsed ? 'IA' : 'En espera'}</span>
-                                </div>
-                            </div>
-
-                            {/* Storage Status */}
-                            <div className={cn("flex items-center justify-between w-full", isCollapsed && "justify-center")}>
-                                {!isCollapsed && <span className="text-[11px] text-slate-400">Archivos</span>}
-                                <div className={cn("flex items-center gap-1.5", isCollapsed && "flex-col gap-0.5")}>
-                                    <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                    <span className="text-[10px] font-bold text-emerald-500/90 uppercase">{isCollapsed ? 'AR' : 'Conectado'}</span>
-                                </div>
-                            </div>
-
                             {/* Naming Work Status */}
                             {isCollapsed ? (
                                 <button

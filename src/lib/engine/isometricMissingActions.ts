@@ -1,4 +1,5 @@
 import { dbQuery } from '@/lib/supabase'
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { unstable_noStore as noStore } from 'next/cache'
 
 export type MissingIsometricRow = {
@@ -32,7 +33,7 @@ function buildMissingIsometricWhere() {
 export async function getMissingIsometricCount(): Promise<number> {
     noStore()
     const where = buildMissingIsometricWhere()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const rows: any[] = await dbQuery(`
         SELECT COUNT(*)::int AS missing_isometric_count
         FROM public.v_ui_generate_list

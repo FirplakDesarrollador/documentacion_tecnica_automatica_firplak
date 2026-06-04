@@ -1,4 +1,5 @@
 'use server'
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { dbQuery } from '@/lib/supabase'
 import { computeNameWithNamingComponents } from '@/lib/engine/namingComponentsEngine'

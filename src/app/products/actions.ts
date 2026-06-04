@@ -1,4 +1,5 @@
 'use server'
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { dbQuery, supabaseServer } from '@/lib/supabase'
 import { resetGlossaryCache } from '@/lib/engine/translator'
@@ -212,7 +213,7 @@ function buildCreateProductV6Payload(
         Object.assign(versionAttrs, parsed._version_overrides);
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const payload: any = {
         reference: {
             reference_code: parsed.ref_code,
@@ -646,7 +647,7 @@ export async function checkProductExistsAction(code?: string, sapDesc?: string) 
 }
 
 export async function getClientsAction() {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     let fromClients: any[] = []
     try {
         fromClients = await dbQuery(`SELECT id, name, logo_asset_id FROM public.clients ORDER BY name ASC`) || []

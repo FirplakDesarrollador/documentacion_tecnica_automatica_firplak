@@ -152,7 +152,6 @@ SamiGen es una plataforma web para la gestión de un catálogo maestro de produc
 | UI | Tailwind CSS v4, shadcn/ui, Radix UI, Base UI |
 | Base de datos | Prisma ORM + SQLite (local) / Supabase PostgreSQL (producción) |
 | Autenticación | Supabase Auth con Proxy Pattern |
-| IA | Google Gemini (`@google/genai`) |
 | Exportación | Puppeteer, jsbarcode, @sparticuz/chromium |
 | Archivos | Excel/CSV via exceljs, papaparse |
 | Despliegue | Vercel (serverless) |
@@ -173,7 +172,7 @@ SamiGen es una plataforma web para la gestión de un catálogo maestro de produc
 
 ## 8. Dependencias y Restricciones
 
-- **Dependencias externas:** Supabase (DB + Auth), Google Gemini (traducción), Chrome/Chromium (Puppeteer), Vercel (hosting)
+- **Dependencias externas:** Supabase (DB + Auth), Chrome/Chromium (Puppeteer), Vercel (hosting)
 - **Restricciones técnicas:** Serverless functions tienen límite de tiempo de ejecución (10s en plan Hobby, 60s en Pro); la generación de documentos debe ser asíncrona o dividida en chunks
 - **Datos legacy:** No usar tabla `cabinet_products` para lógica de negocio; usar tablas del catálogo maestro (`product_skus`, `product_versions`, `product_references`, `families`)
 
@@ -197,7 +196,6 @@ SamiGen es una plataforma web para la gestión de un catálogo maestro de produc
 | Breaking changes en Next.js 16 | Alto | Media | Pruebas exhaustivas en staging antes de actualizar |
 | Límites de serverless (tiempo/memoria) | Alto | Alta | Exportación asíncrona con colas de jobs |
 | Datos inconsistentes entre SQLite y Supabase | Medio | Media | Pruebas con ambos motores de base de datos |
-| Dependencia de Gemini AI para traducción | Medio | Baja | Fallback a reglas básicas si la API no responde |
 | Rotación de secretos (API keys) | Alto | Baja | MCP config sync automatizado, sin hardcodeo |
 
 ---

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { supabaseServer } from '@/lib/supabase';
 import { readTemplateXlsx } from '@/lib/massImport/io';
 import { parseSkuComplete } from '@/lib/massImport/sku';

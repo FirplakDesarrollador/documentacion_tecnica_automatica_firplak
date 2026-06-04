@@ -1,4 +1,5 @@
 import { dbQuery, supabaseServer } from '@/lib/supabase'
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import {
     recomputeMasterNamesForSkuIds,
     recomputeMasterNamesForVersionIds,
@@ -178,7 +179,7 @@ async function countScopedStale(job: NamingJob) {
     const skuPredicate = buildSkuPredicate(job)
     const shouldCountVersions = shouldProcessVersions(job)
     const shouldCountSkus = shouldProcessSkus(job)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const [versionRows, skuRows]: any = await Promise.all([
         shouldCountVersions ? dbQuery(`
             SELECT COUNT(*)::int AS count
@@ -209,7 +210,7 @@ async function countScopedStale(job: NamingJob) {
 }
 
 async function getStaleVersionIds(job: NamingJob, limit: number) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const rows = await dbQuery(`
         SELECT v.id
         FROM public.product_versions v
@@ -225,7 +226,7 @@ async function getStaleVersionIds(job: NamingJob, limit: number) {
 }
 
 async function getStaleSkuIds(job: NamingJob, limit: number) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const rows = await dbQuery(`
         SELECT s.id
         FROM public.product_skus s

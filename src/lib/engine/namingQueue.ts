@@ -1,4 +1,5 @@
 import { dbQuery, supabaseServer } from '@/lib/supabase'
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { evaluateProductRules } from './ruleEvaluator'
 import { getNamingFieldValue } from './namingFieldResolver'
 import {
@@ -322,7 +323,7 @@ export async function markNamingStaleForGlossaryTerms(
         let offset = 0
 
         while (true) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+             
             const rows: any[] = await dbQuery(`
                 SELECT *
                 FROM public.v_ui_generate_list

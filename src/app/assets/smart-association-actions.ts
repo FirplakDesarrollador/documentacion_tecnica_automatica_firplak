@@ -1,4 +1,5 @@
 'use server'
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { dbQuery } from '@/lib/supabase'
 import { revalidatePath, revalidateTag } from 'next/cache'
@@ -106,7 +107,7 @@ function calculateMatchLevel(missing: ProductRow, existing: ProductRow): Isometr
  */
 export async function getIsometricSuggestionsAction(): Promise<IsometricSuggestion[]> {
     // 1. Get products missing isometrics
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const missingRows = await dbQuery(`
         SELECT 
             id, reference_code, product_name, family_code, designation, 
@@ -119,7 +120,7 @@ export async function getIsometricSuggestionsAction(): Promise<IsometricSuggesti
     `) as any[] || []
 
     // 2. Get products that HAVE isometrics
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const existingRows = await dbQuery(`
         SELECT 
             id, reference_code, product_name, family_code, designation, 
@@ -184,7 +185,7 @@ export async function applySmartAssociationsAction(associations: {
     // Since we want to update the REFERENCE level (per user request), 
     // we first need to find the reference_id for each SKU.
     const skuIds = associations.map(a => `'${a.skuId}'`).join(',')
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const mapping = await dbQuery(`
         SELECT s.id as sku_id, v.reference_id
         FROM public.product_skus s
@@ -223,7 +224,7 @@ export async function applySmartAssociationsAction(associations: {
  */
 export async function getIsometricNormalizationGroupsAction(): Promise<IsometricNormalizationGroup[]> {
     // 1. Find the groups based on ALL core attributes including special_label
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const groups = await dbQuery(`
         SELECT 
             r.family_code, f.family_name, r.product_name, r.designation, r.commercial_measure, 
@@ -243,7 +244,7 @@ export async function getIsometricNormalizationGroupsAction(): Promise<Isometric
 
     for (const g of groups) {
         // 2. Fetch references for this group to get details, including the final constructed name
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         const refs = await dbQuery(`
             SELECT 
                 r.id as reference_id, r.isometric_asset_id, r.isometric_path,
@@ -324,7 +325,7 @@ export async function applyIsometricNormalizationAction(
     const [familyCode, name, designation, measure, accessory, specialLabel] = parts
 
     // 2. Identify all references in this group
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const refs = await dbQuery(`
         SELECT id FROM public.product_references
         WHERE family_code = '${familyCode}'
@@ -354,7 +355,7 @@ export async function applyIsometricNormalizationAction(
 
     for (const assetId of assetsToCheck) {
         // Verify if the asset is still used by ANY other reference outside this group
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         const usage = await dbQuery(`
             SELECT count(*) as count FROM public.product_references 
             WHERE isometric_asset_id = '${assetId}'
@@ -364,7 +365,7 @@ export async function applyIsometricNormalizationAction(
             console.log(`Asset ${assetId} is now orphaned. Deleting...`)
             
             // Get path for storage deletion
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+             
             const assetData = await dbQuery(`SELECT path FROM public.assets WHERE id = '${assetId}'`) as any[]
             if (assetData && assetData[0]) {
                 const storagePath = assetData[0].path

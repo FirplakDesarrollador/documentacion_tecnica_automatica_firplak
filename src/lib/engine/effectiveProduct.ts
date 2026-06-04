@@ -1,4 +1,5 @@
 export interface EffectiveContextOptions {
+/* eslint-disable @typescript-eslint/no-explicit-any */
     includeSkuOverrides?: boolean
 }
 

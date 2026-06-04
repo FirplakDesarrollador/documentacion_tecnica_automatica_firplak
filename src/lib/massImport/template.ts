@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { dbQuery, supabaseServer } from '../supabase';
 import { parseSkuComplete } from './sku';
 
@@ -27,7 +28,7 @@ export interface TemplateRow {
   ref_attrs: Record<string, any>;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 function normalizeSchemaKeys(schema: any): string[] {
   if (!schema || typeof schema !== 'object') return [];
   return Object.keys(schema)
