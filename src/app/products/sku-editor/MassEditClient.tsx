@@ -287,8 +287,8 @@ export default function MassEditClient() {
     let parsedValue: any;
     try {
       parsedValue = parseEditValue();
-    } catch (e: any) {
-      return toast.warning(e.message);
+    } catch (e) {
+      return toast.warning(e instanceof Error ? e.message : String(e));
     }
 
     const normalUpdates = editType === 'normal' ? { [editField.trim()]: parsedValue } : {};
@@ -314,10 +314,10 @@ export default function MassEditClient() {
     let parsedValue: any;
     try {
       parsedValue = parseEditValue();
-    } catch (e: any) {
+    } catch (e) {
       setIsExecuting(false);
       setExecutionProgress(null);
-      return toast.warning(e.message);
+      return toast.warning(e instanceof Error ? e.message : String(e));
     }
 
     const normalUpdates = editType === 'normal' ? { [editField.trim()]: parsedValue } : {};
@@ -337,8 +337,8 @@ export default function MassEditClient() {
       toast.success('SKUs actualizados con éxito');
       setShowPreview(false);
       handleSearch();
-    } catch (e: any) {
-      toast.error('Error ejecutando actualización: ' + (e?.message || 'Error desconocido'));
+    } catch (e) {
+      toast.error('Error ejecutando actualización: ' + (e instanceof Error ? e.message : String(e) || 'Error desconocido'));
     } finally {
       setIsExecuting(false);
       setExecutionProgress(null);
@@ -361,8 +361,8 @@ export default function MassEditClient() {
       setDeletePreview(null);
       setSelectedIds([]);
       await handleSearch();
-    } catch (e: any) {
-      toast.error('Error eliminando SKUs: ' + (e?.message || 'Error desconocido'));
+    } catch (e) {
+      toast.error('Error eliminando SKUs: ' + (e instanceof Error ? e.message : String(e) || 'Error desconocido'));
     } finally {
       setIsDeleting(false);
     }

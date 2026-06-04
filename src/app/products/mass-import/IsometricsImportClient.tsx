@@ -292,8 +292,8 @@ export function IsometricsImportClient(props: { families: FamilyFilterOption[] }
       if ((j.job.conflicts || 0) > 0) toast.error(`Preview con conflictos: ${j.job.conflicts}. Debes elegir 1 archivo por grupo.`)
       else if ((j.job.ambiguous || 0) > 0) toast.error(`Preview con ambiguos: ${j.job.ambiguous}.`)
       else toast.success(`Preview OK (${j.job.total} archivos).`)
-    } catch (e: any) {
-      toast.error(e?.message || 'Preview failed')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e) || 'Preview failed')
     } finally {
       setIsPreviewing(false)
     }
@@ -347,8 +347,8 @@ export function IsometricsImportClient(props: { families: FamilyFilterOption[] }
       }
       setConflictSelection(sel)
       toast.success('Job cargado.')
-    } catch (e: any) {
-      toast.error(e?.message || 'No se pudo cargar el job')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e) || 'No se pudo cargar el job')
     }
   }
 
@@ -429,8 +429,8 @@ export function IsometricsImportClient(props: { families: FamilyFilterOption[] }
       })
 
       toast.success(jobId ? 'Conflictos resueltos y guardados.' : 'Conflictos resueltos (local).')
-    } catch (e: any) {
-      toast.error(e?.message || 'Resolve failed')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e) || 'Resolve failed')
     } finally {
       setIsResolving(false)
     }
@@ -581,8 +581,8 @@ export function IsometricsImportClient(props: { families: FamilyFilterOption[] }
       }
 
       toast.success('Aplicación completada.')
-    } catch (e: any) {
-      toast.error(e?.message || 'Apply failed')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e) || 'Apply failed')
     } finally {
       setIsApplying(false)
       setProgress(null)

@@ -32,15 +32,15 @@ export interface PendingSummary {
     details: PendingDetail[]
 }
 
-function isInactiveOrNotExportable(product: any) {
+function isInactiveOrNotExportable(product: Record<string, unknown>) {
     return product?.is_exportable === false || product?.effective_status === 'INACTIVO'
 }
 
-function isNullishOrEmpty(value: any) {
+function isNullishOrEmpty(value: unknown) {
     return value === null || value === undefined || value === ''
 }
 
-function isPlaceholderValue(value: any) {
+function isPlaceholderValue(value: unknown) {
     if (value === null || value === undefined) return true
     if (typeof value === 'boolean') return false
     const str = String(value).trim().toUpperCase()
@@ -50,7 +50,7 @@ function isPlaceholderValue(value: any) {
 function extractRequiredTemplateFields(requiredElements: TemplateElement[]) {
     const requiredDataFields = new Set<string>()
 
-    requiredElements.forEach((el: any) => {
+    requiredElements.forEach((el) => {
         if (!el?.required) return
 
         const t = el.type as TemplateElementType

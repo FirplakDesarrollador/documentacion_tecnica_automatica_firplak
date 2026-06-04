@@ -52,8 +52,8 @@ export async function linkDatasetToTemplatesAction(datasetId: string, templateId
         revalidatePath('/templates')
         revalidatePath('/generate')
         return { success: true, linked: validTemplateIds.length }
-    } catch (e: any) {
-        return { success: false, error: e.message }
+    } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
 }
 
@@ -71,8 +71,8 @@ export async function unlinkDatasetFromTemplateAction(datasetId: string, templat
         revalidatePath('/templates')
         revalidatePath('/generate')
         return { success: true }
-    } catch (e: any) {
-        return { success: false, error: e.message }
+    } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
 }
 
@@ -165,8 +165,8 @@ export async function createDatasetAction(data: {
         `)
         revalidatePath('/datasets')
         return { success: true, id: rows?.[0]?.id }
-    } catch (e: any) {
-        return { success: false, error: e.message }
+    } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
 }
 
@@ -186,8 +186,8 @@ export async function overwriteDatasetRowsAction(datasetId: string, rows: Record
         await _bulkInsertRows(datasetId, rows)
         revalidatePath('/datasets')
         return { success: true, inserted: rows.length }
-    } catch (e: any) {
-        return { success: false, error: e.message }
+    } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
 }
 
@@ -202,8 +202,8 @@ export async function appendDatasetRowsAction(datasetId: string, rows: Record<st
         await _bulkInsertRows(datasetId, rows)
         revalidatePath('/datasets')
         return { success: true, inserted: rows.length }
-    } catch (e: any) {
-        return { success: false, error: e.message }
+    } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
 }
 
@@ -265,8 +265,8 @@ export async function mergeDatasetRowsAction(
 
         revalidatePath('/datasets')
         return { success: true, merged, created, notFound }
-    } catch (e: any) {
-        return { success: false, merged: 0, created: 0, notFound: [], error: e.message }
+    } catch (e) {
+        return { success: false, merged: 0, created: 0, notFound: [], error: e instanceof Error ? e.message : String(e) }
     }
 }
 
@@ -276,8 +276,8 @@ export async function createOrphanRowsAction(datasetId: string, rows: Record<str
         await _bulkInsertRows(datasetId, rows)
         revalidatePath('/datasets')
         return { success: true, created: rows.length }
-    } catch (e: any) {
-        return { success: false, error: e.message }
+    } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
 }
 
@@ -316,8 +316,8 @@ export async function backfillDatasetRowKeysAction(
         revalidatePath('/templates')
         revalidatePath('/generate')
         return { success: true, updated: pairs.length }
-    } catch (e: any) {
-        return { success: false, error: e.message }
+    } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
 }
 
@@ -367,8 +367,8 @@ export async function normalizeDatasetRowJsonKeysAction(datasetId: string) {
         revalidatePath('/datasets')
         revalidatePath('/generate')
         return { success: true, removedKeys: toDrop.length }
-    } catch (e: any) {
-        return { success: false, error: e.message }
+    } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
 }
 
@@ -381,8 +381,8 @@ export async function deleteDatasetAction(id: string) {
         `)
         revalidatePath('/datasets')
         return { success: true }
-    } catch (e: any) {
-        return { success: false, error: e.message }
+    } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
 }
 

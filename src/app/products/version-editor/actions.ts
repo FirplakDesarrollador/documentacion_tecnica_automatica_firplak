@@ -17,7 +17,7 @@ function normalizeOverridePayload(input: any) {
   return canonicalizeOverrideAttrs(input || {});
 }
 
-function mapVersionRow(row: any) {
+function mapVersionRow(row: Record<string, unknown>) {
   const versionAttrs = canonicalizeOverrideAttrs(row.version_attrs);
   const effectiveContext = buildEffectiveProductContext(
     {
@@ -250,8 +250,8 @@ export async function previewMassUpdateVersions(ids: string[], normalUpdates: an
     });
     if (error) throw error;
     return { success: true, data };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -271,8 +271,8 @@ export async function executeMassUpdateVersions(ids: string[], normalUpdates: an
 
     revalidatePath('/generate');
     return { success: true, data };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
 }
 

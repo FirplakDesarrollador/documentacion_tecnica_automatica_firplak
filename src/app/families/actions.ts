@@ -299,8 +299,8 @@ export async function previewProductTypeRenameImpactAction(ids: string[], nextPr
   try {
     const impact = await computeProductTypeRenameImpact(ids, nextProductType);
     return { success: true, data: impact };
-  } catch (err: any) {
-    return { success: false, error: err.message };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -374,8 +374,8 @@ export async function executeMassUpdateFamilies(
     revalidatePath('/configuration/reference-editor');
     revalidatePath('/configuration');
     return { success: true, namingMigration };
-  } catch (err: any) {
-    return { success: false, error: err.message };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 

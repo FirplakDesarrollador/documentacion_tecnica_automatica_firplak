@@ -288,8 +288,8 @@ export function BulkExportPanel({
             setDirectoryHandle(handle)
             setDirectoryName(handle.name)
             toast.success(`Carpeta seleccionada: ${handle.name}`)
-        } catch (err: any) {
-            if (err.name !== 'AbortError') {
+        } catch (err) {
+            if ((err as Error).name !== 'AbortError') {
                 toast.error("Error al seleccionar carpeta")
                 console.error(err)
             }
@@ -315,8 +315,8 @@ export function BulkExportPanel({
                 )
                 exportItems = allProducts.map(p => ({ product: p as unknown as GenerateProduct, status: 'pending' as ExportStatus }))
                 setItems(exportItems)
-            } catch (err: any) {
-                toast.error('Error al cargar todos los productos: ' + (err?.message || 'Error desconocido'))
+            } catch (err) {
+                toast.error('Error al cargar todos los productos: ' + (err instanceof Error ? err.message : String(err)))
                 setIsRunning(false)
                 setStarted(false)
                 return
@@ -335,8 +335,8 @@ export function BulkExportPanel({
                 await exportOneProduct(item.product, template, selectedFormat, rules, directoryHandle)
                 successCount += 1
                 updateItem(item.product.id, 'done')
-            } catch (err: any) {
-                const msg = String(err?.message || 'Error desconocido')
+            } catch (err) {
+                const msg = String(err instanceof Error ? err.message : 'Error desconocido')
                 if (msg.includes('[DIRECTORY_INVALID]')) {
                     // Auto-recuperación: si el usuario renombró/movió/eliminó la carpeta,
                     // desactivamos el guardado a carpeta y continuamos por descarga del navegador.
@@ -349,9 +349,9 @@ export function BulkExportPanel({
                         successCount += 1
                         updateItem(item.product.id, 'done')
                         continue
-                    } catch (retryErr: any) {
+                    } catch (retryErr) {
                         errorCount += 1
-                        updateItem(item.product.id, 'error', String(retryErr?.message || msg))
+                        updateItem(item.product.id, 'error', String(retryErr instanceof Error ? retryErr.message : msg))
                         continue
                     }
                 }

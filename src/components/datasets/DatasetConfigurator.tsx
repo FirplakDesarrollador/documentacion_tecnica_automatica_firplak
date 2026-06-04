@@ -178,8 +178,8 @@ export function DatasetConfigurator({ datasetId, onClose, onSaved }: DatasetConf
                 setSchema(normalizeSchema(data?.schema_json))
                 const count = data?.row_count?.[0]?.count
                 setRowCount(typeof count === 'number' ? count : Number(count || 0))
-            } catch (e: any) {
-                if (!cancelled) toast.error(e?.message || 'Error al cargar configuración')
+            } catch (e) {
+                if (!cancelled) toast.error(e instanceof Error ? e.message : String(e) || 'Error al cargar configuración')
             } finally {
                 if (!cancelled) setLoading(false)
             }
@@ -309,8 +309,8 @@ export function DatasetConfigurator({ datasetId, onClose, onSaved }: DatasetConf
             toast.success('Configuración actualizada')
             onSaved({ id: datasetId, name: datasetName.trim(), schema_json: nextSchema })
             onClose()
-        } catch (e: any) {
-            toast.error(e?.message || 'Error al guardar configuración')
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : String(e) || 'Error al guardar configuración')
         } finally {
             setSaving(false)
         }
@@ -352,8 +352,8 @@ export function DatasetConfigurator({ datasetId, onClose, onSaved }: DatasetConf
             if (!res?.success) throw new Error(res?.error || 'No se pudo normalizar')
             toast.success('Filas normalizadas', { description: `Llaves removidas: ${res.removedKeys ?? 0}` })
             await revalidateDatasetsPathsAction()
-        } catch (e: any) {
-            toast.error(e?.message || 'Error al normalizar filas')
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : String(e) || 'Error al normalizar filas')
         } finally {
             setNormalizing(false)
         }

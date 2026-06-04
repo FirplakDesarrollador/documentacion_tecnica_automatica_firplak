@@ -334,8 +334,8 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
             setHasPendingNamingWork(Boolean(result?.jobId))
             setSavedSuccessfully(true)
             setDeletedIds([])
-        } catch (err: any) {
-            toast.error("Error al guardar: " + err.message)
+        } catch (err) {
+            toast.error("Error al guardar: " + (err instanceof Error ? err.message : String(err)))
         } finally {
             setLoading(false)
         }
@@ -355,8 +355,8 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
             setGlossaryEdits({})
             // Auto-revalidate preview after saving glossary
             await handleLoadPreview()
-        } catch (err: any) {
-            toast.error("Error al guardar glosario: " + err.message)
+        } catch (err) {
+            toast.error("Error al guardar glosario: " + (err instanceof Error ? err.message : String(err)))
         } finally {
             setIsSavingGlossary(false)
         }
@@ -417,8 +417,8 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
             const results = await previewNamingComponentsAction(productType, namingType, rules, enConfig)
             setPreviewResults(results as PreviewResult[])
             setPreviewGenerated(true)
-        } catch (err: any) {
-            toast.error("Error al cargar la vista previa: " + err.message)
+        } catch (err) {
+            toast.error("Error al cargar la vista previa: " + (err instanceof Error ? err.message : String(err)))
         } finally {
             setIsLoadingPreview(false)
         }
@@ -527,8 +527,8 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
                 const issues = checkSyncIssues(cfg)
                 setSyncIssues(issues)
                 setShowEnSyncAlert(issues.missing.length > 0 || issues.obsolete.length > 0)
-            } catch (err: any) {
-                toast.error("Error al cargar config EN: " + err.message)
+            } catch (err) {
+                toast.error("Error al cargar config EN: " + (err instanceof Error ? err.message : String(err)))
             } finally {
                 setEnConfigLoading(false)
             }
@@ -580,8 +580,8 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
             setHasPendingNamingWork(result.status.hasWork)
             await revalidateRulesAndProductsAction()
             toast.success(result.status.hasWork ? 'Nomenclatura en proceso. Puedes continuar desde el panel izquierdo.' : 'Nomenclatura aplicada correctamente.')
-        } catch (err: any) {
-            toast.error("Error en aplicación masiva: " + err.message)
+        } catch (err) {
+            toast.error("Error en aplicación masiva: " + (err instanceof Error ? err.message : String(err)))
         } finally {
             setIsApplying(false)
         }

@@ -429,8 +429,8 @@ export async function POST(req: Request) {
         reused_existing_master_data: safeIgnoredMaster,
       },
     });
-  } catch (e: any) {
+  } catch (e) {
     console.error('[mass-import/execute] error', e);
-    return NextResponse.json({ success: false, error: e?.message || 'Execute failed' }, { status: 500 });
+    return NextResponse.json({ success: false, error: e instanceof Error ? e.message : 'Execute failed' }, { status: 500 });
   }
 }

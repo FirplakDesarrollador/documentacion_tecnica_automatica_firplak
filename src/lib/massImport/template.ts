@@ -27,6 +27,7 @@ export interface TemplateRow {
   ref_attrs: Record<string, any>;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function normalizeSchemaKeys(schema: any): string[] {
   if (!schema || typeof schema !== 'object') return [];
   return Object.keys(schema)
@@ -36,7 +37,7 @@ function normalizeSchemaKeys(schema: any): string[] {
     .sort();
 }
 
-function safeJson(val: any): any {
+function safeJson(val: unknown): any {
   if (val === null || val === undefined) return null;
   if (typeof val === 'object') return val;
   try {

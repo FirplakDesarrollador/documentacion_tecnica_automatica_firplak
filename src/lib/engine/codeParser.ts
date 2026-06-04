@@ -110,7 +110,7 @@ export async function parseProductCode(
         _version_overrides: {}
     }
 
-    function setInheritance(field: string, value: any, source: string) {
+    function setInheritance(field: string, value: unknown, source: string) {
         if (value !== null && value !== undefined && value !== '') {
             if (!result.inheritance_sources[field]) {
                 const effectiveSource = source === 'historic_version' && REFERENCE_LEVEL_FIELDS.has(field)
@@ -483,32 +483,32 @@ export async function parseProductCode(
             ]);
 
             if (!result.product_name && shouldOverride('product_name')) {
-                const names = nameRows.map((r: any) => r.product_name);
+                const names = nameRows.map((r: Record<string, unknown>) => r.product_name as string);
                 const matched = findBestMatch(descUpper, names);
                 if (matched) { result.product_name = matched; setSap('product_name', matched); }
             }
             if (!result.designation && shouldOverride('designation')) {
-                const desigs = desigRows.map((r: any) => r.designation);
+                const desigs = desigRows.map((r: Record<string, unknown>) => r.designation as string);
                 const matched = findBestMatch(descUpper, desigs);
                 if (matched) { result.designation = matched; setSap('designation', matched); }
             }
             if (!result.line && shouldOverride('line')) {
-                const lines = lineRows.map((r: any) => r.line);
+                const lines = lineRows.map((r: Record<string, unknown>) => r.line as string);
                 const matched = findBestMatch(descUpper, lines);
                 if (matched) { result.line = matched; setSap('line', matched); }
             }
             if (!result.use_destination && shouldOverride('use_destination')) {
-                const dests = destRows.map((r: any) => r.use_destination);
+                const dests = destRows.map((r: Record<string, unknown>) => r.use_destination as string);
                 const matched = findBestMatch(descUpper, dests);
                 if (matched) { result.use_destination = matched; setSap('use_destination', matched); }
             }
             if (!result.zone_home && shouldOverride('zone_home')) {
-                const zones = zoneRows.map((r: any) => r.zone_home);
+                const zones = zoneRows.map((r: Record<string, unknown>) => r.zone_home as string);
                 const matched = findBestMatch(descUpper, zones);
                 if (matched) { result.zone_home = matched; setSap('zone_home', matched); }
             }
             if (!(result as any).color_name && shouldOverride('color_name')) {
-                const colorNames = colorRows.map((r: any) => r.name_color_sap);
+                const colorNames = colorRows.map((r: Record<string, unknown>) => r.name_color_sap as string);
                 const matchedColor = findBestMatch(descUpper, colorNames);
                 if (matchedColor) { (result as any).color_name = matchedColor; setSap('color_name', matchedColor); }
             }

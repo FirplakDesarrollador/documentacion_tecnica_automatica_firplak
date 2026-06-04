@@ -79,8 +79,8 @@ export async function createTemplate(data: {
 
         revalidatePath('/templates')
         return { success: true, id: rows?.[0]?.id }
-    } catch (e: any) {
-        return { success: false, error: e.message }
+    } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
 }
 
@@ -142,8 +142,8 @@ export async function duplicateTemplate(id: string, newName: string, dataSource:
 
         revalidatePath('/templates')
         return { success: true, id: inserted?.[0]?.id }
-    } catch (e: any) {
-        return { success: false, error: e.message }
+    } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
 }
 
@@ -224,8 +224,8 @@ export async function updateTemplate(id: string, data: {
         revalidatePath('/templates')
         revalidatePath('/templates/builder')
         return { success: true }
-    } catch (e: any) {
-        return { success: false, error: e.message }
+    } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
 }
 
@@ -396,8 +396,8 @@ export async function deleteTemplate(id: string) {
         await dbQuery(`DELETE FROM public.plantillas_doc_tec WHERE id='${id}'`)
         revalidatePath('/templates')
         return { success: true }
-    } catch (e: any) {
-        return { success: false, error: e.message }
+    } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
 }
 
@@ -508,7 +508,7 @@ export async function validateExportFilenameLength(pattern: string, dataSource: 
         }
 
         return { success: true, count: products.length }
-    } catch (e: any) {
-        return { success: false, error: e.message }
+    } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
 }

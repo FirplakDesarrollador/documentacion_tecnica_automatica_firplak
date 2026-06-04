@@ -111,7 +111,7 @@ export function canonicalizeOverrideAttrs(input: unknown): Record<string, any> {
     return canonical
 }
 
-function buildFamilyDefaults(row: any): Record<string, any> {
+function buildFamilyDefaults(row: Record<string, unknown>): Record<string, any> {
     const rhDefault = row?.rh_default ? 'RH' : 'NA'
     const assembledDefault = row?.assembled_default === true
     return {
@@ -121,7 +121,7 @@ function buildFamilyDefaults(row: any): Record<string, any> {
 }
 
 export function buildEffectiveProductContext(
-    row: any,
+    row: Record<string, unknown>,
     options: EffectiveContextOptions = {}
 ): EffectiveProductContext {
     const includeSkuOverrides = options.includeSkuOverrides !== false

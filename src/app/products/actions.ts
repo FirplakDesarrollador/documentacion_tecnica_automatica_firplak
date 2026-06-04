@@ -14,7 +14,7 @@ import { upsertVersionAction } from '@/app/rules/versions/actions'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 
-function normalizeCanto(val: any) {
+function normalizeCanto(val: unknown) {
     if (val === null || val === undefined || val === '' || val === 'false') return 'CANTO 2 MM'
     const clean = String(val).toUpperCase().replace(/\s+/g, '')
     if (clean === 'CANTO0.45MM') return 'CANTO 0.45 MM'
@@ -23,7 +23,7 @@ function normalizeCanto(val: any) {
     return String(val)
 }
 
-function normalizeCarb2(val: any) {
+function normalizeCarb2(val: unknown) {
     if (val === null || val === undefined || val === '' || val === 'false') return 'NA'
     const clean = String(val).trim().toUpperCase()
     if (clean === 'SI' || clean === 'SÍ' || clean === 'YES' || clean === 'TRUE') return 'CARB2'
@@ -587,22 +587,22 @@ export async function getUniquePropertiesAction() {
     const colors = await dbQuery(`SELECT code_4dig as code_color, name_color_sap FROM public.colors ORDER BY code_4dig ASC`) || []
 
     return {
-        lines: lines.map((r: any) => r.line),
-        designations: designations.map((r: any) => r.designation),
-        productTypes: productTypes.map((r: any) => r.product_type),
-        useDestinations: useDestinations.map((r: any) => r.use_destination),
-        productNames: productNames.map((r: any) => r.product_name),
-        commercialMeasures: commercialMeasures.map((r: any) => r.commercial_measure),
-        accessoryTexts: accessoryTexts.map((r: any) => r.accessory_text),
-        bisagras: ['NA', ...bisagrasValues.map((r: any) => r.bisagras).filter((v: string) => v !== 'NA')],
-        carb2: ['NA', ...carb2Values.map((r: any) => r.carb2).filter((v: string) => v !== 'NA')],
-        specialLabels: ['NA', ...specialLabels.map((r: any) => r.special_label).filter((v: string) => v !== 'NA')],
-        zoneHomes: zoneHomes.map((r: any) => r.zone_home),
-        rh: ['NA', ...rhValues.map((r: any) => r.rh).filter((v: string) => v !== 'NA')],
-        cantoPuertas: ['NA', ...cantoValues.map((r: any) => r.canto_puertas).filter((v: string) => v !== 'NA')],
-        doorColorTexts: ['NA', ...doorColorTextValues.map((r: any) => r.door_color_text).filter((v: string) => v !== 'NA')],
-        versionLabels: ['NA', ...versionLabelValues.map((r: any) => r.version_label).filter((v: string) => v !== 'NA')],
-        colors: colors.map((r: any) => ({ code: r.code_color, name: r.name_color_sap }))
+        lines: lines.map((r: Record<string, unknown>) => r.line as string),
+        designations: designations.map((r: Record<string, unknown>) => r.designation as string),
+        productTypes: productTypes.map((r: Record<string, unknown>) => r.product_type as string),
+        useDestinations: useDestinations.map((r: Record<string, unknown>) => r.use_destination as string),
+        productNames: productNames.map((r: Record<string, unknown>) => r.product_name as string),
+        commercialMeasures: commercialMeasures.map((r: Record<string, unknown>) => r.commercial_measure as string),
+        accessoryTexts: accessoryTexts.map((r: Record<string, unknown>) => r.accessory_text as string),
+        bisagras: ['NA', ...bisagrasValues.map((r: Record<string, unknown>) => r.bisagras as string).filter((v: string) => v !== 'NA')],
+        carb2: ['NA', ...carb2Values.map((r: Record<string, unknown>) => r.carb2 as string).filter((v: string) => v !== 'NA')],
+        specialLabels: ['NA', ...specialLabels.map((r: Record<string, unknown>) => r.special_label as string).filter((v: string) => v !== 'NA')],
+        zoneHomes: zoneHomes.map((r: Record<string, unknown>) => r.zone_home as string),
+        rh: ['NA', ...rhValues.map((r: Record<string, unknown>) => r.rh as string).filter((v: string) => v !== 'NA')],
+        cantoPuertas: ['NA', ...cantoValues.map((r: Record<string, unknown>) => r.canto_puertas as string).filter((v: string) => v !== 'NA')],
+        doorColorTexts: ['NA', ...doorColorTextValues.map((r: Record<string, unknown>) => r.door_color_text as string).filter((v: string) => v !== 'NA')],
+        versionLabels: ['NA', ...versionLabelValues.map((r: Record<string, unknown>) => r.version_label as string).filter((v: string) => v !== 'NA')],
+        colors: colors.map((r: Record<string, unknown>) => ({ code: r.code_color as string, name: r.name_color_sap as string }))
     }
 }
 

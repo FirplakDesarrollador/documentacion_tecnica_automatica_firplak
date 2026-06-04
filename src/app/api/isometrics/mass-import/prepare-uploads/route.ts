@@ -64,7 +64,7 @@ export async function POST(req: Request) {
         upsert: true,
       })
       if (error || !data?.token) {
-        throw new Error(`Failed to create signed upload URL for ${normalizeText(storagePath)}: ${error?.message || 'unknown'}`)
+        throw new Error(`Failed to create signed upload URL for ${normalizeText(storagePath)}: ${(error as { message?: string })?.message || 'unknown'}`)
       }
       out.push({
         sha256: f.sha256,

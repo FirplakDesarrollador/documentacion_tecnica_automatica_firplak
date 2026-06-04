@@ -31,7 +31,7 @@ import {
     type NamingVariableSource,
 } from '@/lib/engine/namingVariableCatalog'
 
-function esc(v: any) {
+function esc(v: unknown) {
     if (v === null || v === undefined) return 'NULL'
     if (typeof v === 'boolean') return v ? 'true' : 'false'
     if (typeof v === 'number') return String(v)
@@ -50,7 +50,7 @@ function normalizeProductType(raw: string) {
     return String(raw || '').trim().toUpperCase()
 }
 
-function parseProductTypesValue(value: any): string[] {
+function parseProductTypesValue(value: unknown): string[] {
     if (!value) return []
     const src = Array.isArray(value)
         ? value
@@ -128,8 +128,8 @@ async function saveNamingModelTypesToStorage(types: string[]) {
 export async function getRulesAction() {
     try {
         return await loadAllRulesForNamingType(DEFAULT_NAMING_TYPE)
-    } catch (error: any) {
-        console.error("getRulesAction error:", error.message)
+    } catch (error) {
+        console.error("getRulesAction error:", error instanceof Error ? error.message : String(error))
         return []
     }
 }
@@ -322,8 +322,8 @@ export async function getNamingComponentsEnConfigAction(targetEntity: string, na
     try {
         const components = await loadNamingComponents(targetEntity, namingType)
         return componentsToEnConfig(components)
-    } catch (error: any) {
-        console.error("getNamingComponentsEnConfigAction error:", error.message)
+    } catch (error) {
+        console.error("getNamingComponentsEnConfigAction error:", error instanceof Error ? error.message : String(error))
         return []
     }
 }

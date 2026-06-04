@@ -263,8 +263,8 @@ export default function MassEditClient() {
       setExecutionProgress(null);
       setIsExecuting(false);
       setMigrateNamingModel(false);
-    } catch (e: any) {
-      toast.error('Error ejecutando actualización: ' + (e?.message || 'Error desconocido'));
+    } catch (e) {
+      toast.error('Error ejecutando actualización: ' + (e instanceof Error ? e.message : String(e) || 'Error desconocido'));
       setIsExecuting(false);
       setExecutionProgress(null);
     }
@@ -293,8 +293,8 @@ export default function MassEditClient() {
       } else {
         toast.error('Error al obtener previsualización: ' + (res as any).error);
       }
-    } catch (e: any) {
-      toast.error('Error: ' + e.message);
+    } catch (e) {
+      toast.error('Error: ' + (e instanceof Error ? e.message : String(e)));
     }
     setIsDeleting(false);
   };
@@ -310,8 +310,8 @@ export default function MassEditClient() {
       }
       setShowDeleteWizard(false);
       handleSearch();
-    } catch (e: any) {
-      toast.error('Error eliminando: ' + e.message);
+    } catch (e) {
+      toast.error('Error eliminando: ' + (e instanceof Error ? e.message : String(e)));
     }
     setIsDeleting(false);
   };
@@ -1092,8 +1092,8 @@ export default function MassEditClient() {
                             setAvailableLines(prev => prev.filter(l => l !== line));
                             setLinesModalSelected(prev => prev.filter(l => l !== line));
                             toast.success(`Línea "${line}" eliminada`);
-                          } catch (e: any) {
-                            toast.error('Error: ' + e.message);
+                          } catch (e) {
+                            toast.error('Error: ' + (e instanceof Error ? e.message : String(e)));
                           }
                         }}
                         className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center shadow-sm hover:bg-red-600"
@@ -1138,8 +1138,8 @@ export default function MassEditClient() {
                     toast.success('Líneas actualizadas');
                     setLinesModalFamily(null);
                     handleSearch();
-                  } catch (e: any) {
-                    toast.error('Error: ' + e.message);
+                  } catch (e) {
+                    toast.error('Error: ' + (e instanceof Error ? e.message : String(e)));
                   }
                   setSavingLines(false);
                 }}

@@ -155,8 +155,8 @@ export async function POST(req: Request) {
     if (error) return NextResponse.json({ success: false, error: error.message }, { status: 500 });
 
     return NextResponse.json({ success: true, result: rpcData });
-  } catch (e: any) {
+  } catch (e) {
     console.error('[mass-import/preview] error', e);
-    return NextResponse.json({ success: false, error: e?.message || 'Preview failed' }, { status: 500 });
+    return NextResponse.json({ success: false, error: e instanceof Error ? e.message : 'Preview failed' }, { status: 500 });
   }
 }

@@ -17,7 +17,7 @@ function normalizeOverridePayload(input: any) {
   return canonicalizeOverrideAttrs(input || {});
 }
 
-function mapSkuRow(row: any) {
+function mapSkuRow(row: Record<string, unknown>) {
   const skuAttrs = canonicalizeOverrideAttrs(row.sku_attrs);
   const effectiveContext = buildEffectiveProductContext({ ...row, sku_attrs: skuAttrs }, { includeSkuOverrides: true });
 
