@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Eye, AlertTriangle } from 'lucide-react'
+import { Eye } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
@@ -51,13 +51,15 @@ interface GenerateProductTableProps {
 
 export function GenerateProductTable({
     products,
-    missingFieldsByProduct = {},
+    missingFieldsByProduct: _missingFieldsByProduct = {},
     onSelectionChange,
     selectedIds,
-    templateId,
+    templateId: _templateId,
     isExternalSource = false,
     hideActions = false,
 }: GenerateProductTableProps) {
+    void _missingFieldsByProduct
+    void _templateId
     const exportableProducts = products.filter(p => p.is_exportable !== false)
     const allSelected = exportableProducts.length > 0 && exportableProducts.every(p => selectedIds.includes(p.id))
     const someSelected = products.some(p => selectedIds.includes(p.id))
@@ -141,8 +143,6 @@ export function GenerateProductTable({
             </TableHeader>
             <TableBody>
                 {products.map((product) => {
-                    const missing = missingFieldsByProduct[product.id] || []
-                    const hasMissing = missing.length > 0
                     const isSelected = selectedIds.includes(product.id)
                     const isInactive = product.is_exportable === false
                     const inactiveReasons = product.inactive_reasons || []

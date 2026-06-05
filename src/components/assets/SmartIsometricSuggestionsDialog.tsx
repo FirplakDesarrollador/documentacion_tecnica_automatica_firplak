@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from "react"
+import Image from 'next/image'
 import { 
     Dialog, 
     DialogContent, 
@@ -236,8 +237,15 @@ export function SmartIsometricSuggestionsDialog() {
                                         </TableCell>
                                         <TableCell className="text-center align-top pt-8 border-l border-slate-50 bg-slate-50/30 group-hover:bg-slate-50/60 transition-colors w-[180px]">
                                             <div className="flex flex-col items-center gap-4 sticky top-24">
-                                                <div className="w-24 h-24 rounded-xl bg-white border-2 border-slate-200 overflow-hidden p-2 flex items-center justify-center shadow-lg group-hover:border-indigo-400 transition-all">
-                                                    <img src={s.suggestedPath} className="max-w-full max-h-full object-contain" alt="preview" />
+                                                <div className="relative w-24 h-24 rounded-xl bg-white border-2 border-slate-200 overflow-hidden flex items-center justify-center shadow-lg group-hover:border-indigo-400 transition-all">
+                                                    <Image
+                                                        src={s.suggestedPath}
+                                                        alt="preview"
+                                                        fill
+                                                        unoptimized
+                                                        sizes="96px"
+                                                        className="object-contain"
+                                                    />
                                                 </div>
                                                 <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">Previsualización</p>
                                             </div>

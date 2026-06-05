@@ -1583,13 +1583,13 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         return enrichProductDataWithIcons(dataWithZone, resolvedAssetMap) as PreviewData
     }
 
-    const getPreviewScopeArgs = () => ({
+    const getPreviewScopeArgs = useCallback(() => ({
         brandScope: dataSource === 'core_firplak' ? brandScope : 'firplak' as TemplateBrandScope,
         privateLabelClientName:
             dataSource === 'core_firplak' && brandScope === 'private_label'
                 ? String(privateLabelClientName || '').trim()
                 : null,
-    })
+    }), [dataSource, brandScope, privateLabelClientName])
 
     const effectivePreviewSource = useMemo(() => {
         if (dataSource === 'custom_datasets' && linkedDatasets.length > 0) {
@@ -1618,7 +1618,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         return () => {
             cancelled = true
         }
-    }, [isPreviewMode, effectivePreviewSource, brandScope, privateLabelClientName])
+    }, [isPreviewMode, effectivePreviewSource, getPreviewScopeArgs])
 
     // Fetch datasets info (solo necesario para legacy selector/compat)
     useEffect(() => {

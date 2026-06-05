@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { Search, Download, AlertTriangle, X, ChevronLeft, ChevronRight } from 'lucide-react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -17,6 +17,7 @@ import { TemplatePicker, type TemplateOption } from '@/components/generate/Templ
 import { GenerateProductTable, type GenerateProduct } from '@/components/generate/GenerateProductTable'
 import { getTemplateRequiredFields, getTemplateValidationIssues } from '@/components/generate/ValidationWarnings'
 import { BulkExportPanel } from '@/components/generate/BulkExportPanel'
+import { getReferencesByFamilyAction } from '@/app/assets/actions'
 
 const STORAGE_KEYS = {
     SELECTED_IDS: 'generate-selected-ids',
@@ -44,7 +45,7 @@ interface GenerateClientProps {
 }
 
 export function GenerateClient({
-    products,
+    products: initialProducts,
     templates,
     families,
     references,
@@ -54,22 +55,33 @@ export function GenerateClient({
     hasFilter,
     rules,
     isExternalSource = false,
-    totalCount = 0,
+    totalCount: initialTotalCount = 0,
     page = 1,
     pageSize = 200,
     templateBrandWarning = null,
 }: GenerateClientProps) {
-    const router = useRouter()
     const searchParams = useSearchParams()
     
     // --- Estados de Selección de Productos ---
     const [selectedIds, setSelectedIds] = useState<string[]>([])
     const [isLoaded, setIsLoaded] = useState(false)
+    const didHydrateSavedStateRef = useRef(false)
+    const pendingSavedTemplateIdRef = useRef<string | null>(null)
+    const pendingSavedDatasetIdRef = useRef<string | null>(null)
 
     // --- Estados de Filtros ---
     const [familyIds, setFamilyIds] = useState<string[]>(() => searchParams.getAll('f'))
     const [referenceIds, setReferenceIds] = useState<string[]>(() => searchParams.getAll('r'))
+    const [referenceOptions, setReferenceOptions] = useState(references)
+    const [isLoadingReferences, setIsLoadingReferences] = useState(false)
+    const referenceOptionsCacheRef = useRef<Map<string, { value: string; label: string }[]>>(new Map())
     const [textFilter, setTextFilter] = useState(() => searchParams.get('q') || '')
+    const [products, setProducts] = useState<GenerateProduct[]>(initialProducts)
+    const [totalCount, setTotalCount] = useState(initialTotalCount)
+    const [effectiveHasFilter, setEffectiveHasFilter] = useState(hasFilter)
+    const [currentTemplateBrandWarning, setCurrentTemplateBrandWarning] = useState<string | null>(templateBrandWarning)
+    const [isLoadingProducts, setIsLoadingProducts] = useState(false)
+    const latestProductsRequestRef = useRef(0)
 
     // --- Estado de Plantilla ---
     const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
@@ -82,16 +94,68 @@ export function GenerateClient({
     const [currentPage, setCurrentPage] = useState(page)
 
     const [showBulkExport, setShowBulkExport] = useState(false)
+    const selectedTemplate = useMemo(
+        () => templates.find(t => t.id === selectedTemplateId) ?? null,
+        [templates, selectedTemplateId]
+    )
+    const isGenericDatasetsTemplate = selectedTemplate?.data_source === 'custom_datasets'
+    const needsDatasetSelection = Boolean(isGenericDatasetsTemplate && !selectedDatasetId)
+    const brandScope = selectedTemplate?.brand_scope === 'private_label' ? 'private_label' : 'firplak'
+    const privateLabelClientName = selectedTemplate?.private_label_client_name
+        ? String(selectedTemplate.private_label_client_name).trim()
+        : ''
+    const buildGenerateUrl = useCallback((nextState?: {
+        families?: string[]
+        references?: string[]
+        templateId?: string | null
+        datasetId?: string | null
+        text?: string
+        page?: number
+    }) => {
+        const params = new URLSearchParams()
+
+        const nextFamilies = nextState?.families ?? familyIds
+        const nextReferences = nextState?.references ?? referenceIds
+        const nextTemplateId = nextState?.templateId ?? selectedTemplateId
+        const nextDatasetId = nextState?.datasetId ?? selectedDatasetId
+        const nextText = nextState?.text ?? textFilter
+        const nextPage = nextState?.page ?? currentPage
+
+        nextFamilies.forEach(id => params.append('f', id))
+        nextReferences.forEach(id => params.append('r', id))
+
+        if (nextText.trim()) {
+            params.set('q', nextText.trim())
+        }
+
+        if (nextTemplateId) {
+            params.set('template_id', nextTemplateId)
+        }
+
+        if (nextDatasetId) {
+            params.set('dataset_id', nextDatasetId)
+        }
+
+        if (nextPage > 1) {
+            params.set('page', String(nextPage))
+        }
+
+        const next = params.toString()
+        return next ? `/generate?${next}` : '/generate'
+    }, [currentPage, familyIds, referenceIds, selectedDatasetId, selectedTemplateId, textFilter])
 
     // 1. Cargar estados iniciales desde localStorage si la URL está vacía
     useEffect(() => {
-        /* eslint-disable react-hooks/set-state-in-effect */
-        // Intencional: Restauración de localStorage al montar.
-        // No se puede mover a inicializadores lazy porque depende de
-        // templates/datasetsForTemplate que vienen de Supabase (asíncronos).
+        if (didHydrateSavedStateRef.current) return
+        let cancelled = false
+
+        let nextSelectedIds: string[] | null = null
+        let nextFamilyIds: string[] | null = null
+        let nextReferenceIds: string[] | null = null
+
         const savedIds = localStorage.getItem(STORAGE_KEYS.SELECTED_IDS)
         if (savedIds) {
-            try { setSelectedIds(JSON.parse(savedIds)) } catch (e) { console.error(e) }
+            try { nextSelectedIds = JSON.parse(savedIds) } catch (e) { console.error(e) }
         }
 
         const hasUrlFilters = searchParams.has('f') || searchParams.has('r')
@@ -104,59 +168,205 @@ export function GenerateClient({
             if (savedFam) {
                 try {
                     const parsed = JSON.parse(savedFam)
-                    if (Array.isArray(parsed) && parsed.length > 0) setFamilyIds(parsed)
+                    if (Array.isArray(parsed) && parsed.length > 0) nextFamilyIds = parsed
                 } catch (e) { console.error(e) }
             }
             if (savedRef) {
                 try {
                     const parsed = JSON.parse(savedRef)
-                    if (Array.isArray(parsed) && parsed.length > 0) setReferenceIds(parsed)
+                    if (Array.isArray(parsed) && parsed.length > 0) nextReferenceIds = parsed
                 } catch (e) { console.error(e) }
             }
             if (savedTpl && !initialTemplateId) {
-                const exists = templates.some(t => t.id === savedTpl)
-                if (exists) setSelectedTemplateId(savedTpl)
+                pendingSavedTemplateIdRef.current = savedTpl
             }
             if (savedDs && !initialDatasetId) {
-                const exists = datasetsForTemplate.some(d => d.id === savedDs)
-                if (exists) setSelectedDatasetId(savedDs)
+                pendingSavedDatasetIdRef.current = savedDs
             }
         }
-        setIsLoaded(true)
-        /* eslint-enable react-hooks/set-state-in-effect */
-    }, [])
 
-    // 2. Sincronización Unificada con la URL (Debounced)
+        queueMicrotask(() => {
+            if (cancelled) return
+            didHydrateSavedStateRef.current = true
+            if (nextSelectedIds) setSelectedIds(nextSelectedIds)
+            if (nextFamilyIds) setFamilyIds(nextFamilyIds)
+            if (nextReferenceIds) setReferenceIds(nextReferenceIds)
+            setIsLoaded(true)
+        })
+
+        return () => {
+            cancelled = true
+        }
+    }, [searchParams, initialTemplateId, initialDatasetId])
+
+    useEffect(() => {
+        const pendingTemplateId = pendingSavedTemplateIdRef.current
+        if (!pendingTemplateId || initialTemplateId) return
+
+        const exists = templates.some(t => t.id === pendingTemplateId)
+        if (!exists) return
+
+        setSelectedTemplateId(pendingTemplateId)
+        pendingSavedTemplateIdRef.current = null
+    }, [templates, initialTemplateId])
+
+    useEffect(() => {
+        const pendingDatasetId = pendingSavedDatasetIdRef.current
+        if (!pendingDatasetId || initialDatasetId) return
+
+        const exists = datasetsForTemplate.some(d => d.id === pendingDatasetId)
+        if (!exists) return
+
+        setSelectedDatasetId(pendingDatasetId)
+        pendingSavedDatasetIdRef.current = null
+    }, [datasetsForTemplate, initialDatasetId])
+
+    useEffect(() => {
+        let cancelled = false
+
+        const loadReferences = async () => {
+            if (familyIds.length === 0) {
+                setReferenceOptions([])
+                setIsLoadingReferences(false)
+                return
+            }
+
+            const cacheKey = [...familyIds].sort().join('|')
+            const cached = referenceOptionsCacheRef.current.get(cacheKey)
+            if (cached) {
+                setReferenceOptions(cached)
+                setIsLoadingReferences(false)
+                return
+            }
+
+            setReferenceOptions([])
+            setIsLoadingReferences(true)
+
+            try {
+                const nextReferences = await getReferencesByFamilyAction(familyIds)
+                if (!cancelled) {
+                    const safeReferences = Array.isArray(nextReferences) ? nextReferences : []
+                    referenceOptionsCacheRef.current.set(cacheKey, safeReferences)
+                    setReferenceOptions(safeReferences)
+                    setIsLoadingReferences(false)
+                }
+            } catch (error) {
+                console.error('[GenerateClient] Error loading references by family:', error)
+                if (!cancelled) {
+                    setReferenceOptions([])
+                    setIsLoadingReferences(false)
+                }
+            }
+        }
+
+        void loadReferences()
+
+        return () => {
+            cancelled = true
+        }
+    }, [familyIds])
+
+    useEffect(() => {
+        queueMicrotask(() => {
+            setProducts(initialProducts)
+            setTotalCount(initialTotalCount)
+            setEffectiveHasFilter(hasFilter)
+            setCurrentTemplateBrandWarning(templateBrandWarning)
+            setIsLoadingProducts(false)
+        })
+    }, [hasFilter, initialProducts, initialTotalCount, templateBrandWarning])
+
+    useEffect(() => {
+        if (!isLoaded || isExternalSource || isGenericDatasetsTemplate) return
+
+        const shouldFetch =
+            familyIds.length > 0 ||
+            referenceIds.length > 0 ||
+            textFilter.trim().length > 0
+
+        if (!shouldFetch) {
+            setProducts([])
+            setTotalCount(0)
+            setEffectiveHasFilter(false)
+            setCurrentTemplateBrandWarning(templateBrandWarning)
+            setIsLoadingProducts(false)
+            return
+        }
+
+        if (products.length === 0) {
+            setIsLoadingProducts(true)
+        }
+
+        const controller = new AbortController()
+        const requestId = ++latestProductsRequestRef.current
+
+        const params = new URLSearchParams()
+        familyIds.forEach(id => params.append('f', id))
+        referenceIds.forEach(id => params.append('r', id))
+        if (textFilter.trim()) {
+            params.set('q', textFilter.trim())
+        }
+        if (selectedTemplateId) {
+            params.set('template_id', selectedTemplateId)
+        }
+        params.set('page', String(currentPage))
+        params.set('pageSize', String(pageSize))
+
+        void fetch(`/api/generate/products?${params.toString()}`, {
+            method: 'GET',
+            cache: 'no-store',
+            signal: controller.signal,
+        })
+            .then(async (response) => {
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`)
+                }
+                return await response.json() as {
+                    products?: GenerateProduct[]
+                    totalCount?: number
+                    hasFilter?: boolean
+                    templateBrandWarning?: string | null
+                }
+            })
+            .then((payload) => {
+                if (latestProductsRequestRef.current !== requestId) return
+                setProducts(Array.isArray(payload.products) ? payload.products : [])
+                setTotalCount(typeof payload.totalCount === 'number' ? payload.totalCount : 0)
+                setEffectiveHasFilter(Boolean(payload.hasFilter))
+                setCurrentTemplateBrandWarning(payload.templateBrandWarning ?? null)
+                setIsLoadingProducts(false)
+            })
+            .catch((error) => {
+                if (controller.signal.aborted) return
+                console.error('[GenerateClient] Error fetching filtered products:', error)
+                if (latestProductsRequestRef.current !== requestId) return
+                setProducts([])
+                setTotalCount(0)
+                setEffectiveHasFilter(true)
+                setIsLoadingProducts(false)
+            })
+
+        return () => {
+            controller.abort()
+        }
+    }, [
+        currentPage,
+        familyIds,
+        isExternalSource,
+        isGenericDatasetsTemplate,
+        isLoaded,
+        pageSize,
+        referenceIds,
+        selectedTemplateId,
+        templateBrandWarning,
+        textFilter,
+    ])
+
+    // 2. Sincronización de URL y persistencia sin recarga completa
     useEffect(() => {
         if (!isLoaded) return
 
         const timeout = setTimeout(() => {
-            const params = new URLSearchParams()
-            
-            // Filtros
-            familyIds.forEach(id => params.append('f', id))
-            referenceIds.forEach(id => params.append('r', id))
-            
-            // Filtro de búsqueda
-            if (textFilter.trim()) {
-                params.set('q', textFilter.trim())
-            }
-            
-            // Plantilla
-            if (selectedTemplateId) {
-                params.set('template_id', selectedTemplateId)
-            }
-
-            // Dataset (solo cuando aplica: el server decide si lo usa o no)
-            if (selectedDatasetId) {
-                params.set('dataset_id', selectedDatasetId)
-            }
-
-            // Página
-            if (currentPage > 1) {
-                params.set('page', String(currentPage))
-            }
-
             // Persistencia
             localStorage.setItem(STORAGE_KEYS.SELECTED_IDS, JSON.stringify(selectedIds))
             localStorage.setItem(STORAGE_KEYS.FAMILY, JSON.stringify(familyIds))
@@ -170,24 +380,23 @@ export function GenerateClient({
                 localStorage.removeItem(STORAGE_KEYS.DATASET)
             }
 
-            const current = searchParams.toString()
-            const next = params.toString()
+            const current = `${window.location.pathname}${window.location.search}`
+            const targetUrl = buildGenerateUrl()
 
-            if (current !== next) {
-                router.push(`/generate?${next}`)
-                router.refresh()
+            if (current !== targetUrl) {
+                window.history.replaceState(null, '', targetUrl)
             }
         }, 300)
 
         return () => clearTimeout(timeout)
-    }, [familyIds, referenceIds, selectedTemplateId, selectedDatasetId, selectedIds, textFilter, currentPage, isLoaded, router, searchParams])
+    }, [buildGenerateUrl, familyIds, referenceIds, selectedTemplateId, selectedDatasetId, selectedIds, textFilter, currentPage, isLoaded])
 
     useEffect(() => {
         /* eslint-disable-next-line react-hooks/set-state-in-effect */
         setSelectedIds(prev =>
-            prev.filter(id => products.some(product => product.id === id && product.is_exportable !== false))
+            prev.filter(id => initialProducts.some(product => product.id === id && product.is_exportable !== false))
         )
-    }, [products])
+    }, [initialProducts])
 
     // 3. Sincronizar selección de plantilla con cambios en la URL (Navegación externa/atrás)
     // Usamos este patrón para evitar que el estado local "pelee" con la prop inicial durante el re-renderizado
@@ -227,14 +436,6 @@ export function GenerateClient({
     }, [page, lastSyncedPage])
 
     // --- Computed Values ---
-    const selectedTemplate = useMemo(
-        () => templates.find(t => t.id === selectedTemplateId) ?? null,
-        [templates, selectedTemplateId]
-    )
-
-    const isGenericDatasetsTemplate = selectedTemplate?.data_source === 'custom_datasets'
-    const needsDatasetSelection = Boolean(isGenericDatasetsTemplate && !selectedDatasetId)
-
     const requiredFields = useMemo(
         () => selectedTemplate ? getTemplateRequiredFields(selectedTemplate.elements_json) : [],
         [selectedTemplate]
@@ -322,6 +523,9 @@ export function GenerateClient({
     const handleFilterChange = (families: string[], references: string[]) => {
         setFamilyIds(families)
         setReferenceIds(references)
+        setCurrentPage(1)
+        localStorage.setItem(STORAGE_KEYS.FAMILY, JSON.stringify(families))
+        localStorage.setItem(STORAGE_KEYS.REFERENCE, JSON.stringify(references))
         // No limpiamos el filtro de texto para que persista al cambiar familias/referencias
     }
 
@@ -343,19 +547,23 @@ export function GenerateClient({
 
         // La selección de dataset depende de la plantilla (server-side)
         setSelectedDatasetId(null)
+        window.location.replace(buildGenerateUrl({
+            templateId: id,
+            datasetId: null,
+            page: 1,
+        }))
     }
 
     const handleDatasetChange = (datasetId: string) => {
         setSelectedDatasetId(datasetId)
         setSelectedIds([])
+        window.location.replace(buildGenerateUrl({
+            datasetId,
+            page: 1,
+        }))
     }
 
     // --- Valores para exportación completa ---
-    const brandScope = selectedTemplate?.brand_scope === 'private_label' ? 'private_label' : 'firplak'
-    const privateLabelClientName = selectedTemplate?.private_label_client_name
-        ? String(selectedTemplate.private_label_client_name).trim()
-        : ''
-
     const parsedRefsForExport = useMemo(() => {
         return referenceIds.map((v) => {
             const parts = v.split('|||')
@@ -384,7 +592,8 @@ export function GenerateClient({
                     {!isExternalSource && !isGenericDatasetsTemplate ? (
                         <GenerateFilters
                             families={families}
-                            references={references}
+                            references={referenceOptions}
+                            referencesLoading={isLoadingReferences}
                             familyIds={familyIds}
                             referenceIds={referenceIds}
                             onChange={handleFilterChange}
@@ -458,22 +667,29 @@ export function GenerateClient({
                         <span className="text-slate-400">·</span>
                         <span className="capitalize">{selectedTemplate.document_type}</span>
                     </div>
-                    {hasFilter && products.length > 0 && (
-                        <div className="text-slate-600 text-xs font-medium bg-slate-100 px-2 py-1 rounded-md">
-                            {textFilter ? (
-                                `Filtrados: ${filteredProducts.length} de ${products.length} cargados (Total: ${totalCount})`
-                            ) : (
-                                `Mostrando ${pageStart}-${pageEnd} de ${totalCount} productos encontrados`
+                    {effectiveHasFilter && products.length > 0 && (
+                        <div className="flex items-center gap-2">
+                            {isLoadingProducts && (
+                                <div className="text-indigo-700 text-xs font-medium bg-indigo-50 border border-indigo-200 px-2 py-1 rounded-md">
+                                    Actualizando...
+                                </div>
                             )}
+                            <div className="text-slate-600 text-xs font-medium bg-slate-100 px-2 py-1 rounded-md">
+                                {textFilter ? (
+                                    `Filtrados: ${filteredProducts.length} de ${products.length} cargados (Total: ${totalCount})`
+                                ) : (
+                                    `Mostrando ${pageStart}-${pageEnd} de ${totalCount} productos encontrados`
+                                )}
+                            </div>
                         </div>
                     )}
                 </div>
             )}
 
-            {templateBrandWarning && (
+            {currentTemplateBrandWarning && (
                 <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
                     <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                    <div className="leading-snug">{templateBrandWarning}</div>
+                    <div className="leading-snug">{currentTemplateBrandWarning}</div>
                 </div>
             )}
 
@@ -490,7 +706,17 @@ export function GenerateClient({
                                 Esta plantilla usa <b>Bases de datos</b>. Elige un dataset asociado para cargar los registros.
                             </p>
                     </div>
-                ) : !hasFilter ? (
+                ) : isLoadingProducts && products.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-72 text-center px-6">
+                        <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-3 ring-1 ring-inset ring-indigo-100">
+                            <Search className="w-8 h-8 text-indigo-400 animate-pulse" />
+                        </div>
+                        <h3 className="text-base font-semibold text-slate-800">Cargando productos</h3>
+                        <p className="text-sm text-slate-500 mt-1 max-w-xs">
+                            Estamos aplicando los filtros seleccionados.
+                        </p>
+                    </div>
+                ) : !effectiveHasFilter ? (
                     <div className="flex flex-col items-center justify-center h-72 text-center px-6">
                         <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-3">
                             <Search className="w-8 h-8 text-slate-400" />
@@ -513,7 +739,7 @@ export function GenerateClient({
             </div>
 
             {/* Paginación */}
-            {hasFilter && totalPages > 1 && (
+            {effectiveHasFilter && totalPages > 1 && (
                 <div className="flex items-center justify-between gap-4 px-1">
                     <div className="text-xs text-slate-400">
                         Página {currentPage} de {totalPages}

@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 interface GenerateFiltersProps {
     families: { value: string, label: string }[]
     references: { value: string, label: string }[]
+    referencesLoading?: boolean
     familyIds: string[]
     referenceIds: string[]
     onChange: (family: string[], reference: string[]) => void
@@ -18,6 +19,7 @@ interface GenerateFiltersProps {
 export function GenerateFilters({ 
     families, 
     references,
+    referencesLoading = false,
     familyIds,
     referenceIds,
     onChange,
@@ -47,7 +49,20 @@ export function GenerateFilters({
                 options={references}
                 values={referenceIds}
                 onChange={handleReferenceChange}
-                placeholder="Referencia · Designación · Medida..."
+                placeholder={
+                    familyIds.length === 0
+                        ? "Referencia · Designación · Medida..."
+                        : referencesLoading
+                            ? "Cargando referencias..."
+                            : "Referencia · Designación · Medida..."
+                }
+                emptyMessage={
+                    familyIds.length === 0
+                        ? "Selecciona una familia primero."
+                        : referencesLoading
+                            ? "Cargando referencias..."
+                            : "No se encontraron resultados."
+                }
                 className="max-w-[420px]"
             />
             <div className="relative flex items-center max-w-[280px] w-full">

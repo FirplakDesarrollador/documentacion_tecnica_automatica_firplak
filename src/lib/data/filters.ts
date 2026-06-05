@@ -90,7 +90,10 @@ export async function getReferenceFilters(
         // One option per (family, reference, measure) to avoid cross-family leaks.
         `SELECT
             r.family_code,
-            f.family_name,
+            COALESCE(
+                f_exact.family_name,
+                f_prefix.family_name
+            ) as family_name,
             r.reference_code,
             r.commercial_measure,
             MAX(r.designation) as designation,
@@ -98,10 +101,15 @@ export async function getReferenceFilters(
             MAX(r.ref_attrs->>'accessory_text') as accessory_text,
             MAX(r.special_label) as special_label
          FROM public.product_references r
-         JOIN public.families f ON r.family_code = f.family_code
+         LEFT JOIN public.families f_exact
+             ON f_exact.family_code = r.family_code
+         LEFT JOIN public.families f_prefix
+             ON f_prefix.family_code = SUBSTRING(r.family_code FROM 2)
+             AND r.family_code ~ '^[VCP].+'
+             AND f_exact.family_code IS NULL
          WHERE r.family_code IN (${fFilter})
-         GROUP BY r.family_code, f.family_name, r.reference_code, r.commercial_measure
-         ORDER BY f.family_name, r.reference_code, r.commercial_measure`
+         GROUP BY r.family_code, COALESCE(f_exact.family_name, f_prefix.family_name), r.reference_code, r.commercial_measure
+         ORDER BY COALESCE(f_exact.family_name, f_prefix.family_name), r.reference_code, r.commercial_measure`
     ) || []
 
     return records.map((rec: { family_code?: string; reference_code?: string; designation?: string; commercial_measure?: string; product_name?: string; accessory_text?: string; special_label?: string }) => {

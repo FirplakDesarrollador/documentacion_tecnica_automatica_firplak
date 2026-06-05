@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from "react"
+import Image from 'next/image'
 import { 
     Dialog, 
     DialogContent, 
@@ -428,9 +429,16 @@ export function IsometricAssociationDialog({
                                                 : "bg-white border-slate-200 hover:border-slate-300"
                                         )}
                                     >
-                                        <div className="h-10 w-10 bg-slate-100 rounded-lg flex items-center justify-center shrink-0 overflow-hidden">
+                                        <div className="relative h-10 w-10 bg-white rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-slate-200">
                                             {asset.file_path ? (
-                                                <img src={asset.file_path} className="max-w-full max-h-full object-contain p-1" />
+                                                <Image
+                                                    src={asset.file_path}
+                                                    alt={`Vista previa del isométrico ${asset.name}`}
+                                                    fill
+                                                    unoptimized
+                                                    sizes="40px"
+                                                    className="object-contain"
+                                                />
                                             ) : (
                                                 <ImageIcon className="h-5 w-5 text-slate-400" />
                                             )}

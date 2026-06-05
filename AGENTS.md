@@ -7,6 +7,7 @@ Compact, repo-specific rules for future OpenCode sessions.
 - `TERMINAL_SAFETY.md` (local terminal safety policy)
 - `package.json` (authoritative npm scripts)
 - relevant SOP in `directives/` before building one-off flows
+- for lint, TypeScript, suppression cleanup, or helper scripts: `directives/code_quality_guardrails.md`
 
 ## Stack and structure (verified)
 - App is Next.js 16 + React 19 + TypeScript (`src/app` router, API routes in `src/app/api/**/route.ts`).

@@ -1,6 +1,7 @@
 'use client'
 
 import React from 'react'
+import Image from 'next/image'
 import { getTemplateFontCssStack } from '@/lib/templates/templateTypography'
 const PIXELS_PER_MM = 4
 
@@ -139,6 +140,11 @@ function AutoScalingIconContent({ el }: { el: TemplateElement }) {
     const sizePx = (el.iconSizeMM || 15) * PIXELS_PER_MM
     const gapPx = (el.captionGapMM ?? 2) * PIXELS_PER_MM
     const vAlign = el.verticalAlign === 'top' ? 'flex-start' : el.verticalAlign === 'middle' ? 'center' : 'flex-end'
+    const resolvedSrc = el.resolvedSrc
+
+    if (!resolvedSrc) {
+        return null
+    }
 
     return (
         <div 
@@ -147,14 +153,17 @@ function AutoScalingIconContent({ el }: { el: TemplateElement }) {
             style={{ alignItems: 'center', justifyContent: vAlign }}
             data-scaling={isScaling ? "true" : "false"}
         >
-            <img 
-                src={el.resolvedSrc} 
-                alt="icon" 
-                style={{ 
-                    width: `${sizePx}px`, 
-                    height: `${sizePx}px`, 
-                    objectFit: 'contain' 
-                }} 
+            <Image
+                src={resolvedSrc}
+                alt="icon"
+                width={sizePx}
+                height={sizePx}
+                unoptimized
+                style={{
+                    width: `${sizePx}px`,
+                    height: `${sizePx}px`,
+                    objectFit: 'contain',
+                }}
             />
             {el.caption && (
                 <div 
@@ -260,7 +269,14 @@ export default function DocumentRenderSurface({
             if (src && !src.includes('undefined') && src !== 'null') {
                 return (
                     <div className="w-full h-full flex flex-col pointer-events-none p-1" style={{ alignItems: 'center', justifyContent: 'center' }}>
-                        <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                        <Image
+                            src={src}
+                            alt=""
+                            width={Math.max(1, Math.round(el.width || 1))}
+                            height={Math.max(1, Math.round(el.height || 1))}
+                            unoptimized
+                            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                        />
                     </div>
                 )
             }

@@ -30,7 +30,7 @@ async function runPsCapture(script) {
     const tmpFile = path.join(__dirname, '.tmp-ps-' + Date.now() + '.ps1');
     fs.writeFileSync(tmpFile, script, 'utf-8');
     try {
-        const { stdout, stderr } = await new Promise((resolve, reject) => {
+        const { stdout } = await new Promise((resolve, reject) => {
             exec(
                 `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${tmpFile}"`,
                 { timeout: 60000, maxBuffer: 50 * 1024 * 1024 },

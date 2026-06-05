@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from "react"
+import Image from 'next/image'
 import { ChevronDown, ChevronRight, Image as ImageIcon, Box, FolderOpen, FileBox } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { ViewAssetDialog } from '@/components/assets/ViewAssetDialog'
@@ -26,9 +27,16 @@ function AssetItem({ asset, isDefault }: { asset: GroupedRow; isDefault: boolean
     return (
         <div className="flex items-start gap-3 p-2.5 rounded-lg border border-slate-100 bg-white hover:border-indigo-200 hover:shadow-sm transition-all">
             <ViewAssetDialog assetName={asset.name} assetUrl={asset.file_path}>
-                <div className="h-10 w-10 rounded-lg bg-slate-50 flex items-center justify-center overflow-hidden border border-slate-200 cursor-pointer shrink-0 hover:ring-2 hover:ring-indigo-500/50 transition-all">
+                <div className="relative h-10 w-10 rounded-lg bg-white flex items-center justify-center overflow-hidden border border-slate-200 cursor-pointer shrink-0 hover:ring-2 hover:ring-indigo-500/50 transition-all">
                     {asset.file_path ? (
-                        <img src={asset.file_path} alt={asset.name} className="max-w-full max-h-full object-contain p-1" />
+                        <Image
+                            src={asset.file_path}
+                            alt={asset.name}
+                            fill
+                            unoptimized
+                            sizes="40px"
+                            className="object-contain"
+                        />
                     ) : (
                         <ImageIcon className="h-5 w-5 text-slate-300" />
                     )}

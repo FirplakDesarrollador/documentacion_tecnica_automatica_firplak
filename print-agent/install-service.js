@@ -4,7 +4,6 @@
 
 const { execSync } = require('child_process');
 const path = require('path');
-const os = require('os');
 
 const agentDir = __dirname;
 const nodePath = process.execPath;

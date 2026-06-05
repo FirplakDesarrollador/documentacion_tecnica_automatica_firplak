@@ -3,6 +3,10 @@ import 'dotenv/config';
 const SUPABASE_PROJECT_ID = 'nbifmxggfusipomspoly';
 const SUPABASE_MGMT_TOKEN = process.env.SUPABASE_ACCESS_TOKEN || '';
 
+function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
 async function applySql(sql: string) {
     const response = await fetch(`https://api.supabase.com/v1/projects/${SUPABASE_PROJECT_ID}/database/query`, {
         method: 'POST',
@@ -41,8 +45,8 @@ async function run() {
         try {
             await applySql(sql);
             console.log(`✅ ${file} aplicado con éxito.`);
-        } catch (err: any) {
-            console.error(`❌ Error aplicando ${file}:`, err.message);
+        } catch (err: unknown) {
+            console.error(`❌ Error aplicando ${file}:`, errorMessage(err));
             // Si el bloque es muy grande, podríamos intentar dividirlo, pero 300 líneas suelen caber.
         }
     }

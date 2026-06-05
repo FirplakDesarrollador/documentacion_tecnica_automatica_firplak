@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import { Image as ImageIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { ViewAssetDialog } from '@/components/assets/ViewAssetDialog'
@@ -38,12 +39,15 @@ export function FlatAssetGrid({ assets, defaultNames }: Props) {
                         className="group bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all overflow-hidden"
                     >
                         <ViewAssetDialog assetName={asset.name} assetUrl={asset.file_path}>
-                            <div className="aspect-square bg-slate-50 flex items-center justify-center overflow-hidden cursor-pointer border-b border-slate-100">
+                            <div className="relative aspect-square bg-slate-50 flex items-center justify-center overflow-hidden cursor-pointer border-b border-slate-100">
                                 {asset.file_path ? (
-                                    <img
+                                    <Image
                                         src={asset.file_path}
                                         alt={asset.name}
-                                        className="max-w-full max-h-full object-contain p-4 group-hover:scale-105 transition-transform duration-300"
+                                        fill
+                                        unoptimized
+                                        sizes="(max-width: 640px) 50vw, (max-width: 768px) 33vw, (max-width: 1024px) 25vw, (max-width: 1280px) 20vw, 16vw"
+                                        className="object-contain p-4"
                                     />
                                 ) : (
                                     <ImageIcon className="h-10 w-10 text-slate-300" />

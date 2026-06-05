@@ -1,5 +1,4 @@
 'use client'
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -11,6 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { supabase } from '@/lib/supabase'
+import { directoryInputProps } from '@/lib/ui/directoryInputProps'
 import { MultiSelectSearchField } from '@/components/ui-custom/MultiSelectSearchField'
 import type { FamilyFilterOption } from '@/lib/data/filters'
 
@@ -19,7 +19,7 @@ type PreviewItem = {
   relative_path: string
   base_name: string
   ext: string
-  parsed: any | null
+  parsed: unknown | null
   match_status: string
   match_mode: string | null
   target_granularity: 'reference' | 'version'
@@ -72,10 +72,91 @@ type PreviewResponse = {
   error?: string
 }
 
+type JobResponse = {
+  success: boolean
+  job?: {
+    id?: string | null
+  }
+  items?: unknown[]
+  error?: string
+}
+
+type JobPreviewItemRaw = {
+  id?: unknown
+  item_id?: unknown
+  relative_path?: unknown
+  base_name?: unknown
+  ext?: unknown
+  parsed?: unknown
+  match_status?: unknown
+  target_version_ids?: unknown
+  target_reference_ids?: unknown
+  conflict_group_code?: unknown
+  target_reference_summaries?: unknown
+  target_version_summaries?: unknown
+  conflict_target_reference_summaries?: unknown
+  conflict_target_version_summaries?: unknown
+  notes?: unknown
+  selected?: unknown
+}
+
 function stripExtension(fileName: string) {
   const idx = fileName.lastIndexOf('.')
   if (idx > 0) return { base: fileName.slice(0, idx), ext: fileName.slice(idx).toLowerCase() }
   return { base: fileName, ext: '' }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : []
+}
+
+function getRelativePath(file: File) {
+  const withRelativePath = file as File & { webkitRelativePath?: string }
+  return withRelativePath.webkitRelativePath ? String(withRelativePath.webkitRelativePath) : file.name
+}
+
+function toPreviewTargetSelection(item: Pick<PreviewItem, 'item_id' | 'target_reference_ids' | 'target_version_ids'>) {
+  return {
+    [item.item_id]: {
+      refIds: asStringArray(item.target_reference_ids),
+      verIds: asStringArray(item.target_version_ids),
+    },
+  }
+}
+
+function toPreviewItemFromJob(raw: unknown): PreviewItem | null {
+  if (!isRecord(raw)) return null
+  const item = raw as JobPreviewItemRaw
+  const itemId = item.id ?? item.item_id
+  if (itemId === undefined || itemId === null) return null
+
+  return {
+    item_id: String(itemId),
+    relative_path: String(item.relative_path || ''),
+    base_name: String(item.base_name || ''),
+    ext: String(item.ext || ''),
+    parsed: item.parsed ?? null,
+    match_status: String(item.match_status || ''),
+    match_mode: null,
+    target_granularity: asStringArray(item.target_version_ids).length > 0 ? 'version' : 'reference',
+    target_reference_ids: asStringArray(item.target_reference_ids),
+    target_version_ids: asStringArray(item.target_version_ids),
+    conflict_group_code: item.conflict_group_code ? String(item.conflict_group_code) : null,
+    conflict_target_ids: [],
+    target_reference_summaries: Array.isArray(item.target_reference_summaries) ? (item.target_reference_summaries as PreviewItem['target_reference_summaries']) : undefined,
+    target_version_summaries: Array.isArray(item.target_version_summaries) ? (item.target_version_summaries as PreviewItem['target_version_summaries']) : undefined,
+    conflict_target_reference_summaries: Array.isArray(item.conflict_target_reference_summaries)
+      ? (item.conflict_target_reference_summaries as PreviewItem['conflict_target_reference_summaries'])
+      : undefined,
+    conflict_target_version_summaries: Array.isArray(item.conflict_target_version_summaries)
+      ? (item.conflict_target_version_summaries as PreviewItem['conflict_target_version_summaries'])
+      : undefined,
+    notes: item.notes ? String(item.notes) : null,
+  }
 }
 
 function isAiFilename(fileName: string) {
@@ -105,7 +186,7 @@ function toCsv(items: PreviewItem[]) {
     'conflict_group_code',
     'notes',
   ]
-  const esc = (v: any) => {
+  const esc = (v: unknown) => {
     const s = String(v ?? '')
     if (s.includes('"') || s.includes(',') || s.includes('\n') || s.includes('\r')) return `"${s.replace(/"/g, '""')}"`
     return s
@@ -226,7 +307,7 @@ export function IsometricsImportClient(props: { families: FamilyFilterOption[] }
     setIgnoredAiCount(aiFiles)
     const m = new Map<string, File>()
     for (const f of list) {
-      const rel = (f as any).webkitRelativePath ? String((f as any).webkitRelativePath) : f.name
+      const rel = getRelativePath(f)
       m.set(rel, f)
     }
     setFileByRelativePath(m)
@@ -252,7 +333,7 @@ export function IsometricsImportClient(props: { families: FamilyFilterOption[] }
       // Defense-in-depth: never send .ai files to the server.
       const effectiveFiles = selectedFiles.filter(f => !isAiFilename(f.name))
       const filesPayload = effectiveFiles.map(f => {
-        const rel = (f as any).webkitRelativePath ? String((f as any).webkitRelativePath) : f.name
+        const rel = getRelativePath(f)
         const { base, ext } = stripExtension(f.name)
         return { relative_path: rel, base_name: base, ext }
       })
@@ -281,12 +362,12 @@ export function IsometricsImportClient(props: { families: FamilyFilterOption[] }
       setTargetSelectionByItemId(() => {
         const next: Record<string, { refIds: string[]; verIds: string[] }> = {}
         for (const it of j.items || []) {
-          const id = String((it as any).item_id || '')
-          if (!id) continue
-          next[id] = {
-            refIds: Array.isArray((it as any).target_reference_ids) ? (it as any).target_reference_ids.map(String) : [],
-            verIds: Array.isArray((it as any).target_version_ids) ? (it as any).target_version_ids.map(String) : [],
-          }
+          if (!isRecord(it) || !it.item_id) continue
+          Object.assign(next, toPreviewTargetSelection({
+            item_id: String(it.item_id),
+            target_reference_ids: asStringArray(it.target_reference_ids),
+            target_version_ids: asStringArray(it.target_version_ids),
+          }))
         }
         return next
       })
@@ -305,46 +386,26 @@ export function IsometricsImportClient(props: { families: FamilyFilterOption[] }
     if (!id) return
     try {
       const res = await fetch(`/api/isometrics/mass-import/job?id=${encodeURIComponent(id)}`)
-      const j = await res.json().catch(() => null)
+      const j = (await res.json().catch(() => null)) as JobResponse | null
       if (!res.ok || !j?.success) throw new Error(j?.error || 'No se pudo cargar el job')
       setJobId(String(j.job?.id || id))
-      const loadedItems: any[] = Array.isArray(j.items) ? j.items : []
-      setIgnoredAiCount(loadedItems.filter(it => String(it.match_status || '') === 'IGNORED_AI').length)
-      const mapped: PreviewItem[] = loadedItems.map((it: any) => ({
-        item_id: String(it.id),
-        relative_path: String(it.relative_path || ''),
-        base_name: String(it.base_name || ''),
-        ext: String(it.ext || ''),
-        parsed: it.parsed || null,
-        match_status: String(it.match_status || ''),
-        match_mode: null,
-        target_granularity: Array.isArray(it.target_version_ids) && it.target_version_ids.length > 0 ? 'version' : 'reference',
-        target_reference_ids: Array.isArray(it.target_reference_ids) ? it.target_reference_ids.map(String) : [],
-        target_version_ids: Array.isArray(it.target_version_ids) ? it.target_version_ids.map(String) : [],
-        conflict_group_code: it.conflict_group_code ? String(it.conflict_group_code) : null,
-        conflict_target_ids: [],
-        target_reference_summaries: Array.isArray(it.target_reference_summaries) ? it.target_reference_summaries : undefined,
-        target_version_summaries: Array.isArray(it.target_version_summaries) ? it.target_version_summaries : undefined,
-        conflict_target_reference_summaries: Array.isArray(it.conflict_target_reference_summaries) ? it.conflict_target_reference_summaries : undefined,
-        conflict_target_version_summaries: Array.isArray(it.conflict_target_version_summaries) ? it.conflict_target_version_summaries : undefined,
-        notes: it.notes ? String(it.notes) : null,
-      }))
+      const loadedItems = Array.isArray(j.items) ? j.items : []
+      const mapped = loadedItems.map(toPreviewItemFromJob).filter((item): item is PreviewItem => item !== null)
+      setIgnoredAiCount(mapped.filter(it => it.match_status === 'IGNORED_AI').length)
       // Hide .ai items entirely (no mention in listing).
       setItems(mapped.filter(it => it.match_status !== 'IGNORED_AI'))
       setTargetSelectionByItemId(() => {
         const next: Record<string, { refIds: string[]; verIds: string[] }> = {}
         for (const it of mapped) {
-          next[it.item_id] = {
-            refIds: Array.isArray(it.target_reference_ids) ? it.target_reference_ids.map(String) : [],
-            verIds: Array.isArray(it.target_version_ids) ? it.target_version_ids.map(String) : [],
-          }
+          Object.assign(next, toPreviewTargetSelection(it))
         }
         return next
       })
       // Restore conflict selection from DB
       const sel: Record<string, string> = {}
       for (const it of loadedItems) {
-        if (it.conflict_group_code && it.selected) sel[String(it.conflict_group_code)] = String(it.id)
+        if (!isRecord(it)) continue
+        if (it.conflict_group_code && it.selected && it.id) sel[String(it.conflict_group_code)] = String(it.id)
       }
       setConflictSelection(sel)
       toast.success('Job cargado.')
@@ -608,8 +669,7 @@ export function IsometricsImportClient(props: { families: FamilyFilterOption[] }
             ref={fileInputRef}
             type="file"
             multiple
-            // @ts-ignore - non-standard attribute supported by Chromium-based browsers
-            webkitdirectory=""
+            {...directoryInputProps}
             onClick={e => {
               ;(e.currentTarget as HTMLInputElement).value = ''
             }}

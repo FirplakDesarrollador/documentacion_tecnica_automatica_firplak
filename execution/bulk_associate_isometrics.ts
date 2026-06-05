@@ -41,6 +41,10 @@ type VersionRow = {
     isometric_path: string | null
 }
 
+function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error)
+}
+
 function usage() {
     console.log(`
 Bulk associate isometrics by filename <-> product_references fields.
@@ -1242,7 +1246,7 @@ async function main() {
                     'APPLIED',
                     csvEscape(`mode=${matchMode}; target=version; version_codes=${versionCodes}; updated_versions=${versionUpdatable.length}; asset_id=${assetId}; hash=${hash}`),
                 ].join(','))
-            } catch (e: any) {
+            } catch (e: unknown) {
                 errors++
                 const example = candidates[0]
                 reportLines.push([
@@ -1264,7 +1268,7 @@ async function main() {
                     '',
                     '',
                     'ERROR',
-                    csvEscape(String(e?.message || e)),
+                    csvEscape(errorMessage(e)),
                 ].join(','))
             }
 
@@ -1413,7 +1417,7 @@ async function main() {
                 'APPLIED',
                 csvEscape(`mode=${matchMode}; asset_id=${assetId}; updated_refs=${updatable.length}; overwritten_refs=${overwrite ? existingCount : 0}; skipped_refs=${skipped}; hash=${hash}`),
             ].join(','))
-        } catch (e: any) {
+        } catch (e: unknown) {
             errors++
             const example = candidates[0]
             reportLines.push([
@@ -1435,7 +1439,7 @@ async function main() {
                 '',
                 '',
                 'ERROR',
-                csvEscape(String(e?.message || e)),
+                csvEscape(errorMessage(e)),
             ].join(','))
         }
     }

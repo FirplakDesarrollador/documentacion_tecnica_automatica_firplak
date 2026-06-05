@@ -91,7 +91,8 @@ app.post('/print', upload.single('file'), async (req, res) => {
     }
 });
 
-app.use((err, _req, res, _next) => {
+app.use((err, _req, res, next) => {
+    void next;
     console.error('[error]', err.message);
     res.status(500).json({ error: err.message });
 });

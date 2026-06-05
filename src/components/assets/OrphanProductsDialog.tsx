@@ -10,6 +10,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { getOrphanReferencesAction, inactivateOrphanReferencesAction, type OrphanReferenceRow } from '@/app/assets/orphans-actions'
 import { normalizeText } from '@/lib/isometrics/bulkMatch'
+import { directoryInputProps } from '@/lib/ui/directoryInputProps'
 import { supabase } from '@/lib/supabase'
 
 type ParsedExcel = {
@@ -81,6 +82,20 @@ export function OrphanProductsDialog() {
   const [isApplying, setIsApplying] = React.useState(false)
   const [progress, setProgress] = React.useState<{ phase: string; current: number; total: number } | null>(null)
 
+  const resetDialogState = React.useCallback(() => {
+    setStep('list')
+    setOrphans([])
+    setExcel(null)
+    setSelectedFiles([])
+    setFileByRelativePath(new Map())
+    setIgnoredAiCount(0)
+    setItems([])
+    setMissingGroups([])
+    setTargetSelectionByItemId({})
+    setProgress(null)
+    setSelectedOrphanIds({})
+  }, [])
+
   const loadOrphans = async () => {
     setLoading(true)
     try {
@@ -94,25 +109,17 @@ export function OrphanProductsDialog() {
     }
   }
 
-  React.useEffect(() => {
-    if (!open) {
-      /* eslint-disable react-hooks/set-state-in-effect */
-      setStep('list')
-      setOrphans([])
-      setExcel(null)
-      setSelectedFiles([])
-      setFileByRelativePath(new Map())
-      setIgnoredAiCount(0)
-      setItems([])
-      setMissingGroups([])
-      setTargetSelectionByItemId({})
-      setProgress(null)
-      setSelectedOrphanIds({})
-      /* eslint-enable react-hooks/set-state-in-effect */
-      return
-    }
-    loadOrphans()
-  }, [open])
+  const handleOpenChange = React.useCallback(
+    (nextOpen: boolean) => {
+      setOpen(nextOpen)
+      if (nextOpen) {
+        void loadOrphans()
+        return
+      }
+      resetDialogState()
+    },
+    [resetDialogState]
+  )
 
   const selectedOrphanCount = React.useMemo(() => Object.values(selectedOrphanIds).filter(Boolean).length, [selectedOrphanIds])
 
@@ -425,7 +432,7 @@ export function OrphanProductsDialog() {
   const orphanCount = orphans.length
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger
         className={cn(buttonVariants({ variant: 'outline', className: 'gap-2 border-slate-200 text-slate-800 hover:bg-slate-50 shadow-sm transition-all h-10 px-4' }))}
       >
@@ -563,8 +570,7 @@ export function OrphanProductsDialog() {
                   ref={fileInputRef}
                   type="file"
                   multiple
-                  // @ts-ignore
-                  webkitdirectory=""
+                  {...directoryInputProps}
                   onClick={e => {
                     ;(e.currentTarget as HTMLInputElement).value = ''
                   }}

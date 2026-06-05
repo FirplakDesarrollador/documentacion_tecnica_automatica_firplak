@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from "react"
+import Image from 'next/image'
 import { 
     Dialog, 
     DialogContent, 
@@ -144,8 +145,15 @@ export function SmartIsometricNormalizationDialog() {
                                                 className="flex items-center justify-between p-4 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-all group/opt"
                                             >
                                                 <div className="flex items-center gap-4 flex-1">
-                                                    <div className="w-16 h-16 rounded-lg bg-white border border-slate-200 p-1 flex items-center justify-center shadow-sm shrink-0">
-                                                        <img src={option.path} alt="preview" className="max-w-full max-h-full object-contain" />
+                                                    <div className="relative w-16 h-16 rounded-lg bg-white border border-slate-200 flex items-center justify-center shadow-sm shrink-0 overflow-hidden">
+                                                        <Image
+                                                            src={option.path}
+                                                            alt="preview"
+                                                            fill
+                                                            unoptimized
+                                                            sizes="64px"
+                                                            className="object-contain"
+                                                        />
                                                     </div>
                                                     <div className="flex flex-col gap-3 min-w-0 flex-1">
                                                         {option.references.map((ref, rIdx) => (
