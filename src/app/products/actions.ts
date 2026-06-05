@@ -14,6 +14,11 @@ import {
 import { upsertVersionAction } from '@/app/rules/versions/actions'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
+import { assertRole } from '@/utils/auth/access'
+
+async function assertAdminAccess() {
+    await assertRole('admin')
+}
 
 function normalizeCanto(val: unknown) {
     if (val === null || val === undefined || val === '' || val === 'false') return 'CANTO 2 MM'
@@ -51,10 +56,14 @@ async function computeProductNameByNamingType(product: any, namingType: string) 
 }
 
 export async function parseProductCodeAction(code: string, sapDesc: string, rhFlag: boolean) {
+    await assertAdminAccess()
+
     return await parseProductCode(code, sapDesc, rhFlag)
 }
 
 export async function translateAction(nameEs: string, ctx?: any, force: boolean = false) {
+    await assertAdminAccess()
+
     if (ctx) {
         const result = await computeNameWithNamingComponents({ ...ctx, final_name_es: nameEs } as any, 'final_complete_name', force)
         return result.translation
@@ -69,6 +78,8 @@ export async function translateAction(nameEs: string, ctx?: any, force: boolean 
  * Returns null if no translation is found (productUtils will use its built-in fallback map).
  */
 export async function resolveZoneHomeEnAction(zoneEs: string | null | undefined): Promise<string | null> {
+    await assertAdminAccess()
+
     if (!zoneEs) return null
     const key = zoneEs.trim().toUpperCase()
     try {
@@ -89,12 +100,16 @@ export async function resolveZoneHomeEnAction(zoneEs: string | null | undefined)
  * Use this after create/update before export so fields like `sku_base` match the export module pipeline.
  */
 export async function composeProductByIdAction(id: string) {
+    await assertAdminAccess()
+
     if (!id) return null
     const { composeProductById } = await import('@/lib/engine/product_composer')
     return await composeProductById(id)
 }
 
 export async function checkFamilyExists(code: string) {
+    await assertAdminAccess()
+
     if (!code) return true
     const parsed = await parseProductCode(code, '', false)
     if (!parsed.familia_code) return true
@@ -104,16 +119,22 @@ export async function checkFamilyExists(code: string) {
 }
 
 export async function checkFamilyExistsAction(code: string) {
+    await assertAdminAccess()
+
     return await checkFamilyExists(code);
 }
 
 export async function checkVersionExistsAction(versionCode: string) {
+    await assertAdminAccess()
+
     if (!versionCode) return true
     const rows = await dbQuery(`SELECT version_code FROM public.global_version_rules WHERE version_code = '${versionCode.replace(/'/g, "''")}' LIMIT 1`)
     return rows && rows.length > 0
 }
 
 export async function upsertFamilyAction(data: any) {
+    await assertAdminAccess()
+
     if (!data.code) throw new Error("Family code is required")
     
     const query = `
@@ -152,6 +173,8 @@ export async function upsertFamilyAction(data: any) {
 }
 
 export async function upsertColorAction(code: string, name: string) {
+    await assertAdminAccess()
+
     if (!code || !name) throw new Error("Color code and name are required")
     
     // El code_4dig siempre tiene 4 dígitos (ej: 0434)
@@ -280,6 +303,8 @@ function buildCreateProductV6Payload(
     return payload;
 }
 export async function createProductAction(data: any) {
+    await assertAdminAccess()
+
     if (!data.code) throw new Error('Code is required')
 
     const parsed = await parseProductCode(data.code, data.sap_description, data.rh_flag)
@@ -433,6 +458,8 @@ export async function createProductAction(data: any) {
 }
 
 export async function updateFamilyAction(code: string, data: any) {
+    await assertAdminAccess()
+
     if (!code) throw new Error("Family code is required")
     await dbQuery(`
         UPDATE public.families SET
@@ -454,6 +481,8 @@ export async function updateFamilyAction(code: string, data: any) {
 }
 
 export async function translateProductsAction(ids?: string[], mode: 'missing' | 'repair' | 'all' = 'missing') {
+    await assertAdminAccess()
+
     try {
         let query = `
             SELECT *
@@ -553,10 +582,14 @@ export async function translateProductsAction(ids?: string[], mode: 'missing' | 
 
 
 export async function translateMissingProducts() {
+    await assertAdminAccess()
+
     return translateProductsAction(undefined, 'missing')
 }
 
 export async function getUniquePropertiesAction() {
+    await assertAdminAccess()
+
     const lines = await dbQuery(`
         SELECT DISTINCT line 
         FROM public.product_references 
@@ -608,6 +641,8 @@ export async function getUniquePropertiesAction() {
 }
 
 export async function checkProductExistsAction(code?: string, sapDesc?: string) {
+    await assertAdminAccess()
+
     if (!code && !sapDesc) return null
 
     const codeSafe = code ? String(code).trim().replace(/'/g, "''") : ""
@@ -647,6 +682,8 @@ export async function checkProductExistsAction(code?: string, sapDesc?: string) 
 }
 
 export async function getClientsAction() {
+    await assertAdminAccess()
+
      
     let fromClients: any[] = []
     try {
@@ -678,6 +715,8 @@ export async function getClientsAction() {
 }
 
 export async function createClientAction(name: string, logoAssetId?: string) {
+    await assertAdminAccess()
+
     if (!name) throw new Error("Nombre del cliente requerido")
 
     const nameNorm = String(name).trim().toUpperCase()
@@ -711,6 +750,8 @@ export async function createClientAction(name: string, logoAssetId?: string) {
     return res[0]
 }
 export async function saveGlossaryTermsAction(terms: { term_es: string, term_en: string, category: string, priority: number }[]) {
+    await assertAdminAccess()
+
     if (!terms || terms.length === 0) return { success: true }
     
     try {
@@ -757,6 +798,8 @@ export async function saveGlossaryTermsAction(terms: { term_es: string, term_en:
 }
 
 export async function getDiagnosticInfoAction() {
+    await assertAdminAccess()
+
     const hasToken = !!process.env.SUPABASE_ACCESS_TOKEN;
     const hasServiceKey = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
     let rulesCount = 0;
@@ -778,6 +821,8 @@ export async function getDiagnosticInfoAction() {
 
 
 export async function executeMassImportAction(payload: any[]) {
+    await assertAdminAccess()
+
     try {
         const query = `SELECT bulk_import_products('${JSON.stringify(payload).replace(/'/g, "''")}'::jsonb)`;
         const res = await dbQuery(query);
@@ -792,6 +837,8 @@ export async function batchCreateColorVariantsAction(
     originalProduct: any,
     colors: { code: string, name: string, isNew: boolean }[]
 ) {
+    await assertAdminAccess()
+
     const results = []
     
     for (const color of colors) {

@@ -2,8 +2,15 @@
 
 import { supabaseServer } from '@/lib/supabase'
 import type { ProductFilters } from '@/lib/engine/product_composer'
+import { assertRole } from '@/utils/auth/access'
+
+async function assertAdminAccess() {
+    await assertRole('admin')
+}
 
 export async function resolveAssetsAction(assetIds: string[]) {
+    await assertAdminAccess()
+
     const map: Record<string, string> = {}
     
     // 1. Buscar assets por nombres específicos del sistema (Estándar)
@@ -80,6 +87,8 @@ export async function getAllFilteredProductsAction(
     brandScope: string,
     privateLabelClientName: string
 ) {
+    await assertAdminAccess()
+
     const { composeProductsByFilters } = await import('@/lib/engine/product_composer')
 
     const filters: ProductFilters = {

@@ -4,6 +4,11 @@
 import { dbQuery } from '@/lib/supabase'
 import { computeNameWithNamingComponents } from '@/lib/engine/namingComponentsEngine'
 import type { ProductPayload } from '@/lib/engine/translator'
+import { assertRole } from '@/utils/auth/access'
+
+async function assertAdminAccess() {
+    await assertRole('admin')
+}
 
 /**
  * Escanea el catálogo en busca de términos faltantes en las traducciones
@@ -11,6 +16,8 @@ import type { ProductPayload } from '@/lib/engine/translator'
  * Retorna una lista de términos y su frecuencia.
  */
 export async function scanMissingGlossaryTermsAction(): Promise<{ success: boolean; missingTerms?: { term: string, count: number }[]; error?: string }> {
+    await assertAdminAccess()
+
     try {
         const rows =
             (await dbQuery(`

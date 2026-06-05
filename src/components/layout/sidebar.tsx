@@ -27,6 +27,7 @@ import { getNamingWorkStatusAction, processPendingNamingWorkAction, type NamingW
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
 import { Toaster } from '@/components/ui/sonner'
 import { cn } from '@/lib/utils'
+import { GENERATE_LAST_URL_STORAGE_KEY, normalizeGenerateLastUrl } from '@/lib/navigation/generateLastUrl'
 import { USER_ROLE_LABELS, type Permission, type UserRole } from '@/types/auth'
 import { createClient } from '@/utils/supabase/client'
 
@@ -77,9 +78,11 @@ function isItemActive(pathname: string, href: string) {
 export function Sidebar({
     children,
     access,
+    initialGenerateHref = '/generate',
 }: {
     children: React.ReactNode
     access: SidebarAccess
+    initialGenerateHref?: string
 }) {
     const pathname = usePathname()
     const [isCollapsed, setIsCollapsed] = useState(false)
@@ -99,14 +102,18 @@ export function Sidebar({
     const canViewServiceStatus = access.role === 'admin'
 
     useEffect(() => {
-        /* eslint-disable react-hooks/set-state-in-effect */
-        setMounted(true)
         const saved = localStorage.getItem('sidebar-collapsed')
-        if (saved !== null) {
-            setIsCollapsed(saved === 'true')
-        }
-        /* eslint-enable react-hooks/set-state-in-effect */
+
+        queueMicrotask(() => {
+            setMounted(true)
+            if (saved !== null) {
+                setIsCollapsed(saved === 'true')
+            }
+        })
     }, [])
+    const generateHref = mounted
+        ? normalizeGenerateLastUrl(window.localStorage.getItem(GENERATE_LAST_URL_STORAGE_KEY)) ?? initialGenerateHref
+        : initialGenerateHref
 
     const refreshNamingStatus = useCallback(async () => {
         if (!canManageNaming || pathname?.startsWith('/export-render') || pathname === '/login') return
@@ -262,11 +269,12 @@ export function Sidebar({
                                     </div>
                                     <nav className="grid items-start px-3 text-sm font-medium gap-1">
                                         {visibleNavItems.map((item) => {
+                                            const itemHref = item.permission === 'module:generate' ? generateHref : item.href
                                             const isActive = isItemActive(pathname, item.href)
                                             return (
                                                 <Link
                                                     key={item.name}
-                                                    href={item.href}
+                                                    href={itemHref}
                                                     title={isCollapsed ? item.name : undefined}
                                                     className={cn(
                                                         'group flex items-center rounded-lg px-3 py-2.5 transition-all duration-200 relative',
@@ -408,11 +416,12 @@ export function Sidebar({
                                 </div>
                                 <nav className="grid gap-1 px-3 py-6 text-sm font-medium">
                                     {visibleNavItems.map((item) => {
+                                        const itemHref = item.permission === 'module:generate' ? generateHref : item.href
                                         const isActive = isItemActive(pathname, item.href)
                                         return (
                                             <Link
                                                 key={item.href}
-                                                href={item.href}
+                                                href={itemHref}
                                                 className={cn(
                                                     'flex items-center gap-3 rounded-lg px-3 py-3 transition-all relative',
                                                     isActive

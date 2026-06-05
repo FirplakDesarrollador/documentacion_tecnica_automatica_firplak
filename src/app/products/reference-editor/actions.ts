@@ -3,6 +3,11 @@
 import { supabaseServer, dbQuery } from '@/lib/supabase';
 import { markNamingStaleForReferences, processNamingJobsInline } from '@/lib/engine/namingQueue';
 import { revalidatePath } from 'next/cache';
+import { assertRole } from '@/utils/auth/access';
+
+async function assertAdminAccess() {
+  await assertRole('admin');
+}
 
 // --- FLUJO B: MASS EDIT ---
 
@@ -16,6 +21,8 @@ interface SearchFilters {
 }
 
 export async function searchReferences(filters: SearchFilters) {
+  await assertAdminAccess();
+
   // Construir query. supabaseServer
   // Note: Si hay que cruzar con product_type, haremos join con families
   let query = supabaseServer.from('product_references').select(`
@@ -59,6 +66,8 @@ export async function searchReferences(filters: SearchFilters) {
 }
 
 export async function previewMassUpdateReferences(referenceIds: string[], normalUpdates: Record<string, string>, refAttrsUpdates: Record<string, string>) {
+  await assertAdminAccess();
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (supabaseServer as any).rpc('rpc_preview_mass_update', {
     p_reference_ids: referenceIds,
@@ -71,6 +80,8 @@ export async function previewMassUpdateReferences(referenceIds: string[], normal
 }
 
 export async function executeMassUpdateReferences(referenceIds: string[], normalUpdates: Record<string, string>, refAttrsUpdates: Record<string, string>) {
+  await assertAdminAccess();
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (supabaseServer as any).rpc('rpc_mass_update_references', {
     p_reference_ids: referenceIds,
@@ -87,6 +98,8 @@ export async function executeMassUpdateReferences(referenceIds: string[], normal
 }
 
 export async function previewDeleteReferencesAction(referenceIds: string[]) {
+  await assertAdminAccess();
+
   const ids = referenceIds.map(v => `'${v.replace(/'/g, "''")}'`).join(',');
   const result = await dbQuery(`
     SELECT
@@ -101,6 +114,8 @@ export async function previewDeleteReferencesAction(referenceIds: string[]) {
 }
 
 export async function deleteReferencesAction(referenceIds: string[]) {
+  await assertAdminAccess();
+
   const ids = referenceIds.map(v => `'${v.replace(/'/g, "''")}'`).join(',');
   await dbQuery(`
     DELETE FROM public.product_skus WHERE version_id IN (SELECT id FROM public.product_versions WHERE reference_id IN (${ids}));
@@ -112,6 +127,8 @@ export async function deleteReferencesAction(referenceIds: string[]) {
 }
 
 export async function getFilterOptions() {
+  await assertAdminAccess();
+
   // Fetch distinct product_type from families
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: famsRaw } = await (supabaseServer.from('families').select('product_type, family_code') as any) as { data: any[]; error: any };

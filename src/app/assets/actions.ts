@@ -1,9 +1,33 @@
 'use server'
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { dbQuery } from '@/lib/supabase'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { getFamilyFilters, getReferenceFilters } from '@/lib/data/filters'
+import { assertRole } from '@/utils/auth/access'
+
+async function assertAdminAccess() {
+    await assertRole('admin')
+}
+
+type MeasureRecord = {
+    commercial_measure: string
+}
+
+type VersionRecord = {
+    version_code: string
+}
+
+type AssetFilePathRow = {
+    file_path: string
+}
+
+type IdRow = {
+    id: string
+}
+
+type UpdatedCountRow = {
+    updated_count: number
+}
 
 async function revalidateValidationSweepEverywhere() {
     // Local (same server) cache invalidation.
@@ -30,14 +54,20 @@ async function revalidateValidationSweepEverywhere() {
 }
 
 export async function getFamiliesAction() {
+    await assertAdminAccess()
+
     return await getFamilyFilters()
 }
 
 export async function getReferencesByFamilyAction(familyCodes: string[]) {
+    await assertAdminAccess()
+
     return await getReferenceFilters(familyCodes)
 }
 
 export async function getMeasuresByFamilyAndRefAction(familyCodes: string[], referenceCodes: string[]) {
+    await assertAdminAccess()
+
     if ((!familyCodes || familyCodes.length === 0) && (!referenceCodes || referenceCodes.length === 0)) return []
     
     const whereParts = []
@@ -51,21 +81,23 @@ export async function getMeasuresByFamilyAndRefAction(familyCodes: string[], ref
         whereParts.push(`family_code IN (${familyCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
     }
 
-    const measureRecords = await dbQuery(`
+    const measureRecords = (await dbQuery(`
         SELECT DISTINCT commercial_measure 
         FROM public.v_ui_generate_list 
         WHERE commercial_measure IS NOT NULL AND ${whereParts.join(' AND ')}
         ORDER BY commercial_measure ASC
-    `) || []
+    `) || []) as MeasureRecord[]
     
      
-    return (measureRecords as any[]).map((rec: { commercial_measure: string }) => ({ 
+    return measureRecords.map((rec) => ({ 
         value: rec.commercial_measure, 
         label: rec.commercial_measure 
     }))
 }
 
 export async function getVersionsByFamilyAndRefAction(familyCodes: string[], referenceCodes: string[]) {
+    await assertAdminAccess()
+
     if ((!familyCodes || familyCodes.length === 0) && (!referenceCodes || referenceCodes.length === 0)) return []
     
     const whereParts = []
@@ -94,6 +126,8 @@ export async function getVersionsByFamilyAndRefAction(familyCodes: string[], ref
 }
 
 export async function getAssetsByTypeAction(type: string) {
+    await assertAdminAccess()
+
     const safeType = type.replace(/'/g, "''")
     return await dbQuery(`
         WITH asset_counts AS (
@@ -132,6 +166,8 @@ export interface IsometricGroupRow {
 }
 
 export async function getGroupedIsometricsAction() {
+    await assertAdminAccess()
+
     return await dbQuery(`
         WITH asset_counts AS (
             SELECT 
@@ -166,6 +202,8 @@ export async function associateIsometricAction(data: {
     measureCodes?: string[],
     versionCodes?: string[]
 }) {
+    await assertAdminAccess()
+
     const { assetId, familyCodes, referenceCodes, measureCodes = [], versionCodes = [] } = data
     
     if (!assetId) throw new Error("Asset ID is required")
@@ -265,6 +303,8 @@ export async function associateIsometricAction(data: {
 }
 
 export async function deleteAssetAction(assetId: string) {
+    await assertAdminAccess()
+
     // 1. Protección contra el borrado de activos de sistema
     const defaults = await dbQuery(`SELECT id FROM public.assets WHERE name IN (
         'Logo Empresa Pordefecto',
@@ -339,6 +379,8 @@ export async function deleteAssetAction(assetId: string) {
 }
 
 export async function updateAssetAction(assetId: string, data: { name?: string, file_path?: string, type?: string }) {
+    await assertAdminAccess()
+
     const updates = []
     if (data.name) updates.push(`name = '${data.name.replace(/'/g, "''")}'`)
     if (data.file_path) updates.push(`file_path = '${data.file_path.replace(/'/g, "''")}'`)
@@ -380,6 +422,8 @@ export async function updateAssetAction(assetId: string, data: { name?: string, 
 }
 
 export async function getAssetRelationshipsAction(assetId: string) {
+    await assertAdminAccess()
+
     const safeId = assetId.replace(/'/g, "''")
     
     // 1. Fetch references
@@ -412,6 +456,8 @@ export async function getAssetRelationshipsAction(assetId: string) {
 }
 
 export async function unlinkReferenceAction(referenceId: string) {
+    await assertAdminAccess()
+
     await dbQuery(`
         UPDATE public.product_references
         SET isometric_asset_id = NULL,
@@ -426,6 +472,8 @@ export async function unlinkReferenceAction(referenceId: string) {
 }
 
 export async function unlinkVersionAction(versionId: string) {
+    await assertAdminAccess()
+
     await dbQuery(`
         UPDATE public.product_versions
         SET version_attrs = version_attrs - 'isometric_asset_id' - 'isometric_path',
@@ -439,6 +487,8 @@ export async function unlinkVersionAction(versionId: string) {
 }
 
 export async function unlinkAllAssetRelationshipsAction(assetId: string) {
+    await assertAdminAccess()
+
     const safeId = assetId.replace(/'/g, "''")
     
     // Unlink references

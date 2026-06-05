@@ -9,6 +9,11 @@ import {
   canonicalizeOverrideKey,
 } from '@/lib/engine/effectiveProduct';
 import { markNamingStaleForSkus, processNamingJobsInline } from '@/lib/engine/namingQueue';
+import { assertRole } from '@/utils/auth/access';
+
+async function assertAdminAccess() {
+  await assertRole('admin');
+}
 
 function esc(value: string) {
   return value.replace(/'/g, "''");
@@ -39,6 +44,8 @@ function mapSkuRow(row: Record<string, unknown>) {
 }
 
 export async function searchSkus(filters: any) {
+  await assertAdminAccess();
+
   const conditions: string[] = [];
 
   if (filters.familyCode) conditions.push(`family_code = '${esc(filters.familyCode)}'`);
@@ -111,6 +118,8 @@ export async function searchSkus(filters: any) {
 }
 
 export async function previewMassUpdateSkus(skuIds: string[], normalUpdates: any, skuAttrsUpdates: any) {
+  await assertAdminAccess();
+
   const normalizedSkuAttrsUpdates = normalizeOverridePayload(skuAttrsUpdates);
   const { data, error } = await (supabaseServer as any).rpc('rpc_preview_mass_update_skus', {
     p_sku_ids: skuIds,
@@ -123,6 +132,8 @@ export async function previewMassUpdateSkus(skuIds: string[], normalUpdates: any
 }
 
 export async function executeMassUpdateSkus(skuIds: string[], normalUpdates: any, skuAttrsUpdates: any) {
+  await assertAdminAccess();
+
   const normalizedSkuAttrsUpdates = normalizeOverridePayload(skuAttrsUpdates);
   const { data, error } = await (supabaseServer as any).rpc('rpc_mass_update_skus', {
     p_sku_ids: skuIds,
@@ -141,10 +152,14 @@ export async function executeMassUpdateSkus(skuIds: string[], normalUpdates: any
 }
 
 export async function previewDeleteSkusAction(skuIds: string[]) {
+  await assertAdminAccess();
+
   return { skuCount: skuIds.length };
 }
 
 export async function deleteSkusAction(skuIds: string[]) {
+  await assertAdminAccess();
+
   const ids = skuIds.map(v => `'${v.replace(/'/g, "''")}'`).join(',');
   await dbQuery(`DELETE FROM public.product_skus WHERE id IN (${ids})`);
 
@@ -152,6 +167,8 @@ export async function deleteSkusAction(skuIds: string[]) {
 }
 
 export async function getSkuFilterOptions() {
+  await assertAdminAccess();
+
   const [rows, familiesRows] = await Promise.all([
     dbQuery(`
       SELECT

@@ -1,8 +1,10 @@
 import type { Metadata } from 'next';
+import { cookies } from 'next/headers';
 import { Geist, Geist_Mono } from 'next/font/google';
 import { lato, montserrat, openSans, roboto } from './fonts';
 import './globals.css';
 import { Sidebar } from '@/components/layout/sidebar';
+import { decodeGenerateLastUrl, GENERATE_LAST_URL_COOKIE } from '@/lib/navigation/generateLastUrl';
 import { getAccessContext } from '@/utils/auth/access';
 
 const geistSans = Geist({
@@ -26,6 +28,9 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const access = await getAccessContext()
+  const cookieStore = await cookies()
+  const initialGenerateHref =
+    decodeGenerateLastUrl(cookieStore.get(GENERATE_LAST_URL_COOKIE)?.value) ?? '/generate'
 
   return (
     <html
@@ -33,7 +38,7 @@ export default async function RootLayout({
       className={`${montserrat.variable} ${lato.variable} ${openSans.variable} ${roboto.variable} ${geistSans.variable} ${geistMono.variable}`}
     >
       <body className="antialiased text-foreground bg-background font-sans min-h-screen">
-        <Sidebar access={access}>{children}</Sidebar>
+        <Sidebar access={access} initialGenerateHref={initialGenerateHref}>{children}</Sidebar>
       </body>
     </html>
   );

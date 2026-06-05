@@ -2,12 +2,17 @@
 
 import { revalidatePath } from 'next/cache'
 import { dbQuery } from '@/lib/supabase'
+import { assertRole } from '@/utils/auth/access'
 
 type ClientRow = {
   id: string
   name: string
   logo_asset_id: string | null
   logo_url: string | null
+}
+
+async function assertAdminAccess() {
+  await assertRole('admin')
 }
 
 function normalizeClientName(raw: string) {
@@ -61,6 +66,8 @@ async function fetchClientByNameInsensitive(nameUpper: string) {
 }
 
 export async function createClientAction(input: { name: string; logo_asset_id?: string | null }): Promise<ClientRow> {
+  await assertAdminAccess()
+
   const nameUpper = normalizeClientName(input?.name)
   const logoAssetId = input?.logo_asset_id ? String(input.logo_asset_id) : null
 
@@ -92,6 +99,8 @@ export async function createClientAction(input: { name: string; logo_asset_id?: 
 }
 
 export async function updateClientLogoAction(input: { client_id: string; logo_asset_id: string | null }) {
+  await assertAdminAccess()
+
   const clientId = String(input?.client_id || '').trim()
   if (!clientId) throw new Error('client_id requerido')
 
@@ -115,6 +124,8 @@ export async function updateClientLogoAction(input: { client_id: string; logo_as
 }
 
 export async function renameClientAndPropagateAction(input: { client_id: string; new_name: string }) {
+  await assertAdminAccess()
+
   const clientId = String(input?.client_id || '').trim()
   if (!clientId) throw new Error('client_id requerido')
 
@@ -137,6 +148,8 @@ export async function renameClientAndPropagateAction(input: { client_id: string;
 }
 
 export async function createMissingClientsAction(names: string[]) {
+  await assertAdminAccess()
+
   if (!Array.isArray(names) || names.length === 0) return []
 
   const unique: string[] = []

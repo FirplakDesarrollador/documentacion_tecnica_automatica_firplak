@@ -9,6 +9,11 @@ import {
   canonicalizeOverrideKey,
 } from '@/lib/engine/effectiveProduct';
 import { markNamingStaleForVersions, processNamingJobsInline } from '@/lib/engine/namingQueue';
+import { assertRole } from '@/utils/auth/access';
+
+async function assertAdminAccess() {
+  await assertRole('admin');
+}
 
 function esc(value: string) {
   return value.replace(/'/g, "''");
@@ -47,6 +52,8 @@ function mapVersionRow(row: Record<string, unknown>) {
 }
 
 export async function searchVersions(filters: any) {
+  await assertAdminAccess();
+
   const conditions: string[] = [];
 
   if (filters.familyCode) conditions.push(`f.family_code = '${esc(filters.familyCode)}'`);
@@ -148,6 +155,8 @@ export async function searchVersions(filters: any) {
 }
 
 export async function getVersionFilterOptions() {
+  await assertAdminAccess();
+
   const [rows, familiesRows] = await Promise.all([
     dbQuery(`
       SELECT
@@ -242,6 +251,8 @@ export async function getVersionFilterOptions() {
 }
 
 export async function previewMassUpdateVersions(ids: string[], normalUpdates: any, versionAttrsUpdates: any) {
+  await assertAdminAccess();
+
   const normalizedVersionAttrsUpdates = normalizeOverridePayload(versionAttrsUpdates);
   try {
     const { data, error } = await (supabaseServer.rpc as any)('rpc_preview_mass_update_versions', {
@@ -257,6 +268,8 @@ export async function previewMassUpdateVersions(ids: string[], normalUpdates: an
 }
 
 export async function executeMassUpdateVersions(ids: string[], normalUpdates: any, versionAttrsUpdates: any) {
+  await assertAdminAccess();
+
   const normalizedVersionAttrsUpdates = normalizeOverridePayload(versionAttrsUpdates);
   try {
     const { data, error } = await (supabaseServer.rpc as any)('rpc_mass_update_versions', {
@@ -278,6 +291,8 @@ export async function executeMassUpdateVersions(ids: string[], normalUpdates: an
 }
 
 export async function previewDeleteVersionInstancesAction(versionIds: string[]) {
+  await assertAdminAccess();
+
   const ids = versionIds.map(v => `'${v.replace(/'/g, "''")}'`).join(',');
   const result = await dbQuery(`
     SELECT COUNT(*)::int AS sku_count
@@ -291,6 +306,8 @@ export async function previewDeleteVersionInstancesAction(versionIds: string[]) 
 }
 
 export async function deleteVersionInstancesAction(versionIds: string[]) {
+  await assertAdminAccess();
+
   const ids = versionIds.map(v => `'${v.replace(/'/g, "''")}'`).join(',');
   await dbQuery(`
     DELETE FROM public.product_skus WHERE version_id IN (${ids});

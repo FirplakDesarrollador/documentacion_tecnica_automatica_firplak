@@ -4,6 +4,11 @@
 import { dbQuery } from "@/lib/supabase"
 import { revalidatePath } from "next/cache"
 import { normalizeTemplateFontFamily } from "@/lib/templates/templateTypography"
+import { assertRole } from '@/utils/auth/access'
+
+async function assertAdminAccess() {
+    await assertRole('admin')
+}
 
 /**
  * Bumps a semver version string (MAJOR.MINOR.PATCH) by incrementing PATCH.
@@ -36,6 +41,8 @@ export async function createTemplate(data: {
     brand_scope?: 'firplak' | 'private_label'
     private_label_client_name?: string | null
 }) {
+    await assertAdminAccess()
+
     try {
         const orientation = data.width_mm >= data.height_mm ? 'horizontal' : 'vertical'
         const brandScope = data.data_source === 'core_firplak' && data.brand_scope === 'private_label' ? 'private_label' : 'firplak'
@@ -86,6 +93,8 @@ export async function createTemplate(data: {
 }
 
 export async function duplicateTemplate(id: string, newName: string, dataSource: string, width_mm: number, height_mm: number) {
+    await assertAdminAccess()
+
     try {
         const rows = await dbQuery(`SELECT * FROM public.plantillas_doc_tec WHERE id = '${id}' LIMIT 1`)
         if (!rows || rows.length === 0) return { success: false, error: 'Plantilla original no encontrada' }
@@ -160,6 +169,8 @@ export async function updateTemplate(id: string, data: {
     brand_scope?: 'firplak' | 'private_label'
     private_label_client_name?: string | null
 }) {
+    await assertAdminAccess()
+
     try {
         const nameClause = data.name ? `, name='${data.name.replace(/'/g, "''")}' ` : ''
         const formatsClause = data.export_formats ? `, export_formats='${data.export_formats.replace(/'/g, "''")}' ` : ''
@@ -251,6 +262,8 @@ export async function getPreviewProduct(
     brandScope: 'firplak' | 'private_label' = 'firplak',
     privateLabelClientName?: string | null
 ) {
+    await assertAdminAccess()
+
     if (dataSource && dataSource !== 'core_firplak' && dataSource !== 'custom_datasets') {
         try {
             const rows = await dbQuery(`
@@ -327,6 +340,8 @@ export async function getRandomPreviewProduct(
     brandScope: 'firplak' | 'private_label' = 'firplak',
     privateLabelClientName?: string | null
 ) {
+    await assertAdminAccess()
+
     if (dataSource && dataSource !== 'core_firplak' && dataSource !== 'custom_datasets') {
         try {
             const rows = await dbQuery(`
@@ -393,6 +408,8 @@ export async function getRandomPreviewProduct(
 }
 
 export async function deleteTemplate(id: string) {
+    await assertAdminAccess()
+
     try {
         await dbQuery(`DELETE FROM public.plantillas_doc_tec WHERE id='${id}'`)
         revalidatePath('/templates')
@@ -403,6 +420,8 @@ export async function deleteTemplate(id: string) {
 }
 
 export async function getTemplatesAction() {
+    await assertAdminAccess()
+
     try {
         const rows = await dbQuery(`SELECT * FROM public.plantillas_doc_tec WHERE active = true ORDER BY name ASC`)
         return rows || []
@@ -413,6 +432,8 @@ export async function getTemplatesAction() {
 }
 
 export async function getDatasetModeTemplatesAction(): Promise<{ id: string; name: string; elements_json: string; data_source: string }[]> {
+    await assertAdminAccess()
+
     try {
         const rows = await dbQuery(`
             SELECT id, name, elements_json, data_source
@@ -432,6 +453,8 @@ export async function getDatasetModeTemplatesAction(): Promise<{ id: string; nam
 }
 
 export async function getTemplateLinkedDatasetsAction(templateId: string): Promise<{ id: string; name: string; schema_json: any; created_at: string }[]> {
+    await assertAdminAccess()
+
     try {
         const tid = String(templateId || '').trim()
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tid)) return []
@@ -459,6 +482,8 @@ export async function getTemplateLinkedDatasetsAction(templateId: string): Promi
  * Validates the length of generated filenames across all products in the database.
  */
 export async function validateExportFilenameLength(pattern: string, dataSource: string = 'core_firplak') {
+    await assertAdminAccess()
+
     try {
         let products: any[] = []
 

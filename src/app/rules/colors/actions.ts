@@ -3,9 +3,16 @@
 import { dbQuery } from '@/lib/supabase'
 import { markNamingStaleForColor, processNamingJobsInline } from '@/lib/engine/namingQueue'
 import { revalidatePath } from 'next/cache'
+import { assertRole } from '@/utils/auth/access'
+
+async function assertAdminAccess() {
+  await assertRole('admin')
+}
 
 /** Fetch all colors */
 export async function getColorsAction() {
+  await assertAdminAccess()
+
   const rows = await dbQuery(
     `SELECT code_4dig, name_color_sap FROM public.colors ORDER BY code_4dig ASC`
   )
@@ -14,6 +21,8 @@ export async function getColorsAction() {
 
 /** Update a color name or upsert */
 export async function upsertColorAction(data: { code_4dig: string; name_color_sap: string; isNew?: boolean }) {
+  await assertAdminAccess()
+
   const { code_4dig, name_color_sap, isNew } = data
   if (!code_4dig || !name_color_sap) {
     throw new Error('El código y el nombre SAP del color son obligatorios')
@@ -61,6 +70,8 @@ export async function upsertColorAction(data: { code_4dig: string; name_color_sa
 
 /** Delete a color (checks for associated SKUs first) */
 export async function deleteColorAction(code_4dig: string) {
+  await assertAdminAccess()
+
   if (!code_4dig) throw new Error('Código es obligatorio para eliminar')
 
   const skus = await dbQuery(
@@ -86,6 +97,8 @@ export async function deleteColorAction(code_4dig: string) {
 
 /** Force delete a color and all SKUs that use it */
 export async function forceDeleteColorAction(code_4dig: string) {
+  await assertAdminAccess()
+
   if (!code_4dig) throw new Error('Código es obligatorio para eliminar')
   await dbQuery(`DELETE FROM public.product_skus WHERE color_code = $1`, [code_4dig])
   await dbQuery(`DELETE FROM public.colors WHERE code_4dig = $1`, [code_4dig])

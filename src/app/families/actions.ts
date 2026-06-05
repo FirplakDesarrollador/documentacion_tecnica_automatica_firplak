@@ -8,10 +8,17 @@ import {
   processNamingJobsInline,
 } from '@/lib/engine/namingQueue';
 import { revalidatePath } from 'next/cache';
+import { assertRole } from '@/utils/auth/access';
+
+async function assertAdminAccess() {
+  await assertRole('admin');
+}
 
 // --- FILTER OPTIONS ---
 
 export async function getFamiliesFilterOptions() {
+  await assertAdminAccess();
+
   const { data: fams } = await supabaseServer
     .from('families')
     .select('family_code, family_name, product_type, zone_home, manufacturing_process')
@@ -34,6 +41,8 @@ export async function getFamiliesFilterOptions() {
 // --- SEARCH ---
 
 export async function searchFamilies(filters: any) {
+  await assertAdminAccess();
+
   let query = supabaseServer
     .from('families')
     .select('*')
@@ -267,6 +276,8 @@ async function computeProductTypeRenameImpact(ids: string[], rawNextType: string
 }
 
 export async function previewMassUpdateFamilies(ids: string[], normalUpdates: any) {
+  await assertAdminAccess();
+
   const errors: string[] = [];
   const col = Object.keys(normalUpdates || {})[0];
 
@@ -293,6 +304,8 @@ export async function previewMassUpdateFamilies(ids: string[], normalUpdates: an
 }
 
 export async function previewProductTypeRenameImpactAction(ids: string[], nextProductType: string) {
+  await assertAdminAccess();
+
   if (!ids || ids.length === 0) {
     return { success: false, error: 'No hay familias seleccionadas' };
   }
@@ -312,6 +325,8 @@ export async function executeMassUpdateFamilies(
   normalUpdates: any,
   options?: { migrateNamingModel?: boolean; migrationFromType?: string }
 ) {
+  await assertAdminAccess();
+
   const col = Object.keys(normalUpdates || {})[0];
   if (!col || !ALLOWED_NORMAL_COLS.includes(col)) {
     return { success: false, error: `Columna no permitida: "${col}"` };
@@ -383,6 +398,8 @@ export async function executeMassUpdateFamilies(
 // --- LINES MANAGEMENT ---
 
 export async function getAvailableLines() {
+  await assertAdminAccess();
+
   const data = await dbQuery(`
     SELECT DISTINCT line
     FROM public.product_references
@@ -394,6 +411,8 @@ export async function getAvailableLines() {
 }
 
 export async function updateFamilyLinesAction(familyCode: string, lines: string[]) {
+  await assertAdminAccess();
+
   const safeCode = familyCode.replace(/'/g, "''");
   const safeLines = lines.length > 0
     ? `'{${lines.map(l => l.replace(/'/g, "''").replace(/"/g, '\\"')).join(',')}}'`
@@ -412,6 +431,8 @@ export async function updateFamilyLinesAction(familyCode: string, lines: string[
 }
 
 export async function deleteLineAction(line: string) {
+  await assertAdminAccess();
+
   const safeLine = line.replace(/'/g, "''");
   const affectedRows = await dbQuery(`
     SELECT id
@@ -435,6 +456,8 @@ export async function deleteLineAction(line: string) {
 // --- DELETE PREVIEW (show counts before cascade) ---
 
 export async function previewDeleteFamiliesAction(codes: string[]) {
+  await assertAdminAccess();
+
   if (!codes || codes.length === 0) throw new Error('No hay familias seleccionadas');
 
   const safe = codes.map(c => `'${c.replace(/'/g, "''")}'`).join(',');
@@ -465,6 +488,8 @@ export async function previewDeleteFamiliesAction(codes: string[]) {
 // --- DELETE FAMILIES (cascade) ---
 
 export async function deleteFamiliesAction(codes: string[]) {
+  await assertAdminAccess();
+
   if (!codes || codes.length === 0) throw new Error('No hay familias seleccionadas');
 
   const safe = codes.map(c => `'${c.replace(/'/g, "''")}'`).join(',');
@@ -533,6 +558,8 @@ export async function deleteFamiliesAction(codes: string[]) {
 // --- SCHEMA CONFIG (FLUJO A, movido desde reference-editor) ---
 
 export async function getFamiliesWithSchema(productTypeFilter?: string) {
+  await assertAdminAccess();
+
   let query = supabaseServer.from('families').select('family_code, product_type, ref_attrs_schema');
 
   if (productTypeFilter) {
@@ -550,6 +577,8 @@ export async function getFamiliesWithSchema(productTypeFilter?: string) {
 }
 
 export async function previewAddAttrToFamilies(familyCodes: string[], attrKey: string) {
+  await assertAdminAccess();
+
   const { data, error } = await (supabaseServer as any).rpc('rpc_preview_add_attr_to_families', {
     p_family_codes: familyCodes,
     p_attr_key: attrKey
@@ -563,6 +592,8 @@ export async function previewAddAttrToFamilies(familyCodes: string[], attrKey: s
 }
 
 export async function executeAddAttrToFamilies(familyCodes: string[], attrKey: string, attrDef: any, defaultValue: string) {
+  await assertAdminAccess();
+
   const { error } = await (supabaseServer as any).rpc('rpc_add_attr_to_families', {
     p_family_codes: familyCodes,
     p_attr_key: attrKey,
@@ -582,6 +613,8 @@ export async function executeAddAttrToFamilies(familyCodes: string[], attrKey: s
 }
 
 export async function previewRemoveAttrFromFamilies(familyCodes: string[], attrKey: string) {
+  await assertAdminAccess();
+
   const errors: string[] = [];
 
   if (!attrKey || !attrKey.trim()) {
@@ -622,6 +655,8 @@ export async function previewRemoveAttrFromFamilies(familyCodes: string[], attrK
 }
 
 export async function executeRemoveAttrFromFamilies(familyCodes: string[], attrKey: string) {
+  await assertAdminAccess();
+
   const { error } = await (supabaseServer as any).rpc('rpc_remove_attr_from_families', {
     p_family_codes: familyCodes,
     p_attr_key: attrKey

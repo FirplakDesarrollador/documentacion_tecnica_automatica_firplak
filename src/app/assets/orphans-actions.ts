@@ -2,6 +2,11 @@
 
 import { dbQuery } from '@/lib/supabase'
 import { revalidatePath, revalidateTag, unstable_noStore as noStore } from 'next/cache'
+import { assertRole } from '@/utils/auth/access'
+
+async function assertAdminAccess() {
+  await assertRole('admin')
+}
 
 export type OrphanReferenceRow = {
   reference_id: string
@@ -62,6 +67,8 @@ async function revalidateValidationSweepEverywhere() {
  * - AND no usable suggestion exists (very_high/high). Medium does NOT count.
  */
 export async function getOrphanReferencesAction(): Promise<OrphanReferenceRow[]> {
+  await assertAdminAccess()
+
   noStore()
   const whereMissing = buildMissingIsometricWhere()
 
@@ -153,6 +160,8 @@ export async function getOrphanReferencesAction(): Promise<OrphanReferenceRow[]>
 }
 
 export async function inactivateOrphanReferencesAction(referenceIds: string[]): Promise<{ success: true; updated: number }> {
+  await assertAdminAccess()
+
   noStore()
   const ids = (referenceIds || []).map(v => String(v || '').trim()).filter(isUuid)
   const unique = Array.from(new Set(ids))

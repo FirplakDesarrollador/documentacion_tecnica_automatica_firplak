@@ -3,6 +3,11 @@
 
 import { dbQuery } from "@/lib/supabase"
 import { revalidatePath } from "next/cache"
+import { assertRole } from '@/utils/auth/access'
+
+async function assertAdminAccess() {
+    await assertRole('admin')
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -22,6 +27,8 @@ export type CustomDataset = {
 }
 
 export async function revalidateDatasetsPathsAction() {
+    await assertAdminAccess()
+
     revalidatePath('/datasets')
     revalidatePath('/templates')
     revalidatePath('/generate')
@@ -33,6 +40,8 @@ type TemplateLinkRow = { template_id: string; dataset_id: string }
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export async function linkDatasetToTemplatesAction(datasetId: string, templateIds: string[]) {
+    await assertAdminAccess()
+
     const did = String(datasetId || '').trim()
     if (!UUID_RE.test(did)) return { success: false, error: 'dataset_id inválido' }
 
@@ -59,6 +68,8 @@ export async function linkDatasetToTemplatesAction(datasetId: string, templateId
 }
 
 export async function unlinkDatasetFromTemplateAction(datasetId: string, templateId: string) {
+    await assertAdminAccess()
+
     const did = String(datasetId || '').trim()
     const tid = String(templateId || '').trim()
     if (!UUID_RE.test(did) || !UUID_RE.test(tid)) return { success: false, error: 'IDs inválidos' }
@@ -78,6 +89,8 @@ export async function unlinkDatasetFromTemplateAction(datasetId: string, templat
 }
 
 export async function getDatasetLinkedTemplateIdsAction(datasetId: string): Promise<string[]> {
+    await assertAdminAccess()
+
     const did = String(datasetId || '').trim()
     if (!UUID_RE.test(did)) return []
 
@@ -97,6 +110,8 @@ export async function getDatasetLinkedTemplateIdsAction(datasetId: string): Prom
 // ─── Read ─────────────────────────────────────────────────────────────────────
 
 export async function getDatasetsAction(): Promise<CustomDataset[]> {
+    await assertAdminAccess()
+
     try {
         const rows = await dbQuery(`
             SELECT d.id, d.name, d.schema_json, d.created_at,
@@ -116,6 +131,8 @@ export async function getDatasetsAction(): Promise<CustomDataset[]> {
 }
 
 export async function getDatasetByIdAction(id: string): Promise<CustomDataset | null> {
+    await assertAdminAccess()
+
     try {
         const rows = await dbQuery(`
             SELECT id, name, schema_json, created_at
@@ -135,6 +152,8 @@ export async function getDatasetByIdAction(id: string): Promise<CustomDataset | 
 }
 
 export async function getDatasetSampleRowAction(datasetId: string): Promise<Record<string, string> | null> {
+    await assertAdminAccess()
+
     try {
         const rows = await dbQuery(`
             SELECT data_json FROM public.custom_dataset_rows
@@ -156,6 +175,8 @@ export async function createDatasetAction(data: {
     name: string
     schema: FieldDef[]
 }) {
+    await assertAdminAccess()
+
     try {
         const schemaStr = JSON.stringify(data.schema).replace(/'/g, "''")
         const nameStr = data.name.replace(/'/g, "''")
@@ -175,6 +196,8 @@ export async function createDatasetAction(data: {
 
 /** Sobrescribir (Overwrite): borra todo y recarga */
 export async function overwriteDatasetRowsAction(datasetId: string, rows: Record<string, any>[], newSchema?: FieldDef[]) {
+    await assertAdminAccess()
+
     try {
         const id = datasetId.replace(/'/g, "''")
         await dbQuery(`DELETE FROM public.custom_dataset_rows WHERE dataset_id = '${id}'`)
@@ -194,6 +217,8 @@ export async function overwriteDatasetRowsAction(datasetId: string, rows: Record
 
 /** Añadir Filas (Append): agrega nuevas filas, actualiza schema si hay columnas nuevas */
 export async function appendDatasetRowsAction(datasetId: string, rows: Record<string, any>[], newSchema?: FieldDef[]) {
+    await assertAdminAccess()
+
     try {
         if (newSchema) {
             const id = datasetId.replace(/'/g, "''")
@@ -215,6 +240,8 @@ export async function mergeDatasetRowsAction(
     joinKey: string,        // key funcional que sirve como identificador
     newSchema?: FieldDef[]
 ): Promise<{ success: boolean; merged: number; created: number; notFound: string[]; error?: string }> {
+    await assertAdminAccess()
+
     try {
         const id = datasetId.replace(/'/g, "''")
 
@@ -273,6 +300,8 @@ export async function mergeDatasetRowsAction(
 
 /** Crear filas faltantes del merge que el usuario decidió aceptar */
 export async function createOrphanRowsAction(datasetId: string, rows: Record<string, any>[]) {
+    await assertAdminAccess()
+
     try {
         await _bulkInsertRows(datasetId, rows)
         revalidatePath('/datasets')
@@ -288,6 +317,8 @@ export async function backfillDatasetRowKeysAction(
     datasetId: string,
     renames: { fromKey: string; toKey: string }[]
 ) {
+    await assertAdminAccess()
+
     try {
         const id = String(datasetId || '').trim()
         if (!UUID_RE.test(id)) return { success: false, error: 'dataset_id inválido' }
@@ -323,6 +354,8 @@ export async function backfillDatasetRowKeysAction(
 }
 
 export async function normalizeDatasetRowJsonKeysAction(datasetId: string) {
+    await assertAdminAccess()
+
     try {
         const id = String(datasetId || '').trim()
         if (!UUID_RE.test(id)) return { success: false, error: 'dataset_id inválido' }
@@ -374,6 +407,8 @@ export async function normalizeDatasetRowJsonKeysAction(datasetId: string) {
 }
 
 export async function deleteDatasetAction(id: string) {
+    await assertAdminAccess()
+
     try {
         const safeId = id.replace(/'/g, "''")
         await dbQuery(`

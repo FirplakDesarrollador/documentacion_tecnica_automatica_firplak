@@ -3,6 +3,11 @@
 import { dbQuery } from '@/lib/supabase'
 import { markNamingStaleForVersionRule, processNamingJobsInline } from '@/lib/engine/namingQueue'
 import { revalidatePath } from 'next/cache'
+import { assertRole } from '@/utils/auth/access'
+
+async function assertAdminAccess() {
+    await assertRole('admin')
+}
 
 export async function upsertVersionAction(data: {
     version_code: string
@@ -12,6 +17,8 @@ export async function upsertVersionAction(data: {
     product_types?: string[]
     isNew?: boolean
 }) {
+    await assertAdminAccess()
+
     const { version_code, version_description, automatic_version_rules, status, product_types, isNew } = data
 
     if (isNew) {
@@ -57,6 +64,8 @@ export async function upsertVersionAction(data: {
 }
 
 export async function previewDeleteVersionAction(version_code: string) {
+    await assertAdminAccess()
+
     const result = await dbQuery(`
         SELECT
             (SELECT COUNT(*) FROM public.product_versions WHERE version_code = $1)::int AS version_count,
@@ -70,6 +79,8 @@ export async function previewDeleteVersionAction(version_code: string) {
 }
 
 export async function deleteVersionAction(version_code: string) {
+    await assertAdminAccess()
+
     await dbQuery(`
         DELETE FROM public.product_skus WHERE version_id IN (SELECT id FROM public.product_versions WHERE version_code = $1);
         DELETE FROM public.product_versions WHERE version_code = $1;

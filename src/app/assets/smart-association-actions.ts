@@ -3,6 +3,11 @@
 
 import { dbQuery } from '@/lib/supabase'
 import { revalidatePath, revalidateTag } from 'next/cache'
+import { assertRole } from '@/utils/auth/access'
+
+async function assertAdminAccess() {
+    await assertRole('admin')
+}
 
 /**
  * Sweeps validation everywhere to ensure UI is fresh.
@@ -106,6 +111,8 @@ function calculateMatchLevel(missing: ProductRow, existing: ProductRow): Isometr
  * Finds suggestions for missing isometrics based on existing ones.
  */
 export async function getIsometricSuggestionsAction(): Promise<IsometricSuggestion[]> {
+    await assertAdminAccess()
+
     // 1. Get products missing isometrics
      
     const missingRows = await dbQuery(`
@@ -180,6 +187,8 @@ export async function applySmartAssociationsAction(associations: {
     assetId: string, 
     path: string 
 }[]) {
+    await assertAdminAccess()
+
     if (associations.length === 0) return { success: true, count: 0 }
 
     // Since we want to update the REFERENCE level (per user request), 
@@ -223,6 +232,8 @@ export async function applySmartAssociationsAction(associations: {
  * Finds groups of references that have identical attributes but different isometric assets.
  */
 export async function getIsometricNormalizationGroupsAction(): Promise<IsometricNormalizationGroup[]> {
+    await assertAdminAccess()
+
     // 1. Find the groups based on ALL core attributes including special_label
      
     const groups = await dbQuery(`
@@ -320,6 +331,8 @@ export async function applyIsometricNormalizationAction(
     masterPath: string,
     allAssetIdsInGroup: string[]
 ) {
+    await assertAdminAccess()
+
     // 1. Parse group components from ID using the new separator
     const parts = groupId.split(':::').map(s => decodeURIComponent(s))
     const [familyCode, name, designation, measure, accessory, specialLabel] = parts

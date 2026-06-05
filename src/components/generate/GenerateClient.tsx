@@ -18,6 +18,7 @@ import { GenerateProductTable, type GenerateProduct } from '@/components/generat
 import { getTemplateRequiredFields, getTemplateValidationIssues } from '@/components/generate/ValidationWarnings'
 import { BulkExportPanel } from '@/components/generate/BulkExportPanel'
 import { getReferencesByFamilyAction } from '@/app/assets/actions'
+import { GENERATE_LAST_URL_COOKIE, GENERATE_LAST_URL_STORAGE_KEY } from '@/lib/navigation/generateLastUrl'
 
 const STORAGE_KEYS = {
     SELECTED_IDS: 'generate-selected-ids',
@@ -426,6 +427,9 @@ export function GenerateClient({
             if (current !== targetUrl) {
                 window.history.replaceState(null, '', targetUrl)
             }
+
+            localStorage.setItem(GENERATE_LAST_URL_STORAGE_KEY, targetUrl)
+            document.cookie = `${GENERATE_LAST_URL_COOKIE}=${encodeURIComponent(targetUrl)}; path=/; max-age=2592000; samesite=lax`
         }, 300)
 
         return () => clearTimeout(timeout)
@@ -437,7 +441,7 @@ export function GenerateClient({
     // también se modifica internamente (usuario cambia plantilla). La alternativa sería un refactor
     // grande a componente controlado o usar `key` (que perdería todo el estado interno).
     const lastSyncedInitialTemplateIdRef = useRef(initialTemplateId)
-    const [lastSyncedInitialDatasetId, setLastSyncedInitialDatasetId] = useState(initialDatasetId)
+    const lastSyncedInitialDatasetIdRef = useRef(initialDatasetId)
     
     useEffect(() => {
         if (initialTemplateId === lastSyncedInitialTemplateIdRef.current) return
@@ -456,13 +460,20 @@ export function GenerateClient({
     }, [initialTemplateId])
 
     useEffect(() => {
-        if (initialDatasetId !== lastSyncedInitialDatasetId) {
-            /* eslint-disable react-hooks/set-state-in-effect */
+        if (initialDatasetId === lastSyncedInitialDatasetIdRef.current) return
+
+        let cancelled = false
+
+        queueMicrotask(() => {
+            if (cancelled) return
             setSelectedDatasetId(initialDatasetId ?? null)
-            setLastSyncedInitialDatasetId(initialDatasetId)
-            /* eslint-enable react-hooks/set-state-in-effect */
+            lastSyncedInitialDatasetIdRef.current = initialDatasetId
+        })
+
+        return () => {
+            cancelled = true
         }
-    }, [initialDatasetId, lastSyncedInitialDatasetId])
+    }, [initialDatasetId])
 
     // 4. Sincronizar página con cambios externos (navegación atrás/adelante)
     const lastSyncedPageRef = useRef(page)

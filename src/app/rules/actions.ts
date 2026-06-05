@@ -31,6 +31,11 @@ import {
     type NamingVariableField,
     type NamingVariableSource,
 } from '@/lib/engine/namingVariableCatalog'
+import { assertRole } from '@/utils/auth/access'
+
+async function assertAdminAccess() {
+    await assertRole('admin')
+}
 
 function esc(v: unknown) {
     if (v === null || v === undefined) return 'NULL'
@@ -127,6 +132,8 @@ async function saveNamingModelTypesToStorage(types: string[]) {
 }
 
 export async function getRulesAction() {
+    await assertAdminAccess()
+
     try {
         return await loadAllRulesForNamingType(DEFAULT_NAMING_TYPE)
     } catch (error) {
@@ -136,12 +143,16 @@ export async function getRulesAction() {
 }
 
 export async function getColorByNameAction(code4Dig: string) {
+    await assertAdminAccess()
+
     if (!code4Dig) return null
     const rows = await dbQuery(`SELECT name_color_sap FROM public.colors WHERE code_4dig = '${code4Dig.replace(/'/g, "''")}' LIMIT 1`)
     return rows && rows.length > 0 ? rows[0].name_color_sap : null
 }
 
 export async function upsertRuleAction(data: any) {
+    await assertAdminAccess()
+
     const { id, rule_type, target_entity, condition_expression, action_type, action_payload, priority, enabled, notes, target_value } = data
     void rule_type
     void action_type
@@ -192,6 +203,8 @@ export async function upsertRuleAction(data: any) {
 }
 
 export async function deleteRuleAction(id: string) {
+    await assertAdminAccess()
+
     if (!id) return
     const rows = await dbQuery(`
         SELECT product_type, naming_type
@@ -217,12 +230,16 @@ export async function deleteRuleAction(id: string) {
 }
 
 export async function revalidateRulesAndProductsAction() {
+    await assertAdminAccess()
+
     revalidatePath('/rules')
     revalidatePath('/configuration')
     revalidatePendingSweepEverywhere()
 }
 
 export async function previewNamingRulesAction(productType: string, pendingRules: any[]) {
+    await assertAdminAccess()
+
     return previewNamingComponentsAction(productType, DEFAULT_NAMING_TYPE, pendingRules)
 }
 
@@ -232,6 +249,8 @@ export async function previewNamingComponentsAction(
     pendingRules: any[],
     pendingEnConfig?: any[]
 ) {
+    await assertAdminAccess()
+
     const safeType = productType.replace(/'/g, "''")
     const rows = await dbQuery(`
         SELECT *
@@ -290,6 +309,8 @@ export async function previewNamingComponentsAction(
 }
 
 export async function getProductsCountByFamilyAction(productType: string) {
+    await assertAdminAccess()
+
     const safeType = productType.replace(/'/g, "''")
     const result = await dbQuery(`
         SELECT COUNT(id) as exact_count
@@ -305,6 +326,8 @@ export async function getProductsCountByFamilyAction(productType: string) {
 }
 
 export async function applyNamesToProductTypeBatchAction(productType: string, offset: number, limit: number) {
+    await assertAdminAccess()
+
     const recomputed = await recomputeMasterNamesByProductType(productType, offset, limit)
 
     return recomputed.products.map((product) => ({
@@ -316,10 +339,14 @@ export async function applyNamesToProductTypeBatchAction(productType: string, of
 }
 
 export async function getEnConfigAction(targetEntity: string) {
+    await assertAdminAccess()
+
     return getNamingComponentsEnConfigAction(targetEntity, DEFAULT_NAMING_TYPE)
 }
 
 export async function getNamingComponentsEnConfigAction(targetEntity: string, namingType: string) {
+    await assertAdminAccess()
+
     try {
         const components = await loadNamingComponents(targetEntity, namingType)
         return componentsToEnConfig(components)
@@ -337,6 +364,8 @@ export async function saveEnConfigAction(targetEntity: string, variable_id: stri
     fallback_strategy?: string
     drop_if_resolved?: boolean
 }, namingType: string = DEFAULT_NAMING_TYPE) {
+    await assertAdminAccess()
+
     const current = await loadNamingComponents(targetEntity, namingType)
     const enConfig = componentsToEnConfig(current)
     const existing = enConfig.find((cfg: any) => cfg.variable_id === variable_id)
@@ -357,10 +386,14 @@ export async function saveEnConfigAction(targetEntity: string, variable_id: stri
 }
 
 export async function saveFullConfigAction(productType: string, esRules: any[], deletedEsIds: string[], enConfig: any[]) {
+    await assertAdminAccess()
+
     return saveNamingComponentsFullConfigAction(productType, DEFAULT_NAMING_TYPE, esRules, deletedEsIds, enConfig)
 }
 
 export async function saveNamingComponentsFullConfigAction(productType: string, namingType: string, esRules: any[], deletedEsIds: string[], enConfig: any[]) {
+    await assertAdminAccess()
+
     void deletedEsIds
     const indexedRules = esRules.map((rule, index) => ({
         ...rule,
@@ -385,6 +418,8 @@ export async function saveNamingComponentsFullConfigAction(productType: string, 
 }
 
 export async function getNamingComponentsAction(productType?: string) {
+    await assertAdminAccess()
+
     if (productType) return loadNamingComponentsByProductType(productType)
     const rows = await dbQuery(`
         SELECT *
@@ -395,6 +430,8 @@ export async function getNamingComponentsAction(productType?: string) {
 }
 
 export async function getNamingVariableCatalogAction(productType?: string): Promise<NamingVariableField[]> {
+    await assertAdminAccess()
+
     const normalizedType = productType ? normalizeProductType(productType) : ''
     const safeType = normalizedType.replace(/'/g, "''")
     const familyFilter = safeType ? `WHERE upper(btrim(product_type)) = '${safeType}'` : ''
@@ -457,6 +494,8 @@ export async function getNamingVariableCatalogAction(productType?: string): Prom
 }
 
 export async function saveGlossaryTermsAction(terms: { es: string, en: string }[]) {
+    await assertAdminAccess()
+
     if (terms.length === 0) return { success: true }
 
     for (const term of terms) {
@@ -484,6 +523,8 @@ export async function saveGlossaryTermsAction(terms: { es: string, en: string }[
 }
 
 export async function saveMassImportSettingsAction(input: { executeEnabled: boolean; safeMaxRows: number }) {
+    await assertAdminAccess()
+
     const executeEnabled = !!input.executeEnabled
     const safeMaxRows = Number(input.safeMaxRows)
     if (!Number.isFinite(safeMaxRows) || safeMaxRows <= 0) throw new Error('safeMaxRows debe ser un número mayor a 0')
@@ -503,6 +544,8 @@ export async function saveMassImportSettingsAction(input: { executeEnabled: bool
 }
 
 export async function getNamingModelStatusAction() {
+    await assertAdminAccess()
+
     const [familyTypes, modelTypes] = await Promise.all([
         getFamiliesProductTypes(),
         resolveNamingModelTypesFromStorage(),
@@ -523,6 +566,8 @@ export async function getNamingModelStatusAction() {
 }
 
 export async function addNamingModelAction(rawProductType: string) {
+    await assertAdminAccess()
+
     const productType = normalizeProductType(rawProductType)
     if (!productType) throw new Error('Debes seleccionar un tipo de producto válido')
 
@@ -544,6 +589,8 @@ export async function addNamingModelAction(rawProductType: string) {
 }
 
 export async function deleteNamingModelAction(rawProductType: string) {
+    await assertAdminAccess()
+
     const productType = normalizeProductType(rawProductType)
     if (!productType) throw new Error('Tipo de producto inválido')
 
@@ -578,6 +625,8 @@ export async function applyFullBulkNamingUpdateBatchAction(
     clientEnConfig?: any[],
     namingType?: string
 ) {
+    await assertAdminAccess()
+
     void clientEsRules
     void clientEnConfig
 

@@ -4,12 +4,21 @@ import { dbQuery } from '@/lib/supabase'
 import { markNamingStaleForGlossaryTerms, processNamingJobsInline } from '@/lib/engine/namingQueue'
 import { resetGlossaryCache } from '@/lib/engine/translator'
 import { revalidatePath, revalidateTag } from 'next/cache'
+import { assertRole } from '@/utils/auth/access'
+
+async function assertAdminAccess() {
+    await assertRole('admin')
+}
 
 export async function getGlossaryAction() {
+    await assertAdminAccess()
+
     return await dbQuery(`SELECT * FROM public.glossary ORDER BY term_es ASC`) || []
 }
 
 export async function upsertGlossaryTermAction(data: { id?: string, term_es: string, term_en: string, category?: string }) {
+    await assertAdminAccess()
+
     const { id, term_es, term_en, category } = data
     const termEsEsc = term_es.toUpperCase().replace(/'/g, "''")
     const termEnEsc = term_en.toUpperCase().replace(/'/g, "''")
@@ -43,6 +52,8 @@ export async function upsertGlossaryTermAction(data: { id?: string, term_es: str
 }
 
 export async function deleteGlossaryTermAction(id: string) {
+    await assertAdminAccess()
+
     const existingRows = await dbQuery(`SELECT term_es, category FROM public.glossary WHERE id = $1 LIMIT 1`, [id]) || []
     const deletedTermEs = existingRows[0]?.term_es ? String(existingRows[0].term_es) : ''
     const deletedCategory = existingRows[0]?.category ? String(existingRows[0].category) : null

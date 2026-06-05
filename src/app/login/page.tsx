@@ -129,7 +129,7 @@ export default function LoginPage() {
 
                 <div className="mt-8 text-center">
                     <p className="text-[10px] text-slate-600 uppercase tracking-[0.2em] font-bold">
-                        Exclusivo para personal de Firplak I+D
+                        Exclusivo para personal de Firplak
                     </p>
                 </div>
             </div>

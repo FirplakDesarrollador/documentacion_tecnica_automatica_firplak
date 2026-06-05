@@ -1,4 +1,5 @@
 import { dbQuery } from '@/lib/supabase'
+import { cookies } from 'next/headers'
 import Link from 'next/link'
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -8,6 +9,7 @@ import {
   FileText, PlusCircle, ArrowRight, Upload
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { decodeGenerateLastUrl, GENERATE_LAST_URL_COOKIE } from '@/lib/navigation/generateLastUrl'
 
 import { getPendingSummaryCached } from '@/lib/engine/validationActions'
 import { requirePageRole } from '@/utils/auth/access'
@@ -21,6 +23,10 @@ interface RecentProduct {
 }
 
 export default async function Home() {
+  const cookieStore = await cookies()
+  const generateHref =
+    decodeGenerateLastUrl(cookieStore.get(GENERATE_LAST_URL_COOKIE)?.value) ?? '/generate'
+
   await requirePageRole('admin')
 
   // Fetch real KPIs and validation state
@@ -83,7 +89,7 @@ export default async function Home() {
       title: "Generar",
       description: "Exportación masiva de documentos",
       icon: <FileText className="h-6 w-6 text-purple-500" />,
-      href: "/generate",
+      href: generateHref,
       color: "bg-purple-50 border-purple-100"
     }
   ]
