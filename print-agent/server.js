@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const { convertImageToTspl } = require('./printService');
 const { scanUsbDevices, printViaUsb } = require('./usbService');
+const packageJson = require('./package.json');
 
 const app = express();
 const PORT = process.env.PORT || 3344;
@@ -29,6 +30,9 @@ app.get('/health', async (_req, res) => {
         const printers = await scanUsbDevices();
         res.json({
             status: 'ok',
+            name: packageJson.name,
+            version: packageJson.version,
+            endpoint: `http://127.0.0.1:${PORT}`,
             printerDetected: printers.length > 0,
             printerName: printers.length > 0 ? printers[0].known : null,
             printers: printers.map(p => p.known || `${p.vid}:${p.pid}`),

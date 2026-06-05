@@ -5,7 +5,7 @@ echo ============================================
 echo   SamiGen - Agente de Impresion Local
 echo ============================================
 echo.
-echo Iniciando agente en http://localhost:3344 ...
+echo Iniciando agente en http://127.0.0.1:3344 ...
 echo.
 npm start
 pause

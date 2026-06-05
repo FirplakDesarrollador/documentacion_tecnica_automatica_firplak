@@ -1,5 +1,4 @@
 'use server'
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { dbQuery } from '@/lib/supabase'
 import { revalidatePath, revalidateTag } from 'next/cache'
@@ -77,6 +76,41 @@ interface ProductRow {
     reference_id?: string
 }
 
+type SkuReferenceRow = {
+    sku_id: string
+    reference_id: string
+}
+
+type NormalizationGroupRow = {
+    family_code: string
+    family_name: string
+    product_name: string
+    designation: string
+    commercial_measure: string
+    accessory_text: string
+    special_label: string
+}
+
+type NormalizationReferenceRow = {
+    reference_id: string
+    isometric_asset_id: string | null
+    isometric_path: string | null
+    sample_sku: string
+    sample_name: string
+}
+
+type ReferenceIdRow = {
+    id: string
+}
+
+type UsageCountRow = {
+    count: string | number
+}
+
+type AssetPathRow = {
+    path: string
+}
+
 /**
  * Compares two products to determine their compatibility level for reusing an isometric.
  */
@@ -115,7 +149,7 @@ export async function getIsometricSuggestionsAction(): Promise<IsometricSuggesti
 
     // 1. Get products missing isometrics
      
-    const missingRows = await dbQuery(`
+    const missingRows = (await dbQuery(`
         SELECT 
             id, reference_code, product_name, family_code, designation, 
             commercial_measure, special_label, ref_attrs, sku_complete,
@@ -124,11 +158,11 @@ export async function getIsometricSuggestionsAction(): Promise<IsometricSuggesti
         WHERE (status IS NULL OR status <> 'INACTIVO')
           AND COALESCE(effective_version_attrs->>'isometric_path','') = ''
           AND (isometric_path IS NULL OR isometric_path = '')
-    `) as any[] || []
+    `) || []) as ProductRow[]
 
     // 2. Get products that HAVE isometrics
      
-    const existingRows = await dbQuery(`
+    const existingRows = (await dbQuery(`
         SELECT 
             id, reference_code, product_name, family_code, designation, 
             commercial_measure, special_label, ref_attrs, 
@@ -137,7 +171,7 @@ export async function getIsometricSuggestionsAction(): Promise<IsometricSuggesti
         FROM public.v_ui_generate_list
         WHERE (status IS NULL OR status <> 'INACTIVO')
           AND (isometric_path IS NOT NULL AND isometric_path <> '')
-    `) as any[] || []
+    `) || []) as ProductRow[]
 
     const suggestions: IsometricSuggestion[] = []
 
@@ -195,12 +229,12 @@ export async function applySmartAssociationsAction(associations: {
     // we first need to find the reference_id for each SKU.
     const skuIds = associations.map(a => `'${a.skuId}'`).join(',')
      
-    const mapping = await dbQuery(`
+    const mapping = (await dbQuery(`
         SELECT s.id as sku_id, v.reference_id
         FROM public.product_skus s
         JOIN public.product_versions v ON s.version_id = v.id
         WHERE s.id IN (${skuIds})
-    `) as any[] || []
+    `) || []) as SkuReferenceRow[]
 
     const refUpdates = new Map<string, { assetId: string, path: string }>()
     for (const m of mapping) {
@@ -236,7 +270,7 @@ export async function getIsometricNormalizationGroupsAction(): Promise<Isometric
 
     // 1. Find the groups based on ALL core attributes including special_label
      
-    const groups = await dbQuery(`
+    const groups = (await dbQuery(`
         SELECT 
             r.family_code, f.family_name, r.product_name, r.designation, r.commercial_measure, 
             COALESCE(r.ref_attrs->>'accessory_text', '') as accessory_text,
@@ -249,14 +283,14 @@ export async function getIsometricNormalizationGroupsAction(): Promise<Isometric
             r.family_code, f.family_name, r.product_name, r.designation, r.commercial_measure, 
             COALESCE(r.ref_attrs->>'accessory_text', ''), COALESCE(r.special_label, '')
         HAVING COUNT(DISTINCT r.isometric_asset_id) > 1
-    `) as any[] || []
+    `) || []) as NormalizationGroupRow[]
 
     const result: IsometricNormalizationGroup[] = []
 
     for (const g of groups) {
         // 2. Fetch references for this group to get details, including the final constructed name
          
-        const refs = await dbQuery(`
+        const refs = (await dbQuery(`
             SELECT 
                 r.id as reference_id, r.isometric_asset_id, r.isometric_path,
                 s.sku_complete as sample_sku,
@@ -271,7 +305,7 @@ export async function getIsometricNormalizationGroupsAction(): Promise<Isometric
               AND COALESCE(r.ref_attrs->>'accessory_text', '') = '${g.accessory_text.replace(/'/g, "''")}'
               AND COALESCE(r.special_label, '') = '${g.special_label.replace(/'/g, "''")}'
               AND s.id IS NOT NULL
-        `) as any[] || []
+        `) || []) as NormalizationReferenceRow[]
 
         // 3. Map to options (unique assets in this group)
         const assetsMap = new Map<string, { path: string, references: { sku: string, name: string }[] }>()
@@ -314,7 +348,7 @@ export async function getIsometricNormalizationGroupsAction(): Promise<Isometric
                 specialLabel: g.special_label
             },
             options,
-            totalReferences: new Set((refs as any[]).map((r: { reference_id: string }) => r.reference_id)).size
+            totalReferences: new Set(refs.map((r) => r.reference_id)).size
         })
     }
 
@@ -339,7 +373,7 @@ export async function applyIsometricNormalizationAction(
 
     // 2. Identify all references in this group
      
-    const refs = await dbQuery(`
+    const refs = (await dbQuery(`
         SELECT id FROM public.product_references
         WHERE family_code = '${familyCode}'
           AND product_name = '${name.replace(/'/g, "''")}'
@@ -347,7 +381,7 @@ export async function applyIsometricNormalizationAction(
           AND commercial_measure = '${measure.replace(/'/g, "''")}'
           AND COALESCE(ref_attrs->>'accessory_text', '') = '${accessory.replace(/'/g, "''")}'
           AND COALESCE(special_label, '') = '${specialLabel.replace(/'/g, "''")}'
-    `) as any[] || []
+    `) || []) as ReferenceIdRow[]
 
     const refIds = refs.map((r: { id: string }) => r.id)
     if (refIds.length === 0) return { success: false, message: 'No references found' }
@@ -369,17 +403,17 @@ export async function applyIsometricNormalizationAction(
     for (const assetId of assetsToCheck) {
         // Verify if the asset is still used by ANY other reference outside this group
          
-        const usage = await dbQuery(`
+        const usage = (await dbQuery(`
             SELECT count(*) as count FROM public.product_references 
             WHERE isometric_asset_id = '${assetId}'
-        `) as any[]
+        `) || []) as UsageCountRow[]
         
-        if (usage && usage[0] && parseInt(usage[0].count) === 0) {
+        if (usage && usage[0] && Number(usage[0].count) === 0) {
             console.log(`Asset ${assetId} is now orphaned. Deleting...`)
             
             // Get path for storage deletion
              
-            const assetData = await dbQuery(`SELECT path FROM public.assets WHERE id = '${assetId}'`) as any[]
+            const assetData = await dbQuery(`SELECT path FROM public.assets WHERE id = '${assetId}'`) as AssetPathRow[]
             if (assetData && assetData[0]) {
                 const storagePath = assetData[0].path
                 // Delete from storage (bucket: assets)

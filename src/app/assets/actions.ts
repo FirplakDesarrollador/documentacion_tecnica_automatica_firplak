@@ -111,15 +111,15 @@ export async function getVersionsByFamilyAndRefAction(familyCodes: string[], ref
         whereParts.push(`family_code IN (${familyCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`)
     }
 
-    const versionRecords = await dbQuery(`
+    const versionRecords = (await dbQuery(`
         SELECT DISTINCT version_code 
         FROM public.v_ui_generate_list 
         WHERE version_code IS NOT NULL AND ${whereParts.join(' AND ')}
         ORDER BY version_code ASC
-    `) || []
+    `) || []) as VersionRecord[]
     
      
-    return (versionRecords as any[]).map((rec: { version_code: string }) => ({ 
+    return versionRecords.map((rec) => ({ 
         value: rec.version_code, 
         label: `Versión ${rec.version_code}`
     }))
@@ -209,7 +209,7 @@ export async function associateIsometricAction(data: {
     if (!assetId) throw new Error("Asset ID is required")
     
      
-    const asset = await dbQuery(`SELECT file_path FROM public.assets WHERE id = '${assetId}' LIMIT 1`) as any[]
+    const asset = await dbQuery(`SELECT file_path FROM public.assets WHERE id = '${assetId}' LIMIT 1`) as AssetFilePathRow[]
     if (!asset || asset.length === 0) throw new Error("Asset not found")
     const filePath = asset[0].file_path
 
@@ -226,16 +226,16 @@ export async function associateIsometricAction(data: {
             return condition
         })
          
-        const refs = await dbQuery(`SELECT id FROM public.product_references WHERE ${specificPairs.join(' OR ')}`) as any[]
-        refIds = refs.map((r: { id: string }) => r.id)
+        const refs = await dbQuery(`SELECT id FROM public.product_references WHERE ${specificPairs.join(' OR ')}`) as IdRow[]
+        refIds = refs.map((r) => r.id)
     } else if (familyCodes.length > 0) {
         let query = `SELECT id FROM public.product_references WHERE family_code IN (${familyCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`
         if (measureCodes && measureCodes.length > 0) {
             query += ` AND commercial_measure IN (${measureCodes.map(v => `'${v.replace(/'/g, "''")}'`).join(',')})`
         }
          
-        const refs = await dbQuery(query) as any[]
-        refIds = refs.map((r: { id: string }) => r.id)
+        const refs = await dbQuery(query) as IdRow[]
+        refIds = refs.map((r) => r.id)
     } else {
         throw new Error("Target selection (Family or Reference) is required")
     }
@@ -261,13 +261,13 @@ export async function associateIsometricAction(data: {
         `)
 
          
-        const verifyRows = await dbQuery(`
+        const verifyRows = (await dbQuery(`
             SELECT COUNT(*)::int as updated_count
             FROM public.product_versions
             WHERE reference_id IN ${refsFilter}
               AND version_code IN ${versionFilter}
               AND version_attrs->>'isometric_asset_id' = '${assetId.replace(/'/g, "''")}'
-        `) as any[] || []
+        `) || []) as UpdatedCountRow[]
         updatedCount = Number(verifyRows?.[0]?.updated_count || 0)
     } else {
         // CASE: Default Reference Asset
@@ -282,12 +282,12 @@ export async function associateIsometricAction(data: {
         `)
 
          
-        const verifyRows = await dbQuery(`
+        const verifyRows = (await dbQuery(`
             SELECT COUNT(*)::int as updated_count
             FROM public.product_references
             WHERE id IN ${refsFilter}
               AND isometric_asset_id = '${assetId.replace(/'/g, "''")}'
-        `) as any[] || []
+        `) || []) as UpdatedCountRow[]
         updatedCount = Number(verifyRows?.[0]?.updated_count || 0)
     }
 
@@ -306,7 +306,7 @@ export async function deleteAssetAction(assetId: string) {
     await assertAdminAccess()
 
     // 1. Protección contra el borrado de activos de sistema
-    const defaults = await dbQuery(`SELECT id FROM public.assets WHERE name IN (
+    const defaults = (await dbQuery(`SELECT id FROM public.assets WHERE name IN (
         'Logo Empresa Pordefecto',
         'Isométrico (Placeholder)',
         'Icono RH Fijo',
@@ -318,10 +318,9 @@ export async function deleteAssetAction(assetId: string) {
         'Logo D-ACQUA',
         'Logo PROMART',
         'Logo FERMETAL'
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    )`) as any[] || []
+    )`) || []) as IdRow[]
     
-    if (defaults.some((d: { id: string }) => d.id === assetId)) {
+    if (defaults.some((d) => d.id === assetId)) {
         throw new Error("No puedes eliminar un recurso del sistema por defecto.")
     }
 
@@ -329,7 +328,7 @@ export async function deleteAssetAction(assetId: string) {
 
     // 2. Obtener metadatos del archivo para borrar del Storage
      
-    const asset = await dbQuery(`SELECT file_path FROM public.assets WHERE id = '${safeId}' LIMIT 1`) as any[]
+    const asset = await dbQuery(`SELECT file_path FROM public.assets WHERE id = '${safeId}' LIMIT 1`) as AssetFilePathRow[]
     if (!asset || asset.length === 0) return { success: true } // Ya no existe
     const filePath = asset[0].file_path
 

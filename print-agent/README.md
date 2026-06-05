@@ -1,7 +1,7 @@
 # SamiGen - Agente de Impresi&oacute;n Local
 
-Agente HTTP que recibe documentos desde SamiGen y los env&iacute;a directamente a la
-impresora de etiquetas **3nStar LTT334** (o cualquier impresora Windows).
+Agente HTTP local que recibe etiquetas desde SamiGen en Vercel y las env&iacute;a
+directamente a la impresora USB **3nStar LTT334 / 4BARCODE 4B-2054TG**.
 
 ## Requisitos
 
@@ -9,7 +9,35 @@ impresora de etiquetas **3nStar LTT334** (o cualquier impresora Windows).
 - **Node.js** 18+ instalado
 - Impresora 3nStar LTT334 conectada por **USB** y con driver instalado
 
-## Instalaci&oacute;n r&aacute;pida
+## Instalaci&oacute;n productiva para usuarios finales
+
+El usuario final no necesita clonar este repositorio ni instalar Node.js. Debe
+descargar desde SamiGen el instalador:
+
+```text
+/downloads/samigen-print-agent-setup.exe
+```
+
+El instalador copia el agente a `%LOCALAPPDATA%\SamiGenPrintAgent`, crea la tarea
+programada `SamiGenPrintAgent`, inicia el agente y registra un desinstalador en
+Windows.
+
+Para generar el instalador desde el repositorio:
+
+```powershell
+npm run build:print-agent-installer
+```
+
+El comando publica:
+
+- `public/downloads/samigen-print-agent-setup.exe`
+- `public/downloads/samigen-print-agent-setup-<version>.exe`
+
+Si existen variables `PRINT_AGENT_SIGN_CERT`, `PRINT_AGENT_SIGN_PASSWORD` y
+opcionalmente `PRINT_AGENT_TIMESTAMP_URL`, el build intenta firmar el instalador
+con `signtool`.
+
+## Instalaci&oacute;n manual de desarrollo
 
 ```powershell
 # 1. Abre PowerShell como Administrador y navega a esta carpeta
@@ -25,7 +53,7 @@ npm start
 ## Uso
 
 1. Ejecuta `npm start` en esta carpeta
-2. El agente queda escuchando en `http://localhost:3344`
+2. El agente queda escuchando en `http://127.0.0.1:3344`
 3. En SamiGen, ve a **Impresi&oacute;n** y selecciona el m&eacute;todo **"Agente local"**
 4. El app enviar&aacute; los documentos al agente y &eacute;ste los imprimir&aacute; autom&aacute;ticamente
 
@@ -86,7 +114,7 @@ while ($true) {
 **"Error de conexi&oacute;n"**
 - Verifica que el agente est&eacute; corriendo (debes ver el mensaje "Activo" en la terminal)
 - Confirma que el puerto 3344 no est&eacute; bloqueado por un firewall
-- En SamiGen, la URL debe ser `http://localhost:3344`
+- En SamiGen, la URL debe ser `http://127.0.0.1:3344`
 
 **La impresora no imprime o imprime texto basura**
 - Prueba directamente con PowerShell:

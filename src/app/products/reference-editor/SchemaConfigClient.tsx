@@ -84,7 +84,7 @@ export default function SchemaConfigClient() {
     setLoading(false);
 
     if (res.success) {
-      setPreviewData(res.data || []);
+      setPreviewData(res.data?.families || []);
       setPreviewAction('add');
       setShowAddModal(false);
       setShowPreviewModal(true);

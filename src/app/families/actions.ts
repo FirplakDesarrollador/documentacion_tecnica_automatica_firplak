@@ -1,5 +1,4 @@
 'use server';
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { supabaseServer, dbQuery } from '@/lib/supabase';
 import {
@@ -14,6 +13,54 @@ async function assertAdminAccess() {
   await assertRole('admin');
 }
 
+type FamilyFilterOptionsRow = {
+  family_code?: string | null;
+  family_name?: string | null;
+  product_type?: string | null;
+  zone_home?: string | null;
+  manufacturing_process?: string | null;
+};
+
+type FamilySearchFilters = {
+  familyCode?: string;
+  familyName?: string;
+  productType?: string;
+  zoneHome?: string;
+  manufacturingProcess?: string;
+};
+
+type MassUpdateValue = string | boolean | null | undefined;
+type FamilyMassUpdatePayload = Partial<Record<(typeof ALLOWED_NORMAL_COLS)[number], MassUpdateValue>>;
+
+type LineRow = {
+  line?: string | null;
+};
+
+type ProductTypeRow = {
+  product_type?: string | null;
+};
+
+type PreviewRemoveAttrRow = {
+  family_code: string;
+  total_refs: number | string;
+  refs_with_key: number | string;
+};
+
+type PreviewAddAttrRow = PreviewRemoveAttrRow & {
+  refs_without_key?: number | string;
+};
+
+type RpcResult<T> = {
+  data: T;
+  error: { message: string } | null;
+};
+
+type RpcCaller = {
+  rpc: <T>(fn: string, args: Record<string, unknown>) => Promise<RpcResult<T>>;
+};
+
+const rpcClient = supabaseServer as unknown as RpcCaller;
+
 // --- FILTER OPTIONS ---
 
 export async function getFamiliesFilterOptions() {
@@ -24,7 +71,7 @@ export async function getFamiliesFilterOptions() {
     .select('family_code, family_name, product_type, zone_home, manufacturing_process')
     .order('family_code', { ascending: true });
 
-  const rows = (fams || []) as any[];
+  const rows = (fams || []) as FamilyFilterOptionsRow[];
 
   const familyCodes = Array.from(new Set(rows.map(r => r.family_code).filter(Boolean))).sort();
   const familyNames = Array.from(new Set(rows.map(r => r.family_name).filter(Boolean))).sort();
@@ -40,7 +87,7 @@ export async function getFamiliesFilterOptions() {
 
 // --- SEARCH ---
 
-export async function searchFamilies(filters: any) {
+export async function searchFamilies(filters: FamilySearchFilters) {
   await assertAdminAccess();
 
   let query = supabaseServer
@@ -275,7 +322,7 @@ async function computeProductTypeRenameImpact(ids: string[], rawNextType: string
   };
 }
 
-export async function previewMassUpdateFamilies(ids: string[], normalUpdates: any) {
+export async function previewMassUpdateFamilies(ids: string[], normalUpdates: FamilyMassUpdatePayload) {
   await assertAdminAccess();
 
   const errors: string[] = [];
@@ -322,7 +369,7 @@ export async function previewProductTypeRenameImpactAction(ids: string[], nextPr
 
 export async function executeMassUpdateFamilies(
   ids: string[],
-  normalUpdates: any,
+  normalUpdates: FamilyMassUpdatePayload,
   options?: { migrateNamingModel?: boolean; migrationFromType?: string }
 ) {
   await assertAdminAccess();
@@ -407,7 +454,12 @@ export async function getAvailableLines() {
       AND line NOT IN (SELECT name_color_sap FROM public.colors)
     ORDER BY line ASC
   `) || [];
-  return { success: true, data: data.map((r: any) => r.line).filter(Boolean) };
+  return {
+    success: true,
+    data: (data as LineRow[])
+      .map((r) => r.line)
+      .filter((line): line is string => typeof line === 'string' && line.length > 0)
+  };
 }
 
 export async function updateFamilyLinesAction(familyCode: string, lines: string[]) {
@@ -503,7 +555,7 @@ export async function deleteFamiliesAction(codes: string[]) {
   `) || [];
   const affectedTypes: string[] = Array.from(new Set<string>(
     affectedTypesRows
-      .map((r: any) => String(r.product_type || '').trim().toUpperCase())
+      .map((r: ProductTypeRow) => String(r.product_type || '').trim().toUpperCase())
       .filter(Boolean)
   ));
 
@@ -579,7 +631,7 @@ export async function getFamiliesWithSchema(productTypeFilter?: string) {
 export async function previewAddAttrToFamilies(familyCodes: string[], attrKey: string) {
   await assertAdminAccess();
 
-  const { data, error } = await (supabaseServer as any).rpc('rpc_preview_add_attr_to_families', {
+  const { data, error } = await rpcClient.rpc<PreviewAddAttrRow[]>('rpc_preview_add_attr_to_families', {
     p_family_codes: familyCodes,
     p_attr_key: attrKey
   });
@@ -588,13 +640,28 @@ export async function previewAddAttrToFamilies(familyCodes: string[], attrKey: s
     return { success: false, error: error.message };
   }
 
-  return { success: true, data };
+  const rows = (data || []) as PreviewAddAttrRow[];
+
+  return {
+    success: true,
+    data: {
+      is_valid: true,
+      affected_count: rows.length,
+      errors: [],
+      families: rows.map((row) => ({
+        family_code: row.family_code,
+        total_refs: Number(row.total_refs),
+        refs_with_key: Number(row.refs_with_key),
+        refs_without_key: Number(row.refs_without_key || 0),
+      })),
+    }
+  };
 }
 
-export async function executeAddAttrToFamilies(familyCodes: string[], attrKey: string, attrDef: any, defaultValue: string) {
+export async function executeAddAttrToFamilies(familyCodes: string[], attrKey: string, attrDef: unknown, defaultValue: string) {
   await assertAdminAccess();
 
-  const { error } = await (supabaseServer as any).rpc('rpc_add_attr_to_families', {
+  const { error } = await rpcClient.rpc<unknown>('rpc_add_attr_to_families', {
     p_family_codes: familyCodes,
     p_attr_key: attrKey,
     p_attr_def: attrDef,
@@ -628,7 +695,7 @@ export async function previewRemoveAttrFromFamilies(familyCodes: string[], attrK
     return { success: true, data: { is_valid: false, affected_count: 0, errors, families: [] } };
   }
 
-  const { data, error } = await (supabaseServer as any).rpc('rpc_preview_remove_attr_from_families', {
+  const { data, error } = await rpcClient.rpc<PreviewRemoveAttrRow[]>('rpc_preview_remove_attr_from_families', {
     p_family_codes: familyCodes,
     p_attr_key: attrKey
   });
@@ -637,7 +704,7 @@ export async function previewRemoveAttrFromFamilies(familyCodes: string[], attrK
     return { success: false, error: error.message };
   }
 
-  const rows = (data || []) as any[];
+  const rows = (data || []) as PreviewRemoveAttrRow[];
 
   return {
     success: true,
@@ -645,7 +712,7 @@ export async function previewRemoveAttrFromFamilies(familyCodes: string[], attrK
       is_valid: true,
       affected_count: rows.length,
       errors: [],
-      families: rows.map((r: any) => ({
+      families: rows.map((r) => ({
         family_code: r.family_code,
         total_refs: Number(r.total_refs),
         refs_with_key: Number(r.refs_with_key),
@@ -657,7 +724,7 @@ export async function previewRemoveAttrFromFamilies(familyCodes: string[], attrK
 export async function executeRemoveAttrFromFamilies(familyCodes: string[], attrKey: string) {
   await assertAdminAccess();
 
-  const { error } = await (supabaseServer as any).rpc('rpc_remove_attr_from_families', {
+  const { error } = await rpcClient.rpc<unknown>('rpc_remove_attr_from_families', {
     p_family_codes: familyCodes,
     p_attr_key: attrKey
   });

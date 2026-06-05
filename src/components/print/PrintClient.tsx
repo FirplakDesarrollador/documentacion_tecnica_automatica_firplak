@@ -13,6 +13,7 @@ import {
     ChevronDown,
     ChevronUp,
     FileText,
+    Download,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -49,6 +50,7 @@ interface PrintItem {
 }
 
 const PRINTER_CONFIG_KEY = 'samiGen-printer-config'
+const PRINT_AGENT_DOWNLOAD_URL = '/downloads/samigen-print-agent-setup.exe'
 
 type PrintFormat = 'pdf' | 'jpg'
 
@@ -58,7 +60,7 @@ interface PrinterConfig {
 }
 
 const defaultPrinterConfig: PrinterConfig = {
-    agentUrl: 'http://localhost:3344',
+    agentUrl: 'http://127.0.0.1:3344',
     printerName: '3nStar LTT334',
 }
 
@@ -465,7 +467,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                         <Input
                                             value={printerConfig.agentUrl}
                                             onChange={(e) => setPrinterConfig(prev => ({ ...prev, agentUrl: e.target.value }))}
-                                            placeholder="http://localhost:3344"
+                                            placeholder="http://127.0.0.1:3344"
                                             className="text-sm font-mono flex-1"
                                         />
                                         <Button variant="outline" size="sm" onClick={checkAgent}>
@@ -510,19 +512,29 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                         <div>
                                             <div className="flex items-center gap-2">
                                                 <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
-                                                <span><strong>Agente no detectado</strong></span>
+                                                <span><strong>Agente no instalado o no iniciado</strong></span>
                                             </div>
-                                            <details className="text-xs text-amber-600 mt-1">
-                                                <summary className="cursor-pointer font-medium">Instrucciones</summary>
-                                                <ol className="mt-2 ml-4 list-decimal space-y-1">
-                                                    <li>Abre una terminal PowerShell como Administrador</li>
-                                                    <li>Navega a <code className="bg-amber-100 px-1 rounded">print-agent/</code></li>
-                                                    <li>Ejecuta <code className="bg-amber-100 px-1 rounded">npm install</code> (solo la primera vez)</li>
-                                                    <li>Ejecuta <code className="bg-amber-100 px-1 rounded">npm start</code></li>
-                                                    <li>Mant&eacute;n la ventana abierta</li>
-                                                    <li>Presiona <strong>&quot;Probar&quot;</strong></li>
-                                                </ol>
-                                            </details>
+                                            <p className="text-xs text-amber-600 mt-1">
+                                                Esta PC necesita el agente local para enviar etiquetas a la impresora USB.
+                                            </p>
+                                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                                                <a
+                                                    href={PRINT_AGENT_DOWNLOAD_URL}
+                                                    download
+                                                    className="inline-flex h-8 items-center justify-center rounded-md border border-amber-300 bg-white px-3 text-xs font-medium text-amber-700 shadow-xs transition-colors hover:bg-amber-100"
+                                                >
+                                                    <Download className="w-3.5 h-3.5 mr-1" />
+                                                    Descargar agente de impresi&oacute;n
+                                                </a>
+                                                <Button variant="ghost" size="sm" onClick={checkAgent} className="h-8 text-amber-700 hover:bg-amber-100">
+                                                    Probar de nuevo
+                                                </Button>
+                                            </div>
+                                            <ol className="text-xs text-amber-600 mt-3 ml-4 list-decimal space-y-1">
+                                                <li>Descarga e instala el agente en esta PC.</li>
+                                                <li>Conecta y enciende la impresora 3nStar/4BARCODE.</li>
+                                                <li>Vuelve a esta pantalla y presiona <strong>Probar</strong>.</li>
+                                            </ol>
                                         </div>
                                     ) : (
                                         <span>Verificando conexi&oacute;n...</span>
