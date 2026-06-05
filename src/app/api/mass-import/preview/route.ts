@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase';
 import { readTemplateXlsx } from '@/lib/massImport/io';
 import { parseSkuComplete } from '@/lib/massImport/sku';
+import { apiGuard } from '@/utils/auth/access';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -44,6 +45,9 @@ function normalizeOptionalText(val: any): string | null {
 }
 
 export async function POST(req: Request) {
+  const guard = await apiGuard('admin');
+  if (guard.response) return guard.response;
+
   try {
     const data = await req.formData();
     const file = data.get('file') as unknown as File | null;

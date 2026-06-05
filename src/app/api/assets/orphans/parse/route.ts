@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import ExcelJS from 'exceljs'
 import { normalizeText } from '@/lib/isometrics/bulkMatch'
+import { apiGuard } from '@/utils/auth/access'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -22,6 +23,9 @@ function isUuid(v: string) {
 }
 
 export async function POST(req: Request) {
+  const guard = await apiGuard('admin')
+  if (guard.response) return guard.response
+
   try {
     const fd = await req.formData()
     const file = fd.get('file') as unknown as File | null

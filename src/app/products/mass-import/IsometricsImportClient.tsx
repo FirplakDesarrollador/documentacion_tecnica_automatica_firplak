@@ -9,10 +9,10 @@ import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { supabase } from '@/lib/supabase'
 import { directoryInputProps } from '@/lib/ui/directoryInputProps'
 import { MultiSelectSearchField } from '@/components/ui-custom/MultiSelectSearchField'
 import type { FamilyFilterOption } from '@/lib/data/filters'
+import { createClient } from '@/utils/supabase/client'
 
 type PreviewItem = {
   item_id: string
@@ -240,6 +240,7 @@ function uniq<T>(arr: T[]): T[] {
 }
 
 export function IsometricsImportClient(props: { families: FamilyFilterOption[] }) {
+  const supabase = createClient()
   const { families } = props
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])

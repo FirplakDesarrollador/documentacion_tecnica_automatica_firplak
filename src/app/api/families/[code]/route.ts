@@ -1,10 +1,14 @@
 import { dbQuery } from '@/lib/supabase'
 import { NextResponse } from 'next/server'
+import { apiGuard } from '@/utils/auth/access'
 
 export async function GET(
   request: Request,
   { params: paramsPromise }: { params: Promise<{ code: string }> }
 ) {
+  const guard = await apiGuard('admin')
+  if (guard.response) return guard.response
+
   const params = await paramsPromise
   const code = params.code
 

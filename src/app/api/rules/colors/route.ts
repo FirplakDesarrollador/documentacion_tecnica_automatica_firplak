@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getColorsAction, upsertColorAction } from '@/app/rules/colors/actions';
+import { apiGuard } from '@/utils/auth/access';
 
 export async function GET() {
+  const guard = await apiGuard('admin');
+  if (guard.response) return guard.response;
+
   try {
     const colors = await getColorsAction();
     return NextResponse.json(colors);
@@ -11,6 +15,9 @@ export async function GET() {
 }
 
 export async function PATCH(req: Request) {
+  const guard = await apiGuard('admin');
+  if (guard.response) return guard.response;
+
   try {
     const { code_4dig, name_color_sap } = await req.json();
     const result = await upsertColorAction({ code_4dig, name_color_sap, isNew: false });
@@ -21,6 +28,9 @@ export async function PATCH(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const guard = await apiGuard('admin');
+  if (guard.response) return guard.response;
+
   try {
     const { code_4dig, name_color_sap } = await req.json();
     const result = await upsertColorAction({ code_4dig, name_color_sap, isNew: true });

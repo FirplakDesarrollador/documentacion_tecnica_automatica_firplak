@@ -1,10 +1,14 @@
 import { NextResponse } from 'next/server'
 import { dbQuery } from '@/lib/supabase'
+import { apiGuard } from '@/utils/auth/access'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
 export async function GET(req: Request) {
+  const guard = await apiGuard('admin')
+  if (guard.response) return guard.response
+
   try {
     const url = new URL(req.url)
     const id = String(url.searchParams.get('id') || '').trim()
@@ -35,4 +39,3 @@ export async function GET(req: Request) {
     return NextResponse.json({ success: false, error: message }, { status: 500 })
   }
 }
-

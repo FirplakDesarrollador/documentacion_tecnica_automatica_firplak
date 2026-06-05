@@ -28,13 +28,11 @@ import {
 import { TemplatePicker, type TemplateOption } from '@/components/generate/TemplatePicker'
 import { GenerateProductTable, type GenerateProduct } from '@/components/generate/GenerateProductTable'
 import { getTemplateRequiredFields, getTemplateValidationIssues } from '@/components/generate/ValidationWarnings'
-import { resolveAssetsAction } from '@/app/generate/actions'
 import { hydrateTemplateElements } from '@/lib/export/exportUtils'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
-import { resolveZoneHomeEnAction } from '@/app/products/actions'
 import type { ProductPayload } from '@/lib/engine/translator'
 import { PIXELS_PER_MM } from '@/lib/constants'
-import { getFilteredProducts } from '@/app/print/actions'
+import { getFilteredProducts, resolvePrintAssetsAction, resolveZoneHomeEnForPrintAction } from '@/app/print/actions'
 import { defaultPrintSettings, normalizePrintColorMode, PRINT_SETTINGS_KEY } from '@/lib/printSettings'
 
 interface PrintClientProps {
@@ -214,7 +212,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
             )
             .map((el) => el.content as string)
 
-        const assetMap = await resolveAssetsAction(assetIds)
+        const assetMap = await resolvePrintAssetsAction(assetIds)
         const engineResult = evaluateProductRules(product as unknown as Parameters<typeof evaluateProductRules>[0], rules as unknown as Parameters<typeof evaluateProductRules>[1])
         const finalNameEs = engineResult.finalNameEs || product.final_name_es || ''
 
@@ -223,7 +221,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         const translationResult = await translateProductToEnglish(product as unknown as ProductPayload, productType, engineResult.activeVariableIds)
         const finalNameEn = translationResult.translatedName || product.final_name_en || ''
 
-        const zoneEn = await resolveZoneHomeEnAction(product.zone_home as string | null | undefined)
+        const zoneEn = await resolveZoneHomeEnForPrintAction(product.zone_home as string | null | undefined)
         const updatedProduct = {
             ...product,
             final_name_es: finalNameEs,

@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
+import { startTransition, useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { Search, Download, AlertTriangle, X, ChevronLeft, ChevronRight } from 'lucide-react'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -60,6 +60,7 @@ export function GenerateClient({
     pageSize = 200,
     templateBrandWarning = null,
 }: GenerateClientProps) {
+    const router = useRouter()
     const searchParams = useSearchParams()
     
     // --- Estados de Selección de Productos ---
@@ -82,6 +83,7 @@ export function GenerateClient({
     const [currentTemplateBrandWarning, setCurrentTemplateBrandWarning] = useState<string | null>(templateBrandWarning)
     const [isLoadingProducts, setIsLoadingProducts] = useState(false)
     const latestProductsRequestRef = useRef(0)
+    const hasProductsRef = useRef(initialProducts.length > 0)
 
     // --- Estado de Plantilla ---
     const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
@@ -152,19 +154,25 @@ export function GenerateClient({
         let nextSelectedIds: string[] | null = null
         let nextFamilyIds: string[] | null = null
         let nextReferenceIds: string[] | null = null
+        let nextRestoredUrl: string | null = null
 
         const savedIds = localStorage.getItem(STORAGE_KEYS.SELECTED_IDS)
         if (savedIds) {
             try { nextSelectedIds = JSON.parse(savedIds) } catch (e) { console.error(e) }
         }
 
+        const savedFam = localStorage.getItem(STORAGE_KEYS.FAMILY)
+        const savedRef = localStorage.getItem(STORAGE_KEYS.REFERENCE)
+        const savedTpl = localStorage.getItem(STORAGE_KEYS.TEMPLATE)
+        const savedDs = localStorage.getItem(STORAGE_KEYS.DATASET)
+        const savedTemplate = savedTpl
+            ? templates.find(template => template.id === savedTpl) ?? null
+            : null
+        const savedTemplateDataSource = savedTemplate?.data_source ?? 'core_firplak'
         const hasUrlFilters = searchParams.has('f') || searchParams.has('r')
-        if (!hasUrlFilters) {
-            const savedFam = localStorage.getItem(STORAGE_KEYS.FAMILY)
-            const savedRef = localStorage.getItem(STORAGE_KEYS.REFERENCE)
-            const savedTpl = localStorage.getItem(STORAGE_KEYS.TEMPLATE)
-            const savedDs = localStorage.getItem(STORAGE_KEYS.DATASET)
+        const shouldHydrateSavedFilters = !initialTemplateId && !hasUrlFilters && savedTemplateDataSource === 'core_firplak'
 
+        if (shouldHydrateSavedFilters) {
             if (savedFam) {
                 try {
                     const parsed = JSON.parse(savedFam)
@@ -177,12 +185,25 @@ export function GenerateClient({
                     if (Array.isArray(parsed) && parsed.length > 0) nextReferenceIds = parsed
                 } catch (e) { console.error(e) }
             }
-            if (savedTpl && !initialTemplateId) {
-                pendingSavedTemplateIdRef.current = savedTpl
+        }
+
+        if (savedTpl && !initialTemplateId) {
+            pendingSavedTemplateIdRef.current = savedTpl
+        }
+
+        if (savedDs && !initialDatasetId) {
+            pendingSavedDatasetIdRef.current = savedDs
+        }
+
+        if (savedTpl && !initialTemplateId && savedTemplateDataSource !== 'core_firplak') {
+            const params = new URLSearchParams()
+            params.set('template_id', savedTpl)
+
+            if (savedTemplateDataSource === 'custom_datasets' && savedDs) {
+                params.set('dataset_id', savedDs)
             }
-            if (savedDs && !initialDatasetId) {
-                pendingSavedDatasetIdRef.current = savedDs
-            }
+
+            nextRestoredUrl = `/generate?${params.toString()}`
         }
 
         queueMicrotask(() => {
@@ -192,12 +213,19 @@ export function GenerateClient({
             if (nextFamilyIds) setFamilyIds(nextFamilyIds)
             if (nextReferenceIds) setReferenceIds(nextReferenceIds)
             setIsLoaded(true)
+
+            if (nextRestoredUrl) {
+                startTransition(() => {
+                    router.replace(nextRestoredUrl, { scroll: false })
+                    router.refresh()
+                })
+            }
         })
 
         return () => {
             cancelled = true
         }
-    }, [searchParams, initialTemplateId, initialDatasetId])
+    }, [searchParams, initialTemplateId, initialDatasetId, router, templates])
 
     useEffect(() => {
         const pendingTemplateId = pendingSavedTemplateIdRef.current
@@ -277,6 +305,10 @@ export function GenerateClient({
     }, [hasFilter, initialProducts, initialTotalCount, templateBrandWarning])
 
     useEffect(() => {
+        hasProductsRef.current = products.length > 0
+    }, [products.length])
+
+    useEffect(() => {
         if (!isLoaded || isExternalSource || isGenericDatasetsTemplate) return
 
         const shouldFetch =
@@ -285,15 +317,23 @@ export function GenerateClient({
             textFilter.trim().length > 0
 
         if (!shouldFetch) {
-            setProducts([])
-            setTotalCount(0)
-            setEffectiveHasFilter(false)
-            setCurrentTemplateBrandWarning(templateBrandWarning)
-            setIsLoadingProducts(false)
-            return
+            let cancelled = false
+
+            queueMicrotask(() => {
+                if (cancelled) return
+                setProducts([])
+                setTotalCount(0)
+                setEffectiveHasFilter(false)
+                setCurrentTemplateBrandWarning(templateBrandWarning)
+                setIsLoadingProducts(false)
+            })
+
+            return () => {
+                cancelled = true
+            }
         }
 
-        if (products.length === 0) {
+        if (!hasProductsRef.current) {
             setIsLoadingProducts(true)
         }
 
@@ -391,29 +431,29 @@ export function GenerateClient({
         return () => clearTimeout(timeout)
     }, [buildGenerateUrl, familyIds, referenceIds, selectedTemplateId, selectedDatasetId, selectedIds, textFilter, currentPage, isLoaded])
 
-    useEffect(() => {
-        /* eslint-disable-next-line react-hooks/set-state-in-effect */
-        setSelectedIds(prev =>
-            prev.filter(id => initialProducts.some(product => product.id === id && product.is_exportable !== false))
-        )
-    }, [initialProducts])
-
     // 3. Sincronizar selección de plantilla con cambios en la URL (Navegación externa/atrás)
     // Usamos este patrón para evitar que el estado local "pelee" con la prop inicial durante el re-renderizado
     // eslint-disable: Son efectos de sincronización props→estado. No se pueden eliminar porque el estado
     // también se modifica internamente (usuario cambia plantilla). La alternativa sería un refactor
     // grande a componente controlado o usar `key` (que perdería todo el estado interno).
-    const [lastSyncedInitialId, setLastSyncedInitialId] = useState(initialTemplateId)
+    const lastSyncedInitialTemplateIdRef = useRef(initialTemplateId)
     const [lastSyncedInitialDatasetId, setLastSyncedInitialDatasetId] = useState(initialDatasetId)
     
     useEffect(() => {
-        if (initialTemplateId !== lastSyncedInitialId) {
-            /* eslint-disable react-hooks/set-state-in-effect */
+        if (initialTemplateId === lastSyncedInitialTemplateIdRef.current) return
+
+        let cancelled = false
+
+        queueMicrotask(() => {
+            if (cancelled) return
             setSelectedTemplateId(initialTemplateId)
-            setLastSyncedInitialId(initialTemplateId)
-            /* eslint-enable react-hooks/set-state-in-effect */
+            lastSyncedInitialTemplateIdRef.current = initialTemplateId
+        })
+
+        return () => {
+            cancelled = true
         }
-    }, [initialTemplateId, lastSyncedInitialId])
+    }, [initialTemplateId])
 
     useEffect(() => {
         if (initialDatasetId !== lastSyncedInitialDatasetId) {
@@ -425,15 +465,22 @@ export function GenerateClient({
     }, [initialDatasetId, lastSyncedInitialDatasetId])
 
     // 4. Sincronizar página con cambios externos (navegación atrás/adelante)
-    const [lastSyncedPage, setLastSyncedPage] = useState(page)
+    const lastSyncedPageRef = useRef(page)
     useEffect(() => {
-        if (page !== lastSyncedPage) {
-            /* eslint-disable react-hooks/set-state-in-effect */
+        if (page === lastSyncedPageRef.current) return
+
+        let cancelled = false
+
+        queueMicrotask(() => {
+            if (cancelled) return
             setCurrentPage(page)
-            setLastSyncedPage(page)
-            /* eslint-enable react-hooks/set-state-in-effect */
+            lastSyncedPageRef.current = page
+        })
+
+        return () => {
+            cancelled = true
         }
-    }, [page, lastSyncedPage])
+    }, [page])
 
     // --- Computed Values ---
     const requiredFields = useMemo(
@@ -537,6 +584,7 @@ export function GenerateClient({
 
         setSelectedTemplateId(id)
         setSelectedIds([]) // reset selection when template changes
+        setCurrentPage(1)
 
         // Si cambiamos entre fuentes de datos (Core vs Externo), reseteamos los filtros
         if (newTpl?.data_source !== oldTpl?.data_source) {
@@ -547,20 +595,31 @@ export function GenerateClient({
 
         // La selección de dataset depende de la plantilla (server-side)
         setSelectedDatasetId(null)
-        window.location.replace(buildGenerateUrl({
+        const nextUrl = buildGenerateUrl({
             templateId: id,
             datasetId: null,
             page: 1,
-        }))
+        })
+
+        startTransition(() => {
+            router.replace(nextUrl, { scroll: false })
+            router.refresh()
+        })
     }
 
     const handleDatasetChange = (datasetId: string) => {
         setSelectedDatasetId(datasetId)
         setSelectedIds([])
-        window.location.replace(buildGenerateUrl({
+        setCurrentPage(1)
+        const nextUrl = buildGenerateUrl({
             datasetId,
             page: 1,
-        }))
+        })
+
+        startTransition(() => {
+            router.replace(nextUrl, { scroll: false })
+            router.refresh()
+        })
     }
 
     // --- Valores para exportación completa ---

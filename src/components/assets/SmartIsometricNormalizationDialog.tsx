@@ -34,8 +34,7 @@ export function SmartIsometricNormalizationDialog() {
     const [loading, setLoading] = React.useState(false)
     const [processingGroupId, setProcessingGroupId] = React.useState<string | null>(null)
     const [groups, setGroups] = React.useState<IsometricNormalizationGroup[]>([])
-
-    const loadGroups = async () => {
+    const loadGroups = React.useCallback(async () => {
         setLoading(true)
         try {
             const data = await getIsometricNormalizationGroupsAction()
@@ -45,17 +44,18 @@ export function SmartIsometricNormalizationDialog() {
         } finally {
             setLoading(false)
         }
-    }
+    }, [])
 
-    React.useEffect(() => {
-        /* eslint-disable react-hooks/set-state-in-effect */
-        if (open) {
-            loadGroups()
+    const handleOpenChange = (nextOpen: boolean) => {
+        if (nextOpen) {
+            void loadGroups()
         } else {
             setGroups([])
+            setLoading(false)
+            setProcessingGroupId(null)
         }
-        /* eslint-enable react-hooks/set-state-in-effect */
-    }, [open])
+        setOpen(nextOpen)
+    }
 
     const handleUnify = async (group: IsometricNormalizationGroup, masterAssetId: string, masterPath: string) => {
         setProcessingGroupId(group.id)
@@ -63,8 +63,7 @@ export function SmartIsometricNormalizationDialog() {
             const allAssetIds = group.options.map(o => o.assetId)
             await applyIsometricNormalizationAction(group.id, masterAssetId, masterPath, allAssetIds)
             toast.success("Grupo unificado y limpieza completada")
-            // Refresh groups
-            loadGroups()
+            void loadGroups()
         } catch {
             toast.error("Error al unificar el grupo")
         } finally {
@@ -73,7 +72,7 @@ export function SmartIsometricNormalizationDialog() {
     }
 
     return (
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog open={open} onOpenChange={handleOpenChange}>
             <DialogTrigger
                 className={cn(
                     buttonVariants({ variant: "outline", className: "gap-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 shadow-sm transition-all h-10 px-4" })

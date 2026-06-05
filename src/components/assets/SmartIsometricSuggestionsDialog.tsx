@@ -43,7 +43,7 @@ export function SmartIsometricSuggestionsDialog() {
     const [suggestions, setSuggestions] = React.useState<IsometricSuggestion[]>([])
     const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
 
-    const loadSuggestions = async () => {
+    const loadSuggestions = React.useCallback(async () => {
         setLoading(true)
         try {
             const data = await getIsometricSuggestionsAction()
@@ -58,18 +58,19 @@ export function SmartIsometricSuggestionsDialog() {
         } finally {
             setLoading(false)
         }
-    }
+    }, [])
 
-    React.useEffect(() => {
-        /* eslint-disable react-hooks/set-state-in-effect */
-        if (open) {
-            loadSuggestions()
+    const handleOpenChange = (nextOpen: boolean) => {
+        if (nextOpen) {
+            void loadSuggestions()
         } else {
             setSuggestions([])
             setSelectedIds(new Set())
+            setLoading(false)
+            setSubmitting(false)
         }
-        /* eslint-enable react-hooks/set-state-in-effect */
-    }, [open])
+        setOpen(nextOpen)
+    }
 
     const toggleSelection = (id: string) => {
         const next = new Set(selectedIds)
@@ -109,7 +110,7 @@ export function SmartIsometricSuggestionsDialog() {
     }
 
     return (
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog open={open} onOpenChange={handleOpenChange}>
             <DialogTrigger
                 className={cn(
                     buttonVariants({ variant: "outline", className: "gap-2 border-amber-200 text-amber-700 hover:bg-amber-50 hover:text-amber-800 shadow-sm transition-all h-10 px-4" })

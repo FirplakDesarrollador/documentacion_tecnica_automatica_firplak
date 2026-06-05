@@ -22,7 +22,6 @@ import {
 } from '@/components/ui/select'
 import { AlertCircle, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { supabase } from '@/lib/supabase'
 import {
     getDatasetLinkedTemplateIdsAction,
     normalizeDatasetRowJsonKeysAction,
@@ -33,6 +32,7 @@ import {
 import { getDatasetModeTemplatesAction } from '@/app/templates/actions'
 import { extractTemplateVariables } from '@/lib/templates/templateVariables'
 import { DatasetTemplateLinkWizard, type WizardTemplate } from '@/components/datasets/DatasetTemplateLinkWizard'
+import { createClient } from '@/utils/supabase/client'
 
 type ColumnDef = { original: string; key: string; label: string; is_identifier: boolean }
 type NormalizedSchema = { fieldMap: { code: string; final_name_es: string }; selectedColumns: string[]; columns: ColumnDef[] }
@@ -146,6 +146,7 @@ function validateKeyWarning(key: string) {
 }
 
 export function DatasetConfigurator({ datasetId, onClose, onSaved }: DatasetConfiguratorProps) {
+    const supabase = useMemo(() => createClient(), [])
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
     const [rowCount, setRowCount] = useState<number>(0)
@@ -187,7 +188,7 @@ export function DatasetConfigurator({ datasetId, onClose, onSaved }: DatasetConf
         }
         load()
         return () => { cancelled = true }
-    }, [datasetId])
+    }, [datasetId, supabase])
 
     const isDatasetModeTemplate = (t: { data_source: string }) => {
         const ds = String(t.data_source || '').trim()

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { launchBrowser, resolveExportBrowserMode } from '@/lib/export/launchBrowser'
+import { apiGuard } from '@/utils/auth/access'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -12,6 +13,11 @@ type TemplateElement = {
 }
 
 export async function POST(req: Request) {
+    const guard = await apiGuard('admin')
+    if (guard.response) {
+        return guard.response
+    }
+
     let browser: Awaited<ReturnType<typeof launchBrowser>> | null = null
 
     try {

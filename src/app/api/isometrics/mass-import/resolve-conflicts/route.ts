@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { dbQuery } from '@/lib/supabase'
+import { apiGuard } from '@/utils/auth/access'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -10,6 +11,9 @@ type ResolveConflictsRequest = {
 }
 
 export async function POST(req: Request) {
+  const guard = await apiGuard('admin')
+  if (guard.response) return guard.response
+
   try {
     const body = (await req.json().catch(() => null)) as ResolveConflictsRequest | null
     if (!body?.job_id || !body?.selections || typeof body.selections !== 'object') {
@@ -67,4 +71,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: false, error: message }, { status: 500 })
   }
 }
-

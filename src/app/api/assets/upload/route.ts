@@ -1,9 +1,15 @@
 import { NextResponse } from 'next/server'
 import { dbQuery } from '@/lib/supabase'
-import { supabase } from '@/lib/supabase'
+import { supabaseServer } from '@/lib/supabase'
 import { v4 as uuidv4 } from 'uuid'
+import { apiGuard } from '@/utils/auth/access'
 
 export async function POST(request: Request) {
+    const guard = await apiGuard('admin')
+    if (guard.response) {
+        return guard.response
+    }
+
     try {
         const data = await request.formData()
         const file: File | null = data.get('file') as unknown as File
@@ -25,7 +31,7 @@ export async function POST(request: Request) {
         const customName = (data.get('name') as string || '').trim()
 
         // Upload to Supabase Storage (bucket 'assets')
-        const { error: storageError } = await supabase.storage
+        const { error: storageError } = await supabaseServer.storage
             .from('assets')
             .upload(bucketPath, buffer, {
                 contentType: file.type || 'application/octet-stream',
@@ -42,7 +48,7 @@ export async function POST(request: Request) {
             await writeFile(localPath, buffer)
             filePath = `/uploads/${fileName}`
         } else {
-            const { data: urlData } = supabase.storage.from('assets').getPublicUrl(bucketPath)
+            const { data: urlData } = supabaseServer.storage.from('assets').getPublicUrl(bucketPath)
             filePath = urlData.publicUrl
         }
 

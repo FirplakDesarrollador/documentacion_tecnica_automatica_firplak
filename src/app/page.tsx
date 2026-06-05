@@ -10,6 +10,7 @@ import {
 import { cn } from '@/lib/utils'
 
 import { getPendingSummaryCached } from '@/lib/engine/validationActions'
+import { requirePageRole } from '@/utils/auth/access'
 
 interface RecentProduct {
   id: string
@@ -20,6 +21,8 @@ interface RecentProduct {
 }
 
 export default async function Home() {
+  await requirePageRole('admin')
+
   // Fetch real KPIs and validation state
   const pendingSummary = await getPendingSummaryCached()
   

@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from 'next/font/google';
 import { lato, montserrat, openSans, roboto } from './fonts';
 import './globals.css';
 import { Sidebar } from '@/components/layout/sidebar';
+import { getAccessContext } from '@/utils/auth/access';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -19,18 +20,20 @@ export const metadata: Metadata = {
   description: 'Sistema automático de generación de etiquetas',
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const access = await getAccessContext()
+
   return (
     <html
       lang="es"
       className={`${montserrat.variable} ${lato.variable} ${openSans.variable} ${roboto.variable} ${geistSans.variable} ${geistMono.variable}`}
     >
       <body className="antialiased text-foreground bg-background font-sans min-h-screen">
-        <Sidebar>{children}</Sidebar>
+        <Sidebar access={access}>{children}</Sidebar>
       </body>
     </html>
   );

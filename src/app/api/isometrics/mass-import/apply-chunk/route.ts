@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { dbQuery } from '@/lib/supabase'
 import { getIsometricMassImportSettings } from '@/lib/isometrics/massImportSettings'
 import { revalidatePath, revalidateTag } from 'next/cache'
+import { apiGuard } from '@/utils/auth/access'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -118,6 +119,9 @@ async function getOrCreateIsometricAsset(storagePath: string, desiredName: strin
 }
 
 export async function POST(req: Request) {
+  const guard = await apiGuard('admin')
+  if (guard.response) return guard.response
+
   const { executeEnabled, safeMaxFilesPerApply } = await getIsometricMassImportSettings()
   if (!executeEnabled) {
     return NextResponse.json(

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { dbQuery } from '@/lib/supabase'
 import type { ComposedProduct } from '@/lib/engine/product_composer'
+import { apiGuard } from '@/utils/auth/access'
 
 function toArray(values: string[] | undefined) {
     if (!values) return []
@@ -8,6 +9,9 @@ function toArray(values: string[] | undefined) {
 }
 
 export async function GET(request: Request) {
+    const guard = await apiGuard('admin')
+    if (guard.response) return guard.response
+
     const url = new URL(request.url)
     const familyCodes = toArray(url.searchParams.getAll('f'))
     const referenceValues = toArray(url.searchParams.getAll('r'))

@@ -2,10 +2,13 @@ import { dbQuery } from '@/lib/supabase'
 import { loadAllRulesForNamingType } from '@/lib/engine/namingComponents'
 import { PrintClient } from '@/components/print/PrintClient'
 import { Printer } from 'lucide-react'
+import { requirePagePermission } from '@/utils/auth/access'
 
 export const dynamic = 'force-dynamic'
 
 export default async function PrintPage() {
+    await requirePagePermission('module:print')
+
     const templates = await dbQuery(
         `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json, export_formats, export_filename_format, data_source, template_font_family, brand_scope, private_label_client_name
          FROM public.plantillas_doc_tec WHERE active = true ORDER BY created_at ASC`

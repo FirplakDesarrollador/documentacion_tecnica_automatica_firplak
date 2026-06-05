@@ -3,6 +3,7 @@ import ExcelJS from 'exceljs'
 import crypto from 'crypto'
 import { getOrphanReferencesAction, type OrphanReferenceRow } from '@/app/assets/orphans-actions'
 import { normalizeAccessory, normalizeLine, normalizeSpecialLabel, normalizeText, normalizeProductName, normalizeCommercialMeasure } from '@/lib/isometrics/bulkMatch'
+import { apiGuard } from '@/utils/auth/access'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -49,6 +50,9 @@ function buildExpectedSvgFilename(similarityCode: string, g: OrphanReferenceRow)
 }
 
 export async function GET() {
+  const guard = await apiGuard('admin')
+  if (guard.response) return guard.response
+
   try {
     const orphans = await getOrphanReferencesAction()
 

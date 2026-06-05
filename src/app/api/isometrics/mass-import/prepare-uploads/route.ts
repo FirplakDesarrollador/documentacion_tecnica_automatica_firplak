@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { supabaseServer } from '@/lib/supabase'
 import { normalizeText } from '@/lib/isometrics/bulkMatch'
 import { getIsometricMassImportSettings } from '@/lib/isometrics/massImportSettings'
+import { apiGuard } from '@/utils/auth/access'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -16,6 +17,9 @@ function isValidSha256Hex(v: string) {
 }
 
 export async function POST(req: Request) {
+  const guard = await apiGuard('admin')
+  if (guard.response) return guard.response
+
   const { executeEnabled, safeMaxFilesPerApply } = await getIsometricMassImportSettings()
   if (!executeEnabled) {
     return NextResponse.json(

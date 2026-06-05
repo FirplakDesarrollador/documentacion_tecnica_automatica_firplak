@@ -39,10 +39,10 @@ import {
 } from 'lucide-react'
 import Papa from 'papaparse'
 import { toast } from 'sonner'
-import { supabase } from '@/lib/supabase'
 import { linkDatasetToTemplatesAction, revalidateDatasetsPathsAction } from '@/app/datasets/actions'
 import { getDatasetModeTemplatesAction } from '@/app/templates/actions'
 import { extractTemplateVariables } from '@/lib/templates/templateVariables'
+import { createClient } from '@/utils/supabase/client'
 
 interface ExistingDataset {
     id: string
@@ -59,6 +59,7 @@ interface DatasetIngestorProps {
 type Step = 'name_file' | 'strategy' | 'mapping' | 'associate_templates' | 'preview'
 
 export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: DatasetIngestorProps) {
+    const supabase = useMemo(() => createClient(), [])
     const isNew = mode === 'new'
     
     const [step, setStep] = useState<Step>('name_file')
@@ -470,7 +471,9 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                 .select('*, row_count:custom_dataset_rows(count)')
                 .order('created_at', { ascending: false })
             
-            const normalized = (updated || []).map(d => ({ ...d, row_count: d.row_count?.[0]?.count || 0 }))
+            const normalized = (updated || []).map((d: Record<string, unknown> & {
+                row_count?: Array<{ count?: number | string | null }>
+            }) => ({ ...d, row_count: d.row_count?.[0]?.count || 0 }))
             onDone(normalized)
             onClose()
         } catch (error: unknown) {

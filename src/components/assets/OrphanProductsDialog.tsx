@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
 import { getOrphanReferencesAction, inactivateOrphanReferencesAction, type OrphanReferenceRow } from '@/app/assets/orphans-actions'
 import { normalizeText } from '@/lib/isometrics/bulkMatch'
 import { directoryInputProps } from '@/lib/ui/directoryInputProps'
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@/utils/supabase/client'
 
 type ParsedExcel = {
   groups: Array<{
@@ -60,6 +60,7 @@ async function sha256Hex(buf: ArrayBuffer) {
 }
 
 export function OrphanProductsDialog() {
+  const supabase = createClient()
   const [open, setOpen] = React.useState(false)
   const [step, setStep] = React.useState<'list' | 'associate'>('list')
   const [loading, setLoading] = React.useState(false)

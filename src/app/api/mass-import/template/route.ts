@@ -1,11 +1,15 @@
 import { NextResponse } from 'next/server';
 import { buildMassImportTemplateXlsx } from '@/lib/massImport/template';
 import { readBaseInputFile } from '@/lib/massImport/io';
+import { apiGuard } from '@/utils/auth/access';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 export async function POST(req: Request) {
+  const guard = await apiGuard('admin');
+  if (guard.response) return guard.response;
+
   try {
     const data = await req.formData();
     const file = data.get('file') as unknown as File | null;
@@ -52,4 +56,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: false, error: (e as Error).message || 'Failed to generate template' }, { status: 500 });
   }
 }
-

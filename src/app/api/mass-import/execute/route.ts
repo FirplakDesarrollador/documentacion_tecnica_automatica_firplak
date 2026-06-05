@@ -5,6 +5,7 @@ import { readTemplateXlsx } from '@/lib/massImport/io';
 import { composeProductById } from '@/lib/engine/product_composer';
 import { computeMasterNamePreview } from '@/lib/engine/masterNaming';
 import { markNamingStaleForSkus, processNamingJobsInline } from '@/lib/engine/namingQueue';
+import { apiGuard } from '@/utils/auth/access';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -206,6 +207,9 @@ function buildPayloadFromTemplate(parsed: Awaited<ReturnType<typeof readTemplate
 }
 
 export async function POST(req: Request) {
+  const guard = await apiGuard('admin');
+  if (guard.response) return guard.response;
+
   const { executeEnabled, safeMaxRows } = await getMassImportSettings();
   const safeMode = !executeEnabled;
 

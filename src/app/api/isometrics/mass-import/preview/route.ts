@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { dbQuery } from '@/lib/supabase'
+import { apiGuard } from '@/utils/auth/access'
 import {
   buildExtendedBaseKey,
   buildExtendedKey,
@@ -145,6 +146,9 @@ function isAiFile(baseName: string, ext: string) {
 }
 
 export async function POST(req: Request) {
+  const guard = await apiGuard('admin')
+  if (guard.response) return guard.response
+
   try {
     const body = (await req.json().catch(() => null)) as PreviewRequest | null
     if (!body || !Array.isArray(body.files)) {

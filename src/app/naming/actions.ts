@@ -3,6 +3,7 @@
 import { dbQuery } from '@/lib/supabase'
 import { markNamingStaleForProductType } from '@/lib/engine/namingQueue'
 import { processNamingJobs, type ProcessNamingJobsResult } from '@/lib/engine/namingProcessor'
+import { assertPermission } from '@/utils/auth/access'
 
 export interface NamingJobSummary {
   id: string
@@ -42,6 +43,8 @@ function toNumber(value: unknown) {
 }
 
 export async function getNamingWorkStatusAction(): Promise<NamingWorkStatus> {
+  await assertPermission('action:naming:manage')
+
   const [jobs, counts] = await Promise.all([
     dbQuery(`
       SELECT id, status, scope_type, scope_id, naming_type, total_count, processed_count, created_at, updated_at
@@ -84,6 +87,8 @@ export async function processPendingNamingWorkAction(maxRuntimeMs = 5000, limit 
   processResult: ProcessNamingJobsResult
   status: NamingWorkStatus
 }> {
+  await assertPermission('action:naming:manage')
+
   const processResult = await processNamingJobs({
     limit,
     maxRuntimeMs,
@@ -97,6 +102,8 @@ export async function enqueueProductTypeNamingWorkAction(productType: string, na
   jobId: string | null
   status: NamingWorkStatus
 }> {
+  await assertPermission('action:naming:manage')
+
   const jobId = await markNamingStaleForProductType(productType, namingType, 'manual_naming_apply')
   const status = await getNamingWorkStatusAction()
   return { jobId, status }

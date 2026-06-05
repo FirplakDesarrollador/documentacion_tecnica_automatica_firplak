@@ -14,9 +14,9 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { supabase } from '@/lib/supabase'
 import { backfillDatasetRowKeysAction, linkDatasetToTemplatesAction, revalidateDatasetsPathsAction } from '@/app/datasets/actions'
 import { extractTemplateVariables } from '@/lib/templates/templateVariables'
+import { createClient } from '@/utils/supabase/client'
 
 type ColumnDef = { original: string; key: string; label: string; is_identifier: boolean }
 type NormalizedSchema = { fieldMap: { code: string; final_name_es: string }; selectedColumns: string[]; columns: ColumnDef[] }
@@ -60,6 +60,7 @@ export function DatasetTemplateLinkWizard({
     editTemplateId,
     onLinked,
 }: DatasetTemplateLinkWizardProps) {
+    const supabase = createClient()
     const availableTemplates = useMemo(
         () => templates.filter(t => !excludeTemplateIds.includes(t.id)),
         [templates, excludeTemplateIds]
