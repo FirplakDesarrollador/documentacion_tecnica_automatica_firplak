@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { convertImageToTspl } = require('./printService');
-const { scanUsbDevices, printViaUsb } = require('./usbService');
+const { scanUsbDevices, scanUsbDevicesDetailed, printViaUsb } = require('./usbService');
 const packageJson = require('./package.json');
 
 const app = express();
@@ -22,6 +22,10 @@ const upload = multer({
     },
 });
 
+app.use((_req, res, next) => {
+    res.setHeader('Access-Control-Allow-Private-Network', 'true');
+    next();
+});
 app.use(cors());
 app.use(express.json());
 
@@ -37,6 +41,20 @@ app.get('/health', async (_req, res) => {
             printerName: printers.length > 0 ? printers[0].known : null,
             printers: printers.map(p => p.known || `${p.vid}:${p.pid}`),
             usbDevices: printers,
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/debug-usb', async (_req, res) => {
+    try {
+        const result = await scanUsbDevicesDetailed();
+        res.json({
+            printerDetected: result.devices.length > 0,
+            printerName: result.devices.length > 0 ? result.devices[0].known : null,
+            devicePath: result.devices.length > 0 ? result.devices[0].devicePath : null,
+            details: result.details,
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -101,15 +119,44 @@ app.use((err, _req, res, next) => {
     res.status(500).json({ error: err.message });
 });
 
-app.listen(PORT, '127.0.0.1', () => {
-    console.log(`
+let retryCount = 0;
+const MAX_RETRIES = 10;
+
+function startServer(port) {
+    const server = app.listen(port, '127.0.0.1', () => {
+        retryCount = 0;
+        console.log(`
   ╔══════════════════════════════════════════════════╗
   ║       SamiGen - Agente de Impresión Local        ║
   ╠══════════════════════════════════════════════════╣
-  ║  Puerto:       ${String(PORT).padEnd(35)}║
-  ║  Endpoint:     http://127.0.0.1:${PORT}/print     ║
-  ║  USB Scan:     http://127.0.0.1:${PORT}/scan-usb   ║
+  ║  Puerto:       ${String(port).padEnd(35)}║
+  ║  Endpoint:     http://127.0.0.1:${port}/print     ║
+  ║  USB Scan:     http://127.0.0.1:${port}/scan-usb   ║
   ║  Estado:       Activo                            ║
   ╚══════════════════════════════════════════════════╝
-    `);
+        `);
+    });
+    server.on('error', (err) => {
+        if (err.code === 'EADDRINUSE' && retryCount < MAX_RETRIES) {
+            retryCount++;
+            console.log(`[server] Puerto ${port} ocupado, reintento ${retryCount}/${MAX_RETRIES} en 5s...`);
+            setTimeout(() => {
+                server.close();
+                startServer(port);
+            }, 5000);
+        } else if (err.code === 'EADDRINUSE') {
+            console.error(`[server] No se pudo iniciar en puerto ${port} tras ${MAX_RETRIES} intentos.`);
+        } else {
+            console.error('[server] Error:', err.message);
+        }
+    });
+}
+
+startServer(PORT);
+
+process.on('uncaughtException', (err) => {
+    console.error('[crash] Excepción no capturada:', err.message);
+});
+process.on('unhandledRejection', (err) => {
+    console.error('[crash] Promesa rechazada:', err.message);
 });

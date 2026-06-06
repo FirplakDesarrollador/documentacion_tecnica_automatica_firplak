@@ -36,8 +36,8 @@ export async function upsertGlossaryTermAction(data: { id?: string, term_es: str
         `)
     } else {
         await dbQuery(`
-            INSERT INTO public.glossary (term_es, term_en, category)
-            VALUES ('${termEsEsc}', '${termEnEsc}', ${categoryEsc})
+            INSERT INTO public.glossary (term_es, term_en, active, priority, category)
+            VALUES ('${termEsEsc}', '${termEnEsc}', true, ${category === 'RESOLVED_TYPE' ? 20 : 10}, ${categoryEsc})
         `)
     }
     resetGlossaryCache()

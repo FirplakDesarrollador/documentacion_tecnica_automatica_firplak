@@ -282,7 +282,7 @@ export async function previewNamingComponentsAction(
         notes: r.notes || null,
         target_value: r.target_value || productType,
     }))
-    const components = pendingEnConfig
+    const components = pendingEnConfig?.length
         ? componentsFromRulesAndEnConfig(productType, namingType, rulesForEval, pendingEnConfig)
         : await loadNamingComponents(productType, namingType)
      
@@ -503,9 +503,9 @@ export async function saveGlossaryTermsAction(terms: { es: string, en: string }[
         const safeEn = term.en.replace(/'/g, "''")
 
         await dbQuery(`
-            INSERT INTO public.glossary (term_es, term_en, category)
-            VALUES ('${safeEs}', '${safeEn}', 'TECHNICAL')
-            ON CONFLICT (term_es) DO UPDATE SET term_en = '${safeEn}'
+            INSERT INTO public.glossary (term_es, term_en, active, priority, category)
+            VALUES ('${safeEs}', '${safeEn}', true, 10, 'TECHNICAL')
+            ON CONFLICT (term_es) DO UPDATE SET term_en = '${safeEn}', active = true
         `)
     }
 

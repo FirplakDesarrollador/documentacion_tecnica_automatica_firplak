@@ -12,6 +12,8 @@ El comando crea:
 
 - `public/downloads/samigen-print-agent-setup.exe`
 - `public/downloads/samigen-print-agent-setup-<version>.exe`
+- `public/downloads/samigen-print-agent-portable.zip`
+- `public/downloads/samigen-print-agent-portable-<version>.zip`
 
 Si se configuran `PRINT_AGENT_SIGN_CERT`, `PRINT_AGENT_SIGN_PASSWORD` y opcionalmente
 `PRINT_AGENT_TIMESTAMP_URL`, el script intenta firmar ambos ejecutables con `signtool`.

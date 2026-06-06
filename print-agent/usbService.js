@@ -1,33 +1,70 @@
 const { exec } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const KNOWN_PRINTERS = [
     { vid: '0x2D84', pid: '0x4CFB', name: '4BARCODE 4B-2054TG' },
 ];
 
+const TMP_DIR = path.join(os.tmpdir(), 'samigen-agent');
+
+function ensureTmpDir() {
+    if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
+}
+
 const POWERSHELL_FIND_DEVICE = `
-$instanceIdPattern = "USB\\VID_2D84*PID_4CFB*"
-$dev = Get-PnpDevice -InstanceId $instanceIdPattern | Where-Object { $_.Present -eq $true -and $_.Status -eq 'OK' }
+$vidPid = "VID_2D84*PID_4CFB"
+$insPat = "USB\\" + $vidPid + "*"
+
+$dev = Get-PnpDevice -InstanceId $insPat -ErrorAction SilentlyContinue | Where-Object { $_.Present -eq $true -and $_.Status -eq 'OK' }
 if (-not $dev) { exit 1 }
 
-$key = "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Print\\Monitors\\USB Monitor\\Ports"
-try {
-    $ports = Get-ChildItem $key -ErrorAction Stop
-    foreach ($p in $ports) {
-        $props = Get-ItemProperty $p.PSPath
-        if ($props.'Device Id' -like "*VID_2D84*PID_4CFB*") {
-            Write-Host $props.'Device Path'
-            exit 0
+$instId = $dev.InstanceId
+$enumRoot = "HKLM:\\SYSTEM\\CurrentControlSet\\Enum\\" + $instId
+
+# --- Method 1: Device Parameters in Enum ---
+$dpKey = $enumRoot + "\\Device Parameters"
+$dp = (Get-ItemProperty -Path $dpKey -Name "DevicePath" -ErrorAction SilentlyContinue).DevicePath
+if ($dp) { Write-Host $dp; exit 0 }
+
+# --- Method 2: USB Monitor Ports (legacy) ---
+$portsKey = "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Print\\Monitors\\USB Monitor\\Ports"
+if (Test-Path $portsKey) {
+    try {
+        $ports = Get-ChildItem $portsKey -ErrorAction Stop
+        foreach ($p in $ports) {
+            $props = Get-ItemProperty $p.PSPath
+            if ($props.'Device Id' -like "*" + $vidPid + "*" -and $props.'Device Path') {
+                Write-Host $props.'Device Path'; exit 0
+            }
+        }
+    } catch {}
+}
+
+# --- Method 3: Search DeviceClasses for any path with our VID/PID ---
+$classRoot = "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\DeviceClasses"
+if (Test-Path $classRoot) {
+    Get-ChildItem $classRoot -ErrorAction SilentlyContinue | ForEach-Object {
+        $guid = $_.PSChildName
+        $guidPath = "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\DeviceClasses\\" + $guid
+        Get-ChildItem $guidPath -ErrorAction SilentlyContinue | ForEach-Object {
+            $entry = $_.PSChildName
+            $dpPath = $guidPath + "\\" + $entry + "\\#\\Device Parameters"
+            $val = (Get-ItemProperty -Path $dpPath -Name "DevicePath" -ErrorAction SilentlyContinue).DevicePath
+            if ($val -and $val -match $vidPid) {
+                Write-Host $val; exit 0
+            }
         }
     }
-} catch {}
+}
 
 exit 2
 `;
 
 async function runPsCapture(script) {
-    const tmpFile = path.join(__dirname, '.tmp-ps-' + Date.now() + '.ps1');
+    ensureTmpDir();
+    const tmpFile = path.join(TMP_DIR, '.tmp-ps-' + Date.now() + '.ps1');
     fs.writeFileSync(tmpFile, script, 'utf-8');
     try {
         const { stdout } = await new Promise((resolve, reject) => {
@@ -114,22 +151,58 @@ public class USBWriter {
 }
 `;
 
-async function printViaUsb(zplData) {
-    const devicePath = await findDevicePath();
-    if (!devicePath) {
-        throw new Error(
-            'No se detectó la impresora USB. ' +
-            'Verifica que la 4BARCODE 4B-2054TG esté conectada y encendida.'
-        );
-    }
+const PS_GET_PORT_INFO = `
+$printer = Get-CimInstance -ClassName Win32_Printer -Filter "Name LIKE '%4BARCODE%' OR Name LIKE '%4B-2054%' OR Name LIKE '%LTT334%'" -ErrorAction SilentlyContinue;
+if (-not $printer) { exit 1 }
+$portName = $printer.PortName;
+$printerName = $printer.Name;
+# Look up USB port path in registry
+$portPath = "";
+$portsKey = "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Print\\Monitors\\USB Monitor\\Ports\\" + $portName;
+$pp = Get-ItemProperty -Path $portsKey -Name "Device Path" -ErrorAction SilentlyContinue;
+if ($pp) { $portPath = $pp.'Device Path' }
+Write-Host ($printerName + "|" + $portName + "|" + $portPath);
+`;
 
-    const zplFile = path.join(__dirname, '.tmp-zpl-' + Date.now() + '.zpl');
+async function printViaUsb(zplData) {
+    ensureTmpDir();
+    const zplFile = path.join(TMP_DIR, '.tmp-zpl-' + Date.now() + '.zpl');
     const cleanup = [zplFile];
 
     try {
         fs.writeFileSync(zplFile, zplData, 'utf-8');
-        const psScript = `
-$path = "${devicePath.replace(/"/g, '""').replace(/\$/g, '`$')}";
+
+        // Step 1: get printer port info
+        const portInfoResult = await runPsCapture(PS_GET_PORT_INFO);
+        let printerName = KNOWN_PRINTERS[0].name;
+        let portName = '';
+        let portDevicePath = '';
+        let devicePath = await findDevicePath();
+
+        if (portInfoResult.ok) {
+            const parts = portInfoResult.stdout.split('|');
+            if (parts.length >= 2) {
+                printerName = parts[0] || printerName;
+                portName = parts[1] || '';
+                portDevicePath = parts[2] || '';
+                console.log(`[print] Puerto: ${portName}, printer: ${printerName}`);
+            }
+        }
+
+        console.log(`[print] DevicePath: ${devicePath}`);
+        console.log(`[print] PortDevicePath: ${portDevicePath}`);
+
+        // Step 2: collect candidate paths to try
+        const candidates = [];
+        if (devicePath) candidates.push(devicePath);
+        if (portDevicePath) candidates.push(portDevicePath);
+        if (portName) candidates.push('\\\\.\\' + portName);
+
+        // Step 3: try each path with CreateFile
+        let lastError = '';
+        for (const candidate of candidates) {
+            const psScript = `
+$path = "${candidate.replace(/"/g, '""').replace(/\$/g, '`$')}";
 $zplFile = "${zplFile.replace(/"/g, '""').replace(/\$/g, '`$')}";
 Add-Type -TypeDefinition @"
 ${CSHARP_WRITER}
@@ -137,39 +210,69 @@ ${CSHARP_WRITER}
 $r = [USBWriter]::WriteToPort($path, $zplFile);
 Write-Host $r;
 `;
-
-        const psResult = await runPsCapture(psScript);
-        if (!psResult.ok) {
-            const detail = psResult.stderr || psResult.stdout || psResult.message || 'Error desconocido';
-            throw new Error(`PowerShell falló: ${detail.slice(0, 500)}`);
-        }
-        const output = psResult.stdout.trim();
-
-        if (output.startsWith('ERR_CREATE:')) {
-            const code = output.split(':')[1];
-            throw new Error(
-                `No se pudo abrir el puerto USB (código ${code}). ` +
-                'Desconecta y vuelve a conectar la impresora.'
-            );
-        }
-        if (output.startsWith('ERR_WRITE:')) {
-            const code = parseInt(output.split(':')[1], 10);
-            if (code === 995) {
-                throw new Error('La impresora está en estado de error (rojo titilando). Apágala, espera 5s y enciéndela.');
+            const psResult = await runPsCapture(psScript);
+            if (!psResult.ok) {
+                lastError = psResult.stderr || psResult.message;
+                continue;
             }
-            throw new Error(`Error de escritura USB (código ${code}).`);
-        }
-        if (output.startsWith('ERR_TIMEOUT')) {
-            throw new Error('La impresora no respondió. Apágala, espera 5s y enciéndela.');
-        }
-        if (output.startsWith('ERR_')) {
-            throw new Error(`Error USB: ${output}`);
-        }
-        if (!output.startsWith('OK:')) {
-            throw new Error(`Respuesta inesperada: ${output.slice(0, 200)}`);
+            const output = psResult.stdout.trim();
+            if (output.startsWith('OK:')) {
+                return { method: 'USB-direct (' + candidate.slice(0, 40) + ')', device: printerName };
+            }
+            if (output.startsWith('ERR_CREATE:')) {
+                lastError = `CreateFile code ${output.split(':')[1]}`;
+                continue;
+            }
+            if (output.startsWith('ERR_WRITE:')) {
+                throw new Error(
+                    output.split(':')[1] === '995'
+                        ? 'La impresora está en estado de error (rojo titilando). Apágala, espera 5s y enciéndela.'
+                        : `Error de escritura USB (código ${output.split(':')[1]}).`
+                );
+            }
+            lastError = output;
         }
 
-        return { method: 'USB-direct (CreateFile+WriteFile)', device: KNOWN_PRINTERS[0].name };
+        // Step 4: fallback — Copy-Item to printer UNC
+        console.log(`[print] CreateFile no funcionó (${lastError}), probando Copy-Item a ${printerName}...`);
+        const copyResult = await runPsCapture(`
+$src = "${zplFile.replace(/"/g, '""').replace(/\$/g, '`$')}";
+$dst = "\\\\localhost\\${printerName.replace(/"/g, '""').replace(/\$/g, '`$')}";
+try {
+    [System.IO.File]::Copy($src, $dst, $true);
+    Write-Host "OK";
+} catch {
+    Write-Host ("ERR_COPY:" + $_.Exception.Message);
+}
+`);
+        if (copyResult.ok && copyResult.stdout.trim() === 'OK') {
+            return { method: 'Copy-Item (UNC)', device: printerName };
+        }
+
+        // Step 5: fallback — Write-Printer cmdlet
+        console.log(`[print] Copy-Item falló, probando Write-Printer...`);
+        const wpResult = await runPsCapture(`
+$file = "${zplFile.replace(/"/g, '""').replace(/\$/g, '`$')}";
+$name = "${printerName.replace(/"/g, '""').replace(/\$/g, '`$')}";
+try {
+    $bytes = [System.IO.File]::ReadAllBytes($file);
+    Write-Printer -Name $name -Data $bytes -ErrorAction Stop;
+    Write-Host "OK";
+} catch {
+    Write-Host "ERR_PRINTER:" + $_.Exception.Message;
+}
+`);
+        if (wpResult.ok && wpResult.stdout.trim() === 'OK') {
+            return { method: 'Write-Printer (spooler)', device: printerName };
+        }
+
+        throw new Error(
+            `No se pudo enviar datos a la impresora.\n` +
+            `USB: ${lastError}\n` +
+            `Copy-Item: ${copyResult.ok && !copyResult.stdout.startsWith('OK') ? copyResult.stdout.slice(0, 100) : 'no'}\n` +
+            `Write-Printer: ${wpResult.ok && !wpResult.stdout.startsWith('OK') ? wpResult.stdout.slice(0, 100) : 'no'}\n` +
+            `Verifica que la impresora esté encendida, conectada y correctamente instalada.`
+        );
     } finally {
         for (const f of cleanup) {
             try { fs.unlinkSync(f); } catch {}
@@ -177,4 +280,37 @@ Write-Host $r;
     }
 }
 
-module.exports = { scanUsbDevices, printViaUsb };
+async function printViaWritePrinter(zplData, printerName) {
+    ensureTmpDir();
+    const zplFile = path.join(TMP_DIR, '.tmp-zpl-' + Date.now() + '.zpl');
+    try {
+        fs.writeFileSync(zplFile, zplData, 'utf-8');
+        const psScript = `
+$file = "${zplFile.replace(/"/g, '""').replace(/\$/g, '`$')}";
+$name = "${(printerName || '4BARCODE 4B-2054TG').replace(/"/g, '""').replace(/\$/g, '`$')}";
+try {
+    $bytes = [System.IO.File]::ReadAllBytes($file);
+    Write-Printer -Name $name -Data $bytes -ErrorAction Stop;
+    Write-Host "OK";
+} catch {
+    Write-Host "ERR_PRINTER:" + $_.Exception.Message;
+}
+`;
+        const psResult = await runPsCapture(psScript);
+        if (!psResult.ok) {
+            throw new Error(`Write-Printer falló: ${(psResult.stderr || psResult.stdout || psResult.message).slice(0, 300)}`);
+        }
+        const output = psResult.stdout.trim();
+        if (output.startsWith('ERR_PRINTER:')) {
+            throw new Error(`Write-Printer: ${output.slice(12).trim()}`);
+        }
+        if (output !== 'OK') {
+            throw new Error(`Write-Printer: respuesta inesperada: ${output.slice(0, 200)}`);
+        }
+        return { method: 'Write-Printer (spooler)', device: printerName || KNOWN_PRINTERS[0].name };
+    } finally {
+        try { fs.unlinkSync(zplFile); } catch {}
+    }
+}
+
+module.exports = { scanUsbDevices, scanUsbDevicesDetailed, printViaUsb, printViaWritePrinter };

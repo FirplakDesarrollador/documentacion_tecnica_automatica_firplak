@@ -519,6 +519,17 @@ export function NamingRulesManager({ open, productType, namingType, onClose, ini
         setActiveTab(tab)
         
         if (tab === 'vista_previa' && !previewGenerated) {
+            if (enConfig.length === 0) {
+                try {
+                    const cfg = sanitizeEnConfig(await getNamingComponentsEnConfigAction(productType, namingType))
+                    setEnConfig(cfg)
+                    const issues = checkSyncIssues(cfg)
+                    setSyncIssues(issues)
+                    setShowEnSyncAlert(issues.missing.length > 0 || issues.obsolete.length > 0)
+                } catch (err) {
+                    toast.error("Error al cargar config EN: " + (err instanceof Error ? err.message : String(err)))
+                }
+            }
             handleLoadPreview()
         } else if (tab === 'orden_en' && enConfig.length === 0) {
             setEnConfigLoading(true)

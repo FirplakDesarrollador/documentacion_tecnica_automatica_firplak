@@ -51,11 +51,12 @@ export const PUBLIC_ROUTE_PREFIXES = [
   '/login',
   '/auth',
   '/_next',
+  '/downloads',
   '/favicon.ico',
   '/export-render',
 ]
 
-export const PUBLIC_FILE_EXTENSIONS = ['.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico']
+export const PUBLIC_FILE_EXTENSIONS = ['.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.exe', '.zip', '.msi']
 
 export const SYSTEM_SECRET_API_PREFIXES = ['/api/revalidate', '/api/naming/process-stale']
 

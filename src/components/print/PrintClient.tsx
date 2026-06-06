@@ -50,7 +50,8 @@ interface PrintItem {
 }
 
 const PRINTER_CONFIG_KEY = 'samiGen-printer-config'
-const PRINT_AGENT_DOWNLOAD_URL = '/downloads/samigen-print-agent-setup.exe'
+const PRINT_AGENT_DOWNLOAD_URL = '/downloads/samigen-print-agent-setup-1.0.3.exe'
+const PRINT_AGENT_PORTABLE_URL = '/downloads/samigen-print-agent-portable-1.0.3.zip'
 
 type PrintFormat = 'pdf' | 'jpg'
 
@@ -176,6 +177,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
     const [hasSearched, setHasSearched] = useState(false)
 
     const filteredOutCount = products.length - validProducts.length
+    const canPrintWithAgent = agentOnline === true && printerDetected
 
     useEffect(() => {
         setSelectedIds([])
@@ -526,6 +528,13 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                                     <Download className="w-3.5 h-3.5 mr-1" />
                                                     Descargar agente de impresi&oacute;n
                                                 </a>
+                                                <a
+                                                    href={PRINT_AGENT_PORTABLE_URL}
+                                                    download
+                                                    className="inline-flex h-8 items-center justify-center rounded-md border border-amber-200 bg-amber-50 px-3 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-100"
+                                                >
+                                                    ZIP portable
+                                                </a>
                                                 <Button variant="ghost" size="sm" onClick={checkAgent} className="h-8 text-amber-700 hover:bg-amber-100">
                                                     Probar de nuevo
                                                 </Button>
@@ -535,6 +544,9 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                                 <li>Conecta y enciende la impresora 3nStar/4BARCODE.</li>
                                                 <li>Vuelve a esta pantalla y presiona <strong>Probar</strong>.</li>
                                             </ol>
+                                            <p className="text-xs text-amber-600 mt-2">
+                                                Si el instalador es bloqueado, descarga el ZIP portable, extrae la carpeta y ejecuta <code className="bg-amber-100 px-1 rounded">install-service.cmd</code>.
+                                            </p>
                                         </div>
                                     ) : (
                                         <span>Verificando conexi&oacute;n...</span>
@@ -601,6 +613,8 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                         <XCircle className="w-3 h-3" />
                                         {warnings.filter(w => w.issues.length > 0).length} con datos incompletos
                                     </p>
+                                ) : !canPrintWithAgent ? (
+                                    <p className="text-xs text-amber-600 mt-0.5">Instala el agente y conecta la impresora</p>
                                 ) : (
                                     <p className="text-xs text-green-600 mt-0.5">Listo para imprimir</p>
                                 )}
@@ -621,11 +635,13 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                 disabled={
                                     isPrinting ||
                                     selectedProducts.length === 0 ||
-                                    (agentOnline === true && !printerDetected)
+                                    !canPrintWithAgent
                                 }
                                 className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
                                 title={
-                                    agentOnline === true && !printerDetected
+                                    agentOnline === false
+                                        ? 'Instala o inicia el agente local de impresion'
+                                        : agentOnline === true && !printerDetected
                                         ? 'Conecta la impresora USB para imprimir'
                                         : undefined
                                 }

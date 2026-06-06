@@ -182,8 +182,8 @@ export function mapRowToComposedProduct(row: ViewProductRow, options: EffectiveC
             : row.version_label,
         final_base_name_es: row.final_base_name_es,
         final_base_name_en: row.final_base_name_en,
-        final_name_es: row.final_base_name_es,
-        final_name_en: row.final_base_name_en,
+        final_name_es: row.final_complete_name_es,
+        final_name_en: row.final_complete_name_en,
         validation_status: row.validation_status || 'incomplete',
 
         // === SKU-level ===
@@ -216,15 +216,13 @@ export function mapRowToComposedProduct(row: ViewProductRow, options: EffectiveC
 }
 
 export async function composeProductBySku(skuComplete: string): Promise<ComposedProduct | null> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rows: any[] = await dbQuery(`${BASE_QUERY} WHERE sku_complete = $1 LIMIT 1`, [skuComplete]) as any[];
+    const rows = await dbQuery(`${BASE_QUERY} WHERE sku_complete = $1 LIMIT 1`, [skuComplete]) as ViewProductRow[];
     if (!rows || rows.length === 0) return null;
     return mapRowToComposedProduct(rows[0]);
 }
 
 export async function composeProductById(id: string): Promise<ComposedProduct | null> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rows: any[] = await dbQuery(`${BASE_QUERY} WHERE id = $1 LIMIT 1`, [id]) as any[];
+    const rows = await dbQuery(`${BASE_QUERY} WHERE id = $1 LIMIT 1`, [id]) as ViewProductRow[];
     if (!rows || rows.length === 0) return null;
     return mapRowToComposedProduct(rows[0]);
 }
@@ -259,7 +257,7 @@ export async function composeProductsByFilters(
     }
     if (filters.search) {
         const words = filters.search.toLowerCase().trim().split(/\s+/).filter(Boolean)
-        const searchableFields = ['sku_complete', 'final_base_name_es', 'color_code', 'resolved_color_name', 'name_color_sap', 'reference_code']
+        const searchableFields = ['sku_complete', 'final_complete_name_es', 'final_base_name_es', 'color_code', 'resolved_color_name', 'name_color_sap', 'reference_code']
         for (const word of words) {
             const orClauses = searchableFields.map(f => `${f}.ilike.%${word}%`).join(',')
             query = query.or(orClauses)

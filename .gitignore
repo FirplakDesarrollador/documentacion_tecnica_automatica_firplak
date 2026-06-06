@@ -48,5 +48,6 @@ next-env.d.ts
 # print agent generated artifacts
 /print-agent/.tmp-ps-*.ps1
 /print-agent/debug-last-print/
+/print-agent/dist/
 
 testsprite_tests\tmp\config.json

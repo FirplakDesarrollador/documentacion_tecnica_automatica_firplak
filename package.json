@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "concurrently -n next,agent \"next dev\" \"node print-agent/server.js\"",
+    "dev:web": "next dev",
+    "dev:agent": "node print-agent/server.js",
     "build": "next build",
     "start": "next start",
     "start:local": "concurrently -n next,agent \"next start\" \"node print-agent/server.js\"",

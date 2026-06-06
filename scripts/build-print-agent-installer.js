@@ -14,9 +14,13 @@ const packageJson = require(path.join(agentDir, 'package.json'));
 
 const latestExeName = 'samigen-print-agent-setup.exe';
 const versionedExeName = `samigen-print-agent-setup-${packageJson.version}.exe`;
+const portableZipName = 'samigen-print-agent-portable.zip';
+const versionedPortableZipName = `samigen-print-agent-portable-${packageJson.version}.zip`;
 const tmpLatestExePath = path.join(tmpDir, latestExeName);
 const latestExePath = path.join(downloadsDir, latestExeName);
 const versionedExePath = path.join(downloadsDir, versionedExeName);
+const portableZipPath = path.join(downloadsDir, portableZipName);
+const versionedPortableZipPath = path.join(downloadsDir, versionedPortableZipName);
 
 function assertFile(filePath, message) {
     if (!fs.existsSync(filePath)) {
@@ -81,7 +85,7 @@ CAB_ResvCodeSigning=6144
 RebootMode=N
 InstallPrompt=
 DisplayLicense=
-FinishMessage=SamiGen Print Agent instalado correctamente.
+FinishMessage=
 TargetName=${targetPath}
 FriendlyName=SamiGen Print Agent
 AppLaunched=install-agent.cmd
@@ -131,7 +135,7 @@ function main() {
     ensureDir(stagingDir);
     ensureDir(downloadsDir);
 
-    for (const file of ['server.js', 'usbService.js', 'printService.js', 'package.json', 'package-lock.json', 'README.md']) {
+    for (const file of ['server.js', 'usbService.js', 'printService.js', 'install-service.js', 'package.json', 'package-lock.json', 'README.md']) {
         copyFile(path.join(agentDir, file), path.join(payloadDir, file));
     }
 
@@ -141,6 +145,8 @@ function main() {
 
     const payloadZip = path.join(stagingDir, 'payload.zip');
     runPowerShell(`Compress-Archive -Path "${payloadDir}\\*" -DestinationPath "${payloadZip}" -Force`);
+    copyFile(payloadZip, portableZipPath);
+    copyFile(payloadZip, versionedPortableZipPath);
     copyFile(path.join(installerDir, 'install-agent.cmd'), path.join(stagingDir, 'install-agent.cmd'));
     copyFile(path.join(installerDir, 'install-agent.ps1'), path.join(stagingDir, 'install-agent.ps1'));
 
@@ -156,6 +162,8 @@ function main() {
 
     console.log(`[installer] Created ${latestExePath}`);
     console.log(`[installer] Created ${versionedExePath}`);
+    console.log(`[installer] Created ${portableZipPath}`);
+    console.log(`[installer] Created ${versionedPortableZipPath}`);
 }
 
 main();
