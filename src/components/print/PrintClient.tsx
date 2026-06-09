@@ -181,13 +181,15 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
 
     useEffect(() => {
         setSelectedIds([])
+        setProducts([])
+        setHasSearched(false)
     }, [selectedTemplateId])
 
     const handleSearch = useCallback(async () => {
         setLoading(true)
         setHasSearched(true)
         try {
-            const result = await getFilteredProducts(textFilter || null, 1, 500)
+            const result = await getFilteredProducts(textFilter || null, 1, 500, selectedTemplateId)
             setProducts(result.products as unknown as GenerateProduct[])
             setSelectedIds([])
         } catch (err: unknown) {
@@ -195,7 +197,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         } finally {
             setLoading(false)
         }
-    }, [textFilter])
+    }, [selectedTemplateId, textFilter])
 
     const handlePrintProduct = async (product: GenerateProduct): Promise<boolean> => {
         if (!selectedTemplate) return false

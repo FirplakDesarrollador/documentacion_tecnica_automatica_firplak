@@ -63,6 +63,18 @@ export async function upsertVersionAction(data: {
     }
 }
 
+export async function checkVersionExistsAction(versionCode: string) {
+    await assertAdminAccess()
+
+    if (!versionCode) return true
+
+    const rows = await dbQuery(
+        `SELECT version_code FROM public.global_version_rules WHERE version_code = '${versionCode.replace(/'/g, "''")}' LIMIT 1`
+    )
+
+    return rows && rows.length > 0
+}
+
 export async function previewDeleteVersionAction(version_code: string) {
     await assertAdminAccess()
 

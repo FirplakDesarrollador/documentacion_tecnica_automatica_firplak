@@ -16,7 +16,8 @@ import { cn } from '@/lib/utils'
 import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { PIXELS_PER_MM } from '@/lib/constants'
 import { hydrateText, getVariableValue } from '@/lib/export/exportUtils'
-import { resolveZoneHomeEnAction, getClientsAction } from '@/app/products/actions'
+import { getClientsAction } from '@/app/configuration/clients/actions'
+import { resolveZoneHomeEnAction } from '@/app/products/glossary/actions'
 import { getNamingVariableCatalogAction } from '@/app/rules/actions'
 import {
     BASE_NAMING_VARIABLE_FIELDS,

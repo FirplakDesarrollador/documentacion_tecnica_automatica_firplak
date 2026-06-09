@@ -3,7 +3,8 @@
 
 import React, { useEffect, useState } from "react"
 import { resolveAssetsAction } from "@/app/generate/actions"
-import { composeProductByIdAction, resolveZoneHomeEnAction } from "@/app/products/actions"
+import { composeProductByIdAction } from "@/app/products/actions"
+import { resolveZoneHomeEnAction } from "@/app/products/glossary/actions"
 import { getTemplatesAction } from "@/app/templates/actions"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"

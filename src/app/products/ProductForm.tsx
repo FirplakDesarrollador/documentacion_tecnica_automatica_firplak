@@ -8,7 +8,11 @@ import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { createProductAction, getUniquePropertiesAction, parseProductCodeAction, translateAction, checkProductExistsAction, getClientsAction, checkFamilyExistsAction, checkVersionExistsAction, saveGlossaryTermsAction } from './actions'
+import { createProductAction, getUniquePropertiesAction, parseProductCodeAction, translateAction, checkProductExistsAction } from './actions'
+import { getClientsAction } from '@/app/configuration/clients/actions'
+import { checkFamilyExistsAction } from '@/app/families/actions'
+import { checkVersionExistsAction } from '@/app/rules/versions/actions'
+import { saveGlossaryTermsAction } from '@/app/products/glossary/actions'
 import { Checkbox } from '@/components/ui/checkbox'
 import { getColorByNameAction, getRulesAction } from '@/app/rules/actions'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
@@ -40,7 +44,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
     const [showMultiColorModal, setShowMultiColorModal] = useState(false)
     const [allCreatedProducts, setAllCreatedProducts] = useState<Record<string, unknown>[]>([])
     const [customValues, setCustomValues] = useState({ line: '', designation: '', product_type: '', use_destination: '', zone_home: '', bisagras: '', carb2: '', rh: '', special_label: '', canto_puertas: '' })
-    const [clients, setClients] = useState<{id: string, name: string, logo_asset_id?: string}[]>([])
+    const [clients, setClients] = useState<{id: string, name: string, logo_asset_id?: string | null}[]>([])
     const initialPrivateName = (initialData?.private_label_client_name && String(initialData.private_label_client_name).trim() !== '' && String(initialData.private_label_client_name).toUpperCase() !== 'NA')
         ? String(initialData.private_label_client_name).trim()
         : ''

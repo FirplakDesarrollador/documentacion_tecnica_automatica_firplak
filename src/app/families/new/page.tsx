@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import Link from 'next/link'
-import { upsertFamilyAction } from '@/app/products/actions'
+import { upsertFamilyAction } from '@/app/families/actions'
 import { ArrowLeft } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 

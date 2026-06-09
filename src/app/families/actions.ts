@@ -6,7 +6,9 @@ import {
   markNamingStaleForReferences,
   processNamingJobsInline,
 } from '@/lib/engine/namingQueue';
+import { parseProductCode } from '@/lib/engine/codeParser';
 import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
 import { assertRole } from '@/utils/auth/access';
 
 async function assertAdminAccess() {
@@ -61,6 +63,24 @@ type RpcCaller = {
 
 const rpcClient = supabaseServer as unknown as RpcCaller;
 
+type FamilyUpsertInput = {
+  code: string;
+  name?: string | null;
+  product_type?: string | null;
+  use_destination?: string | null;
+  zone_home?: string | null;
+  allowed_lines?: string[] | null;
+  rh_default?: boolean;
+  assembled_default?: boolean;
+  manufacturing_process?: string | null;
+};
+
+function formatPGArray(arr: string[] | null | undefined) {
+  if (!arr || !Array.isArray(arr) || arr.length === 0) return "'{}'";
+  const escaped = arr.map((value) => value.trim().replace(/'/g, "''").replace(/"/g, '\\"'));
+  return `'{${escaped.join(',')}}'`;
+}
+
 // --- FILTER OPTIONS ---
 
 export async function getFamiliesFilterOptions() {
@@ -83,6 +103,90 @@ export async function getFamiliesFilterOptions() {
     success: true,
     data: { familyCodes, familyNames, productTypes, zoneHomes, manufacturingProcesses }
   };
+}
+
+export async function checkFamilyExists(code: string) {
+  await assertAdminAccess();
+
+  if (!code) return true;
+  const parsed = await parseProductCode(code, '', false);
+  if (!parsed.familia_code) return true;
+
+  const rows = await dbQuery(
+    `SELECT family_code FROM public.families WHERE family_code = '${parsed.familia_code.replace(/'/g, "''")}' LIMIT 1`
+  );
+  return rows && rows.length > 0;
+}
+
+export async function checkFamilyExistsAction(code: string) {
+  await assertAdminAccess();
+  return await checkFamilyExists(code);
+}
+
+export async function upsertFamilyAction(data: FamilyUpsertInput) {
+  await assertAdminAccess();
+
+  if (!data.code) throw new Error('Family code is required');
+
+  const query = `
+    INSERT INTO public.families (
+      family_code, family_name, product_type, use_destination, zone_home,
+      allowed_lines, rh_default, assembled_default, manufacturing_process
+    )
+    VALUES (
+      '${data.code.replace(/'/g, "''")}',
+      ${data.name ? `'${data.name.replace(/'/g, "''")}'` : 'NULL'},
+      ${data.product_type ? `'${data.product_type}'` : 'NULL'},
+      ${data.use_destination ? `'${data.use_destination}'` : 'NULL'},
+      ${data.zone_home ? `'${data.zone_home}'` : 'NULL'},
+      ${formatPGArray(data.allowed_lines)},
+      ${data.rh_default ? 'true' : 'false'},
+      ${data.assembled_default ? 'true' : 'false'},
+      ${data.manufacturing_process ? `'${data.manufacturing_process}'` : "'FABRICADO'"}
+    )
+    ON CONFLICT (family_code) DO UPDATE SET
+      family_name = EXCLUDED.family_name,
+      product_type = EXCLUDED.product_type,
+      use_destination = EXCLUDED.use_destination,
+      zone_home = EXCLUDED.zone_home,
+      allowed_lines = EXCLUDED.allowed_lines,
+      rh_default = EXCLUDED.rh_default,
+      assembled_default = EXCLUDED.assembled_default,
+      manufacturing_process = EXCLUDED.manufacturing_process,
+      updated_at = now()
+    RETURNING *
+  `;
+
+  const rows = await dbQuery(query);
+  await markNamingStaleForFamilies([data.code], null, 'family_upsert');
+  await processNamingJobsInline();
+  revalidatePath('/configuration/families');
+  return rows ? rows[0] : null;
+}
+
+export async function updateFamilyAction(code: string, data: Omit<FamilyUpsertInput, 'code'>) {
+  await assertAdminAccess();
+
+  if (!code) throw new Error('Family code is required');
+
+  await dbQuery(`
+    UPDATE public.families SET
+      family_name=${data.name ? `'${data.name.replace(/'/g, "''")}'` : 'NULL'},
+      product_type=${data.product_type ? `'${data.product_type}'` : 'NULL'},
+      use_destination=${data.use_destination ? `'${data.use_destination}'` : 'NULL'},
+      zone_home=${data.zone_home ? `'${data.zone_home}'` : 'NULL'},
+      allowed_lines=${formatPGArray(data.allowed_lines)},
+      rh_default=${data.rh_default ? 'true' : 'false'},
+      assembled_default=${data.assembled_default ? 'true' : 'false'},
+      manufacturing_process=${data.manufacturing_process ? `'${data.manufacturing_process}'` : "'FABRICADO'"},
+      updated_at=now()
+    WHERE family_code='${code.replace(/'/g, "''")}'
+  `);
+
+  await markNamingStaleForFamilies([code], null, 'family_update');
+  await processNamingJobsInline();
+  revalidatePath('/configuration/families');
+  redirect('/families');
 }
 
 // --- SEARCH ---

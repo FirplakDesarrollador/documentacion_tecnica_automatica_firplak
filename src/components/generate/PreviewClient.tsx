@@ -12,7 +12,7 @@ import { hydrateTemplateElements, hydrateText } from '@/lib/export/exportUtils'
 import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { PIXELS_PER_MM } from '@/lib/constants'
 import DocumentRenderSurface from '@/components/export/DocumentRenderSurface'
-import { resolveZoneHomeEnAction } from '@/app/products/actions'
+import { resolveZoneHomeEnAction } from '@/app/products/glossary/actions'
 
 
 

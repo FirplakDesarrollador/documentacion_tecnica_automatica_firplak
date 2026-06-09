@@ -7,12 +7,26 @@ import { computeNameWithNamingComponents } from '@/lib/engine/namingComponentsEn
 import { parseProductCode } from '@/lib/engine/codeParser'
 import {
     markNamingStaleForColor,
-    markNamingStaleForFamilies,
     markNamingStaleForGlossaryTerms,
     processNamingJobsInline,
 } from '@/lib/engine/namingQueue'
 import { upsertVersionAction } from '@/app/rules/versions/actions'
-import { redirect } from 'next/navigation'
+import {
+    checkVersionExistsAction as checkVersionExistsActionFromRules,
+} from '@/app/rules/versions/actions'
+import {
+    checkFamilyExists as checkFamilyExistsFromFamilies,
+    checkFamilyExistsAction as checkFamilyExistsActionFromFamilies,
+    upsertFamilyAction as upsertFamilyActionFromFamilies,
+    updateFamilyAction as updateFamilyActionFromFamilies,
+} from '@/app/families/actions'
+import {
+    createClientAction as createClientActionFromConfiguration,
+    getClientsAction as getClientsActionFromConfiguration,
+} from '@/app/configuration/clients/actions'
+import {
+    resolveZoneHomeEnAction as resolveZoneHomeEnActionFromGlossary,
+} from '@/app/products/glossary/actions'
 import { revalidatePath } from 'next/cache'
 import { assertRole } from '@/utils/auth/access'
 
@@ -35,13 +49,6 @@ function normalizeCarb2(val: unknown) {
     if (clean === 'SI' || clean === 'SÍ' || clean === 'YES' || clean === 'TRUE') return 'CARB2'
     if (clean === 'CARB 2') return 'CARB2'
     return clean
-}
-
-function formatPGArray(arr: string[] | null | undefined) {
-    if (!arr || !Array.isArray(arr) || arr.length === 0) return "'{}'"
-    // PostgreSQL array syntax: '{val1,val2}'
-    const escaped = arr.map(v => v.trim().replace(/'/g, "''").replace(/"/g, '\\"'))
-    return `'{${escaped.join(',')}}'`
 }
 
 async function computeProductNameByNamingType(product: any, namingType: string) {
@@ -78,21 +85,7 @@ export async function translateAction(nameEs: string, ctx?: any, force: boolean 
  * Returns null if no translation is found (productUtils will use its built-in fallback map).
  */
 export async function resolveZoneHomeEnAction(zoneEs: string | null | undefined): Promise<string | null> {
-    await assertAdminAccess()
-
-    if (!zoneEs) return null
-    const key = zoneEs.trim().toUpperCase()
-    try {
-        const rows = await dbQuery(
-            `SELECT term_en FROM public.glossary 
-             WHERE term_es = '${key.replace(/'/g, "''")}' 
-               AND active = true 
-             LIMIT 1`
-        )
-        return (rows && rows.length > 0) ? (rows[0].term_en as string) : null
-    } catch {
-        return null
-    }
+    return await resolveZoneHomeEnActionFromGlossary(zoneEs)
 }
 
 /**
@@ -108,68 +101,19 @@ export async function composeProductByIdAction(id: string) {
 }
 
 export async function checkFamilyExists(code: string) {
-    await assertAdminAccess()
-
-    if (!code) return true
-    const parsed = await parseProductCode(code, '', false)
-    if (!parsed.familia_code) return true
-
-    const rows = await dbQuery(`SELECT family_code FROM public.families WHERE family_code = '${parsed.familia_code.replace(/'/g, "''")}' LIMIT 1`)
-    return rows && rows.length > 0
+    return await checkFamilyExistsFromFamilies(code)
 }
 
 export async function checkFamilyExistsAction(code: string) {
-    await assertAdminAccess()
-
-    return await checkFamilyExists(code);
+    return await checkFamilyExistsActionFromFamilies(code)
 }
 
 export async function checkVersionExistsAction(versionCode: string) {
-    await assertAdminAccess()
-
-    if (!versionCode) return true
-    const rows = await dbQuery(`SELECT version_code FROM public.global_version_rules WHERE version_code = '${versionCode.replace(/'/g, "''")}' LIMIT 1`)
-    return rows && rows.length > 0
+    return await checkVersionExistsActionFromRules(versionCode)
 }
 
 export async function upsertFamilyAction(data: any) {
-    await assertAdminAccess()
-
-    if (!data.code) throw new Error("Family code is required")
-    
-    const query = `
-        INSERT INTO public.families (
-            family_code, family_name, product_type, use_destination, zone_home, 
-            allowed_lines, rh_default, assembled_default, manufacturing_process
-        )
-        VALUES (
-            '${data.code.replace(/'/g, "''")}', 
-            ${data.name ? `'${data.name.replace(/'/g, "''")}'` : 'NULL'}, 
-            ${data.product_type ? `'${data.product_type}'` : 'NULL'}, 
-            ${data.use_destination ? `'${data.use_destination}'` : 'NULL'}, 
-            ${data.zone_home ? `'${data.zone_home}'` : 'NULL'},
-            ${formatPGArray(data.allowed_lines)},
-            ${data.rh_default ? 'true' : 'false'},
-            ${data.assembled_default ? 'true' : 'false'},
-            ${data.manufacturing_process ? `'${data.manufacturing_process}'` : "'FABRICADO'"}
-        )
-        ON CONFLICT (family_code) DO UPDATE SET
-            family_name = EXCLUDED.family_name,
-            product_type = EXCLUDED.product_type,
-            use_destination = EXCLUDED.use_destination,
-            zone_home = EXCLUDED.zone_home,
-            allowed_lines = EXCLUDED.allowed_lines,
-            rh_default = EXCLUDED.rh_default,
-            assembled_default = EXCLUDED.assembled_default,
-            manufacturing_process = EXCLUDED.manufacturing_process,
-            updated_at = now()
-        RETURNING *
-    `
-    const rows = await dbQuery(query)
-    await markNamingStaleForFamilies([data.code], null, 'family_upsert')
-    await processNamingJobsInline()
-    revalidatePath('/configuration/families')
-    return rows ? rows[0] : null
+    return await upsertFamilyActionFromFamilies(data)
 }
 
 export async function upsertColorAction(code: string, name: string) {
@@ -458,26 +402,7 @@ export async function createProductAction(data: any) {
 }
 
 export async function updateFamilyAction(code: string, data: any) {
-    await assertAdminAccess()
-
-    if (!code) throw new Error("Family code is required")
-    await dbQuery(`
-        UPDATE public.families SET
-            family_name=${data.name ? `'${data.name.replace(/'/g, "''")}'` : 'NULL'},
-            product_type=${data.product_type ? `'${data.product_type}'` : 'NULL'},
-            use_destination=${data.use_destination ? `'${data.use_destination}'` : 'NULL'},
-            zone_home=${data.zone_home ? `'${data.zone_home}'` : 'NULL'},
-            allowed_lines=${formatPGArray(data.allowed_lines)},
-            rh_default=${data.rh_default ? 'true' : 'false'},
-            assembled_default=${data.assembled_default ? 'true' : 'false'},
-            manufacturing_process=${data.manufacturing_process ? `'${data.manufacturing_process}'` : "'FABRICADO'"},
-            updated_at=now()
-        WHERE family_code='${code.replace(/'/g, "''")}'
-    `)
-    await markNamingStaleForFamilies([code], null, 'family_update')
-    await processNamingJobsInline()
-    revalidatePath('/configuration/families')
-    redirect('/families')
+    return await updateFamilyActionFromFamilies(code, data)
 }
 
 export async function translateProductsAction(ids?: string[], mode: 'missing' | 'repair' | 'all' = 'missing') {
@@ -682,72 +607,14 @@ export async function checkProductExistsAction(code?: string, sapDesc?: string) 
 }
 
 export async function getClientsAction() {
-    await assertAdminAccess()
-
-     
-    let fromClients: any[] = []
-    try {
-        fromClients = await dbQuery(`SELECT id, name, logo_asset_id FROM public.clients ORDER BY name ASC`) || []
-    } catch (e) {
-        console.error("Error fetching from public.clients:", e)
-    }
-    
-    const defaults = ["CHILEMAT", "D-ACQUA", "PROMART", "FERMETAL"].map(n => ({ id: n, name: n, logo_id: null }))
-    
-    const combined = [
-        ...fromClients, 
-        ...defaults
-    ]
-    
-    const unique = combined.reduce((acc: any[], curr) => {
-        if (!curr || !curr.name) return acc
-        const found = acc.find(x => x.name.toUpperCase() === curr.name.toUpperCase())
-        if (!found) {
-            acc.push(curr)
-        } else if (typeof found.id === 'string' && !found.id.includes('-') && typeof curr.id === 'string' && curr.id.includes('-')) {
-            const idx = acc.indexOf(found)
-            acc[idx] = curr
-        }
-        return acc
-    }, [])
-    
-    return unique.sort((a: any, b: any) => (a.name || "").localeCompare(b.name || ""))
+    return await getClientsActionFromConfiguration()
 }
 
 export async function createClientAction(name: string, logoAssetId?: string) {
-    await assertAdminAccess()
-
-    if (!name) throw new Error("Nombre del cliente requerido")
-
-    const nameNorm = String(name).trim().toUpperCase()
-    if (!nameNorm || nameNorm === 'NA') throw new Error("Nombre del cliente requerido")
-
-    // Check if client exists (case-insensitive)
-    const existing = await dbQuery(
-        `SELECT id, name, logo_asset_id FROM public.clients WHERE UPPER(name) = $1 LIMIT 1`,
-        [nameNorm]
-    )
-    if (existing && existing.length > 0) {
-        const row = existing[0]
-        // If a logo was provided and we don't have one stored yet, store it (best-effort)
-        if (logoAssetId && !row.logo_asset_id) {
-            try {
-                await dbQuery(`UPDATE public.clients SET logo_asset_id = $1 WHERE id = $2`, [logoAssetId, row.id])
-            } catch {
-                // ignore
-            }
-        }
-        return row
-    }
-
-    const res = await dbQuery(`
-        INSERT INTO public.clients (id, name, logo_asset_id, created_at)
-        VALUES (gen_random_uuid(), $1, $2, now())
-        RETURNING id, name
-    `, [nameNorm, logoAssetId || null])
-    
-    if (!res || res.length === 0) throw new Error("No se pudo crear el cliente")
-    return res[0]
+    return await createClientActionFromConfiguration({
+        name,
+        logo_asset_id: logoAssetId || null,
+    })
 }
 export async function saveGlossaryTermsAction(terms: { term_es: string, term_en: string, category: string, priority: number }[]) {
     await assertAdminAccess()

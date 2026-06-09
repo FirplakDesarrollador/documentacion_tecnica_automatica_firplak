@@ -7,9 +7,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge'
 import { PlusCircle, Trash2, Search, ChevronLeft, Loader2, Save, ScanSearch, X } from 'lucide-react'
 import Link from 'next/link'
-import { upsertGlossaryTermAction, deleteGlossaryTermAction } from './actions'
+import { upsertGlossaryTermAction, deleteGlossaryTermAction, saveGlossaryTermsAction } from './actions'
 import { scanMissingGlossaryTermsAction } from '../translation-actions'
-import { saveGlossaryTermsAction } from '../actions'
 import { toast } from 'sonner'
 import {
     Dialog,

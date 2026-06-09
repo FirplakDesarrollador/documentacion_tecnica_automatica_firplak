@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label"
 import { PlusCircle, Loader2 } from "lucide-react"
 import { createTemplate } from "@/app/templates/actions"
 import { toast } from "sonner"
-import { getClientsAction } from "@/app/products/actions"
+import { getClientsAction } from "@/app/configuration/clients/actions"
 
 interface ClientRow {
     id: string

@@ -11,6 +11,13 @@ type ClientRow = {
   logo_url: string | null
 }
 
+type ClientPickerRow = {
+  id: string
+  name: string
+  logo_asset_id: string | null
+  logo_url: string | null
+}
+
 async function assertAdminAccess() {
   await assertRole('admin')
 }
@@ -72,7 +79,23 @@ export async function createClientAction(input: { name: string; logo_asset_id?: 
   const logoAssetId = input?.logo_asset_id ? String(input.logo_asset_id) : null
 
   const existing = await fetchClientByNameInsensitive(nameUpper)
-  if (existing) return existing
+  if (existing) {
+    if (logoAssetId && !existing.logo_asset_id) {
+      await dbQuery(
+        `
+        UPDATE public.clients
+        SET logo_asset_id = $1
+        WHERE id::text = $2
+      `,
+        [logoAssetId, existing.id]
+      )
+      const hydrated = await fetchClientById(existing.id)
+      revalidatePath('/configuration/clients')
+      revalidatePath('/templates')
+      return hydrated || { ...existing, logo_asset_id: logoAssetId }
+    }
+    return existing
+  }
 
   const insertedRaw =
     (await dbQuery(
@@ -96,6 +119,54 @@ export async function createClientAction(input: { name: string; logo_asset_id?: 
   if (hydrated) return hydrated
   if (row) return { ...row, logo_url: null }
   throw new Error('No se pudo crear el cliente')
+}
+
+export async function getClientsAction(): Promise<ClientPickerRow[]> {
+  await assertAdminAccess()
+
+  const rowsRaw =
+    (await dbQuery(
+      `
+      SELECT
+        c.id,
+        c.name,
+        c.logo_asset_id,
+        a.file_path AS logo_url
+      FROM public.clients c
+      LEFT JOIN public.assets a ON a.id::text = c.logo_asset_id::text
+      ORDER BY c.name ASC
+    `
+    )) || []
+
+  const fromClients: ClientPickerRow[] = Array.isArray(rowsRaw) ? (rowsRaw as ClientPickerRow[]) : []
+  const defaults: ClientPickerRow[] = ['CHILEMAT', 'D-ACQUA', 'PROMART', 'FERMETAL'].map((name) => ({
+    id: name,
+    name,
+    logo_asset_id: null,
+    logo_url: null,
+  }))
+
+  const combined = [...fromClients, ...defaults]
+  const unique = combined.reduce<ClientPickerRow[]>((acc, curr) => {
+    if (!curr?.name) return acc
+
+    const found = acc.find((item) => item.name.toUpperCase() === curr.name.toUpperCase())
+    if (!found) {
+      acc.push(curr)
+      return acc
+    }
+
+    const foundLooksLikeDefault = typeof found.id === 'string' && !found.id.includes('-')
+    const currentLooksPersisted = typeof curr.id === 'string' && curr.id.includes('-')
+    if (foundLooksLikeDefault && currentLooksPersisted) {
+      const idx = acc.indexOf(found)
+      acc[idx] = curr
+    }
+
+    return acc
+  }, [])
+
+  return unique.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
 }
 
 export async function updateClientLogoAction(input: { client_id: string; logo_asset_id: string | null }) {
