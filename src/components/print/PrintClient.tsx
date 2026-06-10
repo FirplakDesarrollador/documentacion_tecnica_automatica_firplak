@@ -55,14 +55,23 @@ interface PrintItem {
 }
 
 const PRINTER_CONFIG_KEY = 'samiGen-printer-config'
-const PRINT_AGENT_DOWNLOAD_URL = '/downloads/samigen-print-agent-setup-1.0.3.exe'
-const PRINT_AGENT_PORTABLE_URL = '/downloads/samigen-print-agent-portable-1.0.3.zip'
+const PRINT_AGENT_VERSION = '1.0.5'
+const PRINT_AGENT_DOWNLOAD_URL = `/downloads/samigen-print-agent-setup-${PRINT_AGENT_VERSION}.exe`
+const PRINT_AGENT_PORTABLE_URL = `/downloads/samigen-print-agent-portable-${PRINT_AGENT_VERSION}.zip`
+const PRINT_RENDER_TIMEOUT_MS = 45000
+const PRINT_AGENT_TIMEOUT_MS = 60000
 
 type PrintFormat = 'pdf' | 'jpg'
 
 interface PrinterConfig {
     agentUrl: string
     printerName: string
+}
+
+interface AgentHealth {
+    printers: string[]
+    printerDetected: boolean
+    supportsJobMetadata: boolean
 }
 
 const defaultPrinterConfig: PrinterConfig = {
@@ -80,6 +89,43 @@ function getSavedPrintColorMode() {
     } catch {
         return defaultPrintSettings.colorMode
     }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null
+}
+
+function normalizeAgentHealth(value: unknown): AgentHealth {
+    if (!isRecord(value)) {
+        return { printers: [], printerDetected: false, supportsJobMetadata: false }
+    }
+
+    const capabilities = isRecord(value.capabilities) ? value.capabilities : {}
+    const printers = Array.isArray(value.printers)
+        ? value.printers.filter((printer): printer is string => typeof printer === 'string')
+        : []
+
+    return {
+        printers,
+        printerDetected: value.printerDetected === true,
+        supportsJobMetadata: capabilities.jobMetadata === true,
+    }
+}
+
+function getTimeoutSignal(timeoutMs: number) {
+    if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+        return AbortSignal.timeout(timeoutMs)
+    }
+
+    const controller = new AbortController()
+    window.setTimeout(() => controller.abort(), timeoutMs)
+    return controller.signal
+}
+
+function getPrintRequestError(err: unknown, fallback: string) {
+    if (err instanceof DOMException && err.name === 'TimeoutError') return fallback
+    if (err instanceof DOMException && err.name === 'AbortError') return fallback
+    return (err as Error)?.message || fallback
 }
 
 export function PrintClient({ templates, rules }: PrintClientProps) {
@@ -107,6 +153,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
     const [agentOnline, setAgentOnline] = useState<boolean | null>(null)
     const [agentPrinters, setAgentPrinters] = useState<string[]>([])
     const [printerDetected, setPrinterDetected] = useState<boolean>(false)
+    const [agentSupportsJobMetadata, setAgentSupportsJobMetadata] = useState<boolean>(false)
 
     useEffect(() => {
         localStorage.setItem(PRINTER_CONFIG_KEY, JSON.stringify(printerConfig))
@@ -116,18 +163,21 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         try {
             const res = await fetch(`${printerConfig.agentUrl}/health`, { signal: AbortSignal.timeout(3000) })
             if (res.ok) {
-                const data = await res.json()
+                const data = normalizeAgentHealth(await res.json())
                 setAgentOnline(true)
-                setAgentPrinters(data.printers || [])
-                setPrinterDetected(data.printerDetected === true)
+                setAgentPrinters(data.printers)
+                setPrinterDetected(data.printerDetected)
+                setAgentSupportsJobMetadata(data.supportsJobMetadata)
             } else {
                 setAgentOnline(false)
                 setPrinterDetected(false)
+                setAgentSupportsJobMetadata(false)
             }
         } catch {
             setAgentOnline(false)
             setAgentPrinters([])
             setPrinterDetected(false)
+            setAgentSupportsJobMetadata(false)
         }
     }, [printerConfig.agentUrl])
 
@@ -196,7 +246,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
 
     const filteredOutCount = products.length - validProducts.length
     const canPrintWithAgent = agentOnline === true && printerDetected
-    const canPrintSelected = !requiresAgent || (canPrintWithAgent && thermalLayout?.ok === true)
+    const canPrintSelected = !requiresAgent || (canPrintWithAgent && agentSupportsJobMetadata && thermalLayout?.ok === true)
 
     useEffect(() => {
         setSelectedIds([])
@@ -262,21 +312,28 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
             if (!thermalLayout?.ok) {
                 throw new Error(thermalLayout?.message || 'La plantilla no tiene una salida 3nStar valida')
             }
+            if (!agentSupportsJobMetadata) {
+                throw new Error(`Actualiza el agente local a la version ${PRINT_AGENT_VERSION} para imprimir con tamanos de etiqueta.`)
+            }
 
             const imageResponse = await fetch('/api/print', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    productId: product.id,
-                    isExternalSource: product.is_external === true,
-                    format: 'jpg',
-                    elements: hydrated,
-                    width: widthPx,
-                    height: heightPx,
-                    templateFontFamily: selectedTemplate.template_font_family,
-                    copies,
-                }),
-            })
+                    method: 'POST',
+                    signal: getTimeoutSignal(PRINT_RENDER_TIMEOUT_MS),
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        productId: product.id,
+                        isExternalSource: product.is_external === true,
+                        format: 'jpg',
+                        elements: hydrated,
+                        width: widthPx,
+                        height: heightPx,
+                        templateFontFamily: selectedTemplate.template_font_family,
+                        copies,
+                    }),
+                })
+                .catch((err: unknown) => {
+                    throw new Error(getPrintRequestError(err, `La generacion de imagen para ${product.code} tardo demasiado.`))
+                })
 
             if (!imageResponse.ok) {
                 const payload = await imageResponse.json().catch(() => null)
@@ -302,9 +359,13 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
             }))
 
             const agentResponse = await fetch(`${printerConfig.agentUrl}/print`, {
-                method: 'POST',
-                body: formData,
-            })
+                    method: 'POST',
+                    signal: getTimeoutSignal(PRINT_AGENT_TIMEOUT_MS),
+                    body: formData,
+                })
+                .catch((err: unknown) => {
+                    throw new Error(getPrintRequestError(err, 'El agente local no respondio a tiempo. Revisa si la impresora quedo ocupada, apagada o con error.'))
+                })
 
             if (!agentResponse.ok) {
                 const payload = await agentResponse.json().catch(() => null)
@@ -314,19 +375,23 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         }
 
         const response = await fetch('/api/print', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                productId: product.id,
-                isExternalSource: product.is_external === true,
-                format: printFormat,
-                elements: hydrated,
-                width: widthPx,
-                height: heightPx,
-                templateFontFamily: selectedTemplate.template_font_family,
-                copies,
-            }),
-        })
+                method: 'POST',
+                signal: getTimeoutSignal(PRINT_RENDER_TIMEOUT_MS),
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    productId: product.id,
+                    isExternalSource: product.is_external === true,
+                    format: printFormat,
+                    elements: hydrated,
+                    width: widthPx,
+                    height: heightPx,
+                    templateFontFamily: selectedTemplate.template_font_family,
+                    copies,
+                }),
+            })
+            .catch((err: unknown) => {
+                throw new Error(getPrintRequestError(err, `La generacion del documento para ${product.code} tardo demasiado.`))
+            })
 
         if (!response.ok) {
             const payload = await response.json().catch(() => null)
@@ -339,13 +404,20 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         }
 
         const url = URL.createObjectURL(blob)
-        const link = document.createElement('a')
-        link.href = url
-        link.download = `${product.code || 'documento'}.${printFormat}`
-        document.body.appendChild(link)
-        link.click()
-        link.remove()
-        window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+        const printWindow = window.open(url, '_blank')
+        if (printWindow) {
+            printWindow.addEventListener('load', () => {
+                printWindow.print()
+            })
+        } else {
+            const link = document.createElement('a')
+            link.href = url
+            link.download = `${product.code || 'documento'}.${printFormat}`
+            document.body.appendChild(link)
+            link.click()
+            link.remove()
+        }
+        window.setTimeout(() => URL.revokeObjectURL(url), 5000)
 
         return true
     }
@@ -526,14 +598,44 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
 
                             {/* Agent status */}
                             <div className={`rounded-xl px-4 py-3 text-sm border ${
-                                agentOnline === true
+                                agentOnline === true && (!requiresAgent || agentSupportsJobMetadata)
                                     ? 'bg-green-50 border-green-200 text-green-700'
                                     : agentOnline === false
                                     ? 'bg-amber-50 border-amber-200 text-amber-700'
                                     : 'bg-slate-50 border-slate-200 text-slate-500'
                             }`}>
                                     {agentOnline === true ? (
-                                        printerDetected ? (
+                                        requiresAgent && !agentSupportsJobMetadata ? (
+                                            <div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                                                    <span><strong>Actualiza el agente local</strong></span>
+                                                </div>
+                                                <p className="text-xs text-amber-600 mt-1">
+                                                    Esta plantilla necesita metadata de tama&ntilde;o de etiqueta. Instala el agente {PRINT_AGENT_VERSION} para evitar impresiones con formato incorrecto.
+                                                </p>
+                                                <div className="mt-3 flex flex-wrap items-center gap-2">
+                                                    <a
+                                                        href={PRINT_AGENT_DOWNLOAD_URL}
+                                                        download
+                                                        className="inline-flex h-8 items-center justify-center rounded-md border border-amber-300 bg-white px-3 text-xs font-medium text-amber-700 shadow-xs transition-colors hover:bg-amber-100"
+                                                    >
+                                                        <Download className="w-3.5 h-3.5 mr-1" />
+                                                        Descargar actualizaci&oacute;n
+                                                    </a>
+                                                    <a
+                                                        href={PRINT_AGENT_PORTABLE_URL}
+                                                        download
+                                                        className="inline-flex h-8 items-center justify-center rounded-md border border-amber-200 bg-amber-50 px-3 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-100"
+                                                    >
+                                                        ZIP portable
+                                                    </a>
+                                                    <Button variant="ghost" size="sm" onClick={checkAgent} className="h-8 text-amber-700 hover:bg-amber-100">
+                                                        Probar de nuevo
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        ) : printerDetected ? (
                                             <div className="flex items-center gap-2">
                                                 <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
                                                 <span>Impresora lista</span>
@@ -662,6 +764,8 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                     <p className="text-xs text-amber-600 mt-0.5">{thermalLayout?.message || 'Configura la salida 3nStar'}</p>
                                 ) : requiresAgent && !canPrintWithAgent ? (
                                     <p className="text-xs text-amber-600 mt-0.5">Instala el agente y conecta la impresora</p>
+                                ) : requiresAgent && !agentSupportsJobMetadata ? (
+                                    <p className="text-xs text-amber-600 mt-0.5">Actualiza el agente local para respetar el tama&ntilde;o de etiqueta</p>
                                 ) : (
                                     <p className="text-xs text-green-600 mt-0.5">Listo para imprimir</p>
                                 )}
@@ -692,6 +796,8 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                         ? 'Instala o inicia el agente local de impresion'
                                         : requiresAgent && agentOnline === true && !printerDetected
                                         ? 'Conecta la impresora USB para imprimir'
+                                        : requiresAgent && !agentSupportsJobMetadata
+                                        ? `Actualiza el agente local a la version ${PRINT_AGENT_VERSION}`
                                         : undefined
                                 }
                             >

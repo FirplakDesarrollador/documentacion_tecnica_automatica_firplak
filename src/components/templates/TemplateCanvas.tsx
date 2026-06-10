@@ -3784,7 +3784,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                         <div className="mt-3 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
                                             <div className="grid grid-cols-3 gap-2">
                                                 <div>
-                                                    <Label className="text-[10px] font-bold text-slate-500 mb-1 block uppercase">Ancho fisico</Label>
+                                                    <Label className="text-[10px] font-bold text-slate-500 mb-1 block uppercase">Ancho impresion</Label>
                                                     <Input
                                                         type="number"
                                                         step="0.1"
@@ -3797,7 +3797,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                                     />
                                                 </div>
                                                 <div>
-                                                    <Label className="text-[10px] font-bold text-slate-500 mb-1 block uppercase">Largo fisico</Label>
+                                                    <Label className="text-[10px] font-bold text-slate-500 mb-1 block uppercase">Largo impresion</Label>
                                                     <Input
                                                         type="number"
                                                         step="0.1"

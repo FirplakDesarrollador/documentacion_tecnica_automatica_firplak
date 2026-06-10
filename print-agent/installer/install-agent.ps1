@@ -109,7 +109,7 @@ try {
 $UninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\SamiGenPrintAgent"
 New-Item -Path $UninstallKey -Force | Out-Null
 Set-ItemProperty -Path $UninstallKey -Name "DisplayName" -Value $AppName
-Set-ItemProperty -Path $UninstallKey -Name "DisplayVersion" -Value "1.0.3"
+Set-ItemProperty -Path $UninstallKey -Name "DisplayVersion" -Value "1.0.5"
 Set-ItemProperty -Path $UninstallKey -Name "Publisher" -Value "SamiGen"
 Set-ItemProperty -Path $UninstallKey -Name "InstallLocation" -Value $InstallDir
 Set-ItemProperty -Path $UninstallKey -Name "UninstallString" -Value "`"$InstallDir\uninstall-agent.cmd`""

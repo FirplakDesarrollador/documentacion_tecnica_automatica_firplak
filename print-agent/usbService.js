@@ -8,6 +8,7 @@ const KNOWN_PRINTERS = [
 ];
 
 const TMP_DIR = path.join(os.tmpdir(), 'samigen-agent');
+const POWERSHELL_TIMEOUT_MS = 15000;
 
 function ensureTmpDir() {
     if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
@@ -70,7 +71,7 @@ async function runPsCapture(script) {
         const { stdout } = await new Promise((resolve, reject) => {
             exec(
                 `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${tmpFile}"`,
-                { timeout: 60000, maxBuffer: 50 * 1024 * 1024 },
+                { timeout: POWERSHELL_TIMEOUT_MS, maxBuffer: 50 * 1024 * 1024 },
                 (err, stdout, stderr) => {
                     if (err) reject(Object.assign(err, { stdout, stderr }));
                     else resolve({ stdout, stderr });

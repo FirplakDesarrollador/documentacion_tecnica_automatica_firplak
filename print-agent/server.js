@@ -90,32 +90,54 @@ app.post('/print', upload.single('file'), async (req, res) => {
         try {
             job = JSON.parse(req.body.job);
         } catch {
+            try { fs.unlinkSync(filePath); } catch {}
             return res.status(400).json({ error: 'Job de impresion invalido' });
         }
     }
 
     console.log(`[print] Recibido: ${originalName} (${copies} copias, color=${colorMode}, job=${job ? 'si' : 'no'})`);
 
+    let responded = false;
+    const AGENT_PRINT_TIMEOUT_MS = 45000;
+    const timeout = setTimeout(() => {
+        if (!responded) {
+            responded = true;
+            console.error(`[print] Timeout: la impresion de ${originalName} tardo mas de ${AGENT_PRINT_TIMEOUT_MS / 1000}s`);
+            try { fs.unlinkSync(filePath); } catch {}
+            res.status(504).json({ error: `Timeout: la impresora no respondio en ${AGENT_PRINT_TIMEOUT_MS / 1000} segundos. Revisa que este encendida y conectada.` });
+        }
+    }, AGENT_PRINT_TIMEOUT_MS);
+
     try {
         const ext = path.extname(originalName).toLowerCase();
         if (ext !== '.jpg' && ext !== '.jpeg' && ext !== '.png') {
+            clearTimeout(timeout);
+            responded = true;
             return res.status(400).json({ error: `Formato no soportado: ${ext}. Usa JPG o PNG.` });
         }
 
         console.log(`[print] Convirtiendo imagen a TSPL...`);
         const { tspl, metadata } = await convertImageToTspl(filePath, copies, { colorMode, job });
-        console.log(`[print] Enviando trabajo único TSPL con ${copies} copia(s)...`);
+        console.log(`[print] Enviando trabajo unico TSPL con ${copies} copia(s)...`);
         const result = await printViaUsb(tspl);
 
+        clearTimeout(timeout);
+        if (responded) return;
+
+        responded = true;
         console.log(`[print] Listo: ${copies} copia(s) enviada(s) via ${result.method}`);
         res.json({
             success: true,
-            message: `Impresión enviada: ${originalName} (${copies} copias)`,
+            message: `Impresion enviada: ${originalName} (${copies} copias)`,
             method: result.method,
             device: result.device,
             metadata,
         });
     } catch (err) {
+        clearTimeout(timeout);
+        if (responded) return;
+
+        responded = true;
         console.error('[print] Error:', err.message);
         res.status(500).json({ error: `Error al imprimir: ${err.message}` });
     } finally {
