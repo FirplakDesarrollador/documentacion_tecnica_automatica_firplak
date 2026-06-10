@@ -33,6 +33,11 @@ import { hydrateTemplateElements } from '@/lib/export/exportUtils'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
 import type { ProductPayload } from '@/lib/engine/translator'
 import { PIXELS_PER_MM } from '@/lib/constants'
+import {
+    PRINT_TARGET_3NSTAR,
+    normalizePrintTarget,
+    resolveThermalPrintLayout,
+} from '@/lib/printLayout'
 import { getFilteredProducts, resolvePrintAssetsAction, resolveZoneHomeEnForPrintAction } from '@/app/print/actions'
 import { defaultPrintSettings, normalizePrintColorMode, PRINT_SETTINGS_KEY } from '@/lib/printSettings'
 
@@ -137,6 +142,19 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         [templates, selectedTemplateId]
     )
 
+    const selectedPrintTarget = normalizePrintTarget(selectedTemplate?.print_target)
+    const requiresAgent = selectedPrintTarget === PRINT_TARGET_3NSTAR
+    const thermalLayout = useMemo(() => {
+        if (!selectedTemplate || !requiresAgent) return null
+        return resolveThermalPrintLayout({
+            designWidthMm: selectedTemplate.width_mm,
+            designHeightMm: selectedTemplate.height_mm,
+            mediaWidthMm: selectedTemplate.media_width_mm,
+            mediaLengthMm: selectedTemplate.media_length_mm,
+            mediaGapMm: selectedTemplate.media_gap_mm,
+        })
+    }, [requiresAgent, selectedTemplate])
+
     const requiredFields = useMemo(
         () => selectedTemplate ? getTemplateRequiredFields(selectedTemplate.elements_json) : [],
         [selectedTemplate]
@@ -178,6 +196,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
 
     const filteredOutCount = products.length - validProducts.length
     const canPrintWithAgent = agentOnline === true && printerDetected
+    const canPrintSelected = !requiresAgent || (canPrintWithAgent && thermalLayout?.ok === true)
 
     useEffect(() => {
         setSelectedIds([])
@@ -239,7 +258,11 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         const widthPx = Math.round((selectedTemplate.width_mm || 200) * PIXELS_PER_MM)
         const heightPx = Math.round((selectedTemplate.height_mm || 100) * PIXELS_PER_MM)
 
-        if (printerConfig.agentUrl) {
+        if (requiresAgent) {
+            if (!thermalLayout?.ok) {
+                throw new Error(thermalLayout?.message || 'La plantilla no tiene una salida 3nStar valida')
+            }
+
             const imageResponse = await fetch('/api/print', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -269,6 +292,14 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
             formData.append('file', new File([blob], `${product.code || 'etiqueta'}.jpg`, { type: 'image/jpeg' }))
             formData.append('copies', String(copies))
             formData.append('colorMode', getSavedPrintColorMode())
+            formData.append('job', JSON.stringify({
+                printTarget: PRINT_TARGET_3NSTAR,
+                designWidthMm: selectedTemplate.width_mm,
+                designHeightMm: selectedTemplate.height_mm,
+                mediaWidthMm: thermalLayout.mediaWidthMm,
+                mediaLengthMm: thermalLayout.mediaLengthMm,
+                mediaGapMm: thermalLayout.mediaGapMm,
+            }))
 
             const agentResponse = await fetch(`${printerConfig.agentUrl}/print`, {
                 method: 'POST',
@@ -306,6 +337,15 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         if (!blob || blob.size <= 0) {
             throw new Error(`Documento vacío para ${product.code}`)
         }
+
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `${product.code || 'documento'}.${printFormat}`
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 
         return true
     }
@@ -363,7 +403,10 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                 </div>
                 {selectedTemplate && (
                     <span className="text-xs text-slate-400">
-                        {selectedTemplate.width_mm}&times;{selectedTemplate.height_mm}mm &middot; {selectedTemplate.orientation}
+                        {selectedTemplate.width_mm}&times;{selectedTemplate.height_mm}mm
+                        {requiresAgent && thermalLayout?.ok
+                            ? ` - 3nStar ${thermalLayout.mediaWidthMm}x${thermalLayout.mediaLengthMm}mm - ${thermalLayout.message}`
+                            : ` - ${selectedTemplate.orientation}`}
                     </span>
                 )}
             </div>
@@ -608,14 +651,16 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                     {' \u00b7 '}
                                     {copies} copia{copies > 1 ? 's' : ''} c/u
                                     {' \u00b7 '}
-                                    {printFormat.toUpperCase()}
+                                    {requiresAgent ? '3NSTAR' : printFormat.toUpperCase()}
                                 </p>
                                 {hasWarnings ? (
                                     <p className="text-xs text-amber-600 flex items-center gap-1 mt-0.5">
                                         <XCircle className="w-3 h-3" />
                                         {warnings.filter(w => w.issues.length > 0).length} con datos incompletos
                                     </p>
-                                ) : !canPrintWithAgent ? (
+                                ) : requiresAgent && thermalLayout?.ok !== true ? (
+                                    <p className="text-xs text-amber-600 mt-0.5">{thermalLayout?.message || 'Configura la salida 3nStar'}</p>
+                                ) : requiresAgent && !canPrintWithAgent ? (
                                     <p className="text-xs text-amber-600 mt-0.5">Instala el agente y conecta la impresora</p>
                                 ) : (
                                     <p className="text-xs text-green-600 mt-0.5">Listo para imprimir</p>
@@ -637,13 +682,15 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                 disabled={
                                     isPrinting ||
                                     selectedProducts.length === 0 ||
-                                    !canPrintWithAgent
+                                    !canPrintSelected
                                 }
                                 className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
                                 title={
-                                    agentOnline === false
+                                    requiresAgent && thermalLayout?.ok !== true
+                                        ? thermalLayout?.message
+                                        : requiresAgent && agentOnline === false
                                         ? 'Instala o inicia el agente local de impresion'
-                                        : agentOnline === true && !printerDetected
+                                        : requiresAgent && agentOnline === true && !printerDetected
                                         ? 'Conecta la impresora USB para imprimir'
                                         : undefined
                                 }

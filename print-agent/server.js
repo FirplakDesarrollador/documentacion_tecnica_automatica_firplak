@@ -36,6 +36,7 @@ app.get('/health', async (_req, res) => {
             status: 'ok',
             name: packageJson.name,
             version: packageJson.version,
+            capabilities: { jobMetadata: true },
             endpoint: `http://127.0.0.1:${PORT}`,
             printerDetected: printers.length > 0,
             printerName: printers.length > 0 ? printers[0].known : null,
@@ -84,8 +85,16 @@ app.post('/print', upload.single('file'), async (req, res) => {
     const originalName = req.file.originalname;
     const copies = parseInt(req.body.copies, 10) || 1;
     const colorMode = req.body.colorMode === 'inverted' ? 'inverted' : 'normal';
+    let job = null;
+    if (req.body.job) {
+        try {
+            job = JSON.parse(req.body.job);
+        } catch {
+            return res.status(400).json({ error: 'Job de impresion invalido' });
+        }
+    }
 
-    console.log(`[print] Recibido: ${originalName} (${copies} copias, color=${colorMode})`);
+    console.log(`[print] Recibido: ${originalName} (${copies} copias, color=${colorMode}, job=${job ? 'si' : 'no'})`);
 
     try {
         const ext = path.extname(originalName).toLowerCase();
@@ -94,7 +103,7 @@ app.post('/print', upload.single('file'), async (req, res) => {
         }
 
         console.log(`[print] Convirtiendo imagen a TSPL...`);
-        const tspl = await convertImageToTspl(filePath, copies, { colorMode });
+        const { tspl, metadata } = await convertImageToTspl(filePath, copies, { colorMode, job });
         console.log(`[print] Enviando trabajo único TSPL con ${copies} copia(s)...`);
         const result = await printViaUsb(tspl);
 
@@ -104,6 +113,7 @@ app.post('/print', upload.single('file'), async (req, res) => {
             message: `Impresión enviada: ${originalName} (${copies} copias)`,
             method: result.method,
             device: result.device,
+            metadata,
         });
     } catch (err) {
         console.error('[print] Error:', err.message);

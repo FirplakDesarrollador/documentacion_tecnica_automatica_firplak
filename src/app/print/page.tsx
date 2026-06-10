@@ -10,7 +10,7 @@ export default async function PrintPage() {
     await requirePagePermission('module:print')
 
     const templates = await dbQuery(
-        `SELECT id, name, document_type, width_mm, height_mm, orientation, active, elements_json, export_formats, export_filename_format, data_source, template_font_family, brand_scope, private_label_client_name
+        `SELECT id, name, document_type, width_mm, height_mm, orientation, print_target, media_width_mm, media_length_mm, media_gap_mm, active, elements_json, export_formats, export_filename_format, data_source, template_font_family, brand_scope, private_label_client_name
          FROM public.plantillas_doc_tec WHERE active = true ORDER BY created_at ASC`
     ) || []
 

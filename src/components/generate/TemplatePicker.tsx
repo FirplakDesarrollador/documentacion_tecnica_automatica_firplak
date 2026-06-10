@@ -22,6 +22,10 @@ export interface TemplateOption {
     width_mm: number
     height_mm: number
     orientation: string
+    print_target?: string
+    media_width_mm?: number | null
+    media_length_mm?: number | null
+    media_gap_mm?: number | null
     active: boolean
     elements_json: string
     export_formats?: string
@@ -117,7 +121,9 @@ export function TemplatePicker({ templates, selectedTemplateId, onSelect, update
                                 )}
                             </div>
                             <span className="text-xs text-slate-400 pl-0">
-                                {t.document_type} · {t.width_mm}×{t.height_mm}mm · {t.orientation}
+                                {t.document_type} · {t.width_mm}×{t.height_mm}mm · {t.print_target === 'agent_3nstar' && t.media_width_mm && t.media_length_mm
+                                    ? `3nStar ${t.media_width_mm}×${t.media_length_mm}mm`
+                                    : t.orientation}
                             </span>
                         </DropdownMenuRadioItem>
                     ))}

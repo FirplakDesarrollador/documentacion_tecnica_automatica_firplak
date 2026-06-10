@@ -22,6 +22,9 @@ interface TemplateRow {
   width_mm: number
   height_mm: number
   orientation: string
+  print_target?: string
+  media_width_mm?: number | null
+  media_length_mm?: number | null
   version: string
   active: boolean
   data_source: string
@@ -80,7 +83,10 @@ export default async function TemplatesPage() {
                                     <TableCell className="font-medium">{template.name}</TableCell>
                                     <TableCell className="capitalize">{template.document_type}</TableCell>
                                     <TableCell>
-                                        {template.width_mm}mm x {template.height_mm}mm ({template.orientation})
+                                        {template.width_mm}mm x {template.height_mm}mm
+                                        {template.print_target === 'agent_3nstar' && template.media_width_mm && template.media_length_mm
+                                            ? ` (3nStar ${template.media_width_mm}x${template.media_length_mm}mm)`
+                                            : ` (${template.orientation})`}
                                     </TableCell>
                                     <TableCell>
                                         <Badge className="bg-slate-50 text-slate-500 ring-1 ring-slate-500/10 hover:bg-slate-50 text-[10px] px-2 py-0.5 font-bold uppercase tracking-tight">{formatVersion(template.version)}</Badge>

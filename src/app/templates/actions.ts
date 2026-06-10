@@ -4,6 +4,7 @@
 import { dbQuery } from "@/lib/supabase"
 import { revalidatePath } from "next/cache"
 import { normalizeTemplateFontFamily } from "@/lib/templates/templateTypography"
+import { DEFAULT_MEDIA_GAP_MM, normalizePrintTarget, type PrintTarget } from "@/lib/printLayout"
 import { assertRole } from '@/utils/auth/access'
 
 async function assertAdminAccess() {
@@ -32,6 +33,16 @@ function bumpVersion(current: unknown): string {
     return `${major}.${minor}.${patch}`
 }
 
+function sqlNullableNumber(value: unknown): string {
+    const parsed = typeof value === 'number' ? value : Number(String(value ?? '').trim())
+    return Number.isFinite(parsed) && parsed > 0 ? String(parsed) : 'NULL'
+}
+
+function sqlRequiredNumber(value: unknown, fallback: number): string {
+    const parsed = typeof value === 'number' ? value : Number(String(value ?? '').trim())
+    return Number.isFinite(parsed) && parsed > 0 ? String(parsed) : String(fallback)
+}
+
 export async function createTemplate(data: {
     name: string
     width_mm: number
@@ -40,6 +51,10 @@ export async function createTemplate(data: {
     template_font_family?: string
     brand_scope?: 'firplak' | 'private_label'
     private_label_client_name?: string | null
+    print_target?: PrintTarget
+    media_width_mm?: number | null
+    media_length_mm?: number | null
+    media_gap_mm?: number | null
 }) {
     await assertAdminAccess()
 
@@ -48,6 +63,7 @@ export async function createTemplate(data: {
         const brandScope = data.data_source === 'core_firplak' && data.brand_scope === 'private_label' ? 'private_label' : 'firplak'
         const plc = data.private_label_client_name ? String(data.private_label_client_name).trim() : ''
         const templateFontFamily = normalizeTemplateFontFamily(data.template_font_family)
+        const printTarget = normalizePrintTarget(data.print_target)
 
         if (brandScope === 'private_label' && !plc) {
             return { success: false, error: 'Cliente marca propia requerido' }
@@ -63,6 +79,10 @@ export async function createTemplate(data: {
                 elements_json,
                 active,
                 version,
+                print_target,
+                media_width_mm,
+                media_length_mm,
+                media_gap_mm,
                 data_source,
                 template_font_family,
                 brand_scope,
@@ -77,6 +97,10 @@ export async function createTemplate(data: {
                 '[]',
                 true,
                 '1.0.0',
+                '${printTarget}',
+                ${sqlNullableNumber(data.media_width_mm)},
+                ${sqlNullableNumber(data.media_length_mm)},
+                ${sqlRequiredNumber(data.media_gap_mm, DEFAULT_MEDIA_GAP_MM)},
                 '${data.data_source.replace(/'/g, "''")}',
                 '${templateFontFamily}',
                 '${brandScope}',
@@ -127,6 +151,10 @@ export async function duplicateTemplate(id: string, newName: string, dataSource:
                 template_font_family,
                 export_formats,
                 export_filename_format,
+                print_target,
+                media_width_mm,
+                media_length_mm,
+                media_gap_mm,
                 brand_scope,
                 private_label_client_name
             )
@@ -144,6 +172,10 @@ export async function duplicateTemplate(id: string, newName: string, dataSource:
                 '${originalTemplateFontFamily}',
                 ${original.export_formats ? `'${original.export_formats.replace(/'/g, "''")}'` : 'NULL'},
                 ${original.export_filename_format ? `'${original.export_filename_format.replace(/'/g, "''")}'` : 'NULL'},
+                '${normalizePrintTarget(original.print_target)}',
+                ${sqlNullableNumber(original.media_width_mm)},
+                ${sqlNullableNumber(original.media_length_mm)},
+                ${sqlRequiredNumber(original.media_gap_mm, DEFAULT_MEDIA_GAP_MM)},
                 '${originalBrandScope}',
                 ${originalPrivateLabelClientName ? `'${originalPrivateLabelClientName.replace(/'/g, "''")}'` : 'NULL'}
             )
@@ -168,6 +200,10 @@ export async function updateTemplate(id: string, data: {
     template_font_family?: string
     brand_scope?: 'firplak' | 'private_label'
     private_label_client_name?: string | null
+    print_target?: PrintTarget
+    media_width_mm?: number | null
+    media_length_mm?: number | null
+    media_gap_mm?: number | null
 }) {
     await assertAdminAccess()
 
@@ -183,6 +219,22 @@ export async function updateTemplate(id: string, data: {
         const widthClause = data.width_mm ? `, width_mm=${data.width_mm} ` : ''
         const heightClause = data.height_mm ? `, height_mm=${data.height_mm} ` : ''
         const brandScopeClause = data.brand_scope ? `, brand_scope='${data.brand_scope}' ` : ''
+        const printTargetClause =
+            data.print_target !== undefined
+                ? `, print_target='${normalizePrintTarget(data.print_target)}' `
+                : ''
+        const mediaWidthClause =
+            data.media_width_mm !== undefined
+                ? `, media_width_mm=${sqlNullableNumber(data.media_width_mm)} `
+                : ''
+        const mediaLengthClause =
+            data.media_length_mm !== undefined
+                ? `, media_length_mm=${sqlNullableNumber(data.media_length_mm)} `
+                : ''
+        const mediaGapClause =
+            data.media_gap_mm !== undefined
+                ? `, media_gap_mm=${sqlRequiredNumber(data.media_gap_mm, DEFAULT_MEDIA_GAP_MM)} `
+                : ''
 
         const plcNormalized =
             data.private_label_client_name !== undefined && data.private_label_client_name !== null
@@ -227,6 +279,10 @@ export async function updateTemplate(id: string, data: {
                 ${filenameClause} 
                 ${sourceClause}
                 ${templateFontClause}
+                ${printTargetClause}
+                ${mediaWidthClause}
+                ${mediaLengthClause}
+                ${mediaGapClause}
                 ${brandScopeClause}
                 ${data.brand_scope === 'firplak' ? forcePlcNullClause : plcClause}
                 ${versionClause}

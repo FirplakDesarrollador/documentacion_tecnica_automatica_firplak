@@ -14,6 +14,15 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { cn } from '@/lib/utils'
 import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { PIXELS_PER_MM } from '@/lib/constants'
+import {
+    DEFAULT_MEDIA_GAP_MM,
+    PRINT_TARGET_3NSTAR,
+    PRINT_TARGET_STANDARD,
+    normalizePrintTarget,
+    resolveThermalPrintLayout,
+    suggestThreeNStarMedia,
+    type PrintTarget,
+} from '@/lib/printLayout'
 import { hydrateText, getVariableValue } from '@/lib/export/exportUtils'
 import { getClientsAction } from '@/app/configuration/clients/actions'
 import { resolveZoneHomeEnAction } from '@/app/configuration/glossary/actions'
@@ -268,6 +277,10 @@ type TemplateData = {
     export_filename_format?: string
     brand_scope?: string
     private_label_client_name?: string
+    print_target?: string
+    media_width_mm?: number | string | null
+    media_length_mm?: number | string | null
+    media_gap_mm?: number | string | null
 } & Record<string, unknown>
 
 type DatasetSchemaColumn = Record<string, unknown> & {
@@ -1608,6 +1621,16 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     // Global settings states
     const [templateName, setTemplateName] = useState(template.name || '')
     const [dataSource, setDataSource] = useState(template.data_source || 'core_firplak')
+    const [printTarget, setPrintTarget] = useState<PrintTarget>(normalizePrintTarget(template.print_target))
+    const [mediaWidthMm, setMediaWidthMm] = useState(
+        template.media_width_mm != null ? String(template.media_width_mm) : ''
+    )
+    const [mediaLengthMm, setMediaLengthMm] = useState(
+        template.media_length_mm != null ? String(template.media_length_mm) : ''
+    )
+    const [mediaGapMm, setMediaGapMm] = useState(
+        template.media_gap_mm != null ? String(template.media_gap_mm) : String(DEFAULT_MEDIA_GAP_MM)
+    )
     const [templateFontFamily, setTemplateFontFamily] = useState<TemplateFontFamily>(
         normalizeTemplateFontFamily(template.template_font_family)
     )
@@ -1627,6 +1650,17 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         template?.private_label_client_name ? String(template.private_label_client_name) : ''
     )
     const [availableClients, setAvailableClients] = useState<{ id?: string | number, name: string }[]>([])
+
+    const thermalLayout = useMemo(() => {
+        if (printTarget !== PRINT_TARGET_3NSTAR) return null
+        return resolveThermalPrintLayout({
+            designWidthMm: template.width_mm,
+            designHeightMm: template.height_mm,
+            mediaWidthMm,
+            mediaLengthMm,
+            mediaGapMm,
+        })
+    }, [mediaGapMm, mediaLengthMm, mediaWidthMm, printTarget, template.height_mm, template.width_mm])
 
     // Nota: la sincronización de datasets ↔ plantillas se gestiona desde `/datasets`.
 
@@ -2232,6 +2266,11 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             }
         }
 
+        if (printTarget === PRINT_TARGET_3NSTAR && (!thermalLayout || !thermalLayout.ok)) {
+            toast.error(thermalLayout?.message || 'Configura el tamano fisico de la etiqueta.')
+            return
+        }
+
         setIsSaving(true)
         const res = await updateTemplate(template.id, {
             name: templateName,
@@ -2240,6 +2279,10 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             elements_json: JSON.stringify(elements),
             export_formats: exportFormats.join(','),
             export_filename_format: exportFilenameFormat,
+            print_target: printTarget,
+            media_width_mm: printTarget === PRINT_TARGET_3NSTAR ? Number(mediaWidthMm) : null,
+            media_length_mm: printTarget === PRINT_TARGET_3NSTAR ? Number(mediaLengthMm) : null,
+            media_gap_mm: printTarget === PRINT_TARGET_3NSTAR ? Number(mediaGapMm) : DEFAULT_MEDIA_GAP_MM,
             brand_scope: dataSource === 'core_firplak' ? brandScope : 'firplak',
             private_label_client_name:
                 dataSource === 'core_firplak' && brandScope === 'private_label'
@@ -3712,6 +3755,82 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                         }}
                                         className="h-9 text-sm border-indigo-50 focus:border-indigo-200"
                                     />
+                                </div>
+
+                                <div>
+                                    <Label className="text-[11px] font-bold text-slate-500 mb-1.5 block uppercase">Salida de Impresion</Label>
+                                    <select
+                                        className="flex h-9 w-full rounded-md border border-indigo-50 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus:border-indigo-200"
+                                        value={printTarget}
+                                        onChange={(e) => {
+                                            const next = normalizePrintTarget(e.target.value)
+                                            setPrintTarget(next)
+                                            if (next === PRINT_TARGET_3NSTAR && (!mediaWidthMm || !mediaLengthMm)) {
+                                                const suggested = suggestThreeNStarMedia(template.width_mm, template.height_mm)
+                                                if (suggested) {
+                                                    setMediaWidthMm(String(suggested.widthMm))
+                                                    setMediaLengthMm(String(suggested.lengthMm))
+                                                }
+                                                if (!mediaGapMm) setMediaGapMm(String(DEFAULT_MEDIA_GAP_MM))
+                                            }
+                                            setIsModified(true)
+                                        }}
+                                    >
+                                        <option value={PRINT_TARGET_STANDARD}>Impresion estandar</option>
+                                        <option value={PRINT_TARGET_3NSTAR}>Agente 3nStar</option>
+                                    </select>
+
+                                    {printTarget === PRINT_TARGET_3NSTAR && (
+                                        <div className="mt-3 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                            <div className="grid grid-cols-3 gap-2">
+                                                <div>
+                                                    <Label className="text-[10px] font-bold text-slate-500 mb-1 block uppercase">Ancho fisico</Label>
+                                                    <Input
+                                                        type="number"
+                                                        step="0.1"
+                                                        value={mediaWidthMm}
+                                                        onChange={(e) => {
+                                                            setMediaWidthMm(e.target.value)
+                                                            setIsModified(true)
+                                                        }}
+                                                        className="h-8 text-sm bg-white"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <Label className="text-[10px] font-bold text-slate-500 mb-1 block uppercase">Largo fisico</Label>
+                                                    <Input
+                                                        type="number"
+                                                        step="0.1"
+                                                        value={mediaLengthMm}
+                                                        onChange={(e) => {
+                                                            setMediaLengthMm(e.target.value)
+                                                            setIsModified(true)
+                                                        }}
+                                                        className="h-8 text-sm bg-white"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <Label className="text-[10px] font-bold text-slate-500 mb-1 block uppercase">Gap</Label>
+                                                    <Input
+                                                        type="number"
+                                                        step="0.1"
+                                                        value={mediaGapMm}
+                                                        onChange={(e) => {
+                                                            setMediaGapMm(e.target.value)
+                                                            setIsModified(true)
+                                                        }}
+                                                        className="h-8 text-sm bg-white"
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className={cn(
+                                                "rounded-md border px-3 py-2 text-[11px] font-semibold",
+                                                thermalLayout?.ok ? "border-green-200 bg-green-50 text-green-700" : "border-amber-200 bg-amber-50 text-amber-700"
+                                            )}>
+                                                {thermalLayout?.message || 'Define el tamano fisico de la etiqueta.'}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
 
                                 <div>

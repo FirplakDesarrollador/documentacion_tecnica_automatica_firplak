@@ -123,6 +123,10 @@ model Template {
   width_mm       Float
   height_mm      Float
   orientation    String
+  print_target   String   @default("standard_browser")
+  media_width_mm Float?
+  media_length_mm Float?
+  media_gap_mm   Float    @default(3)
   data_source    String   @default("core_firplak")
   elements_json  String
   version        Int      @default(1)
