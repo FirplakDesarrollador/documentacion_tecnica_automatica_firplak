@@ -6,7 +6,6 @@ import { toast } from 'sonner'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
-import type { FamilyFilterOption } from '@/lib/data/filters'
 
 type RpcRow = {
   sku_complete: string
@@ -40,7 +39,7 @@ function summarizeRows(rows: RpcRow[]) {
   return { total: rows.length, withErrors, withWarnings }
 }
 
-export function MassImportClient({}: { families: FamilyFilterOption[] }) {
+export function MassImportClient() {
   return <ProductsImportClient />
 }
 

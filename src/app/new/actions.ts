@@ -12,22 +12,8 @@ import {
 } from '@/lib/engine/namingQueue'
 import { upsertVersionAction } from '@/app/rules/versions/actions'
 import {
-    checkVersionExistsAction as checkVersionExistsActionFromRules,
-} from '@/app/rules/versions/actions'
-import {
-    checkFamilyExists as checkFamilyExistsFromFamilies,
-    checkFamilyExistsAction as checkFamilyExistsActionFromFamilies,
-    upsertFamilyAction as upsertFamilyActionFromFamilies,
-    updateFamilyAction as updateFamilyActionFromFamilies,
-} from '@/app/families/actions'
-import {
     createClientAction as createClientActionFromConfiguration,
-    getClientsAction as getClientsActionFromConfiguration,
 } from '@/app/configuration/clients/actions'
-import {
-    resolveZoneHomeEnAction as resolveZoneHomeEnActionFromGlossary,
-} from '@/app/products/glossary/actions'
-import { revalidatePath } from 'next/cache'
 import { assertRole } from '@/utils/auth/access'
 
 async function assertAdminAccess() {
@@ -79,16 +65,6 @@ export async function translateAction(nameEs: string, ctx?: any, force: boolean 
 }
 
 /**
- * Resolves the English label for a given zone_home value using the Supabase glossary.
- * Client components (TemplateCanvas, PostSaveExportModal) should call this before
- * calling enrichProductDataWithIcons so that zone_home_en is correctly populated.
- * Returns null if no translation is found (productUtils will use its built-in fallback map).
- */
-export async function resolveZoneHomeEnAction(zoneEs: string | null | undefined): Promise<string | null> {
-    return await resolveZoneHomeEnActionFromGlossary(zoneEs)
-}
-
-/**
  * Re-fetches the fully composed product context from the DB/view (`v_ui_generate_list`).
  * Use this after create/update before export so fields like `sku_base` match the export module pipeline.
  */
@@ -98,22 +74,6 @@ export async function composeProductByIdAction(id: string) {
     if (!id) return null
     const { composeProductById } = await import('@/lib/engine/product_composer')
     return await composeProductById(id)
-}
-
-export async function checkFamilyExists(code: string) {
-    return await checkFamilyExistsFromFamilies(code)
-}
-
-export async function checkFamilyExistsAction(code: string) {
-    return await checkFamilyExistsActionFromFamilies(code)
-}
-
-export async function checkVersionExistsAction(versionCode: string) {
-    return await checkVersionExistsActionFromRules(versionCode)
-}
-
-export async function upsertFamilyAction(data: any) {
-    return await upsertFamilyActionFromFamilies(data)
 }
 
 export async function upsertColorAction(code: string, name: string) {
@@ -323,7 +283,10 @@ export async function createProductAction(data: any) {
     // (logo association is optional and does not affect private-label logic).
     if (isPrivate) {
         try {
-            await createClientAction(clientNameRaw, data.private_label_logo_id ? String(data.private_label_logo_id) : undefined)
+            await createClientActionFromConfiguration({
+                name: clientNameRaw,
+                logo_asset_id: data.private_label_logo_id ? String(data.private_label_logo_id) : null,
+            })
         } catch {
             // Non-blocking; private label still works without storing logo metadata
         }
@@ -401,116 +364,7 @@ export async function createProductAction(data: any) {
     return { ...data, final_name_es, final_name_en, id: result?.sku_id }
 }
 
-export async function updateFamilyAction(code: string, data: any) {
-    return await updateFamilyActionFromFamilies(code, data)
-}
 
-export async function translateProductsAction(ids?: string[], mode: 'missing' | 'repair' | 'all' = 'missing') {
-    await assertAdminAccess()
-
-    try {
-        let query = `
-            SELECT *
-            FROM public.v_ui_generate_list 
-            WHERE final_complete_name_es IS NOT NULL 
-        `
-        
-        if (ids && ids.length > 0) {
-            const idList = ids.map(id => `'${id}'`).join(',')
-            query += ` AND id IN (${idList})`
-        }
-
-        const rows = await dbQuery(query)
-        if (!rows || rows.length === 0) return { success: true, count: 0, message: "No se encontraron productos para procesar." }
-
-        const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
-        const allProducts = rows.map((row: any) => mapRowToComposedProduct(row))
-
-        // Filter products based on mode
-        const toTranslate = allProducts.filter((p: any) => {
-            if (mode === 'all') return true
-            if (mode === 'missing' && (!p.final_name_en || p.validation_status === 'auto_failed' || p.final_name_en.includes('Pendiente'))) return true
-            if (mode === 'repair') return true // For glossary engine, repair always re-runs
-            return false
-        })
-
-        if (toTranslate.length === 0) return { success: true, count: 0, message: "No hay productos que requieran traducción en este modo." }
-
-        let updatedCount = 0
-        const totalMissingTerms: string[] = []
-        const updatedProducts: { id: string, final_name_en: string }[] = []
-
-        for (const product of toTranslate) {
-            const baseResult = await computeNameWithNamingComponents(product as any, 'final_base_name')
-            const completeResult = await computeNameWithNamingComponents(product as any, 'final_complete_name')
-            const translatedName = completeResult.finalNameEn
-            const missingTerms = [...new Set([...baseResult.missingTerms, ...completeResult.missingTerms])]
-            const isValid = baseResult.isValid && completeResult.isValid
-
-            if (missingTerms.length > 0) {
-                totalMissingTerms.push(...missingTerms)
-            }
-
-            // Block update if there are critical missing terms with translate strategy
-            if (!isValid && missingTerms.length > 0) {
-                updatedProducts.push({ id: product.id, final_name_en: '' })
-                updatedCount++
-                continue
-            }
-
-            const status = isValid ? 'ready' : 'needs_review'
-            const safeBaseTranslated = baseResult.storableFinalNameEn.replace(/'/g, "''")
-            const safeCompleteTranslated = completeResult.storableFinalNameEn.replace(/'/g, "''")
-
-            await dbQuery(`
-                WITH sku AS (
-                    SELECT version_id FROM public.product_skus WHERE id = '${product.id}'
-                ),
-                upd_version AS (
-                    UPDATE public.product_versions v
-                    SET final_base_name_en = '${safeBaseTranslated}',
-                        validation_status = '${status}',
-                        updated_at = now()
-                    FROM sku
-                    WHERE v.id = sku.version_id
-                )
-                UPDATE public.product_skus
-                SET final_complete_name_en = '${safeCompleteTranslated}',
-                    updated_at = now()
-                WHERE id = '${product.id}'
-            `)
-
-            updatedCount++
-            updatedProducts.push({ id: product.id, final_name_en: completeResult.storableFinalNameEn || translatedName })
-        }
-
-        const uniqueMissing = Array.from(new Set(totalMissingTerms))
-
-        return { 
-            success: true, 
-            count: updatedCount, 
-            updatedProducts,
-            missingTerms: uniqueMissing,
-            message: uniqueMissing.length > 0 
-                ? `Proceso completado con ${uniqueMissing.length} términos faltantes en el glosario.` 
-                : `Se tradujeron ${updatedCount} productos correctamente.`
-        }
-
-    } catch (error) {
-        console.error("Translation Action Error:", error)
-        return { 
-            success: false, 
-            message: `Error en el motor de traducción: ${(error as Error).message || 'Error desconocido'}` 
-        }
-    }
-}
-
-
-export async function translateMissingProducts() {
-    await assertAdminAccess()
-
-    return translateProductsAction(undefined, 'missing')
-}
 
 export async function getUniquePropertiesAction() {
     await assertAdminAccess()
@@ -606,99 +460,6 @@ export async function checkProductExistsAction(code?: string, sapDesc?: string) 
     }
 }
 
-export async function getClientsAction() {
-    return await getClientsActionFromConfiguration()
-}
-
-export async function createClientAction(name: string, logoAssetId?: string) {
-    return await createClientActionFromConfiguration({
-        name,
-        logo_asset_id: logoAssetId || null,
-    })
-}
-export async function saveGlossaryTermsAction(terms: { term_es: string, term_en: string, category: string, priority: number }[]) {
-    await assertAdminAccess()
-
-    if (!terms || terms.length === 0) return { success: true }
-    
-    try {
-        const normalizeGlossaryInput = (t: { term_es: string, term_en: string, category: string, priority: number }) => {
-            const rawEs = String(t.term_es || '').trim().toUpperCase()
-            const rawEn = String(t.term_en || '').trim().toUpperCase()
-            let category = String(t.category || 'TECHNICAL_TERM').trim().toUpperCase()
-            let termEs = rawEs
-
-            const resolvedTypePrefix = 'RESOLVED_TYPE_MISSING:'
-            if (termEs.startsWith(resolvedTypePrefix)) {
-                termEs = termEs.slice(resolvedTypePrefix.length).trim()
-                category = 'RESOLVED_TYPE'
-            }
-
-            return { termEs, termEn: rawEn, category, priority: t.priority }
-        }
-
-        const glossaryTermsForStale: { termEs: string; category?: string | null }[] = []
-
-        for (const t of terms) {
-            const n = normalizeGlossaryInput(t)
-            glossaryTermsForStale.push({ termEs: n.termEs, category: n.category })
-            await dbQuery(`
-                INSERT INTO public.glossary (term_es, term_en, category, priority, active)
-                VALUES ('${n.termEs.replace(/'/g, "''")}', '${n.termEn.replace(/'/g, "''")}', '${n.category.replace(/'/g, "''")}', ${n.priority}, true)
-                ON CONFLICT (term_es) DO UPDATE 
-                SET term_en = EXCLUDED.term_en,
-                    category = EXCLUDED.category,
-                    priority = EXCLUDED.priority;
-            `)
-        }
-        resetGlossaryCache()
-        await markNamingStaleForGlossaryTerms(glossaryTermsForStale, 'glossary_update')
-        await processNamingJobsInline()
-        revalidatePath('/configuration/glossary')
-        revalidatePath('/pending')
-        revalidatePath('/')
-        return { success: true, message: `Se guardaron ${terms.length} términos correctamente.` }
-    } catch (error) {
-        console.error("Error saving glossary terms:", error)
-        return { success: false, message: `Error al guardar términos: ${(error as Error).message}` }
-    }
-}
-
-export async function getDiagnosticInfoAction() {
-    await assertAdminAccess()
-
-    const hasToken = !!process.env.SUPABASE_ACCESS_TOKEN;
-    const hasServiceKey = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
-    let rulesCount = 0;
-    let error = null;
-    try {
-        const res = await dbQuery(`SELECT count(*) as count FROM public.naming_components`);
-        rulesCount = res?.[0]?.count || 0;
-    } catch (e) {
-        error = (e as Error).message;
-    }
-    return { 
-        hasToken, 
-        hasServiceKey,
-        rulesCount, 
-        error, 
-        envKeys: Object.keys(process.env).filter(k => k.includes('SUPABASE')) 
-    };
-}
-
-
-export async function executeMassImportAction(payload: any[]) {
-    await assertAdminAccess()
-
-    try {
-        const query = `SELECT bulk_import_products('${JSON.stringify(payload).replace(/'/g, "''")}'::jsonb)`;
-        const res = await dbQuery(query);
-        return { success: true, data: res };
-    } catch (error) {
-        console.error('Error in executeMassImportAction:', error);
-        return { success: false, error: (error as Error).message };
-    }
-}
 
 export async function batchCreateColorVariantsAction(
     originalProduct: any,

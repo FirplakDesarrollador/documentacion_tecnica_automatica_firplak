@@ -1,5 +1,9 @@
 import { dbQuery } from '@/lib/supabase';
-import GlossaryClient from '@/app/products/glossary/GlossaryClient';
+import GlossaryClient from './GlossaryClient';
+
+type GlossaryCategoryRow = {
+  category: string | null
+}
 
 export default async function ConfigGlossaryPage() {
   const glossary = await dbQuery(`SELECT * FROM public.glossary ORDER BY term_es ASC`) || [];
@@ -9,8 +13,9 @@ export default async function ConfigGlossaryPage() {
     <div className="max-w-7xl mx-auto py-8">
       <GlossaryClient
         initialData={glossary}
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        initialCategories={(categories as any[]).map((c: { category: string }) => c.category)}
+        initialCategories={(categories as GlossaryCategoryRow[])
+          .map((c) => c.category)
+          .filter((category): category is string => typeof category === 'string' && category.length > 0)}
       />
     </div>
   );

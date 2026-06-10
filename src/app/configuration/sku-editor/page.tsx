@@ -1,6 +1,6 @@
 import { ChevronLeft, Edit3 } from 'lucide-react';
 import Link from 'next/link';
-import MassEditClient from '@/app/products/sku-editor/MassEditClient';
+import MassEditClient from './MassEditClient';
 
 export default function ConfigSkuEditorPage() {
   return (

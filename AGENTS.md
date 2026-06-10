@@ -46,6 +46,27 @@ Compact, repo-specific rules for future OpenCode sessions.
 - Secret hygiene: never hardcode keys/tokens; use `.env`.
 - For major milestones, suggest running `/archive-session` to sync learnings into KIs and `AI_README.md`.
 
+## Non-eludable code quality rules
+- **Zero escape-by-suppression:** do not add `eslint-disable`, `@ts-ignore`, `@ts-nocheck`, or broad `any` just to get past a failing task. Fix the cause or leave the case explicitly documented as pending and risky.
+- **No fake green:** if `src/` changed, do not call the task ready without running `npm run lint`, `npm run typecheck`, and `npm run check:diff`. If behavior, routes, rendering, or APIs changed, also run `npm run build`.
+- **Touched-file cleanup rule:** if you touch a file that already has suppressions, first try to remove at least one suppression in that same file before closing the task.
+- **Prefer typed extraction over patching inline:** before considering suppression, try helper functions, shared types, narrowing utilities, parser helpers, DOM typing wrappers, or moving logic into a typed utility.
+- **Derived-state over effect-state:** when `react-hooks/set-state-in-effect` appears, prefer `useMemo`, lazy initial state, event-driven updates, reducer logic, or a small typed helper. Do not silence the rule by default.
+- **UX-sensitive modules need minimal-surface changes:** `/generate`, `/templates/builder`, `/new`, `/assets`, filters, previews, and template persistence are high-risk. Do not mix large refactors with lint cleanup there.
+- **Explain real impact plainly:** if a cleanup only changes internal timing or typing, say so explicitly. If it could change visible behavior, pause and explain before editing.
+- **Legacy relocation rule:** when a module was already migrated (for example from `/products` to `/new`, `/configuration`, or `/mass-import`), do not create new bridges back to the old location.
+- **Dead code is a separate job:** do not delete suspected dead code only because it looks old. First verify whether visible UI, routes, actions, or imports still call it.
+
+## Programming style for this repo
+- **Program by responsibility, not by urgency:** keep data parsing, business rules, UI rendering, and side effects separated. Do not bury everything inside one component or action.
+- **Prefer small named helpers:** if a block needs explanation, it probably deserves extraction into a helper with a clear name instead of a large inline patch.
+- **Keep comments scarce but useful:** comments should explain business intent, non-obvious constraints, migration context, or why something must stay a certain way. Do not add comments that merely narrate the syntax.
+- **Name things by business meaning:** use names that reflect what the app does for the user, not just how the code happens to work.
+- **Make state predictable:** avoid duplicated state when a value can be derived. Prefer one source of truth, especially in filters, previews, template selection, and form flows.
+- **Prefer safe normalization layers:** when input can come from legacy JSON, DOM, query params, or external datasets, normalize it once in a typed helper instead of scattering defensive checks everywhere.
+- **Leave files more legible than you found them:** if a file is touched, improve local structure a bit when safe: remove dead branches nearby, group related helpers, reduce nesting, and align naming.
+- **Keep UI behavior stable while cleaning internals:** for sensitive screens, preserve the user flow first and improve structure second.
+
 ## Print agent rules
 - **Never start/restart the agent or dev server.** The user controls that via `npm run dev`. If the agent needs a restart after code changes, say: "Cambios hechos. Reinicia el agente corriendo `npm run dev` (detenlo con Ctrl+C y vuelve a iniciarlo)."
 - **Never start background processes** (Start-Process, cmd /c, etc.) to test code. Use `node -e` one-liners that run inline and return.

@@ -1,6 +1,6 @@
 import { Upload } from 'lucide-react';
 import Link from 'next/link';
-import { MassImportClient } from '@/app/products/mass-import/MassImportClient';
+import { MassImportClient } from './MassImportClient';
 
 export const dynamic = 'force-dynamic'
 
@@ -22,7 +22,7 @@ export default function MassImportPage() {
                     Importa productos faltantes a través de un archivo CSV o Excel.
                 </p>
             </div>
-            <MassImportClient families={[]} />
+            <MassImportClient />
         </div>
     )
 }

@@ -1,6 +1,6 @@
 import { ChevronLeft, DatabaseZap } from 'lucide-react';
 import Link from 'next/link';
-import ReferenceEditorTabs from '@/app/products/reference-editor/ReferenceEditorTabs';
+import ReferenceEditorTabs from './ReferenceEditorTabs';
 
 export default function ConfigReferenceEditorPage() {
   return (

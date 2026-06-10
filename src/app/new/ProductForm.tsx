@@ -12,7 +12,7 @@ import { createProductAction, getUniquePropertiesAction, parseProductCodeAction,
 import { getClientsAction } from '@/app/configuration/clients/actions'
 import { checkFamilyExistsAction } from '@/app/families/actions'
 import { checkVersionExistsAction } from '@/app/rules/versions/actions'
-import { saveGlossaryTermsAction } from '@/app/products/glossary/actions'
+import { saveGlossaryTermsAction } from '@/app/configuration/glossary/actions'
 import { Checkbox } from '@/components/ui/checkbox'
 import { getColorByNameAction, getRulesAction } from '@/app/rules/actions'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
@@ -20,10 +20,10 @@ import { ArrowLeft, FileBadge2, AlertTriangle, Sparkles, Building2, Image as Ima
 import { toast } from 'sonner'
 import { Product, Rule } from '@prisma/client'
 import { UploadAssetButton } from '@/components/assets/UploadAssetButton'
-import { ConfirmOverwriteModal } from '@/components/products/ConfirmOverwriteModal'
+import { ConfirmOverwriteModal } from './ConfirmOverwriteModal'
 import { IsometricAssociationDialog } from '@/components/assets/IsometricAssociationDialog'
-import { PostSaveExportModal } from '@/components/products/PostSaveExportModal'
-import { MultiColorCreationModal } from '@/components/products/MultiColorCreationModal'
+import { PostSaveExportModal } from './PostSaveExportModal'
+import { MultiColorCreationModal } from './MultiColorCreationModal'
 import { cn } from '@/lib/utils'
 
 interface ProductFormProps {

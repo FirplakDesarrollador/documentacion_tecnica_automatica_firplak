@@ -1,5 +1,4 @@
 'use client'
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { useState, useCallback, useMemo, useRef } from 'react'
 import { 
@@ -27,7 +26,39 @@ import { hydrateTemplateElements, hydrateText } from '@/lib/export/exportUtils'
 import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
 import { PIXELS_PER_MM } from '@/lib/constants'
-import { resolveZoneHomeEnAction } from '@/app/products/glossary/actions'
+import { resolveZoneHomeEnAction } from '@/app/configuration/glossary/actions'
+import type { ProductPayload } from '@/lib/engine/translator'
+
+type RuleSet = Record<string, unknown>[]
+type RuleProduct = Parameters<typeof evaluateProductRules>[0]
+type DirectoryPermissionMode = 'readwrite'
+type DirectoryPermissionState = 'granted' | 'denied' | 'prompt'
+
+type TemplateElement = {
+    required?: boolean
+    type?: string
+    content?: string
+}
+
+type BulkExportWritable = {
+    write: (data: Blob) => Promise<void>
+    close: () => Promise<void>
+    abort?: () => Promise<void>
+}
+
+type BulkExportDirectoryHandle = {
+    name: string
+    queryPermission?: (options: { mode: DirectoryPermissionMode }) => Promise<DirectoryPermissionState>
+    requestPermission?: (options: { mode: DirectoryPermissionMode }) => Promise<DirectoryPermissionState>
+    getFileHandle: (name: string, options: { create: boolean }) => Promise<{
+        createWritable: () => Promise<BulkExportWritable>
+    }>
+    removeEntry?: (name: string) => Promise<void>
+}
+
+type WindowWithDirectoryPicker = Window & typeof globalThis & {
+    showDirectoryPicker?: (options: { mode: DirectoryPermissionMode }) => Promise<BulkExportDirectoryHandle>
+}
 
 type ExportStatus = 'pending' | 'exporting' | 'done' | 'error'
 
@@ -40,7 +71,7 @@ interface ProductExportItem {
 interface BulkExportPanelProps {
     selectedProducts: GenerateProduct[]
     template: TemplateOption | null
-    rules: any[]
+    rules: RuleSet
     totalCount?: number
     exportFilterFamilies?: string[]
     exportFilterReferences?: string[]
@@ -62,8 +93,8 @@ async function exportOneProduct(
     product: GenerateProduct, 
     template: TemplateOption, 
     format: 'pdf' | 'jpg',
-    rules: any[],
-    directoryHandle: any | null = null
+    rules: RuleSet,
+    directoryHandle: BulkExportDirectoryHandle | null = null
 ): Promise<boolean> {
     if (product.is_exportable === false) {
         throw new Error(
@@ -73,9 +104,9 @@ async function exportOneProduct(
         )
     }
 
-    let elements: any[] = []
+    let elements: TemplateElement[] = []
     try {
-        elements = JSON.parse(template.elements_json || '[]')
+        elements = JSON.parse(template.elements_json || '[]') as TemplateElement[]
     } catch { elements = [] }
 
     const requiredFields = elements.filter(el => el.required === true)
@@ -88,18 +119,19 @@ async function exportOneProduct(
     const assetIds = elements
         .filter(el => (el.type === 'image' || el.type === 'dynamic_image') && el.content && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(el.content))
         .map(el => el.content)
+        .filter((content): content is string => typeof content === 'string')
     
     // 2. Resolver assets
     const assetMap = await resolveAssetsAction(assetIds)
 
     // 3. Preparar nombres derivados usando el motor de reglas en caliente (español + inglés)
-    const engineResult = evaluateProductRules(product as any, rules)
+    const engineResult = evaluateProductRules(product as unknown as RuleProduct, rules as Parameters<typeof evaluateProductRules>[1])
     const final_name_es = engineResult.finalNameEs || product.final_name_es || ''
     
     // Traducir a inglés en caliente usando el motor adaptativo
     const { translateProductToEnglish } = await import('@/lib/engine/translator')
     const productType = (product.product_type || 'MUEBLE').toUpperCase()
-    const translationResult = await translateProductToEnglish(product as any, productType, engineResult.activeVariableIds)
+    const translationResult = await translateProductToEnglish(product as ProductPayload, productType, engineResult.activeVariableIds)
     const final_name_en = translationResult.translatedName || product.final_name_en || ''
     
     const zoneEn = await resolveZoneHomeEnAction(product.zone_home as string | null | undefined)
@@ -117,7 +149,7 @@ async function exportOneProduct(
     const enriched = enrichProductDataWithIcons(updatedProduct, assetMap)
     
     // Obtenemos el nombre base y lo sanitizamos para evitar errores de sistema de archivos
-    const rawDownloadName = hydrateText((template as any).export_filename_format || '{sku_base}_{final_name_es}', enriched)
+    const rawDownloadName = hydrateText(template.export_filename_format || '{sku_base}_{final_name_es}', enriched)
     // Mantener el nombre completo diseñado; si el navegador/FS API no lo soporta en esa carpeta,
     // caemos a descarga del navegador (sin truncar) y además limpiamos archivos parciales.
     const downloadName = sanitizeFilename(rawDownloadName)
@@ -137,7 +169,7 @@ async function exportOneProduct(
             format, 
             width: widthPx, 
             height: heightPx,
-            templateFontFamily: (template as any).template_font_family,
+            templateFontFamily: template.template_font_family,
             filename: downloadName
         }),
     })
@@ -155,7 +187,7 @@ async function exportOneProduct(
 
     // 6. Guardar: En Carpeta o mediante Descarga Navegador
     if (directoryHandle) {
-        let writable: any | null = null
+        let writable: BulkExportWritable | null = null
         try {
             // Verificar permisos antes de intentar crear/escribir archivos.
             // Nota: si el usuario renombra/mueve/elimina la carpeta mientras exporta, el handle puede quedar inválido.
@@ -187,8 +219,8 @@ async function exportOneProduct(
                 await directoryHandle.removeEntry?.(fileName)
             } catch { /* noop */ }
 
-            const errName = String((err as any)?.name || '')
-            const errMessage = String((err as any)?.message || '')
+            const errName = err instanceof Error ? err.name : ''
+            const errMessage = err instanceof Error ? err.message : ''
             const looksMissing =
                 errName === 'NotFoundError' ||
                 /not\s*found/i.test(errMessage) ||
@@ -234,7 +266,7 @@ export function BulkExportPanel({
     )
     const [isRunning, setIsRunning] = useState(false)
     const [started, setStarted] = useState(false)
-    const [directoryHandle, setDirectoryHandle] = useState<any | null>(null)
+    const [directoryHandle, setDirectoryHandle] = useState<BulkExportDirectoryHandle | null>(null)
     const [directoryName, setDirectoryName] = useState<string | null>(null)
     const isCancelledRef = useRef(false)
     
@@ -245,7 +277,7 @@ export function BulkExportPanel({
     }, [template])
 
     const [selectedFormat, setSelectedFormat] = useState<'pdf' | 'jpg'>(
-        allowedFormats.length > 0 ? (allowedFormats[0] as any) : 'pdf'
+        allowedFormats[0] === 'jpg' ? 'jpg' : 'pdf'
     )
 
     const [exportMode, setExportMode] = useState<'selected' | 'all'>('selected')
@@ -283,7 +315,12 @@ export function BulkExportPanel({
 
     const handlePickDirectory = async () => {
         try {
-            const handle = await (window as any).showDirectoryPicker({
+            const pickerWindow = window as WindowWithDirectoryPicker
+            if (!pickerWindow.showDirectoryPicker) {
+                toast.error('Tu navegador no soporta seleccionar carpetas.')
+                return
+            }
+            const handle = await pickerWindow.showDirectoryPicker({
                 mode: 'readwrite'
             })
             setDirectoryHandle(handle)
@@ -544,7 +581,7 @@ export function BulkExportPanel({
                             {allowedFormats.map(f => (
                                 <button
                                     key={f}
-                                    onClick={() => setSelectedFormat(f as any)}
+                                    onClick={() => setSelectedFormat(f === 'jpg' ? 'jpg' : 'pdf')}
                                     className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${selectedFormat === f ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                                 >
                                     {f.toUpperCase()}

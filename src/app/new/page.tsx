@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, RotateCcw } from 'lucide-react'
-import { ProductForm } from '../products/ProductForm'
+import { ProductForm } from './ProductForm'
 
 export default function NewProductPage() {
     const router = useRouter()

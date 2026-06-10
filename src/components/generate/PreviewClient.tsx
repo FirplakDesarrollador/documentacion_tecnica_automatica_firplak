@@ -12,9 +12,7 @@ import { hydrateTemplateElements, hydrateText } from '@/lib/export/exportUtils'
 import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { PIXELS_PER_MM } from '@/lib/constants'
 import DocumentRenderSurface from '@/components/export/DocumentRenderSurface'
-import { resolveZoneHomeEnAction } from '@/app/products/glossary/actions'
-
-
+import { resolveZoneHomeEnAction } from '@/app/configuration/glossary/actions'
 
 interface PreviewClientProps {
     product: Record<string, unknown>
@@ -28,57 +26,124 @@ interface PreviewClientProps {
     }
 }
 
+type ExportFormat = 'pdf' | 'jpg'
+
+type PreviewProduct = Record<string, unknown> & {
+    code?: string
+    commercial_measure?: string | null
+    familia_code?: string | null
+    final_name_en?: string
+    final_name_es?: string
+    id?: string
+    inactive_reasons?: string[]
+    is_exportable?: boolean
+    is_external?: boolean
+    zone_home?: string | null
+}
+
+type TemplateElement = Record<string, unknown> & {
+    content?: string
+    dataField?: string
+    name?: string
+    type?: string
+}
+
+type HydratedPreviewElement = TemplateElement & {
+    resolvedSrc?: string
+}
+
+type PreflightReport = {
+    criticalErrors: string[]
+    missingAssets: string[]
+    missingVariables: string[]
+}
+
+const DEFAULT_EXPORT_FORMATS: ExportFormat[] = ['pdf', 'jpg']
+const DYNAMIC_ICON_KEYS = ['icon_rh', 'icon_canto', 'icon_bisagras', 'icon_riel', 'icon_group', 'icon_logo'] as const
+
+function isExportFormat(value: string): value is ExportFormat {
+    return value === 'pdf' || value === 'jpg'
+}
+
+function getAllowedExportFormats(template: TemplateOption | null): ExportFormat[] {
+    if (!template?.export_formats) return DEFAULT_EXPORT_FORMATS
+
+    const formats = template.export_formats
+        .split(',')
+        .map(format => format.trim().toLowerCase())
+        .filter(isExportFormat)
+
+    return formats.length > 0 ? formats : DEFAULT_EXPORT_FORMATS
+}
+
+function parseTemplateElements(elementsJson: string): TemplateElement[] {
+    try {
+        const parsed = JSON.parse(elementsJson)
+        return Array.isArray(parsed) ? parsed as TemplateElement[] : []
+    } catch {
+        return []
+    }
+}
+
+function normalizeHydratedElements(elements: Record<string, unknown>[]): HydratedPreviewElement[] {
+    return elements.map((element) => {
+        const resolvedSrc = typeof element.resolvedSrc === 'string' ? element.resolvedSrc : undefined
+        return {
+            ...(element as TemplateElement),
+            resolvedSrc,
+        }
+    })
+}
+
 export function PreviewClient({ product: rawProduct, templates, initialTemplateId, engineResult }: PreviewClientProps) {
     const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
         initialTemplateId ?? templates[0]?.id ?? null
     )
     const [isExporting, setIsExporting] = useState(false)
-    const [exportFormat, setExportFormat] = useState<'pdf' | 'jpg'>('pdf')
+    const [exportFormat, setExportFormat] = useState<ExportFormat>('pdf')
     const [assetMap, setAssetMap] = useState<Record<string, string>>({})
-    const [hydratedElements, setHydratedElements] = useState<Record<string, unknown>[]>([])
-    const [preflightReport, setPreflightReport] = useState<{
-        missingVariables: string[],
-        missingAssets: string[],
-        criticalErrors: string[]
-    }>({ missingVariables: [], missingAssets: [], criticalErrors: [] })
-    
-    // Enriquecer producto base (incluyendo el nombre final del motor de reglas)
-    const product = useMemo(() => {
-        const base = { ...rawProduct }
+    const [hydratedElements, setHydratedElements] = useState<HydratedPreviewElement[]>([])
+
+    const product = useMemo<PreviewProduct>(() => {
+        const base = rawProduct as PreviewProduct
         return {
             ...base,
             final_name_es: engineResult.finalNameEs || base.final_name_es,
-            final_name_en: engineResult.finalNameEn || base.final_name_en
+            final_name_en: engineResult.finalNameEn || base.final_name_en,
         }
     }, [rawProduct, engineResult])
 
     const selectedTemplate = useMemo(
-        () => templates.find(t => t.id === selectedTemplateId) ?? null,
+        () => templates.find(template => template.id === selectedTemplateId) ?? null,
         [templates, selectedTemplateId]
     )
 
-    const elements = useMemo(() => {
-        if (!selectedTemplate) return []
-        try {
-            return JSON.parse(selectedTemplate.elements_json || '[]')
-        } catch {
-            return []
-        }
-    }, [selectedTemplate])
-    
-    // Scale-to-fit logic (Fase 2)
+    const elements = useMemo(
+        () => selectedTemplate ? parseTemplateElements(selectedTemplate.elements_json || '[]') : [],
+        [selectedTemplate]
+    )
+
+    const allowedExportFormats = useMemo(
+        () => getAllowedExportFormats(selectedTemplate),
+        [selectedTemplate]
+    )
+
+    const effectiveExportFormat = useMemo<ExportFormat>(
+        () => allowedExportFormats.includes(exportFormat) ? exportFormat : allowedExportFormats[0] ?? 'pdf',
+        [allowedExportFormats, exportFormat]
+    )
+
     const containerRef = useRef<HTMLDivElement>(null)
     const [scale, setScale] = useState(1)
 
     useEffect(() => {
         if (!containerRef.current || !selectedTemplate) return
-        
+
         const updateScale = () => {
             const containerWidth = containerRef.current?.clientWidth || 0
             const canvasWidth = selectedTemplate.width_mm * PIXELS_PER_MM
-            
+
             if (canvasWidth > 0 && containerWidth > 0) {
-                // Dejar un pequeño margen de 32px (p-4 en cada lado es p-8 = 32px aprox)
                 const newScale = Math.min((containerWidth - 32) / canvasWidth, 1)
                 setScale(newScale)
             }
@@ -88,107 +153,99 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
         const observer = new ResizeObserver(updateScale)
         observer.observe(containerRef.current)
         window.addEventListener('resize', updateScale)
-        
+
         return () => {
             observer.disconnect()
             window.removeEventListener('resize', updateScale)
         }
     }, [selectedTemplate])
 
-    // Cargar assets y luego hidratar elementos
     useEffect(() => {
+        let cancelled = false
+
         const process = async () => {
             if (elements.length === 0) {
-                setHydratedElements([])
+                if (!cancelled) {
+                    setAssetMap({})
+                    setHydratedElements([])
+                }
                 return
             }
 
-            // 1. Identificar UUIDs de assets
             const assetIds = elements
-                .filter((el: Record<string, unknown>) => 
-                    (el.type === 'image' || el.type === 'dynamic_image') && 
-                    el.content && 
-                    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(el.content))
+                .filter((element) =>
+                    (element.type === 'image' || element.type === 'dynamic_image') &&
+                    element.content &&
+                    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(element.content))
                 )
-                .map((el: Record<string, unknown>) => el.content) as string[]
-            
-            const mapping = await resolveAssetsAction(assetIds)
-            setAssetMap(mapping)
+                .map((element) => element.content)
+                .filter((content): content is string => typeof content === 'string')
 
-            // 2. Hidratar usando la función maestra (R6)
+            const mapping = await resolveAssetsAction(assetIds)
             const hydrated = await hydrateTemplateElements(elements, product, mapping)
-            setHydratedElements(hydrated)
+
+            if (cancelled) return
+
+            setAssetMap(mapping)
+            setHydratedElements(normalizeHydratedElements(hydrated))
         }
-        process()
+
+        void process()
+
+        return () => {
+            cancelled = true
+        }
     }, [elements, product])
 
-    // Preflight check (Fase 3)
-    useEffect(() => {
-        if (hydratedElements.length === 0) return
+    const preflightReport = useMemo<PreflightReport>(() => {
+        if (hydratedElements.length === 0) {
+            return {
+                missingVariables: [],
+                missingAssets: [],
+                criticalErrors: [],
+            }
+        }
 
-        const missingVars: string[] = []
-        const missingAss: string[] = []
-        const critical: string[] = []
+        const missingVariables: string[] = []
+        const missingAssets: string[] = []
+        const criticalErrors: string[] = []
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        hydratedElements.forEach((el: any) => {
-            // Check for unresolved variables in text
-            if (el.type === 'text' || el.type === 'dynamic_text') {
-                const matches = el.content?.match(/{[^{}]+}/g)
+        hydratedElements.forEach((element) => {
+            if ((element.type === 'text' || element.type === 'dynamic_text') && element.content) {
+                const matches = element.content.match(/{[^{}]+}/g)
                 if (matches) {
-                    matches.forEach((m: string) => missingVars.push(m))
+                    matches.forEach(match => missingVariables.push(match))
                 }
             }
 
-            // Check for missing assets/images
-            if (el.type === 'image' || el.type === 'dynamic_image') {
-                const dynamicIconKeys = ['icon_rh', 'icon_canto', 'icon_bisagras', 'icon_riel', 'icon_group', 'icon_logo']
-                const iconKey = dynamicIconKeys.find(key => el.name?.includes(key) || el.dataField?.includes(key))
-                
-                if (!el.resolvedSrc || el.resolvedSrc.includes('placeholder')) {
+            if (element.type === 'image' || element.type === 'dynamic_image') {
+                const iconKey = DYNAMIC_ICON_KEYS.find(
+                    key => element.name?.includes(key) || element.dataField?.includes(key)
+                )
+
+                if (!element.resolvedSrc || element.resolvedSrc.includes('placeholder')) {
                     if (iconKey) {
-                        // Solo reportar si el producto TIENE un valor para este icono pero falló la resolución
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        const hasProductValue = (product as any)[iconKey]
+                        const hasProductValue = product[iconKey]
                         if (hasProductValue) {
-                            missingAss.push(`${el.name || iconKey} (Falla de resolución)`)
+                            missingAssets.push(`${element.name || iconKey} (Falla de resolución)`)
                         }
                     } else {
-                        // Assets estáticos normales
-                        const label = el.name || el.dataField || 'Imagen'
-                        missingAss.push(label)
+                        missingAssets.push(element.name || element.dataField || 'Imagen')
                     }
                 }
             }
         })
 
-        // Format check
-        const allowed = (selectedTemplate?.export_formats ? (selectedTemplate.export_formats as string).split(',').map(f => f.trim().toLowerCase()) : ['pdf', 'jpg'])
-        if (!allowed.includes(exportFormat)) {
-            critical.push(`Formato ${exportFormat.toUpperCase()} no permitido para esta plantilla`)
+        if (!allowedExportFormats.includes(effectiveExportFormat)) {
+            criticalErrors.push(`Formato ${effectiveExportFormat.toUpperCase()} no permitido para esta plantilla`)
         }
 
-        /* eslint-disable react-hooks/set-state-in-effect */
-        setPreflightReport({
-            missingVariables: Array.from(new Set(missingVars)),
-            missingAssets: Array.from(new Set(missingAss)),
-            criticalErrors: critical
-        })
-        /* eslint-enable react-hooks/set-state-in-effect */
-    }, [hydratedElements, exportFormat, selectedTemplate, product])
-    
-    // R10: Sincronizar formato de exportación cuando cambia la plantilla
-    useEffect(() => {
-        if (selectedTemplate) {
-            const allowed = (selectedTemplate.export_formats ? (selectedTemplate.export_formats as string).split(',').map(f => f.trim().toLowerCase()) : ['pdf', 'jpg'])
-            // Si el formato actual no está permitido por la nueva plantilla, cambiar al primero disponible
-            if (!allowed.includes(exportFormat)) {
-                /* eslint-disable react-hooks/set-state-in-effect */
-                setExportFormat(allowed.length > 0 ? (allowed[0] as 'pdf' | 'jpg') : 'pdf')
-                /* eslint-enable react-hooks/set-state-in-effect */
-            }
+        return {
+            missingVariables: Array.from(new Set(missingVariables)),
+            missingAssets: Array.from(new Set(missingAssets)),
+            criticalErrors,
         }
-    }, [selectedTemplate, exportFormat])
+    }, [allowedExportFormats, effectiveExportFormat, hydratedElements, product])
 
     const requiredFields = useMemo(
         () => selectedTemplate ? getTemplateRequiredFields(selectedTemplate.elements_json) : [],
@@ -200,11 +257,8 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
         [product, requiredFields]
     )
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const p = product as any
-
     const warnings = validationIssues.length > 0
-        ? [{ productCode: p.code, productName: p.final_name_es || '', issues: validationIssues }]
+        ? [{ productCode: product.code || '', productName: product.final_name_es || '', issues: validationIssues }]
         : []
 
     const canvasW = selectedTemplate ? Math.round(selectedTemplate.width_mm * PIXELS_PER_MM) : 0
@@ -212,27 +266,26 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
 
     const handleExport = async () => {
         if (!selectedTemplate) return
-        if (p.is_exportable === false) {
+
+        if (product.is_exportable === false) {
             toast.error(
-                p.inactive_reasons?.length
-                    ? `Producto inactivo: ${p.inactive_reasons.join(', ')}`
+                product.inactive_reasons?.length
+                    ? `Producto inactivo: ${product.inactive_reasons.join(', ')}`
                     : 'Producto inactivo para exportacion'
             )
             return
         }
+
         setIsExporting(true)
 
         try {
-            // R4: Validación de formato permitida por la plantilla
-            const allowed = (selectedTemplate.export_formats ? (selectedTemplate.export_formats as string).split(',').map((f: string) => f.trim().toLowerCase()) : ['pdf', 'jpg'])
-            if (!allowed.includes(exportFormat)) {
-                toast.error(`El formato ${exportFormat.toUpperCase()} no está permitido para esta plantilla`)
+            if (!allowedExportFormats.includes(effectiveExportFormat)) {
+                toast.error(`El formato ${effectiveExportFormat.toUpperCase()} no está permitido para esta plantilla`)
                 return
             }
 
-            // Usar la misma lógica de hidratación que el preview (R6)
             const hydrated = await hydrateTemplateElements(elements, product, assetMap)
-            const zoneEn = await resolveZoneHomeEnAction(p.zone_home)
+            const zoneEn = await resolveZoneHomeEnAction(product.zone_home)
             const productWithZone = zoneEn ? { ...product, zone_home_en: zoneEn } : product
             const enrichedProduct = enrichProductDataWithIcons(productWithZone, assetMap)
 
@@ -242,15 +295,15 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
             const response = await fetch('/api/export', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    productId: p.id,
-                    isExternalSource: p.is_external === true,
-                    elements: hydrated, 
-                    format: exportFormat, 
-                    width: widthPx, 
+                body: JSON.stringify({
+                    productId: product.id,
+                    isExternalSource: product.is_external === true,
+                    elements: hydrated,
+                    format: effectiveExportFormat,
+                    width: widthPx,
                     height: heightPx,
                     templateFontFamily: selectedTemplate.template_font_family,
-                    filename: hydrateText(selectedTemplate.export_filename_format || '{sku_base}_{final_name_es}', enrichedProduct)
+                    filename: hydrateText(selectedTemplate.export_filename_format || '{sku_base}_{final_name_es}', enrichedProduct),
                 }),
             })
 
@@ -261,12 +314,12 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
             const a = document.createElement('a')
             a.href = url
             const downloadName = hydrateText(selectedTemplate.export_filename_format || '{sku_base}_{final_name_es}', enrichedProduct)
-            a.download = `${downloadName}.${exportFormat}`
+            a.download = `${downloadName}.${effectiveExportFormat}`
             document.body.appendChild(a)
             a.click()
             window.URL.revokeObjectURL(url)
             document.body.removeChild(a)
-            
+
             toast.success('Archivo exportado correctamente')
         } catch (error) {
             console.error(error)
@@ -278,9 +331,7 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Preview Canvas */}
             <div className="lg:col-span-2 flex flex-col gap-4">
-                {/* Template selector in preview */}
                 <div className="flex items-center gap-3 flex-wrap">
                     <span className="text-sm text-slate-500 font-medium">Plantilla:</span>
                     <TemplatePicker
@@ -295,9 +346,8 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                     )}
                 </div>
 
-                {/* Canvas */}
                 {selectedTemplate ? (
-                    <div 
+                    <div
                         ref={containerRef}
                         className="bg-slate-100 border border-slate-200 rounded-xl flex items-start justify-center p-4 min-h-[420px] overflow-hidden"
                     >
@@ -309,7 +359,7 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                                 height: canvasH,
                                 transform: `scale(${scale})`,
                                 transformOrigin: 'center top',
-                                transition: 'transform 0.2s ease-out'
+                                transition: 'transform 0.2s ease-out',
                             }}
                         >
                             <DocumentRenderSurface
@@ -333,9 +383,7 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                 )}
             </div>
 
-            {/* Sidebar */}
             <div className="flex flex-col gap-4">
-                {/* Preflight Report (Fase 3) */}
                 {(preflightReport.missingVariables.length > 0 || preflightReport.missingAssets.length > 0 || preflightReport.criticalErrors.length > 0) && (
                     <div className="bg-white border-2 border-amber-200 rounded-xl overflow-hidden shadow-sm animate-in fade-in slide-in-from-top-2 duration-300">
                         <div className="bg-amber-50 px-4 py-3 border-b border-amber-200 flex items-center justify-between">
@@ -348,18 +396,18 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                             </Badge>
                         </div>
                         <div className="p-4 flex flex-col gap-3">
-                            {preflightReport.criticalErrors.map((err, i) => (
-                                <div key={i} className="flex gap-2 text-red-600 text-xs font-bold bg-red-50 p-2 rounded-lg border border-red-100 italic">
+                            {preflightReport.criticalErrors.map((errorMessage, index) => (
+                                <div key={index} className="flex gap-2 text-red-600 text-xs font-bold bg-red-50 p-2 rounded-lg border border-red-100 italic">
                                     <XCircle className="w-4 h-4 shrink-0" />
-                                    <span>CRÍTICO: {err}</span>
+                                    <span>CRÍTICO: {errorMessage}</span>
                                 </div>
                             ))}
                             {preflightReport.missingVariables.length > 0 && (
                                 <div className="flex flex-col gap-1">
                                     <span className="text-[10px] uppercase font-bold text-slate-400">Variables no resueltas</span>
                                     <div className="flex flex-wrap gap-1">
-                                        {preflightReport.missingVariables.map(v => (
-                                            <span key={v} className="bg-amber-100 text-amber-700 text-[10px] px-2 py-0.5 rounded font-mono border border-amber-200">{v}</span>
+                                        {preflightReport.missingVariables.map(variable => (
+                                            <span key={variable} className="bg-amber-100 text-amber-700 text-[10px] px-2 py-0.5 rounded font-mono border border-amber-200">{variable}</span>
                                         ))}
                                     </div>
                                 </div>
@@ -368,8 +416,8 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                                 <div className="flex flex-col gap-1">
                                     <span className="text-[10px] uppercase font-bold text-slate-400">Recursos faltantes</span>
                                     <div className="flex flex-wrap gap-1">
-                                        {preflightReport.missingAssets.map(a => (
-                                            <span key={a} className="bg-slate-100 text-slate-600 text-[10px] px-2 py-0.5 rounded border border-slate-200 font-medium italic">{a}</span>
+                                        {preflightReport.missingAssets.map(asset => (
+                                            <span key={asset} className="bg-slate-100 text-slate-600 text-[10px] px-2 py-0.5 rounded border border-slate-200 font-medium italic">{asset}</span>
                                         ))}
                                     </div>
                                 </div>
@@ -382,7 +430,6 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                     </div>
                 )}
 
-                {/* Advertencias estándar */}
                 {warnings.length > 0 ? (
                     <ValidationWarnings warnings={warnings} />
                 ) : selectedTemplate && (
@@ -392,70 +439,67 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                     </div>
                 )}
 
-                {p.is_exportable === false && (
+                {product.is_exportable === false && (
                     <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
                         <p className="font-semibold">Producto inactivo para exportacion.</p>
-                        {p.inactive_reasons?.length > 0 && (
-                            <p className="mt-1 text-xs">{p.inactive_reasons.join(', ')}</p>
-                        )}
+                        {product.inactive_reasons?.length ? (
+                            <p className="mt-1 text-xs">{product.inactive_reasons.join(', ')}</p>
+                        ) : null}
                     </div>
                 )}
 
-                {/* Datos del producto */}
                 <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col gap-3">
                     <h3 className="font-semibold text-slate-800 text-sm">Datos del Producto</h3>
                     <div className="flex flex-col gap-2 text-sm">
-                        <div className="flex justify-between"><span className="text-slate-500">Código:</span><span className="font-mono font-semibold">{p.code}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">Familia:</span><span>{p.familia_code || '—'}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">Medida:</span><span>{p.commercial_measure || '—'}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Código:</span><span className="font-mono font-semibold">{product.code}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Familia:</span><span>{product.familia_code || '—'}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Medida:</span><span>{product.commercial_measure || '—'}</span></div>
                         <div className="flex justify-between"><span className="text-slate-500">Nombre derivado:</span><span className="text-right max-w-[160px]">{engineResult.finalNameEs || '—'}</span></div>
                     </div>
                 </div>
 
-                {/* Exportar */}
                 <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col gap-3">
                     <h3 className="font-semibold text-slate-800 text-sm">Exportar</h3>
-                    
+
                     {selectedTemplate && (
                         <div className="flex flex-col gap-3">
-                            {/* Selector de formato filtrado */}
                             <div className="flex bg-slate-100 p-1 rounded-lg w-full">
-                                {(selectedTemplate.export_formats ? (selectedTemplate.export_formats as string).split(',').map((f: string) => f.trim().toLowerCase()) : ['pdf', 'jpg']).map((fmt: string) => (
+                                {allowedExportFormats.map((format) => (
                                     <button
-                                        key={fmt}
-                                        onClick={() => setExportFormat(fmt as 'pdf' | 'jpg')}
-                                        className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${exportFormat === fmt ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                        key={format}
+                                        onClick={() => setExportFormat(format)}
+                                        className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${effectiveExportFormat === format ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                                     >
-                                        {fmt.toUpperCase()}
+                                        {format.toUpperCase()}
                                     </button>
                                 ))}
                             </div>
 
-                            <Button 
+                            <Button
                                 className={`w-full h-12 text-sm font-bold transition-all duration-300 ${
-                                    (preflightReport.criticalErrors.length > 0 || validationIssues.length > 0 || p.is_exportable === false)
-                                        ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300' 
+                                    (preflightReport.criticalErrors.length > 0 || validationIssues.length > 0 || product.is_exportable === false)
+                                        ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300'
                                         : (preflightReport.missingVariables.length > 0 || preflightReport.missingAssets.length > 0)
                                             ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-lg shadow-amber-200'
                                             : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-200'
-                                    }`}
-                                    onClick={handleExport}
-                                    disabled={isExporting || preflightReport.criticalErrors.length > 0 || validationIssues.length > 0 || p.is_exportable === false}
+                                }`}
+                                onClick={handleExport}
+                                disabled={isExporting || preflightReport.criticalErrors.length > 0 || validationIssues.length > 0 || product.is_exportable === false}
                             >
                                 {isExporting ? (
                                     <>
                                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                        <span>Generando {exportFormat.toUpperCase()}...</span>
+                                        <span>Generando {effectiveExportFormat.toUpperCase()}...</span>
                                     </>
                                 ) : (
                                     <>
                                         <Download className="mr-2 h-4 w-4" />
                                         <span>
-                                            {(preflightReport.criticalErrors.length > 0 || validationIssues.length > 0 || p.is_exportable === false)
+                                            {(preflightReport.criticalErrors.length > 0 || validationIssues.length > 0 || product.is_exportable === false)
                                                 ? 'Exportación Bloqueada'
                                                 : (preflightReport.missingVariables.length > 0 || preflightReport.missingAssets.length > 0)
-                                                    ? `Exportar con Avisos (${exportFormat.toUpperCase()})`
-                                                    : `Descargar ${exportFormat.toUpperCase()}`
+                                                    ? `Exportar con Avisos (${effectiveExportFormat.toUpperCase()})`
+                                                    : `Descargar ${effectiveExportFormat.toUpperCase()}`
                                             }
                                         </span>
                                     </>

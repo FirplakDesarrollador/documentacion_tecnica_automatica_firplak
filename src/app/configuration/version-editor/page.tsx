@@ -1,6 +1,6 @@
 import { ChevronLeft, Layers } from 'lucide-react';
 import Link from 'next/link';
-import MassEditClient from '@/app/products/version-editor/MassEditClient';
+import MassEditClient from './MassEditClient';
 
 export default function ConfigVersionEditorPage() {
   return (

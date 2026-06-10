@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { PlusCircle, Trash2, Search, ChevronLeft, Loader2, Save, ScanSearch, X } from 'lucide-react'
 import Link from 'next/link'
 import { upsertGlossaryTermAction, deleteGlossaryTermAction, saveGlossaryTermsAction } from './actions'
-import { scanMissingGlossaryTermsAction } from '../translation-actions'
+import { scanMissingGlossaryTermsAction } from './translation-actions'
 import { toast } from 'sonner'
 import {
     Dialog,

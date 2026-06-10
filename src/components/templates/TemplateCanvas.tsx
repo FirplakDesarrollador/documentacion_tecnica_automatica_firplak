@@ -1,5 +1,4 @@
 'use client'
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import React, { useState, useRef, useEffect, MouseEvent, useCallback, useMemo } from 'react'
 import { Card } from '@/components/ui/card'
@@ -17,7 +16,7 @@ import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { PIXELS_PER_MM } from '@/lib/constants'
 import { hydrateText, getVariableValue } from '@/lib/export/exportUtils'
 import { getClientsAction } from '@/app/configuration/clients/actions'
-import { resolveZoneHomeEnAction } from '@/app/products/glossary/actions'
+import { resolveZoneHomeEnAction } from '@/app/configuration/glossary/actions'
 import { getNamingVariableCatalogAction } from '@/app/rules/actions'
 import {
     BASE_NAMING_VARIABLE_FIELDS,
@@ -147,6 +146,109 @@ function renderVariableOptionGroups(groups: VariableOptionGroup[]) {
     ))
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function parseMaybeJson(value: unknown): unknown {
+    if (typeof value !== 'string') return value
+
+    try {
+        return JSON.parse(value)
+    } catch {
+        return null
+    }
+}
+
+function getSchemaColumns(raw: unknown): DatasetSchemaColumn[] {
+    if (Array.isArray(raw)) {
+        return raw.filter(isRecord)
+    }
+
+    if (isRecord(raw) && Array.isArray(raw.columns)) {
+        return raw.columns.filter(isRecord)
+    }
+
+    return []
+}
+
+function getSchemaCodeField(raw: unknown): string | null {
+    if (!isRecord(raw) || !isRecord(raw.fieldMap)) return null
+    return typeof raw.fieldMap.code === 'string' ? raw.fieldMap.code : null
+}
+
+function getSelectedSchemaColumns(raw: unknown): string[] {
+    if (!isRecord(raw) || !Array.isArray(raw.selectedColumns)) return []
+    return raw.selectedColumns.filter((column): column is string => typeof column === 'string')
+}
+
+function mapSchemaColumnToFieldDef(column: DatasetSchemaColumn, codeField: string | null = null): FieldDef | null {
+    const key = String(column.key ?? column.original ?? '').trim()
+    const original = String(column.original ?? column.key ?? '').trim()
+
+    if (!key || !original) return null
+
+    return {
+        key,
+        label: String(column.label ?? column.key ?? column.original ?? '').replace(/_/g, ' '),
+        original,
+        is_identifier: Boolean(column.is_identifier) || (codeField ? original === codeField : false),
+    }
+}
+
+function buildFieldDefsFromSchema(raw: unknown, codeField: string | null = null): FieldDef[] {
+    return getSchemaColumns(raw)
+        .map((column) => mapSchemaColumnToFieldDef(column, codeField))
+        .filter((column): column is FieldDef => Boolean(column))
+}
+
+function buildSchemaKeySet(raw: unknown): Set<string> {
+    return buildFieldDefsFromSchema(raw).reduce((keys, column) => {
+        keys.add(column.key)
+        return keys
+    }, new Set<string>())
+}
+
+function migrateStoredTemplateElement(raw: unknown): TemplateElement {
+    const element = (isRecord(raw) ? raw : {}) as unknown as TemplateElement
+
+    if (element.type !== 'barcode') return element
+
+    const dataField = element.dataField || 'barcode_text'
+    const barcodeFormat = element.barcodeFormat || (dataField === 'code' ? 'code128' : 'ean13')
+
+    return {
+        ...element,
+        dataField,
+        barcodeFormat,
+        barcodeOrientation: element.barcodeOrientation === 'vertical' ? 'vertical' : 'horizontal',
+        backgroundColor: typeof element.backgroundColor === 'string' ? element.backgroundColor : 'transparent',
+        barcodeXDimensionMm: element.barcodeXDimensionMm ?? 0.33,
+        barcodeBarHeightMm: element.barcodeBarHeightMm ?? 20,
+        barcodeQuietZoneX: element.barcodeQuietZoneX ?? 10,
+    }
+}
+
+function parseTemplateElementsJson(elementsJson: string): TemplateElement[] {
+    try {
+        const parsed = JSON.parse(elementsJson)
+        return Array.isArray(parsed) ? parsed.map(migrateStoredTemplateElement) : []
+    } catch (error) {
+        console.error('Failed to parse template elements', error)
+        return []
+    }
+}
+
+type MutableStyle = CSSStyleDeclaration & Record<string, string>
+
+function setStyleValue(style: CSSStyleDeclaration, prop: string, value: string) {
+    (style as MutableStyle)[prop] = value
+}
+
+function clearStyleValue(style: CSSStyleDeclaration, prop: string) {
+    (style as MutableStyle)[prop] = ''
+}
+
 type AssetItem = {
     id?: string
     name?: string
@@ -167,6 +269,13 @@ type TemplateData = {
     brand_scope?: string
     private_label_client_name?: string
 } & Record<string, unknown>
+
+type DatasetSchemaColumn = Record<string, unknown> & {
+    key?: string
+    label?: string
+    original?: string
+    is_identifier?: boolean
+}
 
 type OverflowTextProps = {
     text: string
@@ -211,8 +320,11 @@ function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPr
 
     // Initialize/Reset font scaling when content or boundaries change
     useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setAdjustedFontSize(fontSize || 12)
+        const timer = window.setTimeout(() => {
+            setAdjustedFontSize(fontSize || 12)
+        }, 0)
+
+        return () => window.clearTimeout(timer)
     }, [fontSize, displayText, width, height])
 
     useEffect(() => {
@@ -296,8 +408,11 @@ function DynamicImageElement({
     const [adjustedCaptionFontSize, setAdjustedCaptionFontSize] = useState(el.captionFontSize || 6.5)
     
     useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setAdjustedCaptionFontSize(el.captionFontSize || 6.5)
+        const timer = window.setTimeout(() => {
+            setAdjustedCaptionFontSize(el.captionFontSize || 6.5)
+        }, 0)
+
+        return () => window.clearTimeout(timer)
     }, [el.caption, el.captionFontSize, el.width, el.height])
 
     useEffect(() => {
@@ -674,17 +789,17 @@ function RichTextEditor({
             if (node?.nodeType === 3) node = node.parentNode;
             const el = node as HTMLElement;
             if (el && el !== editorRef.current) {
-                (el.style as any)[prop] = value;
+                setStyleValue(el.style, prop, value)
                 onChange(editorRef.current.innerHTML);
             }
             return;
         }
         const cloned = range.cloneContents();
         cloned.querySelectorAll('*').forEach(el => {
-            (el as HTMLElement).style[prop as any] = '';
+            clearStyleValue((el as HTMLElement).style, prop)
         });
         const wrapper = document.createElement('span');
-        (wrapper.style as any)[prop] = value;
+        setStyleValue(wrapper.style, prop, value)
         wrapper.appendChild(cloned);
         editorRef.current.focus();
         range.deleteContents();
@@ -1051,27 +1166,14 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
     const letterSpacingRef = useRef<HTMLInputElement>(null);
     const [isInputFocused, setIsInputFocused] = useState(false);
     const [currentWeight, setCurrentWeight] = useState('normal');
-    const initialized = useRef(false);
 
-    // On mount: load content, converting plain text (\n) to HTML (<br>) for backward compat
     useEffect(() => {
-        if (editorRef.current && !initialized.current) {
-            initialized.current = true;
+        if (editorRef.current) {
             const html = content.includes('<')
                 ? content                        // Already HTML — load as-is
                 : content.replace(/\n/g, '<br>') // Plain text — convert newlines
-            editorRef.current.innerHTML = html;
-        }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
-    // When content changes from outside (e.g. switching selected element)
-    useEffect(() => {
-        if (editorRef.current) {
-            const html = content.includes('<') ? content : content.replace(/\n/g, '<br>')
             if (editorRef.current.innerHTML !== html) {
-                editorRef.current.innerHTML = html;
-                initialized.current = true;
+                editorRef.current.innerHTML = html
             }
         }
     }, [content]);
@@ -1158,17 +1260,17 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
             if (node?.nodeType === 3) node = node.parentNode;
             const el = node as HTMLElement;
             if (el && el !== editorRef.current) {
-                (el.style as any)[prop] = value;
+                setStyleValue(el.style, prop, value)
                 onChange(editorRef.current.innerHTML);
             }
             return;
         }
         const cloned = range.cloneContents();
         cloned.querySelectorAll('*').forEach(el => {
-            (el as HTMLElement).style[prop as any] = '';
+            clearStyleValue((el as HTMLElement).style, prop)
         });
         const wrapper = document.createElement('span');
-        (wrapper.style as any)[prop] = value;
+        setStyleValue(wrapper.style, prop, value)
         wrapper.appendChild(cloned);
         editorRef.current.focus();
         document.execCommand('insertHTML', false, wrapper.outerHTML);
@@ -1495,8 +1597,9 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
 }
 
 export function BuilderCanvas({ template, assets = [], datasetSchema: initialSchema = [] }: { template: TemplateData, assets?: AssetItem[], datasetSchema?: FieldDef[] }) {
+    const initialElements = useMemo(() => parseTemplateElementsJson(template.elements_json), [template.elements_json])
 
-    const [elements, setElements] = useState<TemplateElement[]>([])
+    const [elements, setElements] = useState<TemplateElement[]>(initialElements)
     const [selectedIds, setSelectedIds] = useState<string[]>([])
     const [isSaving, setIsSaving] = useState(false)
     const [isModified, setIsModifiedState] = useState(false)
@@ -1543,8 +1646,8 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     )
 
     // History Stack for Undo / Redo
-    const [history, setHistory] = useState<TemplateElement[][]>([])
-    const [historyIndex, setHistoryIndex] = useState(-1)
+    const [history, setHistory] = useState<TemplateElement[][]>([initialElements])
+    const [historyIndex, setHistoryIndex] = useState(0)
 
     // Dragging State
     const [isDragging, setIsDragging] = useState(false)
@@ -1654,53 +1757,40 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     }, [dataSource, previewData?.product_type])
 
     const refreshLinkedDatasets = useCallback(async () => {
-        const tid = String((template as any)?.id || '').trim()
-        if (!tid) return
+        const tid = String(template.id || '').trim()
+        if (!tid || dataSource !== 'custom_datasets') {
+            setLinkedDatasets([])
+            setDatasetSchema([])
+            return
+        }
         try {
             const rows = await getTemplateLinkedDatasetsAction(tid)
             setLinkedDatasets(Array.isArray(rows) ? rows : [])
 
-            if (dataSource === 'custom_datasets' && Array.isArray(rows)) {
+            if (Array.isArray(rows)) {
                 const merged = new Map<string, FieldDef>()
                 for (const ds of rows) {
-                    const raw = typeof ds.schema_json === 'string' ? JSON.parse(ds.schema_json) : ds.schema_json
-                    let cols: any[] = []
-                    if (raw && typeof raw === 'object' && !Array.isArray(raw) && Array.isArray((raw as any).columns)) {
-                        cols = (raw as any).columns
-                    } else if (Array.isArray(raw)) {
-                        cols = raw
-                    }
-                    for (const c of cols) {
-                        const key = String(c?.key ?? c?.original ?? '').trim()
-                        if (!key || merged.has(key)) continue
-                        merged.set(key, {
-                            key,
-                            label: String(c?.label ?? c?.key ?? c?.original ?? '').replace(/_/g, ' '),
-                            original: String(c?.original ?? c?.key ?? ''),
-                            is_identifier: Boolean(c?.is_identifier),
-                        })
+                    const raw = parseMaybeJson(ds.schema_json)
+                    for (const column of buildFieldDefsFromSchema(raw)) {
+                        if (merged.has(column.key)) continue
+                        merged.set(column.key, column)
                     }
                 }
                 setDatasetSchema(Array.from(merged.values()))
-            } else {
-                setDatasetSchema([])
             }
         } catch {
             setLinkedDatasets([])
             setDatasetSchema([])
         }
-    }, [template, dataSource])
+    }, [dataSource, template.id])
 
     useEffect(() => {
-        if (dataSource !== 'custom_datasets') {
-            /* eslint-disable react-hooks/set-state-in-effect */
-            setLinkedDatasets([])
-            setDatasetSchema([])
-            /* eslint-enable react-hooks/set-state-in-effect */
-            return
-        }
-        refreshLinkedDatasets()
-    }, [dataSource, refreshLinkedDatasets])
+        const timer = window.setTimeout(() => {
+            void refreshLinkedDatasets()
+        }, 0)
+
+        return () => window.clearTimeout(timer)
+    }, [refreshLinkedDatasets])
 
     // Fetch clients for private label templates
     useEffect(() => {
@@ -1728,24 +1818,16 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         } else {
             const ds = availableDatasets.find(d => d.id === newSource)
             if (ds && ds.schema_json) {
-                const raw = ds.schema_json
+                const raw = parseMaybeJson(ds.schema_json)
                 if (Array.isArray(raw)) {
-                    setDatasetSchema(raw as FieldDef[])
+                    setDatasetSchema(buildFieldDefsFromSchema(raw))
                 } else if (raw && typeof raw === 'object') {
-                    const obj = raw as Record<string, unknown>
-                    const fieldMap = (obj.fieldMap && typeof obj.fieldMap === 'object') ? (obj.fieldMap as Record<string, unknown>) : null
-                    const codeField = fieldMap && typeof fieldMap.code === 'string' ? fieldMap.code : null
+                    const codeField = getSchemaCodeField(raw)
 
-                    if (Array.isArray((obj as any).columns)) {
-                        setDatasetSchema((obj as any).columns.map((c: any) => ({
-                            key: String(c?.key ?? c?.original ?? ''),
-                            label: String(c?.label ?? c?.key ?? c?.original ?? '').replace(/_/g, ' '),
-                            original: String(c?.original ?? c?.key ?? ''),
-                            is_identifier: Boolean(c?.is_identifier) || (codeField ? String(c?.original ?? '') === codeField : false)
-                        })).filter((c: any) => c.key && c.original))
+                    if (getSchemaColumns(raw).length > 0) {
+                        setDatasetSchema(buildFieldDefsFromSchema(raw, codeField))
                     } else {
-                        const selectedCols = Array.isArray(obj.selectedColumns) ? obj.selectedColumns : []
-                        setDatasetSchema(selectedCols.filter((col): col is string => typeof col === 'string').map((col) => ({
+                        setDatasetSchema(getSelectedSchemaColumns(raw).map((col) => ({
                             key: col,
                             label: col.replace(/_/g, ' '),
                             original: col,
@@ -1776,22 +1858,9 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         [templateVariableFields]
     )
 
-    const isSchemaSyncedToTemplate = useCallback((schema_json: any) => {
+    const isSchemaSyncedToTemplate = useCallback((schema_json: unknown) => {
         try {
-            const raw = typeof schema_json === 'string' ? JSON.parse(schema_json) : schema_json
-            const cols = raw && typeof raw === 'object' && Array.isArray((raw as any).columns) ? (raw as any).columns : null
-            const keys = new Set<string>()
-            if (cols) {
-                cols.forEach((c: any) => {
-                    const k = String(c?.key || '').trim()
-                    if (k) keys.add(k)
-                })
-            } else if (Array.isArray(raw)) {
-                raw.forEach((c: any) => {
-                    const k = String(c?.key ?? c ?? '').trim()
-                    if (k) keys.add(k)
-                })
-            }
+            const keys = buildSchemaKeySet(parseMaybeJson(schema_json))
 
             for (const v of requiredVarsForTemplate) {
                 if (!keys.has(v)) return false
@@ -1870,43 +1939,6 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     const CANVAS_WIDTH = template.width_mm * PIXELS_PER_MM
     const CANVAS_HEIGHT = template.height_mm * PIXELS_PER_MM
 
-    // Initial Load
-    useEffect(() => {
-        try {
-            const parsed = JSON.parse(template.elements_json)
-            if (Array.isArray(parsed)) {
-                const migrated = parsed.map((el: any) => {
-                    if (el?.type !== 'barcode') return el
-                    const dataField = el.dataField || 'barcode_text'
-                    const barcodeFormat = el.barcodeFormat || (dataField === 'code' ? 'code128' : 'ean13')
-                    return {
-                        ...el,
-                        dataField,
-                        barcodeFormat,
-                        barcodeOrientation: (el.barcodeOrientation === 'vertical' ? 'vertical' : 'horizontal'),
-                        // Keep barcodes backgroundless unless explicitly set by older templates.
-                        backgroundColor: (typeof el.backgroundColor === 'string' ? el.backgroundColor : 'transparent'),
-                        barcodeXDimensionMm: el.barcodeXDimensionMm ?? 0.33,
-                        barcodeBarHeightMm: el.barcodeBarHeightMm ?? 20,
-                        barcodeQuietZoneX: el.barcodeQuietZoneX ?? 10,
-                    }
-                })
-                /* eslint-disable react-hooks/set-state-in-effect */
-                setElements(migrated as any)
-                setHistory([migrated as any])
-                setHistoryIndex(0)
-            } else {
-                setHistory([[]])
-                setHistoryIndex(0)
-            }
-        } catch (e) {
-            console.error("Failed to parse template elements", e)
-            setHistory([[]])
-            setHistoryIndex(0)
-        }
-        /* eslint-enable react-hooks/set-state-in-effect */
-    }, [template.elements_json])
-
     // Warn before leaving if unsaved changes exist
     useEffect(() => {
         const handleBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -1946,7 +1978,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         setIsModified(false); 
         isModifiedRef.current = false; // Synchronous bypass
         if (pendingHref) {
-            window.location.href = pendingHref;
+            window.location.assign(pendingHref)
         }
     };
 
@@ -1955,8 +1987,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         setShowExitDialog(false);
         isModifiedRef.current = false; // Synchronous bypass
         if (pendingHref) {
-            /* eslint-disable-next-line react-hooks/immutability */
-            window.location.href = pendingHref;
+            window.location.assign(pendingHref)
         }
     };
 
@@ -2547,15 +2578,20 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     const templateFontLabel = getTemplateFontLabel(templateFontFamily)
 
     useEffect(() => {
-        if (selectedIds.length === 0) {
-            // eslint-disable-next-line react-hooks/set-state-in-effect
-            setPropertiesPanelTab('template')
-            return
-        }
+        const nextTab =
+            selectedIds.length === 0
+                ? 'template'
+                : selectedIds.length === 1
+                    ? 'element'
+                    : null
 
-        if (selectedIds.length === 1) {
-            setPropertiesPanelTab('element')
-        }
+        if (!nextTab) return
+
+        const timer = window.setTimeout(() => {
+            setPropertiesPanelTab(nextTab)
+        }, 0)
+
+        return () => window.clearTimeout(timer)
     }, [selectedIds])
 
     // Helper to render Resize Handles
