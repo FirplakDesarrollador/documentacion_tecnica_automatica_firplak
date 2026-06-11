@@ -47,6 +47,18 @@ for (const rawLine of diffText.split(/\r?\n/)) {
 
   if (
     currentFile.startsWith("src/") &&
+    !currentFile.startsWith("src/generated/") &&
+    /from\s+["']@prisma\/client["']/.test(rawLine)
+  ) {
+    blockedMatches.push({
+      file: currentFile,
+      line: `${rawLine.slice(1).trim()} (use @/generated/prisma/client for types or @/lib/prisma for DB access)`,
+    });
+    continue;
+  }
+
+  if (
+    currentFile.startsWith("src/") &&
     /(\bas any\b|:\s*any\b|<any>|any\[\])/.test(rawLine)
   ) {
     warningMatches.push({ file: currentFile, line: rawLine.slice(1).trim() });

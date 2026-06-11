@@ -28,15 +28,16 @@ Separar errores de producto, deuda historica y scripts auxiliares para que las c
    - encapsular parsing legacy en un helper pequeño y reutilizable
 3. Si tocas un archivo que ya tiene suppressions, intenta retirar al menos una en esa misma intervencion cuando sea razonable.
 4. En `src/`, evita introducir `any` nuevo. Si no se puede resolver en la misma tarea, documenta por que quedo pendiente.
-5. En scripts auxiliares, trata `no-explicit-any` como deuda visible, no como razon para bloquear una correccion de producto no relacionada.
-6. Si aparece `react-hooks/set-state-in-effect`, no lo silencies por defecto. Primero intenta una de estas salidas:
+5. En `src/`, no importes modelos de app ni `PrismaClient` desde `@prisma/client`. Este repo usa el generador Prisma con salida en `src/generated/prisma`; por eso los tipos deben venir de `@/generated/prisma/client` y el acceso DB de `@/lib/prisma`. Si una vista, RPC, action o formulario agrega campos derivados, define un tipo compuesto/local antes de consumirlo. Valida con `rg "@prisma/client" src --glob "!generated/**"`.
+6. En scripts auxiliares, trata `no-explicit-any` como deuda visible, no como razon para bloquear una correccion de producto no relacionada.
+7. Si aparece `react-hooks/set-state-in-effect`, no lo silencies por defecto. Primero intenta una de estas salidas:
    - derivar el valor con `useMemo`
    - inicializar estado de forma perezosa
    - mover la actualizacion a un evento del usuario
    - extraer una funcion pura para normalizar datos antes de renderizar
    - diferir una sincronizacion visual minima solo si mantiene el mismo comportamiento real
-7. Si el archivo tocado pertenece a flujos sensibles (`/generate`, `/templates/builder`, `/new`, `/assets`), no mezcles limpieza con refactor amplio. Cambia la menor superficie posible.
-8. Si limpias un warning sin impacto funcional real, dilo explicitamente al cerrar. Si puede cambiar UX, deten la edicion y explica antes.
+8. Si el archivo tocado pertenece a flujos sensibles (`/generate`, `/templates/builder`, `/new`, `/assets`), no mezcles limpieza con refactor amplio. Cambia la menor superficie posible.
+9. Si limpias un warning sin impacto funcional real, dilo explicitamente al cerrar. Si puede cambiar UX, deten la edicion y explica antes.
 
 ## Estilo de programacion esperado
 
