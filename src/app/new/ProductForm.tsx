@@ -1,5 +1,4 @@
 'use client'
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
@@ -18,7 +17,7 @@ import { getColorByNameAction, getRulesAction } from '@/app/rules/actions'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
 import { ArrowLeft, FileBadge2, AlertTriangle, Sparkles, Building2, Image as ImageIcon, Save, Box, ShieldCheck, History, AlertCircle } from 'lucide-react'
 import { toast } from 'sonner'
-import { Product, Rule } from '@prisma/client'
+import type { Product as PrismaProduct, Rule } from '@/generated/prisma/client'
 import { UploadAssetButton } from '@/components/assets/UploadAssetButton'
 import { ConfirmOverwriteModal } from './ConfirmOverwriteModal'
 import { IsometricAssociationDialog } from '@/components/assets/IsometricAssociationDialog'
@@ -26,10 +25,55 @@ import { PostSaveExportModal } from './PostSaveExportModal'
 import { MultiColorCreationModal } from './MultiColorCreationModal'
 import { cn } from '@/lib/utils'
 
+type ProductFormInitialData = Partial<PrismaProduct> & Record<string, unknown> & {
+    private_label_logo_id?: string | null
+    product_name?: string | null
+    color_name?: string | null
+    rh?: string | null
+    canto_puertas?: string | null
+    bisagras?: string | null
+    carb2?: string | null
+    special_label?: string | null
+    status?: string | null
+    armado_con_lvm?: string | null
+}
+
+type ActionRule = Omit<Rule, 'id' | 'createdAt' | 'updatedAt'> & {
+    id?: string
+    createdAt?: Date
+    updatedAt?: Date
+    naming_type?: string
+    component_key?: string
+    target_value?: string
+}
+
 interface ProductFormProps {
-    initialData?: Partial<Product>
+    initialData?: ProductFormInitialData
     backHref?: string
     readOnly?: boolean
+}
+
+interface ColorVariantProductInput extends Record<string, unknown> {
+    code: string
+    color_code: string
+    color_name: string
+}
+
+function isColorVariantProductInput(value: Record<string, unknown> | null): value is ColorVariantProductInput {
+    return typeof value?.code === 'string'
+        && typeof value.color_code === 'string'
+        && typeof value.color_name === 'string'
+}
+
+function normalizeRuleForEngine(rule: ActionRule): Rule {
+    const fallbackDate = new Date(0)
+
+    return {
+        ...rule,
+        id: rule.id ?? `${rule.rule_type}:${rule.priority}:${rule.action_payload}`,
+        createdAt: rule.createdAt ?? fallbackDate,
+        updatedAt: rule.updatedAt ?? fallbackDate,
+    }
 }
 
 export function ProductForm({ initialData, backHref, readOnly = false }: ProductFormProps) {
@@ -173,7 +217,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
     // Cargar reglas y opciones una vez
     useEffect(() => {
         getRulesAction().then(r => {
-            if (Array.isArray(r)) setRules(r);
+            if (Array.isArray(r)) setRules(r.map(normalizeRuleForEngine));
         });
 
         getUniquePropertiesAction().then(res => {
@@ -533,7 +577,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
 
     const handleGenerateNames = useCallback(async (force: boolean = false) => {
         if (rules.length > 0) {
-            const evalResult = evaluateProductRules(formData as unknown as Product, rules)
+            const evalResult = evaluateProductRules(formData as unknown as PrismaProduct, rules)
             const finalEs = evalResult.finalNameEs
 
             if (finalEs !== formData.final_name_es || force) {
@@ -850,9 +894,11 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                 </>
             )
 
+    const savedProductForColorVariants = isColorVariantProductInput(savedProduct) ? savedProduct : null
+
     return (
         <div className="flex flex-col gap-8 w-full pb-20">
-            <MultiColorCreationModal isOpen={showMultiColorModal} originalProduct={savedProduct as any} availableColors={datalistOptions.colors} onComplete={(products) => { setAllCreatedProducts(products); setShowMultiColorModal(false); setShowExportModal(true); }} onSkip={() => { setAllCreatedProducts(savedProduct ? [savedProduct as any] : []); setShowMultiColorModal(false); setShowExportModal(true); }} />
+            <MultiColorCreationModal isOpen={showMultiColorModal} originalProduct={savedProductForColorVariants} availableColors={datalistOptions.colors} onComplete={(products) => { setAllCreatedProducts(products); setShowMultiColorModal(false); setShowExportModal(true); }} onSkip={() => { setAllCreatedProducts(savedProductForColorVariants ? [savedProductForColorVariants] : []); setShowMultiColorModal(false); setShowExportModal(true); }} />
             <PostSaveExportModal isOpen={showExportModal} product={allCreatedProducts.length > 0 ? allCreatedProducts : savedProduct} onClose={() => router.push(backHref || '/')} />
             {dupeAlertModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
@@ -892,7 +938,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                 isOpen={isConfirmingSave}
                 onClose={() => setIsConfirmingSave(false)}
                 onConfirm={onActualSubmit}
-                initialData={initialData}
+                initialData={initialData ?? null}
                 currentData={formData}
             />
             

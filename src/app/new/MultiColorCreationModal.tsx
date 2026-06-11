@@ -21,7 +21,7 @@ interface ProductInput {
 
 interface MultiColorCreationModalProps {
     isOpen: boolean
-    originalProduct: ProductInput
+    originalProduct: ProductInput | null
     availableColors: {code: string, name: string}[]
     onComplete: (createdProducts: ProductInput[]) => void
     onSkip: () => void
