@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
 import { Geist, Geist_Mono } from 'next/font/google';
-import { lato, montserrat, openSans, roboto } from './fonts';
+import { lato, montserrat, mozaicGeo, openSans, orborn, poppins, roboto } from './fonts';
 import './globals.css';
 import { Sidebar } from '@/components/layout/sidebar';
 import { decodeGenerateLastUrl, GENERATE_LAST_URL_COOKIE } from '@/lib/navigation/generateLastUrl';
@@ -35,7 +35,7 @@ export default async function RootLayout({
   return (
     <html
       lang="es"
-      className={`${montserrat.variable} ${lato.variable} ${openSans.variable} ${roboto.variable} ${geistSans.variable} ${geistMono.variable}`}
+      className={`${montserrat.variable} ${lato.variable} ${openSans.variable} ${roboto.variable} ${poppins.variable} ${orborn.variable} ${mozaicGeo.variable} ${geistSans.variable} ${geistMono.variable}`}
     >
       <body className="antialiased text-foreground bg-background font-sans min-h-screen">
         <Sidebar access={access} initialGenerateHref={initialGenerateHref}>{children}</Sidebar>

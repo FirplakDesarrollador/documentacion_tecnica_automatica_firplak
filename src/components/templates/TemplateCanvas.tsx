@@ -93,6 +93,27 @@ export interface TemplateElement {
 
 const MAX_HISTORY = 10
 
+const FONT_WEIGHT_OPTIONS = [
+    { value: '300', label: 'Light' },
+    { value: 'normal', label: 'Normal' },
+    { value: '500', label: 'Semi B' },
+    { value: 'bold', label: 'Bold' },
+    { value: '900', label: 'Black' },
+] as const
+
+function normalizeEditorFontWeight(weight?: string | null): string {
+    const normalized = String(weight || '').trim().toLowerCase()
+    const numericWeight = Number.parseInt(normalized, 10)
+
+    if (normalized === '300' || numericWeight === 300) return '300'
+    if (normalized === '400' || normalized === 'normal' || numericWeight === 400) return 'normal'
+    if (normalized === '500' || numericWeight === 500) return '500'
+    if (normalized === '900' || normalized === 'black' || numericWeight >= 900) return '900'
+    if (normalized === 'bold' || numericWeight >= 600) return 'bold'
+
+    return 'normal'
+}
+
 type PreviewData = Record<string, unknown>
 
 type VariableOption = {
@@ -614,10 +635,7 @@ function RichTextEditor({
                 }
 
                 // Update Weight State
-                const weight = style.fontWeight;
-                if (weight === '400' || weight === 'normal') setCurrentWeight('normal');
-                else if (weight === '500') setCurrentWeight('500');
-                else if (parseInt(weight) >= 600 || weight === 'bold') setCurrentWeight('bold');
+                setCurrentWeight(normalizeEditorFontWeight(style.fontWeight));
             }
         };
 
@@ -871,9 +889,11 @@ function RichTextEditor({
                         applyInlineStyle('fontWeight', weight);
                     }}
                 >
-                    <option value="normal">Normal</option>
-                    <option value="500">SemiB</option>
-                    <option value="bold">Bold</option>
+                    {FONT_WEIGHT_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                            {option.label}
+                        </option>
+                    ))}
                 </select>
 
                 <div className="h-4 w-px bg-slate-300 mx-1" />
@@ -1243,10 +1263,7 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
                     }
                     letterSpacingRef.current.value = (!isNaN(ratio) ? ratio.toFixed(2) : '0.00');
                 }
-                const weight = style.fontWeight;
-                if (weight === '400' || weight === 'normal') setCurrentWeight('normal');
-                else if (weight === '500') setCurrentWeight('500');
-                else if (parseInt(weight) >= 600 || weight === 'bold') setCurrentWeight('bold');
+                setCurrentWeight(normalizeEditorFontWeight(style.fontWeight));
             }
         };
         document.addEventListener('selectionchange', handleSelectionChange);
@@ -1456,9 +1473,11 @@ function CaptionEditor({ content, onChange }: { content: string, onChange: (val:
                         applyCaptionInlineStyle('fontWeight', weight);
                     }}
                 >
-                    <option value="normal">Normal</option>
-                    <option value="500">SemiB</option>
-                    <option value="bold">Bold</option>
+                    {FONT_WEIGHT_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                            {option.label}
+                        </option>
+                    ))}
                 </select>
 
                 <div className="h-4 w-px bg-slate-300 mx-1" />
@@ -2906,7 +2925,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                         width: el.width,
                                         height: el.height,
                                         fontSize: `${el.fontSize}pt`,
-                                        fontWeight: el.fontWeight as 'normal' | 'bold' | '500',
+                                        fontWeight: el.fontWeight || 'normal',
                                         fontStyle: el.fontStyle,
                                         fontFamily: effectiveTemplateFontFamily,
                                         color: el.color,

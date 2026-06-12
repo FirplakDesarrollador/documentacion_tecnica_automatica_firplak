@@ -19,6 +19,21 @@ export const TEMPLATE_FONT_OPTIONS = [
         label: 'Roboto',
         cssStack: 'var(--font-roboto), ui-sans-serif, system-ui, sans-serif',
     },
+    {
+        value: 'poppins',
+        label: 'Poppins',
+        cssStack: 'var(--font-poppins), ui-sans-serif, system-ui, sans-serif',
+    },
+    {
+        value: 'orborn',
+        label: 'Orborn',
+        cssStack: 'var(--font-orborn), ui-sans-serif, system-ui, sans-serif',
+    },
+    {
+        value: 'mozaic_geo',
+        label: 'Mozaic Geos',
+        cssStack: 'var(--font-mozaic-geo), ui-sans-serif, system-ui, sans-serif',
+    },
 ] as const
 
 export type TemplateFontFamily = (typeof TEMPLATE_FONT_OPTIONS)[number]['value']
@@ -30,6 +45,15 @@ export function normalizeTemplateFontFamily(value?: string | null): TemplateFont
         .trim()
         .toLowerCase()
         .replace(/\s+/g, '_')
+
+    if (
+        normalized === 'mozaic_geo' ||
+        normalized === 'mozaic_geo_light' ||
+        normalized === 'mozaic_geo_regular' ||
+        normalized === 'mozaic_geo_black'
+    ) {
+        return 'mozaic_geo'
+    }
 
     const match = TEMPLATE_FONT_OPTIONS.find((option) => option.value === normalized)
     return match?.value || DEFAULT_TEMPLATE_FONT_FAMILY

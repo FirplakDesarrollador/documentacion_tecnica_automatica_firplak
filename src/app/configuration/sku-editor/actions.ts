@@ -1,5 +1,4 @@
 'use server';
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { revalidatePath } from 'next/cache';
 import { dbQuery, supabaseServer } from '@/lib/supabase';
@@ -11,6 +10,29 @@ import {
 import { markNamingStaleForSkus, processNamingJobsInline } from '@/lib/engine/namingQueue';
 import { assertRole } from '@/utils/auth/access';
 
+type JsonRecord = Record<string, unknown>;
+
+type SkuEditorFilters = {
+  familyCode?: string;
+  referenceCode?: string;
+  versionCode?: string;
+  colorCode?: string;
+  productName?: string;
+  designation?: string;
+  commercialMeasure?: string;
+  specialLabel?: string;
+  refAttrsKey?: string;
+  refAttrsValue?: string;
+  keyword?: string;
+};
+
+type RpcResult = {
+  data: unknown;
+  error: { message: string } | null;
+};
+
+type SupabaseRpc = (fn: string, args: JsonRecord) => Promise<RpcResult>;
+
 async function assertAdminAccess() {
   await assertRole('admin');
 }
@@ -19,11 +41,24 @@ function esc(value: string) {
   return value.replace(/'/g, "''");
 }
 
-function normalizeOverridePayload(input: any) {
+function normalizeOverridePayload(input: unknown) {
   return canonicalizeOverrideAttrs(input || {});
 }
 
-function mapSkuRow(row: Record<string, unknown>) {
+function getRecord(value: unknown): JsonRecord {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as JsonRecord : {};
+}
+
+function getText(row: JsonRecord, key: string): string {
+  const value = row[key];
+  return typeof value === 'string' ? value.toLowerCase() : '';
+}
+
+function getRpc(): SupabaseRpc {
+  return supabaseServer.rpc.bind(supabaseServer) as unknown as SupabaseRpc;
+}
+
+function mapSkuRow(row: JsonRecord): JsonRecord {
   const skuAttrs = canonicalizeOverrideAttrs(row.sku_attrs);
   const effectiveContext = buildEffectiveProductContext({ ...row, sku_attrs: skuAttrs }, { includeSkuOverrides: true });
 
@@ -43,7 +78,7 @@ function mapSkuRow(row: Record<string, unknown>) {
   };
 }
 
-export async function searchSkus(filters: any) {
+export async function searchSkus(filters: SkuEditorFilters) {
   await assertAdminAccess();
 
   const conditions: string[] = [];
@@ -56,9 +91,30 @@ export async function searchSkus(filters: any) {
   if (filters.designation) conditions.push(`designation = '${esc(filters.designation)}'`);
   if (filters.commercialMeasure) conditions.push(`commercial_measure = '${esc(filters.commercialMeasure)}'`);
   if (filters.specialLabel) conditions.push(`special_label = '${esc(filters.specialLabel)}'`);
+  if (filters.keyword) {
+    const keyword = esc(`%${String(filters.keyword).trim()}%`);
+    conditions.push(`(
+      sku_complete ILIKE '${keyword}'
+      OR sap_description_original ILIKE '${keyword}'
+      OR final_complete_name_es ILIKE '${keyword}'
+      OR final_complete_name_en ILIKE '${keyword}'
+      OR color_code ILIKE '${keyword}'
+      OR barcode_text ILIKE '${keyword}'
+      OR version_code ILIKE '${keyword}'
+      OR family_code ILIKE '${keyword}'
+      OR reference_code ILIKE '${keyword}'
+      OR product_name ILIKE '${keyword}'
+      OR designation ILIKE '${keyword}'
+      OR commercial_measure ILIKE '${keyword}'
+      OR special_label ILIKE '${keyword}'
+      OR name_color_sap ILIKE '${keyword}'
+      OR ref_attrs::text ILIKE '${keyword}'
+      OR sku_attrs::text ILIKE '${keyword}'
+    )`);
+  }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-  const rows = await dbQuery(`
+  const rows: JsonRecord[] = await dbQuery(`
     SELECT *
     FROM public.v_ui_generate_list
     ${whereClause}
@@ -69,44 +125,44 @@ export async function searchSkus(filters: any) {
   let filteredData = (rows || []).map(mapSkuRow);
 
   if (filters.refAttrsKey) {
-    filteredData = filteredData.filter((row: any) => {
-      const refAttrs = row.ref_attrs;
-      if (!refAttrs || typeof refAttrs !== 'object') return false;
-      const hasKey = Object.prototype.hasOwnProperty.call(refAttrs, filters.refAttrsKey);
+    const refAttrsKey = filters.refAttrsKey;
+    filteredData = filteredData.filter((row) => {
+      const refAttrs = getRecord(row.ref_attrs);
+      const hasKey = Object.prototype.hasOwnProperty.call(refAttrs, refAttrsKey);
       if (!hasKey) return false;
       if (filters.refAttrsValue) {
-        return String(refAttrs[filters.refAttrsKey]) === String(filters.refAttrsValue);
+        return String(refAttrs[refAttrsKey]) === String(filters.refAttrsValue);
       }
       return true;
     });
   }
 
   if (filters.keyword) {
-    const keyword = filters.keyword.toLowerCase().trim();
-    filteredData = filteredData.filter((row: any) => {
-      if (row.sku_complete?.toLowerCase().includes(keyword)) return true;
-      if (row.sap_description_original?.toLowerCase().includes(keyword)) return true;
-      if (row.final_complete_name_es?.toLowerCase().includes(keyword)) return true;
-      if (row.final_complete_name_en?.toLowerCase().includes(keyword)) return true;
-      if (row.color_code?.toLowerCase().includes(keyword)) return true;
-      if (row.resolved_color_name?.toLowerCase().includes(keyword)) return true;
-      if (row.resolved_private_label_client_name?.toLowerCase().includes(keyword)) return true;
-      if (row.barcode_text?.toLowerCase().includes(keyword)) return true;
-      if (row.version_code?.toLowerCase().includes(keyword)) return true;
-      if (row.family_code?.toLowerCase().includes(keyword)) return true;
-      if (row.reference_code?.toLowerCase().includes(keyword)) return true;
-      if (row.product_name?.toLowerCase().includes(keyword)) return true;
-      if (row.designation?.toLowerCase().includes(keyword)) return true;
-      if (row.commercial_measure?.toLowerCase().includes(keyword)) return true;
-      if (row.special_label?.toLowerCase().includes(keyword)) return true;
+    const keyword = String(filters.keyword).toLowerCase().trim();
+    filteredData = filteredData.filter((row) => {
+      if (getText(row, 'sku_complete').includes(keyword)) return true;
+      if (getText(row, 'sap_description_original').includes(keyword)) return true;
+      if (getText(row, 'final_complete_name_es').includes(keyword)) return true;
+      if (getText(row, 'final_complete_name_en').includes(keyword)) return true;
+      if (getText(row, 'color_code').includes(keyword)) return true;
+      if (getText(row, 'resolved_color_name').includes(keyword)) return true;
+      if (getText(row, 'resolved_private_label_client_name').includes(keyword)) return true;
+      if (getText(row, 'barcode_text').includes(keyword)) return true;
+      if (getText(row, 'version_code').includes(keyword)) return true;
+      if (getText(row, 'family_code').includes(keyword)) return true;
+      if (getText(row, 'reference_code').includes(keyword)) return true;
+      if (getText(row, 'product_name').includes(keyword)) return true;
+      if (getText(row, 'designation').includes(keyword)) return true;
+      if (getText(row, 'commercial_measure').includes(keyword)) return true;
+      if (getText(row, 'special_label').includes(keyword)) return true;
 
-      for (const val of Object.values(row.ref_attrs || {})) {
+      for (const val of Object.values(getRecord(row.ref_attrs))) {
         if (String(val).toLowerCase().includes(keyword)) return true;
       }
-      for (const val of Object.values(row.sku_attrs || {})) {
+      for (const val of Object.values(getRecord(row.sku_attrs))) {
         if (String(val).toLowerCase().includes(keyword)) return true;
       }
-      for (const val of Object.values(row.effective_attrs || {})) {
+      for (const val of Object.values(getRecord(row.effective_attrs))) {
         if (String(val).toLowerCase().includes(keyword)) return true;
       }
 
@@ -117,25 +173,25 @@ export async function searchSkus(filters: any) {
   return { success: true, data: filteredData };
 }
 
-export async function previewMassUpdateSkus(skuIds: string[], normalUpdates: any, skuAttrsUpdates: any) {
+export async function previewMassUpdateSkus(skuIds: string[], normalUpdates: JsonRecord, skuAttrsUpdates: unknown) {
   await assertAdminAccess();
 
   const normalizedSkuAttrsUpdates = normalizeOverridePayload(skuAttrsUpdates);
-  const { data, error } = await (supabaseServer as any).rpc('rpc_preview_mass_update_skus', {
+  const { data, error } = await getRpc()('rpc_preview_mass_update_skus', {
     p_sku_ids: skuIds,
     p_normal_updates: normalUpdates,
     p_sku_attrs_updates: normalizedSkuAttrsUpdates
   });
 
   if (error) return { success: false, error: error.message };
-  return { success: true, data };
+  return { success: true, data: getRecord(data) };
 }
 
-export async function executeMassUpdateSkus(skuIds: string[], normalUpdates: any, skuAttrsUpdates: any) {
+export async function executeMassUpdateSkus(skuIds: string[], normalUpdates: JsonRecord, skuAttrsUpdates: unknown) {
   await assertAdminAccess();
 
   const normalizedSkuAttrsUpdates = normalizeOverridePayload(skuAttrsUpdates);
-  const { data, error } = await (supabaseServer as any).rpc('rpc_mass_update_skus', {
+  const { data, error } = await getRpc()('rpc_mass_update_skus', {
     p_sku_ids: skuIds,
     p_normal_updates: normalUpdates,
     p_sku_attrs_updates: normalizedSkuAttrsUpdates
@@ -148,7 +204,7 @@ export async function executeMassUpdateSkus(skuIds: string[], normalUpdates: any
   revalidatePath('/configuration/sku-editor');
 
   revalidatePath('/generate');
-  return { success: true, data };
+  return { success: true, data: getRecord(data) };
 }
 
 export async function previewDeleteSkusAction(skuIds: string[]) {
@@ -169,7 +225,7 @@ export async function deleteSkusAction(skuIds: string[]) {
 export async function getSkuFilterOptions() {
   await assertAdminAccess();
 
-  const [rows, familiesRows] = await Promise.all([
+  const [rows, familiesRows]: [JsonRecord[], JsonRecord[]] = await Promise.all([
     dbQuery(`
       SELECT
         family_code,
@@ -192,17 +248,18 @@ export async function getSkuFilterOptions() {
   ]);
 
   const familyRefAttrsKeys: Record<string, string[]> = {};
-  (familiesRows || []).forEach((row: any) => {
-    const schema = row.ref_attrs_schema || {};
-    familyRefAttrsKeys[row.family_code] = Object.keys(schema).filter(
-      k => schema[k] && schema[k].active !== false
+  (familiesRows || []).forEach((row) => {
+    const schema = getRecord(row.ref_attrs_schema);
+    const familyCode = String(row.family_code ?? '');
+    familyRefAttrsKeys[familyCode] = Object.keys(schema).filter(
+      k => getRecord(schema[k]).active !== false
     );
   });
 
-  const skus = (rows || []).map((row: any) => ({
+  const skus: JsonRecord[] = (rows || []).map((row): JsonRecord => ({
     ...row,
     sku_attrs: canonicalizeOverrideAttrs(row.sku_attrs),
-  })) as any[];
+  }));
 
   const familyCodes = Array.from(new Set(skus.map(s => s.family_code).filter(Boolean))).sort();
   const referenceCodes = Array.from(new Set(skus.map(s => s.reference_code).filter(Boolean))).sort();
