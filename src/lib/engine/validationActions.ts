@@ -1,8 +1,9 @@
 import { dbQuery } from '@/lib/supabase'
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { TemplateElement, type TemplateElementType } from '@/components/templates/TemplateCanvas'
 import { unstable_cache } from 'next/cache'
 import { computeNameWithNamingComponents } from './namingComponentsEngine'
+import type { ProductPayload } from './translator'
+import { isPrintRuntimeVariable } from '@/lib/templates/printRuntimeVariables'
 
 export type PendingSeverity = 'critical' | 'warning'
 export type PendingReasonCode =
@@ -33,6 +34,19 @@ export interface PendingSummary {
     details: PendingDetail[]
 }
 
+type ProductRecord = Record<string, unknown>
+
+type TemplateRequiredSource = {
+    elements_json?: string | null
+    brand_scope?: string | null
+    private_label_client_name?: string | null
+}
+
+type VersionStatusRow = {
+    id: string
+    version_id: string | null
+}
+
 function isInactiveOrNotExportable(product: Record<string, unknown>) {
     return product?.is_exportable === false || product?.effective_status === 'INACTIVO'
 }
@@ -55,7 +69,7 @@ function extractRequiredTemplateFields(requiredElements: TemplateElement[]) {
         if (!el?.required) return
 
         const t = el.type as TemplateElementType
-        if ((t === 'dynamic_text' || t === 'barcode' || t === 'dynamic_image') && el.dataField) {
+        if ((t === 'dynamic_text' || t === 'barcode' || t === 'dynamic_image') && el.dataField && !isPrintRuntimeVariable(el.dataField)) {
             requiredDataFields.add(String(el.dataField))
         }
 
@@ -78,7 +92,7 @@ function extractRequiredTemplateFields(requiredElements: TemplateElement[]) {
  * Each field tracks whether it's globally required (any Firplak template)
  * or only required for specific private-label clients.
  */
-function buildRequiredFieldMap(templates: any[]): Map<string, { global: boolean; byClient: Set<string> }> {
+function buildRequiredFieldMap(templates: TemplateRequiredSource[]): Map<string, { global: boolean; byClient: Set<string> }> {
     const map = new Map<string, { global: boolean; byClient: Set<string> }>()
 
     for (const t of templates) {
@@ -111,7 +125,7 @@ function buildRequiredFieldMap(templates: any[]): Map<string, { global: boolean;
     return map
 }
 
-function resolveTemplateFieldValue(product: any, field: string) {
+function resolveTemplateFieldValue(product: ProductRecord, field: string) {
     if (field === 'isometric') {
         return product?.isometric_asset_id || product?.isometric_path
     }
@@ -141,7 +155,7 @@ const OPTIONAL_NAMING_INPUT_FIELDS = new Set([
     'color_name',
 ])
 
-function buildNamingInputReasons(product: any, activeVariableIds: string[]): PendingReason[] {
+function buildNamingInputReasons(product: ProductRecord, activeVariableIds: string[]): PendingReason[] {
     const reasons: PendingReason[] = []
 
     const active = new Set((activeVariableIds || []).map(v => String(v).trim()).filter(Boolean))
@@ -178,7 +192,7 @@ function buildNamingInputReasons(product: any, activeVariableIds: string[]): Pen
 }
 
 async function validateProductPending(params: {
-    product: any
+    product: ProductRecord
     requiredFieldMap: Map<string, { global: boolean; byClient: Set<string> }>
 }): Promise<{ reasons: PendingReason[]; severity: PendingSeverity | null }> {
     const { product, requiredFieldMap } = params
@@ -227,7 +241,7 @@ async function validateProductPending(params: {
     }
 
     // B) naming_components / naming inputs (activeVariableIds)
-    const completeNaming = await computeNameWithNamingComponents(product as any, 'final_complete_name')
+    const completeNaming = await computeNameWithNamingComponents(product as ProductPayload, 'final_complete_name')
     reasons.push(...buildNamingInputReasons(product, completeNaming.activeVariableIds))
 
     // C) English translation health
@@ -277,15 +291,17 @@ export async function getPendingSummary(): Promise<PendingSummary> {
     const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
 
      
-    const rows: any[] =
+    type ComposedProductRow = Parameters<typeof mapRowToComposedProduct>[0]
+
+    const rows =
         (await dbQuery(`
             SELECT *
             FROM public.v_ui_generate_list
             WHERE COALESCE(is_exportable, true) = true
             ORDER BY sku_complete ASC
-        `)) as any[] || []
+        `)) as ComposedProductRow[] || []
 
-    const products = rows.map((row: any) => mapRowToComposedProduct(row))
+    const products = rows.map(row => mapRowToComposedProduct(row))
 
     const activeTemplates =
         (await dbQuery(`
@@ -296,10 +312,10 @@ export async function getPendingSummary(): Promise<PendingSummary> {
 
     const requiredFieldMap = buildRequiredFieldMap(activeTemplates)
 
-    const evaluatedProducts = products.filter((p: any) => !isInactiveOrNotExportable(p))
+    const evaluatedProducts = products.filter(p => !isInactiveOrNotExportable(p as unknown as ProductRecord))
 
-    const perProduct = await mapWithConcurrency(evaluatedProducts, 25, async (product: any) => {
-        const { reasons, severity } = await validateProductPending({ product, requiredFieldMap })
+    const perProduct = await mapWithConcurrency(evaluatedProducts, 25, async (product) => {
+        const { reasons, severity } = await validateProductPending({ product: product as unknown as ProductRecord, requiredFieldMap })
         return { product, reasons, severity }
     })
 
@@ -396,11 +412,11 @@ export async function syncValidationStatus(): Promise<{ updated: number }> {
     
     // Get all product IDs to handle 'ready' state
      
-    const allSkus: any[] = await dbQuery(`
+    const allSkus = await dbQuery(`
         SELECT id, version_id
         FROM public.v_ui_generate_list
         WHERE COALESCE(is_exportable, true) = true
-    `) as any[] || []
+    `) as VersionStatusRow[] || []
     
     // Create a map of exceptions for fast lookup
     const pendingMap = new Map(sweep.details.map(d => [d.productId, d.severity]))

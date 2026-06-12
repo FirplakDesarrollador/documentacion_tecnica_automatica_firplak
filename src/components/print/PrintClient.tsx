@@ -22,6 +22,8 @@ import { toast } from 'sonner'
 import {
     Dialog,
     DialogContent,
+    DialogDescription,
+    DialogFooter,
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog'
@@ -40,6 +42,13 @@ import {
 } from '@/lib/printLayout'
 import { getFilteredProducts, resolvePrintAssetsAction, resolveZoneHomeEnForPrintAction } from '@/app/print/actions'
 import { defaultPrintSettings, normalizePrintColorMode, PRINT_SETTINGS_KEY } from '@/lib/printSettings'
+import {
+    buildPrintRuntimeValues,
+    isValidOfNumber,
+    normalizeOfNumberInput,
+    PRINT_RUNTIME_VARIABLE_KEYS,
+    templateUsesPrintRuntimeVariable,
+} from '@/lib/templates/printRuntimeVariables'
 
 interface PrintClientProps {
     templates: TemplateOption[]
@@ -72,6 +81,10 @@ interface AgentHealth {
     printers: string[]
     printerDetected: boolean
     supportsJobMetadata: boolean
+}
+
+type PrintRuntimeOverrides = {
+    ofNumber?: string | null
 }
 
 const defaultPrinterConfig: PrinterConfig = {
@@ -150,6 +163,8 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
     const [printItems, setPrintItems] = useState<PrintItem[]>([])
     const [isPrinting, setIsPrinting] = useState(false)
     const [showPrintDialog, setShowPrintDialog] = useState(false)
+    const [showOfEntryDialog, setShowOfEntryDialog] = useState(false)
+    const [ofEntries, setOfEntries] = useState<Record<string, string>>({})
     const [agentOnline, setAgentOnline] = useState<boolean | null>(null)
     const [agentPrinters, setAgentPrinters] = useState<string[]>([])
     const [printerDetected, setPrinterDetected] = useState<boolean>(false)
@@ -192,6 +207,13 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         [templates, selectedTemplateId]
     )
 
+    const templateRequiresOfNumber = useMemo(
+        () => selectedTemplate
+            ? templateUsesPrintRuntimeVariable(selectedTemplate.elements_json, PRINT_RUNTIME_VARIABLE_KEYS.ofNumber)
+            : false,
+        [selectedTemplate]
+    )
+
     const selectedPrintTarget = normalizePrintTarget(selectedTemplate?.print_target)
     const requiresAgent = selectedPrintTarget === PRINT_TARGET_3NSTAR
     const thermalLayout = useMemo(() => {
@@ -218,6 +240,13 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
     const selectedProducts = useMemo(
         () => validProducts.filter(p => selectedIds.includes(p.id)),
         [validProducts, selectedIds]
+    )
+
+    const invalidOfProducts = useMemo(
+        () => templateRequiresOfNumber
+            ? selectedProducts.filter(product => !isValidOfNumber(ofEntries[product.id]))
+            : [],
+        [ofEntries, selectedProducts, templateRequiresOfNumber]
     )
 
     const warnings = useMemo(() =>
@@ -252,6 +281,8 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         setSelectedIds([])
         setProducts([])
         setHasSearched(false)
+        setShowOfEntryDialog(false)
+        setOfEntries({})
     }, [selectedTemplateId])
 
     const handleSearch = useCallback(async () => {
@@ -268,7 +299,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         }
     }, [selectedTemplateId, textFilter])
 
-    const handlePrintProduct = async (product: GenerateProduct): Promise<boolean> => {
+    const handlePrintProduct = async (product: GenerateProduct, runtimeOverrides: PrintRuntimeOverrides = {}): Promise<boolean> => {
         if (!selectedTemplate) return false
 
         const elements: Record<string, unknown>[] = (() => {
@@ -302,6 +333,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
             final_name_es: finalNameEs,
             final_name_en: finalNameEn,
             zone_home_en: zoneEn || undefined,
+            ...buildPrintRuntimeValues({ ofNumber: runtimeOverrides.ofNumber }),
         }
 
         const hydrated = await hydrateTemplateElements(elements, updatedProduct, assetMap)
@@ -422,7 +454,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         return true
     }
 
-    const startPrinting = async () => {
+    const runPrintQueue = async (ofByProductId: Record<string, string> = {}) => {
         if (!selectedTemplate || selectedProducts.length === 0) return
 
         setIsPrinting(true)
@@ -439,7 +471,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
             setPrintItems(prev => prev.map((p, idx) => idx === i ? { ...p, status: 'printing' } : p))
 
             try {
-                await handlePrintProduct(item.product)
+                await handlePrintProduct(item.product, { ofNumber: ofByProductId[item.product.id] })
                 setPrintItems(prev => prev.map((p, idx) => idx === i ? { ...p, status: 'done' } : p))
                 done++
             } catch (err: unknown) {
@@ -451,6 +483,35 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         setIsPrinting(false)
         const baseMsg = `${done} documento(s) enviado(s) a impresión`
         toast.success(errors > 0 ? `${baseMsg}, ${errors} error(es)` : baseMsg)
+    }
+
+    const startPrinting = async () => {
+        if (!selectedTemplate || selectedProducts.length === 0) return
+
+        if (templateRequiresOfNumber) {
+            setOfEntries(selectedProducts.reduce<Record<string, string>>((next, product) => {
+                next[product.id] = ''
+                return next
+            }, {}))
+            setShowOfEntryDialog(true)
+            return
+        }
+
+        await runPrintQueue()
+    }
+
+    const startPrintingWithOfEntries = async () => {
+        if (!selectedTemplate || selectedProducts.length === 0) return
+
+        if (invalidOfProducts.length > 0) {
+            toast.error('Cada OF debe tener exactamente 4 digitos.')
+            return
+        }
+
+        const ofByProductId = { ...ofEntries }
+        setShowOfEntryDialog(false)
+        setOfEntries({})
+        await runPrintQueue(ofByProductId)
     }
 
     const statusIcon = (status: PrintStatus) => {
@@ -808,6 +869,85 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                     </div>
                 </div>
             )}
+
+            {/* OF entry dialog */}
+            <Dialog open={showOfEntryDialog} onOpenChange={(open) => {
+                if (isPrinting) return
+                setShowOfEntryDialog(open)
+                if (!open) setOfEntries({})
+            }}>
+                <DialogContent className="max-w-2xl rounded-2xl max-h-[85vh] flex flex-col overflow-hidden">
+                    <DialogHeader className="shrink-0">
+                        <DialogTitle className="flex items-center gap-2 text-lg">
+                            <FileText className="w-5 h-5 text-indigo-500" />
+                            Orden de fabricacion (OF)
+                        </DialogTitle>
+                        <DialogDescription>
+                            Ingresa un numero de 4 digitos para cada producto seleccionado.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="overflow-y-auto flex-1 min-h-0 divide-y divide-slate-100 border-y border-slate-100">
+                        {selectedProducts.map((product) => {
+                            const value = ofEntries[product.id] || ''
+                            const isInvalid = !isValidOfNumber(value)
+
+                            return (
+                                <div key={product.id} className="grid grid-cols-1 sm:grid-cols-[1fr_150px] gap-3 px-1 py-3 sm:items-center">
+                                    <div className="min-w-0">
+                                        <p className="font-mono text-sm font-semibold text-slate-800 truncate">
+                                            {product.code}
+                                        </p>
+                                        {product.final_name_es && (
+                                            <p className="text-xs text-slate-500 truncate">{product.final_name_es}</p>
+                                        )}
+                                    </div>
+                                    <div>
+                                        <Input
+                                            value={value}
+                                            inputMode="numeric"
+                                            maxLength={4}
+                                            placeholder="1234"
+                                            onChange={(event) => {
+                                                const nextValue = normalizeOfNumberInput(event.target.value)
+                                                setOfEntries(prev => ({ ...prev, [product.id]: nextValue }))
+                                            }}
+                                            className={`h-9 font-mono text-center ${isInvalid ? 'border-rose-300 focus-visible:ring-rose-200' : ''}`}
+                                            aria-label={`OF ${product.code}`}
+                                        />
+                                        {isInvalid && (
+                                            <p className="mt-1 text-[11px] text-rose-600">4 digitos requeridos</p>
+                                        )}
+                                    </div>
+                                </div>
+                            )
+                        })}
+                    </div>
+
+                    <DialogFooter className="shrink-0 gap-2">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                                setShowOfEntryDialog(false)
+                                setOfEntries({})
+                            }}
+                            disabled={isPrinting}
+                        >
+                            Cancelar
+                        </Button>
+                        <Button
+                            type="button"
+                            onClick={startPrintingWithOfEntries}
+                            disabled={isPrinting || selectedProducts.length === 0 || invalidOfProducts.length > 0}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                        >
+                            <Printer className="w-4 h-4 mr-2" />
+                            Continuar e imprimir
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             {/* Print progress dialog */}
             <Dialog open={showPrintDialog} onOpenChange={(open) => { if (!isPrinting) setShowPrintDialog(open) }}>

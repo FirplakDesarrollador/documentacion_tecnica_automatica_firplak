@@ -2,6 +2,7 @@ import { Product, Rule } from '@/generated/prisma/client'
 import { evaluateProductRules } from './ruleEvaluator'
 import { TemplateElement } from '@/components/templates/TemplateCanvas'
 import { resolveBarcodeFormat, validateBarcodeValue } from '@/lib/export/barcodeUtils'
+import { isPrintRuntimeVariable } from '@/lib/templates/printRuntimeVariables'
 
 export interface ValidationIssues {
     isValid: boolean
@@ -41,7 +42,7 @@ export function validateProductReadiness(
     templates.forEach(el => {
         // If the element is marked as required in the template builder, we must validate it
         if (el.required) {
-            if ((el.type === 'dynamic_text' || el.type === 'barcode' || el.type === 'dynamic_image') && el.dataField) {
+            if ((el.type === 'dynamic_text' || el.type === 'barcode' || el.type === 'dynamic_image') && el.dataField && !isPrintRuntimeVariable(el.dataField)) {
                 requiredDataFields.add(el.dataField)
             }
             // Special case: Static image placeholder used for isometrics

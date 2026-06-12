@@ -1,3 +1,5 @@
+import { isPrintRuntimeVariable } from './printRuntimeVariables'
+
 export type TemplateElementLike = {
     type?: string
     dataField?: string | null
@@ -33,7 +35,7 @@ export function extractTemplateVariablesFromElements(elements: unknown): string[
 
         if ((t === 'dynamic_text' || t === 'barcode' || t === 'dynamic_image') && el.dataField) {
             const clean = stripHtml(String(el.dataField))
-            if (clean) vars.push(clean)
+            if (clean && !isPrintRuntimeVariable(clean)) vars.push(clean)
         }
 
         // {placeholder} patterns inside text content (strip any accidental HTML)
@@ -41,7 +43,7 @@ export function extractTemplateVariablesFromElements(elements: unknown): string[
             const matches = el.content.match(/\{([^}]+)\}/g) || []
             for (const m of matches) {
                 const inner = stripHtml(m.slice(1, -1))
-                if (inner) vars.push(inner)
+                if (inner && !isPrintRuntimeVariable(inner)) vars.push(inner)
             }
         }
     }
@@ -58,4 +60,3 @@ export function extractTemplateVariables(elementsJson: string | null | undefined
         return []
     }
 }
-

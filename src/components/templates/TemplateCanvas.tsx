@@ -38,6 +38,8 @@ import Image from 'next/image'
 import BarcodeElement from '@/components/export/BarcodeElement'
 import { resolveBarcodeFormat } from '@/lib/export/barcodeUtils'
 import { extractTemplateVariables } from '@/lib/templates/templateVariables'
+import { applyTemplateTextTransform, resolveCssTextTransform, type TemplateTextTransform } from '@/lib/templates/textTransforms'
+import { buildPrintRuntimePreviewValues, PRINT_RUNTIME_VARIABLE_OPTIONS } from '@/lib/templates/printRuntimeVariables'
 
 export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'box' | 'dashed_line' | 'dynamic_image' | 'icon_group'
 type TemplateBrandScope = 'firplak' | 'private_label'
@@ -64,7 +66,7 @@ export interface TemplateElement {
     required?: boolean
     lineHeight?: number
     letterSpacing?: number
-    textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize' | 'sentence'
+    textTransform?: TemplateTextTransform
     color?: string
     backgroundColor?: string
     // dynamic_image specific fields
@@ -146,6 +148,11 @@ const TEMPLATE_COMPATIBILITY_VARIABLE_GROUP: VariableOptionGroup = {
     ],
 }
 
+const PRINT_RUNTIME_VARIABLE_GROUP: VariableOptionGroup = {
+    group: 'Impresion',
+    options: PRINT_RUNTIME_VARIABLE_OPTIONS,
+}
+
 function buildTemplateVariableGroups(fields: NamingVariableField[]): VariableOptionGroup[] {
     const fieldsBySource = fields.reduce((acc, field) => {
         const source = field.source || 'ref_attrs'
@@ -163,7 +170,7 @@ function buildTemplateVariableGroups(fields: NamingVariableField[]): VariableOpt
         }))
         .filter(group => group.options.length > 0)
 
-    return [...groups, TEMPLATE_COMPATIBILITY_VARIABLE_GROUP]
+    return [...groups, PRINT_RUNTIME_VARIABLE_GROUP, TEMPLATE_COMPATIBILITY_VARIABLE_GROUP]
 }
 
 function renderVariableOptionGroups(groups: VariableOptionGroup[]) {
@@ -324,9 +331,10 @@ type OverflowTextProps = {
     letterSpacing?: number
     width?: number
     height?: number
+    textTransform?: TemplateTextTransform
 }
 
-function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPreviewMode, type, previewData, dataField, fontSize, lineHeight, letterSpacing, width, height }: OverflowTextProps) {
+function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPreviewMode, type, previewData, dataField, fontSize, lineHeight, letterSpacing, width, height, textTransform }: OverflowTextProps) {
     const textRef = useRef<HTMLDivElement>(null)
     const [isOverflowing, setIsOverflowing] = useState(false)
     const [adjustedFontSize, setAdjustedFontSize] = useState<number>(fontSize || 12)
@@ -337,7 +345,8 @@ function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPr
 
         if (type === 'dynamic_text') {
             const varName = text.replace(/[{}]/g, '');
-            return getVariableValue(previewData, varName) || '[VACÍO]';
+            const value = getVariableValue(previewData, varName) || '[VACÍO]';
+            return applyTemplateTextTransform(value, textTransform, previewData)
         }
 
         let interpolated = text
@@ -349,8 +358,8 @@ function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPr
                 interpolated = interpolated.replace(match, replacement || '[VACÍO]')
             })
         }
-        return interpolated
-    }, [text, isPreviewMode, previewData, type])
+        return applyTemplateTextTransform(interpolated, textTransform, previewData)
+    }, [text, isPreviewMode, previewData, type, textTransform])
 
     // Initialize/Reset font scaling when content or boundaries change
     useEffect(() => {
@@ -1130,11 +1139,14 @@ function RichTextEditor({
                 >
                     <option value="" disabled>+ Variable</option>
                     {isExternalDataSource && datasetSchema.length > 0 ? (
+                        <>
                         <optgroup label="Dataset Externo">
                             {datasetSchema.map(f => (
                                 <option key={f.key} value={f.key}>{f.label}</option>
                             ))}
                         </optgroup>
+                        {renderVariableOptionGroups([PRINT_RUNTIME_VARIABLE_GROUP])}
+                        </>
                     ) : variableGroups.length > 0 ? (
                         renderVariableOptionGroups(variableGroups)
                     ) : (
@@ -1160,6 +1172,7 @@ function RichTextEditor({
                             <option value="height_in">Alto (in)</option>
                             <option value="depth_in">Fondo (in)</option>
                         </optgroup>
+                        {renderVariableOptionGroups([PRINT_RUNTIME_VARIABLE_GROUP])}
                         <optgroup label="Otros">
                             <option value="commercial_measure">Medida Comercial</option>
                             <option value="weight_kg">Peso (kg)</option>
@@ -1737,7 +1750,10 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         const zoneHome = typeof data.zone_home === 'string' ? data.zone_home : null
         const zoneEn = zoneHome ? await resolveZoneHomeEnAction(zoneHome) : null
         const dataWithZone = zoneEn ? { ...data, zone_home_en: zoneEn } : data
-        return enrichProductDataWithIcons(dataWithZone, resolvedAssetMap) as PreviewData
+        return {
+            ...enrichProductDataWithIcons(dataWithZone, resolvedAssetMap),
+            ...buildPrintRuntimePreviewValues(),
+        } as PreviewData
     }
 
     const getPreviewScopeArgs = useCallback(() => ({
@@ -2906,6 +2922,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                             letterSpacing={childEl.letterSpacing}
                                             width={childEl.width}
                                             height={childEl.height}
+                                            textTransform={childEl.textTransform}
                                             text={childEl.type === 'dynamic_text' ? `{${childEl.dataField}}` : (childEl.content || '')}
                                             isPreviewMode={isPreviewMode}
                                             previewData={previewData}
@@ -2931,7 +2948,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                         color: el.color,
                                         backgroundColor: el.type === 'icon_group' ? (isPreviewMode ? 'transparent' : 'rgba(238, 242, 255, 0.4)') : el.backgroundColor,
                                         border: el.type === 'icon_group' && !isPreviewMode ? '1px dashed #818cf8' : undefined,
-                                        textTransform: el.textTransform || 'none'
+                                        textTransform: resolveCssTextTransform(el.textTransform)
                                     }}
                                 >
                                     {renderResizeHandles(el)}
@@ -3099,11 +3116,14 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                     >
                                         <option value="" disabled>-- Selecciona una variable --</option>
                                         {isExternalDataSource && datasetSchema.length > 0 ? (
+                                            <>
                                             <optgroup label="Dataset Externo">
                                                 {datasetSchema.map(f => (
                                                     <option key={f.key} value={f.key}>{f.label}</option>
                                                 ))}
                                             </optgroup>
+                                            {renderVariableOptionGroups([PRINT_RUNTIME_VARIABLE_GROUP])}
+                                            </>
                                         ) : (
                                             renderVariableOptionGroups(templateVariableGroups.length > 0 ? templateVariableGroups : CORE_VARIABLE_OPTS)
                                         )}
@@ -3592,6 +3612,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                                 <option value="uppercase">MAYÚSCULAS</option>
                                                 <option value="lowercase">minúsculas</option>
                                                 <option value="capitalize">Tipo Título</option>
+                                                <option value="sentence">Mayuscula inicial tecnica</option>
                                             </select>
                                         </div>
                                     </div>

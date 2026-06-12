@@ -1,5 +1,6 @@
 import { dbQuery } from '@/lib/supabase'
 import { buildBarcode, resolveBarcodeFormat } from './barcodeUtils'
+import { applyTemplateTextTransform } from '@/lib/templates/textTransforms'
 
 /**
  * Resolves the English translation for a zone_home value from the Supabase glossary.
@@ -33,6 +34,25 @@ export interface ExportOptions {
     format: 'pdf' | 'jpg' | 'png'
     width: number
     height: number
+}
+
+interface HydratableTemplateElement extends Record<string, unknown> {
+    type?: string
+    content?: string
+    dataField?: string
+    caption?: string
+    textTransform?: string
+    width?: number | string
+    height?: number | string
+    barcodeFormat?: string | null
+    barcodeXDimensionMm?: number | string
+    barcodeBarHeightMm?: number | string
+    barcodeQuietZoneX?: number | string
+    resolvedSrc?: string | null
+    barcodeFormatResolved?: string
+    barcodeValue?: string
+    barcodeSvg?: string | null
+    barcodeError?: string | null
 }
 
 const normalizeString = (str: string) => {
@@ -136,9 +156,8 @@ export async function hydrateTemplateElements(
         return `${baseUrl}/storage/v1/object/public/assets/${cleanPath}`
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return elements.map((el: any) => {
-        const cloned = { ...el }
+    return elements.map((el): Record<string, unknown> => {
+        const cloned: HydratableTemplateElement = { ...el }
 
         // Resolución de activos de imagen (R8)
         if (cloned.type === 'image') {
@@ -172,12 +191,12 @@ export async function hydrateTemplateElements(
 
         // Resolución de íconos dinámicos / RH / Canto (R1, R3)
         if (cloned.type === 'dynamic_image') {
-            const df: string = cloned.dataField || ''
+            const df = typeof cloned.dataField === 'string' ? cloned.dataField : ''
             const iconUrl = df ? (enrichedProduct[`${df}_url`] || null) : null
-            cloned.resolvedSrc = iconUrl ? ensureAbsolute(iconUrl) : null
+            cloned.resolvedSrc = iconUrl ? ensureAbsolute(String(iconUrl)) : null
             
             // Hidratar el caption si existe (ej: {caption_es})
-            if (cloned.caption) {
+            if (typeof cloned.caption === 'string' && cloned.caption) {
                 // El contexto para el caption suele ser campos específicos inyectados por el motor de iconos
                 // como icon_canto_caption_es que se mapean a {caption_es} en el builder
                 const captionContext = {
@@ -199,6 +218,7 @@ export async function hydrateTemplateElements(
             // Limpieza de artefactos visuales inyectados por el Template Builder en variables técnicas (punteados, cursores)
             hydrated = hydrated.replace(/text-decoration:\s*underline\s*dotted[^;"]+;?/gi, '')
             hydrated = hydrated.replace(/cursor:\s*text;?/gi, '')
+            hydrated = applyTemplateTextTransform(hydrated, String(cloned.textTransform || 'none'), enrichedProduct)
             cloned.content = hydrated
         }
 

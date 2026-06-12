@@ -2,6 +2,7 @@
 
 import { AlertTriangle, CheckCircle2, XCircle, Info } from 'lucide-react'
 import { resolveBarcodeFormat, validateBarcodeValue } from '@/lib/export/barcodeUtils'
+import { isPrintRuntimeVariable } from '@/lib/templates/printRuntimeVariables'
 
 export interface TemplateValidationIssue {
     field: string
@@ -157,6 +158,8 @@ export function getTemplateValidationIssues(product: Record<string, unknown>, re
     const issues: TemplateValidationIssue[] = []
 
     for (const req of requirements) {
+        if (isPrintRuntimeVariable(req.dataField)) continue
+
         if (req.type === 'barcode' && req.dataField) {
             const format = resolveBarcodeFormat(req)
             const result = validateBarcodeValue(product[req.dataField], format)

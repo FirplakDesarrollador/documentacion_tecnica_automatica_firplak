@@ -3,9 +3,8 @@
 import React from 'react'
 import Image from 'next/image'
 import { getTemplateFontCssStack } from '@/lib/templates/templateTypography'
+import { resolveCssTextTransform } from '@/lib/templates/textTransforms'
 const PIXELS_PER_MM = 4
-
-type TextTransform = React.CSSProperties['textTransform']
 
 interface TemplateElement {
     id?: string
@@ -19,7 +18,7 @@ interface TemplateElement {
     fontStyle?: string
     color?: string
     backgroundColor?: string
-    textTransform?: TextTransform
+    textTransform?: string
     content?: string
     verticalAlign?: string
     textAlign?: React.CSSProperties['textAlign']
@@ -312,7 +311,7 @@ export default function DocumentRenderSurface({
             fontFamily: effectiveFontFamily,
             color: el.color || '#000000',
             backgroundColor: el.type === 'icon_group' ? 'transparent' : (el.backgroundColor || 'transparent'),
-            textTransform: el.textTransform || 'none',
+            textTransform: resolveCssTextTransform(el.textTransform),
             overflow: 'hidden'
         }
 
