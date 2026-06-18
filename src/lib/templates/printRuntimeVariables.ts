@@ -3,6 +3,7 @@ export const PRINT_RUNTIME_TIME_ZONE = 'America/Bogota'
 export const PRINT_RUNTIME_VARIABLE_KEYS = {
     printDatetime: 'print_datetime',
     ofNumber: 'of_number',
+    partesTexto: 'partes_texto',
 } as const
 
 export type PrintRuntimeVariableKey =
@@ -11,6 +12,7 @@ export type PrintRuntimeVariableKey =
 export const PRINT_RUNTIME_VARIABLE_OPTIONS: { key: PrintRuntimeVariableKey; label: string }[] = [
     { key: PRINT_RUNTIME_VARIABLE_KEYS.printDatetime, label: 'Fecha y hora de impresion' },
     { key: PRINT_RUNTIME_VARIABLE_KEYS.ofNumber, label: 'OF / Orden de fabricacion' },
+    { key: PRINT_RUNTIME_VARIABLE_KEYS.partesTexto, label: 'Texto de caja (Caja 1/2)' },
 ]
 
 const PRINT_RUNTIME_VARIABLE_KEY_SET = new Set<string>(
@@ -59,7 +61,7 @@ export function formatPrintDateTime(date: Date = new Date()) {
 export function buildPrintRuntimeValues(params: {
     date?: Date
     ofNumber?: string | null
-} = {}): Record<PrintRuntimeVariableKey, string> {
+} = {}): Record<string, string> {
     return {
         [PRINT_RUNTIME_VARIABLE_KEYS.printDatetime]: formatPrintDateTime(params.date),
         [PRINT_RUNTIME_VARIABLE_KEYS.ofNumber]: params.ofNumber || '',

@@ -13,6 +13,11 @@ import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { PIXELS_PER_MM } from '@/lib/constants'
 import DocumentRenderSurface from '@/components/export/DocumentRenderSurface'
 import { resolveZoneHomeEnAction } from '@/app/configuration/glossary/actions'
+import {
+    appendLabelBoxSuffix,
+    expandLabelBoxProducts,
+    filenameFormatUsesLabelBoxVariable,
+} from '@/lib/engine/labelParts'
 
 interface PreviewClientProps {
     product: Record<string, unknown>
@@ -52,6 +57,11 @@ type HydratedPreviewElement = TemplateElement & {
     resolvedSrc?: string
 }
 
+type HydratedPreviewItem = {
+    product: PreviewProduct
+    elements: HydratedPreviewElement[]
+}
+
 type PreflightReport = {
     criticalErrors: string[]
     missingAssets: string[]
@@ -74,6 +84,10 @@ function getAllowedExportFormats(template: TemplateOption | null): ExportFormat[
         .filter(isExportFormat)
 
     return formats.length > 0 ? formats : DEFAULT_EXPORT_FORMATS
+}
+
+function sanitizeFilename(name: string): string {
+    return name.replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim()
 }
 
 function parseTemplateElements(elementsJson: string): TemplateElement[] {
@@ -102,7 +116,7 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
     const [isExporting, setIsExporting] = useState(false)
     const [exportFormat, setExportFormat] = useState<ExportFormat>('pdf')
     const [assetMap, setAssetMap] = useState<Record<string, string>>({})
-    const [hydratedElements, setHydratedElements] = useState<HydratedPreviewElement[]>([])
+    const [hydratedPreviewItems, setHydratedPreviewItems] = useState<HydratedPreviewItem[]>([])
 
     const product = useMemo<PreviewProduct>(() => {
         const base = rawProduct as PreviewProduct
@@ -116,6 +130,11 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
     const selectedTemplate = useMemo(
         () => templates.find(template => template.id === selectedTemplateId) ?? null,
         [templates, selectedTemplateId]
+    )
+
+    const previewProducts = useMemo(
+        () => expandLabelBoxProducts(product) as PreviewProduct[],
+        [product]
     )
 
     const elements = useMemo(
@@ -167,7 +186,7 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
             if (elements.length === 0) {
                 if (!cancelled) {
                     setAssetMap({})
-                    setHydratedElements([])
+                    setHydratedPreviewItems([])
                 }
                 return
             }
@@ -182,12 +201,18 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                 .filter((content): content is string => typeof content === 'string')
 
             const mapping = await resolveAssetsAction(assetIds)
-            const hydrated = await hydrateTemplateElements(elements, product, mapping)
+            const nextHydratedItems = await Promise.all(previewProducts.map(async (previewProduct) => {
+                const hydrated = await hydrateTemplateElements(elements, previewProduct, mapping)
+                return {
+                    product: previewProduct,
+                    elements: normalizeHydratedElements(hydrated),
+                }
+            }))
 
             if (cancelled) return
 
             setAssetMap(mapping)
-            setHydratedElements(normalizeHydratedElements(hydrated))
+            setHydratedPreviewItems(nextHydratedItems)
         }
 
         void process()
@@ -195,10 +220,11 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
         return () => {
             cancelled = true
         }
-    }, [elements, product])
+    }, [elements, previewProducts])
 
     const preflightReport = useMemo<PreflightReport>(() => {
-        if (hydratedElements.length === 0) {
+        const elementsForPreflight = hydratedPreviewItems.flatMap(item => item.elements)
+        if (elementsForPreflight.length === 0) {
             return {
                 missingVariables: [],
                 missingAssets: [],
@@ -210,7 +236,7 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
         const missingAssets: string[] = []
         const criticalErrors: string[] = []
 
-        hydratedElements.forEach((element) => {
+        elementsForPreflight.forEach((element) => {
             if ((element.type === 'text' || element.type === 'dynamic_text') && element.content) {
                 const matches = element.content.match(/{[^{}]+}/g)
                 if (matches) {
@@ -245,7 +271,7 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
             missingAssets: Array.from(new Set(missingAssets)),
             criticalErrors,
         }
-    }, [allowedExportFormats, effectiveExportFormat, hydratedElements, product])
+    }, [allowedExportFormats, effectiveExportFormat, hydratedPreviewItems, product])
 
     const requiredFields = useMemo(
         () => selectedTemplate ? getTemplateRequiredFields(selectedTemplate.elements_json) : [],
@@ -284,43 +310,52 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                 return
             }
 
-            const hydrated = await hydrateTemplateElements(elements, product, assetMap)
-            const zoneEn = await resolveZoneHomeEnAction(product.zone_home)
-            const productWithZone = zoneEn ? { ...product, zone_home_en: zoneEn } : product
-            const enrichedProduct = enrichProductDataWithIcons(productWithZone, assetMap)
-
             const widthPx = Math.round((selectedTemplate.width_mm || 200) * PIXELS_PER_MM)
             const heightPx = Math.round((selectedTemplate.height_mm || 100) * PIXELS_PER_MM)
+            const filenameFormat = selectedTemplate.export_filename_format || '{sku_base}_{final_name_es}'
+            const hasLabelBoxFilenameVariable = filenameFormatUsesLabelBoxVariable(filenameFormat)
+            let exportedCount = 0
 
-            const response = await fetch('/api/export', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    productId: product.id,
-                    isExternalSource: product.is_external === true,
-                    elements: hydrated,
-                    format: effectiveExportFormat,
-                    width: widthPx,
-                    height: heightPx,
-                    templateFontFamily: selectedTemplate.template_font_family,
-                    filename: hydrateText(selectedTemplate.export_filename_format || '{sku_base}_{final_name_es}', enrichedProduct),
-                }),
-            })
+            for (const previewProduct of previewProducts) {
+                const hydrated = await hydrateTemplateElements(elements, previewProduct, assetMap)
+                const zoneEn = await resolveZoneHomeEnAction(previewProduct.zone_home)
+                const productWithZone = zoneEn ? { ...previewProduct, zone_home_en: zoneEn } : previewProduct
+                const enrichedProduct = enrichProductDataWithIcons(productWithZone, assetMap)
+                const rawDownloadName = hydrateText(filenameFormat, enrichedProduct)
+                const downloadName = sanitizeFilename(
+                    hasLabelBoxFilenameVariable ? rawDownloadName : appendLabelBoxSuffix(rawDownloadName, previewProduct)
+                )
 
-            if (!response.ok) throw new Error('Error en la generación del archivo')
+                const response = await fetch('/api/export', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        productId: previewProduct.id,
+                        isExternalSource: previewProduct.is_external === true,
+                        elements: hydrated,
+                        format: effectiveExportFormat,
+                        width: widthPx,
+                        height: heightPx,
+                        templateFontFamily: selectedTemplate.template_font_family,
+                        filename: downloadName,
+                    }),
+                })
 
-            const blob = await response.blob()
-            const url = window.URL.createObjectURL(blob)
-            const a = document.createElement('a')
-            a.href = url
-            const downloadName = hydrateText(selectedTemplate.export_filename_format || '{sku_base}_{final_name_es}', enrichedProduct)
-            a.download = `${downloadName}.${effectiveExportFormat}`
-            document.body.appendChild(a)
-            a.click()
-            window.URL.revokeObjectURL(url)
-            document.body.removeChild(a)
+                if (!response.ok) throw new Error('Error en la generación del archivo')
 
-            toast.success('Archivo exportado correctamente')
+                const blob = await response.blob()
+                const url = window.URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `${downloadName}.${effectiveExportFormat}`
+                document.body.appendChild(a)
+                a.click()
+                window.URL.revokeObjectURL(url)
+                document.body.removeChild(a)
+                exportedCount += 1
+            }
+
+            toast.success(exportedCount > 1 ? `${exportedCount} archivos exportados correctamente` : 'Archivo exportado correctamente')
         } catch (error) {
             console.error(error)
             toast.error('Hubo un error al exportar el archivo')
@@ -349,25 +384,36 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                 {selectedTemplate ? (
                     <div
                         ref={containerRef}
-                        className="bg-slate-100 border border-slate-200 rounded-xl flex items-start justify-center p-4 min-h-[420px] overflow-hidden"
+                        className="bg-slate-100 border border-slate-200 rounded-xl flex items-start justify-center p-4 min-h-[420px] overflow-auto"
                     >
-                        <div
-                            id="label-canvas"
-                            className="bg-white shadow-xl relative border border-slate-200 shrink-0"
-                            style={{
-                                width: canvasW,
-                                height: canvasH,
-                                transform: `scale(${scale})`,
-                                transformOrigin: 'center top',
-                                transition: 'transform 0.2s ease-out',
-                            }}
-                        >
-                            <DocumentRenderSurface
-                                elements={hydratedElements}
-                                width={canvasW}
-                                height={canvasH}
-                                templateFontFamily={selectedTemplate.template_font_family}
-                            />
+                        <div className="flex flex-col items-center gap-4">
+                            {hydratedPreviewItems.map((item, index) => (
+                                <div key={`${String(item.product.id || product.id)}-${String(item.product.partes_file_suffix || index)}`} className="flex flex-col items-start gap-2">
+                                    {item.product.partes_texto ? (
+                                        <span className="rounded-md bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 shadow-sm ring-1 ring-slate-200">
+                                            {String(item.product.partes_texto)}
+                                        </span>
+                                    ) : null}
+                                    <div
+                                        id={index === 0 ? 'label-canvas' : `label-canvas-${index + 1}`}
+                                        className="bg-white shadow-xl relative border border-slate-200 shrink-0"
+                                        style={{
+                                            width: canvasW,
+                                            height: canvasH,
+                                            transform: `scale(${scale})`,
+                                            transformOrigin: 'center top',
+                                            transition: 'transform 0.2s ease-out',
+                                        }}
+                                    >
+                                        <DocumentRenderSurface
+                                            elements={item.elements}
+                                            width={canvasW}
+                                            height={canvasH}
+                                            templateFontFamily={selectedTemplate.template_font_family}
+                                        />
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     </div>
                 ) : (

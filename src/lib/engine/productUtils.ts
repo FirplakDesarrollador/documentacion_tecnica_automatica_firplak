@@ -1,3 +1,5 @@
+import { normalizeWeightKgTotal } from './labelParts'
+
 /**
  * Minimal built-in fallback map for zone translations.
  * This is NOT the source of truth – the glossary is.
@@ -27,7 +29,7 @@ export function enrichProductData(product: {
     width_cm?: number | null;
     depth_cm?: number | null;
     height_cm?: number | null;
-    weight_kg?: number | null;
+    weight_kg?: unknown;
     sku_base?: string | null;
     rh?: string | null;
     canto_puertas?: string | null;
@@ -62,11 +64,13 @@ export function enrichProductData(product: {
     const width_in = product.width_cm ? (product.width_cm / cm_to_in).toFixed(1) : '';
     const depth_in = product.depth_cm ? (product.depth_cm / cm_to_in).toFixed(1) : '';
     const height_in = product.height_cm ? (product.height_cm / cm_to_in).toFixed(1) : '';
-    const weight_lb = product.weight_kg ? (product.weight_kg * kg_to_lb).toFixed(1) : '';
+    const weightKg = normalizeWeightKgTotal(product.weight_kg)
+    const weight_lb = weightKg !== null ? (weightKg * kg_to_lb).toFixed(1) : '';
 
     return {
         ...product,
         sku_base: product.sku_base || '', 
+        weight_kg: weightKg ?? product.weight_kg,
         width_in,
         depth_in,
         height_in,
@@ -93,7 +97,7 @@ export function enrichProductDataWithIcons(product: {
     width_cm?: number | null;
     depth_cm?: number | null;
     height_cm?: number | null;
-    weight_kg?: number | null;
+    weight_kg?: unknown;
     sku_base?: string | null;
     rh?: string | null;
     canto_puertas?: string | null;

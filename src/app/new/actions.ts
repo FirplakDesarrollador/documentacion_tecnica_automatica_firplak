@@ -15,6 +15,7 @@ import {
     createClientAction as createClientActionFromConfiguration,
 } from '@/app/configuration/clients/actions'
 import { assertRole } from '@/utils/auth/access'
+import { buildLabelBoxesAttr, buildPackageQuantityLabel } from '@/lib/engine/labelParts'
 
 async function assertAdminAccess() {
     await assertRole('admin')
@@ -116,6 +117,10 @@ function buildCreateProductV6Payload(
     const normalizedPrivateName = (clientName && String(clientName).trim() !== '' && String(clientName).toUpperCase() !== 'NA')
         ? String(clientName).trim()
         : null
+    const packageBoxCount = Math.max(1, Math.min(20, parseInt(String(data.package_box_count || '1'), 10) || 1))
+    const referenceWeightKg = packageBoxCount > 1
+        ? buildLabelBoxesAttr(data.label_box_weights_kg || [], packageBoxCount)
+        : (data.weight_kg ? parseFloat(data.weight_kg) : null)
 
     // ref_attrs = verdad de la referencia (solo del form + existente, SIN overrides de versión)
     const refAttrs: Record<string, any> = {
@@ -129,6 +134,7 @@ function buildCreateProductV6Payload(
             ? !!data.assembled_flag : (existingRefAttrs.assembled_flag || false),
         product_type: data.product_type || (existingRefAttrs.product_type || null),
         door_color_text: data.door_color_text || (existingRefAttrs.door_color_text || 'NA'),
+        q_package: buildPackageQuantityLabel(packageBoxCount),
     }
 
     // version_attrs = overrides del version-code (MRH) + GVR + marca propia
@@ -139,8 +145,7 @@ function buildCreateProductV6Payload(
     if (parsed._version_overrides) {
         Object.assign(versionAttrs, parsed._version_overrides);
     }
-
-     
+      
     const payload: any = {
         reference: {
             reference_code: parsed.ref_code,
@@ -153,7 +158,7 @@ function buildCreateProductV6Payload(
             width_cm: data.width_cm ? parseFloat(data.width_cm) : null,
             depth_cm: data.depth_cm ? parseFloat(data.depth_cm) : null,
             height_cm: data.height_cm ? parseFloat(data.height_cm) : null,
-            weight_kg: data.weight_kg ? parseFloat(data.weight_kg) : null,
+            weight_kg: referenceWeightKg,
             stacking_max: data.stacking_max ? parseInt(data.stacking_max) : null,
             isometric_path: data.isometric_path || null,
             isometric_asset_id: data.isometric_asset_id || null,
@@ -165,6 +170,7 @@ function buildCreateProductV6Payload(
             validation_status: final_base_name_es && final_base_name_en && final_complete_name_es && final_complete_name_en ? 'ready' : 'needs_review',
             final_base_name_es,
             final_base_name_en,
+            version_label: data.version_label || parsed.version_label || null,
             version_attrs: versionAttrs
         },
         sku: {

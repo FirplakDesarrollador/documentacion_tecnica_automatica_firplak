@@ -28,6 +28,11 @@ import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
 import { PIXELS_PER_MM } from '@/lib/constants'
 import { resolveZoneHomeEnAction } from '@/app/configuration/glossary/actions'
 import type { ProductPayload } from '@/lib/engine/translator'
+import {
+    appendLabelBoxSuffix,
+    expandLabelBoxProducts,
+    filenameFormatUsesLabelBoxVariable,
+} from '@/lib/engine/labelParts'
 
 type RuleSet = Record<string, unknown>[]
 type RuleProduct = Parameters<typeof evaluateProductRules>[0]
@@ -95,7 +100,7 @@ async function exportOneProduct(
     format: 'pdf' | 'jpg',
     rules: RuleSet,
     directoryHandle: BulkExportDirectoryHandle | null = null
-): Promise<boolean> {
+): Promise<number> {
     if (product.is_exportable === false) {
         throw new Error(
             product.inactive_reasons?.length
@@ -143,109 +148,120 @@ async function exportOneProduct(
         final_name_en, 
         zone_home_en: zoneEn || undefined 
     }
-    
-    // 4. Hidratar la plantilla con los textos resueltos en tiempo real
-    const hydrated = await hydrateTemplateElements(elements, updatedProduct, assetMap)
-    const enriched = enrichProductDataWithIcons(updatedProduct, assetMap)
-    
-    // Obtenemos el nombre base y lo sanitizamos para evitar errores de sistema de archivos
-    const rawDownloadName = hydrateText(template.export_filename_format || '{sku_base}_{final_name_es}', enriched)
-    // Mantener el nombre completo diseñado; si el navegador/FS API no lo soporta en esa carpeta,
-    // caemos a descarga del navegador (sin truncar) y además limpiamos archivos parciales.
-    const downloadName = sanitizeFilename(rawDownloadName)
-    const fileName = `${downloadName}.${format}`
 
-    // 5. Payload para el API
-    const widthPx = Math.round((template.width_mm || 200) * PIXELS_PER_MM)
-    const heightPx = Math.round((template.height_mm || 100) * PIXELS_PER_MM)
+    const labelBoxProducts = expandLabelBoxProducts(updatedProduct)
+    const filenameFormat = template.export_filename_format || '{sku_base}_{final_name_es}'
+    const hasLabelBoxFilenameVariable = filenameFormatUsesLabelBoxVariable(filenameFormat)
+    let exportedCount = 0
 
-    const response = await fetch('/api/export', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            productId: product.id,
-            isExternalSource: product.is_external === true,
-            elements: hydrated, 
-            format, 
-            width: widthPx, 
-            height: heightPx,
-            templateFontFamily: template.template_font_family,
-            filename: downloadName
-        }),
-    })
+    for (const labelBoxProduct of labelBoxProducts) {
+        // 4. Hidratar la plantilla con los textos resueltos en tiempo real
+        const hydrated = await hydrateTemplateElements(elements, labelBoxProduct, assetMap)
+        const enriched = enrichProductDataWithIcons(labelBoxProduct, assetMap)
 
-    if (!response.ok) {
-        const payload = await response.json().catch(() => null)
-        const reasonText = Array.isArray(payload?.inactive_reasons) ? `: ${payload.inactive_reasons.join(', ')}` : ''
-        throw new Error(payload?.error ? `${payload.error}${reasonText}` : `Error exportando ${product.code}`)
-    }
+        // Obtenemos el nombre base y lo sanitizamos para evitar errores de sistema de archivos
+        const rawDownloadName = hydrateText(filenameFormat, enriched)
+        // Mantener el nombre completo diseñado; si el navegador/FS API no lo soporta en esa carpeta,
+        // caemos a descarga del navegador (sin truncar) y además limpiamos archivos parciales.
+        const downloadName = sanitizeFilename(
+            hasLabelBoxFilenameVariable ? rawDownloadName : appendLabelBoxSuffix(rawDownloadName, labelBoxProduct)
+        )
+        const fileName = `${downloadName}.${format}`
 
-    const blob = await response.blob()
-    if (!blob || blob.size <= 0) {
-        throw new Error(`Export generado vacio para ${product.code}`)
-    }
+        // 5. Payload para el API
+        const widthPx = Math.round((template.width_mm || 200) * PIXELS_PER_MM)
+        const heightPx = Math.round((template.height_mm || 100) * PIXELS_PER_MM)
 
-    // 6. Guardar: En Carpeta o mediante Descarga Navegador
-    if (directoryHandle) {
-        let writable: BulkExportWritable | null = null
-        try {
-            // Verificar permisos antes de intentar crear/escribir archivos.
-            // Nota: si el usuario renombra/mueve/elimina la carpeta mientras exporta, el handle puede quedar inválido.
-            try {
-                const permissionState =
-                    (await directoryHandle.queryPermission?.({ mode: 'readwrite' })) ?? 'prompt'
-                if (permissionState !== 'granted') {
-                    const requested =
-                        (await directoryHandle.requestPermission?.({ mode: 'readwrite' })) ?? permissionState
-                    if (requested !== 'granted') {
-                        throw new Error('Permisos de escritura no concedidos para la carpeta seleccionada.')
-                    }
-                }
-            } catch (permErr) {
-                console.warn('[bulk-export] No se pudo validar permisos de carpeta (continuando a intento de escritura)', permErr)
-            }
+        const response = await fetch('/api/export', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                productId: product.id,
+                isExternalSource: product.is_external === true,
+                elements: hydrated,
+                format,
+                width: widthPx,
+                height: heightPx,
+                templateFontFamily: template.template_font_family,
+                filename: downloadName
+            }),
+        })
 
-            const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true })
-            writable = await fileHandle.createWritable()
-            await writable.write(blob)
-            await writable.close()
-        } catch (err) {
-            console.error('Error guardando en carpeta seleccionada', err)
-            try {
-                await writable?.abort?.()
-            } catch { /* noop */ }
-            // Evitar que queden archivos corruptos/0 bytes si la escritura falló.
-            try {
-                await directoryHandle.removeEntry?.(fileName)
-            } catch { /* noop */ }
-
-            const errName = err instanceof Error ? err.name : ''
-            const errMessage = err instanceof Error ? err.message : ''
-            const looksMissing =
-                errName === 'NotFoundError' ||
-                /not\s*found/i.test(errMessage) ||
-                /no\s*such\s*file/i.test(errMessage)
-
-            if (looksMissing) {
-                throw new Error(
-                    `[DIRECTORY_INVALID] No se pudo escribir en la carpeta seleccionada (puede haberse movido/renombrado, o la ruta/nombre es demasiado largo). Re-selecciona un destino o usa descarga del navegador. (${fileName})`
-                )
-            }
-
-            throw new Error(`Permiso denegado o error al guardar archivo: ${fileName}`)
+        if (!response.ok) {
+            const payload = await response.json().catch(() => null)
+            const reasonText = Array.isArray(payload?.inactive_reasons) ? `: ${payload.inactive_reasons.join(', ')}` : ''
+            throw new Error(payload?.error ? `${payload.error}${reasonText}` : `Error exportando ${product.code}`)
         }
-    } else {
-        const url = window.URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = fileName
-        document.body.appendChild(a)
-        a.click()
-        window.URL.revokeObjectURL(url)
-        document.body.removeChild(a)
+
+        const blob = await response.blob()
+        if (!blob || blob.size <= 0) {
+            throw new Error(`Export generado vacio para ${product.code}`)
+        }
+
+        // 6. Guardar: En Carpeta o mediante Descarga Navegador
+        if (directoryHandle) {
+            let writable: BulkExportWritable | null = null
+            try {
+                // Verificar permisos antes de intentar crear/escribir archivos.
+                // Nota: si el usuario renombra/mueve/elimina la carpeta mientras exporta, el handle puede quedar inválido.
+                try {
+                    const permissionState =
+                        (await directoryHandle.queryPermission?.({ mode: 'readwrite' })) ?? 'prompt'
+                    if (permissionState !== 'granted') {
+                        const requested =
+                            (await directoryHandle.requestPermission?.({ mode: 'readwrite' })) ?? permissionState
+                        if (requested !== 'granted') {
+                            throw new Error('Permisos de escritura no concedidos para la carpeta seleccionada.')
+                        }
+                    }
+                } catch (permErr) {
+                    console.warn('[bulk-export] No se pudo validar permisos de carpeta (continuando a intento de escritura)', permErr)
+                }
+
+                const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true })
+                writable = await fileHandle.createWritable()
+                await writable.write(blob)
+                await writable.close()
+            } catch (err) {
+                console.error('Error guardando en carpeta seleccionada', err)
+                try {
+                    await writable?.abort?.()
+                } catch { /* noop */ }
+                // Evitar que queden archivos corruptos/0 bytes si la escritura falló.
+                try {
+                    await directoryHandle.removeEntry?.(fileName)
+                } catch { /* noop */ }
+
+                const errName = err instanceof Error ? err.name : ''
+                const errMessage = err instanceof Error ? err.message : ''
+                const looksMissing =
+                    errName === 'NotFoundError' ||
+                    /not\s*found/i.test(errMessage) ||
+                    /no\s*such\s*file/i.test(errMessage)
+
+                if (looksMissing) {
+                    throw new Error(
+                        `[DIRECTORY_INVALID] No se pudo escribir en la carpeta seleccionada (puede haberse movido/renombrado, o la ruta/nombre es demasiado largo). Re-selecciona un destino o usa descarga del navegador. (${fileName})`
+                    )
+                }
+
+                throw new Error(`Permiso denegado o error al guardar archivo: ${fileName}`)
+            }
+        } else {
+            const url = window.URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = fileName
+            document.body.appendChild(a)
+            a.click()
+            window.URL.revokeObjectURL(url)
+            document.body.removeChild(a)
+        }
+
+        exportedCount += 1
     }
 
-    return true
+    return exportedCount
 }
 
 export function BulkExportPanel({
@@ -370,8 +386,7 @@ export function BulkExportPanel({
 
             updateItem(item.product.id, 'exporting')
             try {
-                await exportOneProduct(item.product, template, selectedFormat, rules, directoryHandle)
-                successCount += 1
+                successCount += await exportOneProduct(item.product, template, selectedFormat, rules, directoryHandle)
                 updateItem(item.product.id, 'done')
             } catch (err) {
                 const msg = String(err instanceof Error ? err.message : 'Error desconocido')
@@ -383,8 +398,7 @@ export function BulkExportPanel({
                     setDirectoryName(null)
 
                     try {
-                        await exportOneProduct(item.product, template, selectedFormat, rules, null)
-                        successCount += 1
+                        successCount += await exportOneProduct(item.product, template, selectedFormat, rules, null)
                         updateItem(item.product.id, 'done')
                         continue
                     } catch (retryErr) {

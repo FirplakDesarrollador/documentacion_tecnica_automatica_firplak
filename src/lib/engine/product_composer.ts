@@ -1,5 +1,6 @@
 import { dbQuery } from '@/lib/supabase';
 import { buildEffectiveProductContext, type EffectiveContextOptions } from './effectiveProduct';
+import { normalizeWeightKgTotal } from './labelParts';
 
 // ============================================================================
 // PHASE 1A: COMPOSITION LAYER
@@ -38,6 +39,9 @@ interface ViewProductRow {
     barcode_path: string | null
     isometric_path: string | null
     isometric_asset_id: string | null
+    weight_kg?: unknown
+    weight_kg_payload?: unknown
+    resolved_weight_kg?: unknown
 }
 
 export interface ComposedProduct {
@@ -70,6 +74,7 @@ export interface ComposedProduct {
     depth_cm: number | null;
     height_cm: number | null;
     weight_kg: number | null;
+    weight_kg_payload?: unknown;
     stacking_max: number | null;
     isometric_path: string | null;
     isometric_asset_id: string | null;
@@ -125,6 +130,7 @@ const BASE_QUERY = `SELECT * FROM public.v_ui_generate_list`;
 export function mapRowToComposedProduct(row: ViewProductRow, options: EffectiveContextOptions = {}): ComposedProduct {
     const effectiveContext = buildEffectiveProductContext(row, options);
     const effectiveAttrs = effectiveContext.effective_attrs;
+    const referenceWeightPayload = row.weight_kg_payload ?? row.weight_kg;
 
     const resolveAttr = (key: string, defaultValue: string = 'NA') => {
         return effectiveAttrs[key] !== undefined ? effectiveAttrs[key] : defaultValue;
@@ -159,7 +165,8 @@ export function mapRowToComposedProduct(row: ViewProductRow, options: EffectiveC
         width_cm: effectiveContext.resolved_width_cm,
         depth_cm: effectiveContext.resolved_depth_cm,
         height_cm: effectiveContext.resolved_height_cm,
-        weight_kg: effectiveContext.resolved_weight_kg,
+        weight_kg: effectiveContext.resolved_weight_kg ?? normalizeWeightKgTotal(referenceWeightPayload),
+        weight_kg_payload: referenceWeightPayload,
         stacking_max: effectiveContext.resolved_stacking_max !== null
             ? parseInt(String(effectiveContext.resolved_stacking_max), 10)
             : null,

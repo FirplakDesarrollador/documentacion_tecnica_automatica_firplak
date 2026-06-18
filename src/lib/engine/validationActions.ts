@@ -47,6 +47,72 @@ type VersionStatusRow = {
     version_id: string | null
 }
 
+const PENDING_PRODUCT_COLUMNS = [
+    'id',
+    'version_id',
+    'reference_id',
+    'sku_complete',
+    'family_code',
+    'reference_code',
+    'version_code',
+    'color_code',
+    'sku_base',
+    'product_type',
+    'zone_home',
+    'use_destination',
+    'assembled_default',
+    'rh_default',
+    'allowed_lines',
+    'product_name',
+    'designation',
+    'line',
+    'commercial_measure',
+    'version_label',
+    'final_base_name_es',
+    'final_base_name_en',
+    'validation_status',
+    'sap_description_original',
+    'final_complete_name_es',
+    'final_complete_name_en',
+    'barcode_text',
+    'barcode_path',
+    'isometric_path',
+    'isometric_asset_id',
+    'weight_kg',
+    'weight_kg_payload',
+    'stacking_max',
+    'status',
+    'version_status',
+    'ref_status',
+    'family_status',
+    'global_version_rule_status',
+    'inactive_reasons',
+    'sku_attrs',
+    'ref_attrs',
+    'automatic_version_rules',
+    'version_attrs',
+    'resolved_color_name',
+    'name_color_sap',
+    'resolved_private_label_client_name',
+    'private_label_client_name',
+    'resolved_special_label',
+    'special_label',
+    'resolved_width_cm',
+    'width_cm',
+    'resolved_depth_cm',
+    'depth_cm',
+    'resolved_height_cm',
+    'height_cm',
+    'resolved_weight_kg',
+    'resolved_stacking_max',
+] as const
+
+const PENDING_SWEEP_PAGE_SIZE = 500
+
+function escapeSqlLiteral(value: string) {
+    return value.replace(/'/g, "''")
+}
+
 function isInactiveOrNotExportable(product: Record<string, unknown>) {
     return product?.is_exportable === false || product?.effective_status === 'INACTIVO'
 }
@@ -283,6 +349,42 @@ async function mapWithConcurrency<T, R>(items: T[], concurrency: number, fn: (it
     return results
 }
 
+async function loadPendingProductRows<T>(): Promise<T[]> {
+    const rows: T[] = []
+    let lastSkuComplete = ''
+
+    while (true) {
+        const cursorCondition = lastSkuComplete
+            ? `AND sku_complete > '${escapeSqlLiteral(lastSkuComplete)}'`
+            : ''
+
+        const pageResult = await dbQuery(`
+            SELECT ${PENDING_PRODUCT_COLUMNS.join(', ')}
+            FROM public.v_ui_generate_list
+            WHERE COALESCE(is_exportable, true) = true
+              ${cursorCondition}
+            ORDER BY sku_complete ASC
+            LIMIT ${PENDING_SWEEP_PAGE_SIZE}
+        `)
+        const page = (pageResult || []) as T[]
+
+        rows.push(...page)
+
+        if (page.length < PENDING_SWEEP_PAGE_SIZE) {
+            break
+        }
+
+        const lastRow = page[page.length - 1] as Record<string, unknown>
+        lastSkuComplete = String(lastRow.sku_complete || '')
+
+        if (!lastSkuComplete) {
+            break
+        }
+    }
+
+    return rows
+}
+
 /**
  * Executes a full “Pendientes” sweep of the active product catalog.
  * This is the single source of truth for the Pending KPI + report.
@@ -290,25 +392,22 @@ async function mapWithConcurrency<T, R>(items: T[], concurrency: number, fn: (it
 export async function getPendingSummary(): Promise<PendingSummary> {
     const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
 
-     
     type ComposedProductRow = Parameters<typeof mapRowToComposedProduct>[0]
 
-    const rows =
-        (await dbQuery(`
-            SELECT *
-            FROM public.v_ui_generate_list
-            WHERE COALESCE(is_exportable, true) = true
-            ORDER BY sku_complete ASC
-        `)) as ComposedProductRow[] || []
-
-    const products = rows.map(row => mapRowToComposedProduct(row))
-
-    const activeTemplates =
-        (await dbQuery(`
+    const [rowsResult, activeTemplatesResult] = await Promise.all([
+        loadPendingProductRows<ComposedProductRow>(),
+        dbQuery(`
             SELECT id, elements_json, brand_scope, private_label_client_name
             FROM public.plantillas_doc_tec
             WHERE active = true
-        `)) || []
+        `),
+    ])
+
+    const rows = (rowsResult || []) as ComposedProductRow[]
+
+    const products = rows.map(row => mapRowToComposedProduct(row))
+
+    const activeTemplates = (activeTemplatesResult || []) as TemplateRequiredSource[]
 
     const requiredFieldMap = buildRequiredFieldMap(activeTemplates)
 
@@ -336,6 +435,8 @@ export async function getPendingSummary(): Promise<PendingSummary> {
             reasons: r.reasons,
         })
     }
+
+    details.sort((a, b) => a.productCode.localeCompare(b.productCode, 'es'))
 
     return {
         totalEvaluated: evaluatedProducts.length,

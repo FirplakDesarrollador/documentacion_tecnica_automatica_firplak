@@ -5,6 +5,14 @@ import { toast } from 'sonner';
 import { searchReferences, previewMassUpdateReferences, executeMassUpdateReferences, getFilterOptions, previewDeleteReferencesAction, deleteReferencesAction } from './actions';
 import { getFamiliesWithSchema } from '@/app/families/actions';
 import { Loader2, Search, CheckSquare, Edit, AlertTriangle, Info, Check, X, Trash2 } from 'lucide-react';
+import {
+  buildLabelBoxesAttr,
+  buildPackageQuantityLabel,
+  getLabelBoxTotal,
+  getLabelBoxWeightsKg,
+  normalizeWeightKgTotal,
+  PACKAGE_QUANTITY_ATTR_KEY,
+} from '@/lib/engine/labelParts';
 
 const NORMAL_COLS = [
   { key: 'product_name', label: 'Nombre' },
@@ -17,16 +25,6 @@ const NORMAL_COLS = [
   { key: 'weight_kg', label: 'Peso (kg)' }
 ];
 
-export default function MassEditClient() {
-  const [filters, setFilters] = useState({
-    productType: '',
-    familyCode: '',
-    referenceCode: '',
-    productName: '',
-    refAttrsKey: '',
-    refAttrsValue: ''
-  });
-  
 interface ReferenceRow {
   id: string
   family_code: string
@@ -36,10 +34,19 @@ interface ReferenceRow {
   width_cm?: number
   depth_cm?: number
   height_cm?: number
-  weight_kg?: number
+  weight_kg?: unknown
   special_label?: string
   designation?: string
   ref_attrs: Record<string, string>
+  families?: {
+    product_type?: string | null
+    zone_home?: string | null
+    use_destination?: string | null
+  } | {
+    product_type?: string | null
+    zone_home?: string | null
+    use_destination?: string | null
+  }[]
 }
 
 interface RawDataItem {
@@ -61,8 +68,118 @@ interface PreviewData {
   errors?: string[]
   affected_count?: number
   families?: string[]
+  displayValue?: string
 }
 
+function isValidWeightInput(value: string) {
+  const normalized = value.trim().replace(',', '.');
+  if (!normalized) return false;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed >= 0;
+}
+
+function normalizePreviewData(value: unknown, displayValue: string): PreviewData {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {
+      is_valid: false,
+      errors: ['Respuesta de validacion invalida'],
+      displayValue,
+    };
+  }
+
+  const record = value as Record<string, unknown>;
+  const affectedCount = Number(record.affected_count);
+
+  return {
+    is_valid: record.is_valid === true,
+    errors: Array.isArray(record.errors) ? record.errors.map(String) : undefined,
+    affected_count: Number.isFinite(affectedCount) ? affectedCount : undefined,
+    families: Array.isArray(record.families) ? record.families.map(String) : undefined,
+    displayValue,
+  };
+}
+
+function getReferenceFamilyInfo(reference: ReferenceRow) {
+  const family = Array.isArray(reference.families) ? reference.families[0] : reference.families;
+  return {
+    productType: family?.product_type || '',
+    destination: family?.use_destination || family?.zone_home || '',
+  };
+}
+
+function buildReferenceIdentity(reference: ReferenceRow) {
+  const { productType, destination } = getReferenceFamilyInfo(reference);
+  return [
+    productType,
+    reference.designation,
+    reference.product_name,
+    destination,
+    reference.commercial_measure,
+    reference.special_label,
+  ]
+    .map(value => String(value || '').trim())
+    .filter(value => value && value.toUpperCase() !== 'NA')
+    .join(' ')
+    .toUpperCase();
+}
+
+function formatKg(value: number | null) {
+  if (value === null) return 'Sin peso';
+  return `${Number(value.toFixed(3))} kg`;
+}
+
+function formatGenericValue(value: unknown) {
+  if (value === null || value === undefined || value === '') return '';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function formatWeightKgValue(weightKg: unknown, qPackage: unknown) {
+  const packageTotal = getLabelBoxTotal(qPackage);
+  const boxWeights = getLabelBoxWeightsKg({ weight_kg: weightKg }, packageTotal ?? undefined);
+  const totalWeight = normalizeWeightKgTotal(weightKg);
+
+  if (boxWeights.length > 1) {
+    const boxesText = boxWeights
+      .map((weight, index) => `Caja ${index + 1}: ${formatKg(weight)}`)
+      .join(' | ');
+    return `${boxesText} | Total: ${formatKg(totalWeight)}`;
+  }
+
+  return formatKg(totalWeight);
+}
+
+function formatReferenceFieldValue(reference: ReferenceRow, editType: 'normal' | 'ref_attr', editField: string) {
+  if (!editField) return '';
+
+  if (editType === 'normal') {
+    const value = (reference as unknown as Record<string, unknown>)[editField];
+    if (editField === 'weight_kg') {
+      return formatWeightKgValue(value, reference.ref_attrs?.[PACKAGE_QUANTITY_ATTR_KEY]);
+    }
+    return formatGenericValue(value);
+  }
+
+  const value = reference.ref_attrs?.[editField];
+  if (editField === PACKAGE_QUANTITY_ATTR_KEY) {
+    const weightSummary = formatWeightKgValue(reference.weight_kg, value);
+    return weightSummary
+      ? `${formatGenericValue(value)} | ${weightSummary}`
+      : formatGenericValue(value);
+  }
+
+  return formatGenericValue(value);
+}
+
+export default function MassEditClient() {
+  const [filters, setFilters] = useState({
+    productType: '',
+    familyCode: '',
+    referenceCode: '',
+    productName: '',
+    refAttrsKey: '',
+    refAttrsValue: ''
+  });
   const [references, setReferences] = useState<ReferenceRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingOpts, setLoadingOpts] = useState(true);
@@ -77,6 +194,8 @@ interface PreviewData {
   const [editType, setEditType] = useState<'normal' | 'ref_attr'>('ref_attr');
   const [editField, setEditField] = useState('');
   const [editValue, setEditValue] = useState('');
+  const [packageBoxCountInput, setPackageBoxCountInput] = useState('');
+  const [packageWeightInputs, setPackageWeightInputs] = useState<string[]>([]);
 
   // Preview Modal
   const [showPreview, setShowPreview] = useState(false);
@@ -169,6 +288,42 @@ interface PreviewData {
     return Array.from(vals).sort();
   }, [editType, editField, selectedIds, references, schemasData]);
 
+  const refAttrEditKeys = useMemo(() => {
+    return [
+      PACKAGE_QUANTITY_ATTR_KEY,
+      ...refAttrsKeys.filter(key => key !== PACKAGE_QUANTITY_ATTR_KEY),
+    ];
+  }, [refAttrsKeys]);
+
+  const selectedReferences = useMemo(
+    () => references.filter(reference => selectedIds.includes(reference.id)),
+    [references, selectedIds]
+  );
+
+  const isEditingPackageQuantity = editType === 'ref_attr' && editField === PACKAGE_QUANTITY_ATTR_KEY;
+
+  const selectedPackageBoxCount = useMemo(() => {
+    if (selectedReferences.length === 0) return 1;
+    return getLabelBoxTotal(selectedReferences[0].ref_attrs?.[PACKAGE_QUANTITY_ATTR_KEY]) ?? 1;
+  }, [selectedReferences]);
+
+  const packageBoxCount = Math.max(
+    1,
+    Math.min(20, parseInt(packageBoxCountInput || String(selectedPackageBoxCount), 10) || 1)
+  );
+
+  const packageWeightValues = useMemo(() => {
+    if (packageBoxCount <= 1) return [];
+    const existingWeights = getLabelBoxWeightsKg(
+      { weight_kg: selectedReferences[0]?.weight_kg },
+      packageBoxCount
+    ).map(weight => weight === null ? '' : String(weight));
+
+    return Array.from({ length: packageBoxCount }, (_, index) =>
+      packageWeightInputs[index] ?? existingWeights[index] ?? ''
+    );
+  }, [packageBoxCount, packageWeightInputs, selectedReferences]);
+
 
   const handleSearch = async () => {
     setLoading(true);
@@ -176,6 +331,8 @@ interface PreviewData {
     if (res.success) {
       setReferences((res.data || []) as ReferenceRow[]);
       setSelectedIds([]);
+      setPackageBoxCountInput('');
+      setPackageWeightInputs([]);
     } else {
       toast.error('Error al buscar referencias: ' + res.error);
     }
@@ -185,32 +342,61 @@ interface PreviewData {
   const handleSelectAll = (checked: boolean) => {
     if (checked) setSelectedIds(references.map(r => r.id));
     else setSelectedIds([]);
+    setPackageBoxCountInput('');
+    setPackageWeightInputs([]);
   };
 
   const handleSelectRef = (id: string, checked: boolean) => {
     if (checked) setSelectedIds(prev => [...prev, id]);
     else setSelectedIds(prev => prev.filter(i => i !== id));
+    setPackageBoxCountInput('');
+    setPackageWeightInputs([]);
   };
 
   const handleClearFilters = () => {
     setFilters({ productType: '', familyCode: '', referenceCode: '', productName: '', refAttrsKey: '', refAttrsValue: '' });
   };
 
+  const buildUpdatePayload = () => {
+    if (isEditingPackageQuantity) {
+      const normalUpdates: Record<string, unknown> = {};
+      const displayValue = buildPackageQuantityLabel(packageBoxCount);
+      let previewDisplayValue = displayValue;
+      if (packageBoxCount > 1) {
+        const nextWeightKg = buildLabelBoxesAttr(packageWeightValues, packageBoxCount);
+        normalUpdates.weight_kg = nextWeightKg;
+        previewDisplayValue = `${displayValue} | ${formatWeightKgValue(nextWeightKg, displayValue)}`;
+      }
+      return {
+        normalUpdates,
+        refAttrsUpdates: { [PACKAGE_QUANTITY_ATTR_KEY]: displayValue },
+        displayValue: previewDisplayValue,
+      };
+    }
+
+    return {
+      normalUpdates: editType === 'normal' ? { [editField.trim()]: editValue.trim() } : {},
+      refAttrsUpdates: editType === 'ref_attr' ? { [editField.trim()]: editValue.trim() } : {},
+      displayValue: editValue.trim(),
+    };
+  };
+
   const handlePreview = async () => {
     if (selectedIds.length === 0) return toast.warning('Selecciona al menos una referencia');
     if (!editField) return toast.warning('Selecciona el campo a modificar');
-    if (editValue.trim() === '') return toast.warning('Ingresa o selecciona un valor');
+    if (!isEditingPackageQuantity && editValue.trim() === '') return toast.warning('Ingresa o selecciona un valor');
+    if (isEditingPackageQuantity && packageBoxCount > 1 && packageWeightValues.some(value => !isValidWeightInput(value))) {
+      return toast.warning('Ingresa un peso válido para cada caja');
+    }
 
-    const normalUpdates = editType === 'normal' ? { [editField.trim()]: editValue.trim() } : {};
-    const refAttrsUpdates = editType === 'ref_attr' ? { [editField.trim()]: editValue.trim() } : {};
+    const { normalUpdates, refAttrsUpdates, displayValue } = buildUpdatePayload();
 
     setLoading(true);
     const res = await previewMassUpdateReferences(selectedIds, normalUpdates, refAttrsUpdates);
     setLoading(false);
 
     if (res.success) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      setPreviewData(res.data as any);
+      setPreviewData(normalizePreviewData(res.data, displayValue));
       setShowPreview(true);
     } else {
       toast.error('Error generando preview: ' + res.error);
@@ -221,8 +407,7 @@ interface PreviewData {
     if (!previewData?.is_valid) return toast.error('Corrige los errores de validación');
     setIsExecuting(true);
     setExecutionProgress({ processed: 0, total: selectedIds.length });
-    const normalUpdates = editType === 'normal' ? { [editField.trim()]: editValue.trim() } : {};
-    const refAttrsUpdates = editType === 'ref_attr' ? { [editField.trim()]: editValue.trim() } : {};
+    const { normalUpdates, refAttrsUpdates } = buildUpdatePayload();
 
     const total = selectedIds.length;
     const batchSize = 100;
@@ -323,7 +508,7 @@ interface PreviewData {
               <label className="block text-xs font-medium text-slate-500 mb-1">JSONB Key</label>
               <select value={filters.refAttrsKey} onChange={e => setFilters({...filters, refAttrsKey: e.target.value, refAttrsValue: ''})} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
                 <option value="">Ninguna</option>
-                {refAttrsKeys.map(o => <option key={o} value={o}>{o}</option>)}
+                  {refAttrEditKeys.map(o => <option key={o} value={o}>{o}</option>)}
               </select>
             </div>
             <div>
@@ -373,8 +558,18 @@ interface PreviewData {
                 {references.map((r) => {
                   let currentValue = '';
                   if (editField) {
-                    currentValue = editType === 'normal' ? String((r as unknown as Record<string, unknown>)[editField] ?? '') : String(r.ref_attrs?.[editField] ?? '');
+                    currentValue = formatReferenceFieldValue(r, editType, editField);
                   }
+                  const referenceIdentity = buildReferenceIdentity(r);
+                  const familyInfo = getReferenceFamilyInfo(r);
+                  const identityParts = [
+                    familyInfo.productType ? `Tipo: ${familyInfo.productType}` : '',
+                    r.designation ? `Designacion: ${r.designation}` : '',
+                    r.product_name ? `Nombre: ${r.product_name}` : '',
+                    familyInfo.destination ? `Destino: ${familyInfo.destination}` : '',
+                    r.commercial_measure ? `Medida: ${r.commercial_measure}` : '',
+                    r.special_label ? `Etiqueta: ${r.special_label}` : '',
+                  ].filter(Boolean);
                   
                   return (
                     <tr key={r.id} className="hover:bg-slate-50 transition-colors">
@@ -387,7 +582,23 @@ interface PreviewData {
                         />
                       </td>
                       <td className="p-2 font-medium text-slate-800">{r.family_code}-{r.reference_code}</td>
-                      <td className="p-2 text-slate-600 max-w-[200px] truncate" title={r.product_name}>{r.product_name}</td>
+                      <td
+                        className="p-2 text-slate-600 min-w-[260px] max-w-[360px]"
+                        title={[referenceIdentity, ...identityParts].filter(Boolean).join(' | ')}
+                      >
+                        <div className="font-medium text-slate-800 whitespace-normal break-words">
+                          {referenceIdentity || <span className="text-slate-400 italic">Sin nombre</span>}
+                        </div>
+                        {identityParts.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {identityParts.map(part => (
+                              <span key={part} className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] text-slate-500">
+                                {part}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </td>
                       <td className="p-2">
                         <div className="flex flex-wrap gap-1">
                           {r.ref_attrs && Object.entries(r.ref_attrs).map(([k, v]) => (
@@ -400,7 +611,12 @@ interface PreviewData {
                       {editField && (
                         <td className="p-2 bg-indigo-50/30 text-slate-800 font-medium">
                           {currentValue ? (
-                            <span className="bg-white px-2 py-1 rounded border shadow-sm text-xs">{currentValue}</span>
+                            <span
+                              className="inline-block max-w-[320px] whitespace-normal break-words bg-white px-2 py-1 rounded border shadow-sm text-xs"
+                              title={currentValue}
+                            >
+                              {currentValue}
+                            </span>
                           ) : (
                             <span className="text-slate-400 italic text-xs">Vacio</span>
                           )}
@@ -426,7 +642,7 @@ interface PreviewData {
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Tipo de Campo</label>
-              <select value={editType} onChange={e => { setEditType(e.target.value as 'normal' | 'ref_attr'); setEditField(''); setEditValue(''); }} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
+              <select value={editType} onChange={e => { setEditType(e.target.value as 'normal' | 'ref_attr'); setEditField(''); setEditValue(''); setPackageBoxCountInput(''); setPackageWeightInputs([]); }} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
                 <option value="ref_attr">Llave (JSONB)</option>
                 <option value="normal">Columna Normal</option>
               </select>
@@ -435,19 +651,62 @@ interface PreviewData {
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Campo a Modificar</label>
               {editType === 'normal' ? (
-                <select value={editField} onChange={e => setEditField(e.target.value)} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
+                <select value={editField} onChange={e => { setEditField(e.target.value); setPackageBoxCountInput(''); setPackageWeightInputs([]); }} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
                   <option value="">Seleccione...</option>
                   {NORMAL_COLS.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
                 </select>
               ) : (
-                <select value={editField} onChange={e => setEditField(e.target.value)} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
+                <select value={editField} onChange={e => { setEditField(e.target.value); setEditValue(''); setPackageBoxCountInput(''); setPackageWeightInputs([]); }} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
                   <option value="">Seleccione llave existente...</option>
-                  {refAttrsKeys.map(k => <option key={k} value={k}>{k}</option>)}
+                  {refAttrEditKeys.map(k => <option key={k} value={k}>{k}</option>)}
                 </select>
               )}
             </div>
 
             <div>
+              {isEditingPackageQuantity ? (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Cantidad de cajas</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="20"
+                      step="1"
+                      value={packageBoxCount}
+                      onChange={e => {
+                        const nextCount = Math.max(1, Math.min(20, parseInt(e.target.value || '1', 10) || 1));
+                        setPackageBoxCountInput(String(nextCount));
+                        setPackageWeightInputs(prev => Array.from({ length: nextCount }, (_, index) => prev[index] ?? packageWeightValues[index] ?? ''));
+                      }}
+                      className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white"
+                    />
+                  </div>
+                  {packageWeightValues.length > 0 && (
+                    <div className="space-y-2 rounded-md border bg-slate-50 p-3">
+                      <p className="text-xs font-semibold text-slate-700">Pesos por caja en kg</p>
+                      {packageWeightValues.map((value, index) => (
+                        <label key={index} className="block text-xs font-medium text-slate-600">
+                          Peso caja {index + 1}
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.001"
+                            value={value}
+                            onChange={e => setPackageWeightInputs(() => {
+                              const next = [...packageWeightValues];
+                              next[index] = e.target.value;
+                              return next;
+                            })}
+                            className="mt-1 w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white"
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <>
               <label className="block text-sm font-medium text-slate-700 mb-1">Nuevo Valor</label>
               <input 
                 type="text" 
@@ -464,6 +723,8 @@ interface PreviewData {
                 <p className="text-[11px] text-slate-500 mt-1 leading-tight">
                   Las opciones del menú desplegable son los valores permitidos actuales. Puedes escribir uno nuevo, pero si no está en el esquema de la familia, fallará la validación.
                 </p>
+              )}
+                </>
               )}
             </div>
 
@@ -528,7 +789,7 @@ interface PreviewData {
                     <h4 className="font-semibold flex items-center gap-2 mb-2"><Info className="w-5 h-5"/> Resumen Quirúrgico</h4>
                     <p className="text-sm">A las <strong>{previewData.affected_count} referencias</strong> se les aplicará la siguiente mutación:</p>
                     <div className="mt-3 bg-white p-3 rounded border font-mono text-sm text-slate-700">
-                      <strong>{editField}</strong> = <span className="text-green-600 font-bold">&quot;{editValue}&quot;</span>
+                      <strong>{editField}</strong> = <span className="text-green-600 font-bold">&quot;{previewData.displayValue ?? editValue}&quot;</span>
                     </div>
                   </div>
                 </>

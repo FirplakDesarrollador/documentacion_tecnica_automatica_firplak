@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { dbQuery, supabaseServer } from '../supabase';
 import { parseSkuComplete } from './sku';
+import { normalizeWeightKgTotal } from '../engine/labelParts';
 
 export interface TemplateRow {
   row_number: number;
@@ -36,6 +37,10 @@ function normalizeSchemaKeys(schema: any): string[] {
     // product_type is inherited from family; don't expose it as an editable REF_ATTR column
     .filter(k => String(k).toLowerCase() !== 'product_type')
     .sort();
+}
+
+function displayWeightKg(value: unknown): string | number {
+  return normalizeWeightKgTotal(value) ?? '';
 }
 
 function safeJson(val: unknown): any {
@@ -441,7 +446,7 @@ export async function buildMassImportTemplateXlsx(baseRows: { sku_complete: stri
         width_cm = ref.width_cm ?? '';
         depth_cm = ref.depth_cm ?? '';
         height_cm = ref.height_cm ?? '';
-        weight_kg = ref.weight_kg ?? '';
+        weight_kg = displayWeightKg(ref.weight_kg);
         stacking_max = ref.stacking_max ?? '';
 
         const baseAttrs = safeJson(ref.ref_attrs) || {};
@@ -616,7 +621,7 @@ export async function buildMassImportTemplateXlsx(baseRows: { sku_complete: stri
               if (width_cm === '' && bestRef.width_cm != null) width_cm = bestRef.width_cm;
               if (depth_cm === '' && bestRef.depth_cm != null) depth_cm = bestRef.depth_cm;
               if (height_cm === '' && bestRef.height_cm != null) height_cm = bestRef.height_cm;
-              if (weight_kg === '' && bestRef.weight_kg != null) weight_kg = bestRef.weight_kg;
+              if (weight_kg === '' && bestRef.weight_kg != null) weight_kg = displayWeightKg(bestRef.weight_kg);
               if (stacking_max === '' && bestRef.stacking_max != null) stacking_max = bestRef.stacking_max;
             } else {
               infoNotes.push(

@@ -8,10 +8,10 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { AlertTriangle } from 'lucide-react'
-import { getPendingSummary, type PendingDetail, type PendingReason } from '@/lib/engine/validationActions'
+import { getPendingSummaryCached, type PendingDetail, type PendingReason } from '@/lib/engine/validationActions'
 
 export default async function PendingPage() {
-  const pendingSummary = await getPendingSummary()
+  const pendingSummary = await getPendingSummaryCached()
   const pendingProducts = pendingSummary.details
 
   return (
@@ -95,4 +95,3 @@ export default async function PendingPage() {
     </div>
   )
 }
-

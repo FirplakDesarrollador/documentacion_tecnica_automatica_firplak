@@ -38,7 +38,7 @@ export async function searchReferences(filters: SearchFilters) {
     special_label,
     designation,
     ref_attrs,
-    families!inner(product_type)
+    families!inner(product_type, zone_home, use_destination)
   `);
 
   if (filters.familyCode) query = query.ilike('family_code', `%${filters.familyCode}%`);
@@ -65,7 +65,7 @@ export async function searchReferences(filters: SearchFilters) {
   return { success: true, data };
 }
 
-export async function previewMassUpdateReferences(referenceIds: string[], normalUpdates: Record<string, string>, refAttrsUpdates: Record<string, string>) {
+export async function previewMassUpdateReferences(referenceIds: string[], normalUpdates: Record<string, unknown>, refAttrsUpdates: Record<string, unknown>) {
   await assertAdminAccess();
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -79,7 +79,7 @@ export async function previewMassUpdateReferences(referenceIds: string[], normal
   return { success: true, data };
 }
 
-export async function executeMassUpdateReferences(referenceIds: string[], normalUpdates: Record<string, string>, refAttrsUpdates: Record<string, string>) {
+export async function executeMassUpdateReferences(referenceIds: string[], normalUpdates: Record<string, unknown>, refAttrsUpdates: Record<string, unknown>) {
   await assertAdminAccess();
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

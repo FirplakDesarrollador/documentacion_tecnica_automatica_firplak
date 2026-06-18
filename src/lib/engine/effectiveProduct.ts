@@ -1,3 +1,5 @@
+import { normalizeWeightKgTotal } from './labelParts'
+
 export interface EffectiveContextOptions {
 /* eslint-disable @typescript-eslint/no-explicit-any */
     includeSkuOverrides?: boolean
@@ -61,7 +63,8 @@ function normalizeText(value: unknown): string | null {
 function normalizeNumber(value: unknown): number | null {
     if (value === null || value === undefined || value === '') return null
     const parsed = Number(value)
-    return Number.isFinite(parsed) ? parsed : null
+    if (Number.isFinite(parsed)) return parsed
+    return normalizeWeightKgTotal(value)
 }
 
 function normalizeStatus(value: unknown, fallback: string = 'ACTIVO'): string {

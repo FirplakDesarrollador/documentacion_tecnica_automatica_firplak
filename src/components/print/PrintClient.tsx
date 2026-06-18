@@ -49,6 +49,7 @@ import {
     PRINT_RUNTIME_VARIABLE_KEYS,
     templateUsesPrintRuntimeVariable,
 } from '@/lib/templates/printRuntimeVariables'
+import { appendLabelBoxSuffix, expandLabelBoxProducts } from '@/lib/engine/labelParts'
 
 interface PrintClientProps {
     templates: TemplateOption[]
@@ -336,7 +337,8 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
             ...buildPrintRuntimeValues({ ofNumber: runtimeOverrides.ofNumber }),
         }
 
-        const hydrated = await hydrateTemplateElements(elements, updatedProduct, assetMap)
+        const labelBoxProducts = expandLabelBoxProducts(updatedProduct)
+        const hasLabelBoxSet = labelBoxProducts.some(labelBoxProduct => labelBoxProduct._labelBoxTotal !== null)
         const widthPx = Math.round((selectedTemplate.width_mm || 200) * PIXELS_PER_MM)
         const heightPx = Math.round((selectedTemplate.height_mm || 100) * PIXELS_PER_MM)
 
@@ -348,7 +350,12 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                 throw new Error(`Actualiza el agente local a la version ${PRINT_AGENT_VERSION} para imprimir con tamanos de etiqueta.`)
             }
 
-            const imageResponse = await fetch('/api/print', {
+            const preparedJobs: Array<{ blob: Blob; outputName: string }> = []
+
+            for (const labelBoxProduct of labelBoxProducts) {
+                const hydrated = await hydrateTemplateElements(elements, labelBoxProduct, assetMap)
+                const outputName = appendLabelBoxSuffix(product.code || 'etiqueta', labelBoxProduct)
+                const imageResponse = await fetch('/api/print', {
                     method: 'POST',
                     signal: getTimeoutSignal(PRINT_RENDER_TIMEOUT_MS),
                     headers: { 'Content-Type': 'application/json' },
@@ -360,37 +367,44 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                         width: widthPx,
                         height: heightPx,
                         templateFontFamily: selectedTemplate.template_font_family,
-                        copies,
+                        copies: 1,
                     }),
                 })
                 .catch((err: unknown) => {
                     throw new Error(getPrintRequestError(err, `La generacion de imagen para ${product.code} tardo demasiado.`))
                 })
 
-            if (!imageResponse.ok) {
-                const payload = await imageResponse.json().catch(() => null)
-                throw new Error(payload?.error || `Error al generar imagen para ${product.code}`)
+                if (!imageResponse.ok) {
+                    const payload = await imageResponse.json().catch(() => null)
+                    throw new Error(payload?.error || `Error al generar imagen para ${product.code}`)
+                }
+
+                const blob = await imageResponse.blob()
+                if (!blob || blob.size <= 0) {
+                    throw new Error(`Imagen vacia para ${product.code}`)
+                }
+
+                preparedJobs.push({ blob, outputName })
             }
 
-            const blob = await imageResponse.blob()
-            if (!blob || blob.size <= 0) {
-                throw new Error(`Imagen vacía para ${product.code}`)
-            }
+            const sendPreparedJobToAgent = async (
+                job: { blob: Blob; outputName: string },
+                printCopies: number
+            ) => {
+                const formData = new FormData()
+                formData.append('file', new File([job.blob], `${job.outputName}.jpg`, { type: 'image/jpeg' }))
+                formData.append('copies', String(printCopies))
+                formData.append('colorMode', getSavedPrintColorMode())
+                formData.append('job', JSON.stringify({
+                    printTarget: PRINT_TARGET_3NSTAR,
+                    designWidthMm: selectedTemplate.width_mm,
+                    designHeightMm: selectedTemplate.height_mm,
+                    mediaWidthMm: thermalLayout.mediaWidthMm,
+                    mediaLengthMm: thermalLayout.mediaLengthMm,
+                    mediaGapMm: thermalLayout.mediaGapMm,
+                }))
 
-            const formData = new FormData()
-            formData.append('file', new File([blob], `${product.code || 'etiqueta'}.jpg`, { type: 'image/jpeg' }))
-            formData.append('copies', String(copies))
-            formData.append('colorMode', getSavedPrintColorMode())
-            formData.append('job', JSON.stringify({
-                printTarget: PRINT_TARGET_3NSTAR,
-                designWidthMm: selectedTemplate.width_mm,
-                designHeightMm: selectedTemplate.height_mm,
-                mediaWidthMm: thermalLayout.mediaWidthMm,
-                mediaLengthMm: thermalLayout.mediaLengthMm,
-                mediaGapMm: thermalLayout.mediaGapMm,
-            }))
-
-            const agentResponse = await fetch(`${printerConfig.agentUrl}/print`, {
+                const agentResponse = await fetch(`${printerConfig.agentUrl}/print`, {
                     method: 'POST',
                     signal: getTimeoutSignal(PRINT_AGENT_TIMEOUT_MS),
                     body: formData,
@@ -399,57 +413,73 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                     throw new Error(getPrintRequestError(err, 'El agente local no respondio a tiempo. Revisa si la impresora quedo ocupada, apagada o con error.'))
                 })
 
-            if (!agentResponse.ok) {
-                const payload = await agentResponse.json().catch(() => null)
-                throw new Error(payload?.error || 'Error al enviar a la impresora local')
+                if (!agentResponse.ok) {
+                    const payload = await agentResponse.json().catch(() => null)
+                    throw new Error(payload?.error || 'Error al enviar a la impresora local')
+                }
             }
+
+            for (const preparedJob of preparedJobs) {
+                await sendPreparedJobToAgent(preparedJob, copies)
+            }
+
             return true
         }
 
-        const response = await fetch('/api/print', {
-                method: 'POST',
-                signal: getTimeoutSignal(PRINT_RENDER_TIMEOUT_MS),
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    productId: product.id,
-                    isExternalSource: product.is_external === true,
-                    format: printFormat,
-                    elements: hydrated,
-                    width: widthPx,
-                    height: heightPx,
-                    templateFontFamily: selectedTemplate.template_font_family,
-                    copies,
-                }),
-            })
-            .catch((err: unknown) => {
-                throw new Error(getPrintRequestError(err, `La generacion del documento para ${product.code} tardo demasiado.`))
-            })
+        const gameCount = hasLabelBoxSet ? copies : 1
+        const requestCopies = hasLabelBoxSet ? 1 : copies
 
-        if (!response.ok) {
-            const payload = await response.json().catch(() => null)
-            throw new Error(payload?.error || `Error al generar documento para ${product.code}`)
-        }
+        for (let setIndex = 0; setIndex < gameCount; setIndex += 1) {
+            for (const labelBoxProduct of labelBoxProducts) {
+                const hydrated = await hydrateTemplateElements(elements, labelBoxProduct, assetMap)
+                const outputName = appendLabelBoxSuffix(product.code || 'etiqueta', labelBoxProduct)
 
-        const blob = await response.blob()
-        if (!blob || blob.size <= 0) {
-            throw new Error(`Documento vacío para ${product.code}`)
-        }
+                const response = await fetch('/api/print', {
+                    method: 'POST',
+                    signal: getTimeoutSignal(PRINT_RENDER_TIMEOUT_MS),
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        productId: product.id,
+                        isExternalSource: product.is_external === true,
+                        format: printFormat,
+                        elements: hydrated,
+                        width: widthPx,
+                        height: heightPx,
+                        templateFontFamily: selectedTemplate.template_font_family,
+                        copies: requestCopies,
+                    }),
+                })
+                .catch((err: unknown) => {
+                    throw new Error(getPrintRequestError(err, `La generacion del documento para ${product.code} tardo demasiado.`))
+                })
 
-        const url = URL.createObjectURL(blob)
-        const printWindow = window.open(url, '_blank')
-        if (printWindow) {
-            printWindow.addEventListener('load', () => {
-                printWindow.print()
-            })
-        } else {
-            const link = document.createElement('a')
-            link.href = url
-            link.download = `${product.code || 'documento'}.${printFormat}`
-            document.body.appendChild(link)
-            link.click()
-            link.remove()
+                if (!response.ok) {
+                    const payload = await response.json().catch(() => null)
+                    throw new Error(payload?.error || `Error al generar documento para ${product.code}`)
+                }
+
+                const blob = await response.blob()
+                if (!blob || blob.size <= 0) {
+                    throw new Error(`Documento vacío para ${product.code}`)
+                }
+
+                const url = URL.createObjectURL(blob)
+                const printWindow = window.open(url, '_blank')
+                if (printWindow) {
+                    printWindow.addEventListener('load', () => {
+                        printWindow.print()
+                    })
+                } else {
+                    const link = document.createElement('a')
+                    link.href = url
+                    link.download = `${outputName}.${printFormat}`
+                    document.body.appendChild(link)
+                    link.click()
+                    link.remove()
+                }
+                window.setTimeout(() => URL.revokeObjectURL(url), 5000)
+            }
         }
-        window.setTimeout(() => URL.revokeObjectURL(url), 5000)
 
         return true
     }

@@ -31,6 +31,39 @@ export function normalizeNamingProductType(value: string) {
     return String(value || '').trim().toUpperCase()
 }
 
+const NAMING_COMPONENTS_CACHE_TTL_MS = 60_000
+
+type NamingComponentsCacheEntry = {
+    fetchedAt: number
+    value?: NamingComponent[]
+    promise?: Promise<NamingComponent[]>
+}
+
+const namingComponentsCache = new Map<string, NamingComponentsCacheEntry>()
+
+function getNamingComponentsCacheKey(productType: string, namingType: string) {
+    return `${normalizeNamingProductType(productType)}::${namingType}`
+}
+
+export function resetNamingComponentsCache(productType?: string, namingType?: string) {
+    if (!productType && !namingType) {
+        namingComponentsCache.clear()
+        return
+    }
+
+    const normalizedProductType = productType ? normalizeNamingProductType(productType) : null
+
+    for (const key of namingComponentsCache.keys()) {
+        const [cachedProductType, cachedNamingType] = key.split('::')
+        const productTypeMatches = !normalizedProductType || cachedProductType === normalizedProductType
+        const namingTypeMatches = !namingType || cachedNamingType === namingType
+
+        if (productTypeMatches && namingTypeMatches) {
+            namingComponentsCache.delete(key)
+        }
+    }
+}
+
 interface LegacyRule {
     id?: string
     component_key?: string
@@ -182,15 +215,49 @@ export function componentsFromRulesAndEnConfig(
 }
 
 export async function loadNamingComponents(productType: string, namingType: string): Promise<NamingComponent[]> {
-    const rows = await dbQuery(`
-        SELECT *
-        FROM public.naming_components
-        WHERE product_type = ${esc(normalizeNamingProductType(productType))}
-          AND naming_type = ${esc(namingType)}
-        ORDER BY COALESCE(order_es, order_en, 999999), component_key ASC
-    `) || []
+    const normalizedProductType = normalizeNamingProductType(productType)
+    const cacheKey = getNamingComponentsCacheKey(normalizedProductType, namingType)
+    const cached = namingComponentsCache.get(cacheKey)
+    const now = Date.now()
 
-    return rows as NamingComponent[]
+    if (cached?.value && now - cached.fetchedAt < NAMING_COMPONENTS_CACHE_TTL_MS) {
+        return cached.value
+    }
+
+    if (cached?.promise) {
+        return cached.promise
+    }
+
+    const promise = (async () => {
+        try {
+            const rows = await dbQuery(`
+                SELECT *
+                FROM public.naming_components
+                WHERE product_type = ${esc(normalizedProductType)}
+                  AND naming_type = ${esc(namingType)}
+                ORDER BY COALESCE(order_es, order_en, 999999), component_key ASC
+            `) || []
+
+            const components = rows as NamingComponent[]
+            namingComponentsCache.set(cacheKey, { fetchedAt: Date.now(), value: components })
+            return components
+        } catch (error) {
+            if (cached?.value) {
+                namingComponentsCache.set(cacheKey, { fetchedAt: cached.fetchedAt, value: cached.value })
+            } else {
+                namingComponentsCache.delete(cacheKey)
+            }
+            throw error
+        }
+    })()
+
+    namingComponentsCache.set(cacheKey, {
+        fetchedAt: cached?.fetchedAt ?? now,
+        value: cached?.value,
+        promise,
+    })
+
+    return promise
 }
 
 export async function loadNamingComponentsByProductType(productType: string): Promise<NamingComponent[]> {
@@ -261,4 +328,6 @@ export async function replaceNamingComponents(productType: string, namingType: s
             )
         `)
     }
+
+    resetNamingComponentsCache(normalizedType, namingType)
 }

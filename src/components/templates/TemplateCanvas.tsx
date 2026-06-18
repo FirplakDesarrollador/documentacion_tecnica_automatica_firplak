@@ -39,7 +39,8 @@ import BarcodeElement from '@/components/export/BarcodeElement'
 import { resolveBarcodeFormat } from '@/lib/export/barcodeUtils'
 import { extractTemplateVariables } from '@/lib/templates/templateVariables'
 import { applyTemplateTextTransform, resolveCssTextTransform, type TemplateTextTransform } from '@/lib/templates/textTransforms'
-import { buildPrintRuntimePreviewValues, PRINT_RUNTIME_VARIABLE_OPTIONS } from '@/lib/templates/printRuntimeVariables'
+import { buildPrintRuntimePreviewValues, PRINT_RUNTIME_VARIABLE_KEYS, PRINT_RUNTIME_VARIABLE_OPTIONS } from '@/lib/templates/printRuntimeVariables'
+import { expandLabelBoxProducts } from '@/lib/engine/labelParts'
 
 export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'box' | 'dashed_line' | 'dynamic_image' | 'icon_group'
 type TemplateBrandScope = 'firplak' | 'private_label'
@@ -343,9 +344,15 @@ function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPr
     const displayText = React.useMemo(() => {
         if (!isPreviewMode || !previewData) return text
 
+        const resolvePreviewVariable = (varName: string) => {
+            const value = getVariableValue(previewData, varName)
+            if (value || varName === PRINT_RUNTIME_VARIABLE_KEYS.partesTexto) return value
+            return '[VACÍO]'
+        }
+
         if (type === 'dynamic_text') {
             const varName = text.replace(/[{}]/g, '');
-            const value = getVariableValue(previewData, varName) || '[VACÍO]';
+            const value = resolvePreviewVariable(varName);
             return applyTemplateTextTransform(value, textTransform, previewData)
         }
 
@@ -354,8 +361,7 @@ function OverflowText({ text, textAlign = 'left', verticalAlign = 'middle', isPr
         if (matches) {
             matches.forEach(match => {
                 const varName = match.slice(1, -1)
-                const replacement = getVariableValue(previewData, varName);
-                interpolated = interpolated.replace(match, replacement || '[VACÍO]')
+                interpolated = interpolated.replace(match, resolvePreviewVariable(varName))
             })
         }
         return applyTemplateTextTransform(interpolated, textTransform, previewData)
@@ -1750,8 +1756,10 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         const zoneHome = typeof data.zone_home === 'string' ? data.zone_home : null
         const zoneEn = zoneHome ? await resolveZoneHomeEnAction(zoneHome) : null
         const dataWithZone = zoneEn ? { ...data, zone_home_en: zoneEn } : data
+        const enriched = enrichProductDataWithIcons(dataWithZone, resolvedAssetMap) as PreviewData
+        const [labelBoxPreview] = expandLabelBoxProducts(enriched)
         return {
-            ...enrichProductDataWithIcons(dataWithZone, resolvedAssetMap),
+            ...labelBoxPreview,
             ...buildPrintRuntimePreviewValues(),
         } as PreviewData
     }

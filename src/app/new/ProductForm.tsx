@@ -24,6 +24,7 @@ import { IsometricAssociationDialog } from '@/components/assets/IsometricAssocia
 import { PostSaveExportModal } from './PostSaveExportModal'
 import { MultiColorCreationModal } from './MultiColorCreationModal'
 import { cn } from '@/lib/utils'
+import { getLabelBoxTotal, getLabelBoxWeightsKg, normalizeWeightKgTotal } from '@/lib/engine/labelParts'
 
 type ProductFormInitialData = Partial<PrismaProduct> & Record<string, unknown> & {
     private_label_logo_id?: string | null
@@ -76,9 +77,30 @@ function normalizeRuleForEngine(rule: ActionRule): Rule {
     }
 }
 
+function isValidPackageWeightInput(value: string) {
+    const normalized = value.trim().replace(',', '.')
+    if (!normalized) return false
+    const parsed = Number(normalized)
+    return Number.isFinite(parsed) && parsed >= 0
+}
+
+function parsePackageWeightInput(value: string) {
+    const normalized = value.trim().replace(',', '.')
+    if (!normalized) return null
+    const parsed = Number(normalized)
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}
+
 export function ProductForm({ initialData, backHref, readOnly = false }: ProductFormProps) {
     const isEdit = !!initialData
     const router = useRouter()
+    const initialEffectiveAttrs = initialData?.effective_attrs as Record<string, unknown> | undefined
+    const initialPackageBoxCount = getLabelBoxTotal(initialEffectiveAttrs?.q_package) ?? 1
+    const initialWeightKg = normalizeWeightKgTotal(initialData?.weight_kg_payload ?? initialData?.weight_kg)
+    const initialLabelBoxWeights = getLabelBoxWeightsKg(
+        { weight_kg: initialData?.weight_kg_payload ?? initialData?.weight_kg },
+        initialPackageBoxCount
+    ).map(weight => weight === null ? '' : String(weight))
     const [dupeAlertModal, setDupeAlertModal] = useState<{
         matchType: 'code' | 'sap_description' | 'both' | 'unknown'
     } | null>(null)
@@ -124,7 +146,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         width_cm: initialData?.width_cm ? String(initialData.width_cm) : '',
         depth_cm: initialData?.depth_cm ? String(initialData.depth_cm) : '',
         height_cm: initialData?.height_cm ? String(initialData.height_cm) : '',
-        weight_kg: initialData?.weight_kg ? String(initialData.weight_kg) : '',
+        weight_kg: initialWeightKg !== null ? String(initialWeightKg) : '',
         stacking_max: initialData?.stacking_max ? String(initialData.stacking_max) : '',
         final_name_es: initialData?.final_name_es || '',
         final_name_en: initialData?.final_name_en || '',
@@ -142,7 +164,9 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         barcode_text: initialData?.barcode_text || '',
         armado_con_lvm: initialData?.armado_con_lvm || '',
         door_color_text: initialData?.door_color_text || 'NA',
-        version_label: initialData?.version_label || 'NA'
+        version_label: initialData?.version_label || 'NA',
+        package_box_count: String(initialPackageBoxCount),
+        label_box_weights_kg: initialLabelBoxWeights
     })
 
     const [datalistOptions, setDatalistOptions] = useState({ 
@@ -209,10 +233,16 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         { key: 'width_cm', label: 'Ancho (cm)', group: 'Dimensiones', type: 'number' },
         { key: 'depth_cm', label: 'Fondo (cm)', group: 'Dimensiones', type: 'number' },
         { key: 'height_cm', label: 'Alto (cm)', group: 'Dimensiones', type: 'number' },
-        { key: 'weight_kg', label: 'Peso (kg)', group: 'Dimensiones', type: 'number' },
     ]
 
     const OVERRIDE_GROUPS = Array.from(new Set(OVERRIDE_FIELDS.map(f => f.group)))
+    const packageBoxCount = Math.max(1, Math.min(20, parseInt(String(formData.package_box_count || '1'), 10) || 1))
+    const labelBoxWeightInputs = packageBoxCount > 1
+        ? Array.from({ length: packageBoxCount }, (_, index) => formData.label_box_weights_kg[index] || '')
+        : []
+    const packageWeightTotalKg = labelBoxWeightInputs.length > 0 && labelBoxWeightInputs.every(isValidPackageWeightInput)
+        ? labelBoxWeightInputs.reduce((sum, value) => sum + (parsePackageWeightInput(value) ?? 0), 0)
+        : null
 
     // Cargar reglas y opciones una vez
     useEffect(() => {
@@ -649,6 +679,23 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
         setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))
     }
 
+    const handleLabelBoxWeightChange = (index: number, value: string) => {
+        setFormData(prev => {
+            const nextWeights = [...prev.label_box_weights_kg]
+            nextWeights[index] = value
+            return { ...prev, label_box_weights_kg: nextWeights }
+        })
+    }
+
+    const handlePackageBoxCountChange = (value: string) => {
+        const normalized = Math.max(1, Math.min(20, parseInt(value || '1', 10) || 1))
+        setFormData(prev => ({
+            ...prev,
+            package_box_count: String(normalized),
+            label_box_weights_kg: Array.from({ length: normalized }, (_, index) => prev.label_box_weights_kg[index] || ''),
+        }))
+    }
+
     const handleTeachSystem = async () => {
         const termsToSave: { term_es: string; term_en: string; category: string; priority: number }[] = []
         
@@ -814,6 +861,13 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                 });
                 return;
             }
+        }
+
+        if (packageBoxCount > 1 && labelBoxWeightInputs.some(value => !isValidPackageWeightInput(value))) {
+            toast.error("Pesos por caja incompletos", {
+                description: "Ingresa un peso válido para cada caja antes de guardar."
+            })
+            return
         }
         
         if (isNewFamily) {
@@ -1626,10 +1680,50 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                         {renderFormField('version_label', datalistOptions.versionLabels || [], 'ETIQUETA DE VERSIÓN')}
                                     </div>
                                     <div className="grid gap-2">
+                                        <Label className="text-xs font-bold text-slate-500 uppercase">Cantidad de cajas</Label>
+                                        <Input
+                                            type="number"
+                                            min="1"
+                                            max="20"
+                                            step="1"
+                                            value={formData.package_box_count}
+                                            onChange={(event) => handlePackageBoxCountChange(event.target.value)}
+                                            disabled={readOnly}
+                                            className="border-slate-200 bg-white"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="grid gap-2">
                                         <Label className="text-xs font-bold text-slate-500 uppercase">Color Puerta</Label>
                                         {renderFormField('door_color_text', datalistOptions.doorColorTexts || [], 'COLOR PUERTA')}
                                     </div>
                                 </div>
+
+                                {labelBoxWeightInputs.length > 0 && (
+                                    <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50/70 p-4">
+                                        <Label className="text-xs font-bold text-slate-500 uppercase">Pesos por caja</Label>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            {labelBoxWeightInputs.map((value, index) => (
+                                                <div key={`label-box-weight-${index}`} className="grid gap-2">
+                                                    <Label className="text-xs font-bold text-slate-500 uppercase">
+                                                        Peso caja {index + 1} (kg)
+                                                    </Label>
+                                                    <Input
+                                                        type="number"
+                                                        step="0.01"
+                                                        min="0"
+                                                        value={value}
+                                                        onChange={(event) => handleLabelBoxWeightChange(index, event.target.value)}
+                                                        disabled={readOnly}
+                                                        className="border-slate-200 bg-white"
+                                                    />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
 
                                 {warnings.length > 0 && (
                                     <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-2">
@@ -1886,8 +1980,23 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="grid gap-2">
-                                            <Label className="text-xs font-bold text-slate-500 uppercase">Peso Bruto (kg)</Label>
-                                            <Input type="number" step="0.1" name="weight_kg" value={formData.weight_kg} onChange={handleChange} className={`border-orange-200 bg-orange-50/20 ${lockedInputClass('weight_kg')}`} disabled={readOnly || isFieldLocked('weight_kg')} />
+                                            {packageBoxCount > 1 ? (
+                                                <>
+                                                    <Label className="text-xs font-bold text-slate-500 uppercase">Peso total calculado (kg)</Label>
+                                                    <Input
+                                                        type="number"
+                                                        value={packageWeightTotalKg !== null ? String(Number(packageWeightTotalKg.toFixed(3))) : ''}
+                                                        placeholder="Completa pesos por caja"
+                                                        disabled
+                                                        className="border-slate-200 bg-slate-100 text-slate-500"
+                                                    />
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Label className="text-xs font-bold text-slate-500 uppercase">Peso Bruto (kg)</Label>
+                                                    <Input type="number" step="0.1" name="weight_kg" value={formData.weight_kg} onChange={handleChange} className={`border-orange-200 bg-orange-50/20 ${lockedInputClass('weight_kg')}`} disabled={readOnly || isFieldLocked('weight_kg')} />
+                                                </>
+                                            )}
                                         </div>
                                         <div className="grid gap-2">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Apilamiento Max</Label>

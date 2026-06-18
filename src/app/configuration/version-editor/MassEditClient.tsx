@@ -11,6 +11,14 @@ const NORMAL_COLS = [
   { key: 'status', label: 'Estado (ACTIVO/INACTIVO)', type: 'text' }
 ];
 
+type EditType = 'normal' | 'version_attr';
+
+const REFERENCE_ONLY_VERSION_ATTR_KEYS = new Set(['q_package', 'weight_kg']);
+
+function isEditType(value: string): value is EditType {
+  return value === 'normal' || value === 'version_attr';
+}
+
 function formatKeyToLabel(key: string): string {
   const map: Record<string, string> = {
     private_label_client_name: 'Nombre del Cliente (Marca Propia)',
@@ -59,7 +67,7 @@ export default function MassEditClient() {
   const [filterOpts, setFilterOpts] = useState<any>({});
 
   // Edit Panel State
-  const [editType, setEditType] = useState<'normal' | 'version_attr'>('version_attr');
+  const [editType, setEditType] = useState<EditType>('version_attr');
   const [editField, setEditField] = useState('');
   const [editValue, setEditValue] = useState('');
   
@@ -79,6 +87,13 @@ export default function MassEditClient() {
     skuCount: number;
   } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  function handleEditTypeChange(value: string) {
+    if (!isEditType(value)) return;
+    setEditType(value);
+    setEditField('');
+    setEditValue('');
+  }
 
   useEffect(() => {
     async function loadInitial() {
@@ -100,7 +115,6 @@ export default function MassEditClient() {
     const baseCols = [
       { key: 'private_label_client_name', label: 'Nombre del Cliente (Marca Propia)', type: 'text' },
       { key: 'special_label', label: 'Etiqueta Especial', type: 'text' },
-      { key: 'weight_kg', label: 'Peso (kg)', type: 'number' },
       { key: 'width_cm', label: 'Ancho (cm)', type: 'number' },
       { key: 'depth_cm', label: 'Fondo (cm)', type: 'number' },
       { key: 'height_cm', label: 'Alto (cm)', type: 'number' },
@@ -129,6 +143,7 @@ export default function MassEditClient() {
 
     const combined = [...baseCols];
     refKeys.forEach(k => {
+      if (REFERENCE_ONLY_VERSION_ATTR_KEYS.has(k)) return;
       if (!combined.some(c => c.key === k)) {
         combined.push({
           key: k,
@@ -261,7 +276,7 @@ export default function MassEditClient() {
 
   const parseEditValue = () => {
     if (clearOverrideMode) return null;
-    
+
     let finalValue: any = editValue.trim();
     if (editType === 'version_attr' && currentFieldDef) {
       if (currentFieldDef.type === 'number') {
@@ -605,7 +620,7 @@ export default function MassEditClient() {
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Tipo de Campo</label>
-              <select value={editType} onChange={e => { setEditType(e.target.value as any); setEditField(''); setEditValue(''); }} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
+              <select value={editType} onChange={e => handleEditTypeChange(e.target.value)} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
                 <option value="version_attr">Excepciones (Overrides)</option>
                 <option value="normal">Columna Normal</option>
               </select>
