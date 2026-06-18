@@ -1,6 +1,6 @@
 {
   "name": "web",
-  "version": "1.5.7",
+  "version": "1.5.8",
   "private": true,
   "scripts": {
     "dev": "concurrently -n next,agent \"next dev\" \"node print-agent/server.js\"",
