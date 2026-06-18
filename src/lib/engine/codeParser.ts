@@ -319,7 +319,10 @@ export async function parseProductCode(
                 if (d.designation) { result.designation = d.designation; setInheritance('designation', d.designation, 'historic_reference'); }
                 if (d.commercial_measure) { result.commercial_measure = d.commercial_measure; setInheritance('commercial_measure', d.commercial_measure, 'historic_reference'); }
                 if (d.product_type) { result.product_type = d.product_type; setInheritance('product_type', d.product_type, source === 'sku_match' ? 'historic_sku' : 'historic_reference'); }
-                if (d.use_destination) { result.use_destination = d.use_destination; setInheritance('use_destination', d.use_destination, source === 'sku_match' ? 'historic_sku' : 'historic_reference'); }
+                if (effectiveContext.resolved_use_destination) {
+                    result.use_destination = effectiveContext.resolved_use_destination;
+                    setInheritance('use_destination', effectiveContext.resolved_use_destination, source === 'sku_match' ? 'historic_sku' : 'historic_reference');
+                }
                 if (d.zone_home) { result.zone_home = d.zone_home; setInheritance('zone_home', d.zone_home, source === 'sku_match' ? 'historic_sku' : 'historic_reference'); }
 
                 // ── Resolved fields (from effectiveContext) ──
@@ -396,8 +399,9 @@ export async function parseProductCode(
                 }
 
                 // assembled_flag: explicit boolean handling (false is a valid value)
-                if (effectiveAttrs.assembled_flag !== undefined) {
-                    result.assembled_flag = effectiveAttrs.assembled_flag;
+                const effectiveAssembledFlag = effectiveAttrs.assembled_flag;
+                if (typeof effectiveAssembledFlag === 'boolean') {
+                    result.assembled_flag = effectiveAssembledFlag;
                     const contributing = contributingLayer('assembled_flag');
                     if (contributing) {
                         setInheritance('assembled_flag', result.assembled_flag, fieldSource(contributing));

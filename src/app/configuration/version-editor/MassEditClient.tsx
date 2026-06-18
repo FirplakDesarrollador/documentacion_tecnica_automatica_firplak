@@ -13,7 +13,7 @@ const NORMAL_COLS = [
 
 type EditType = 'normal' | 'version_attr';
 
-const REFERENCE_ONLY_VERSION_ATTR_KEYS = new Set(['q_package', 'weight_kg']);
+const REFERENCE_ONLY_VERSION_ATTR_KEYS = new Set(['q_package', 'weight_kg', 'use_destination']);
 
 function isEditType(value: string): value is EditType {
   return value === 'normal' || value === 'version_attr';

@@ -4,7 +4,7 @@ $TaskName = "SamiGenPrintAgent"
 $AppName = "SamiGen Print Agent"
 $InstallDir = Join-Path $env:LOCALAPPDATA "SamiGenPrintAgent"
 $Payload = Join-Path $PSScriptRoot "payload.zip"
-$HealthUrl = "http://127.0.0.1:3344/health"
+$HealthUrl = "http://127.0.0.1:3344/ping"
 $RunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $RunValueName = "SamiGenPrintAgent"
 
@@ -109,7 +109,7 @@ try {
 $UninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\SamiGenPrintAgent"
 New-Item -Path $UninstallKey -Force | Out-Null
 Set-ItemProperty -Path $UninstallKey -Name "DisplayName" -Value $AppName
-Set-ItemProperty -Path $UninstallKey -Name "DisplayVersion" -Value "1.0.5"
+Set-ItemProperty -Path $UninstallKey -Name "DisplayVersion" -Value "1.0.6"
 Set-ItemProperty -Path $UninstallKey -Name "Publisher" -Value "SamiGen"
 Set-ItemProperty -Path $UninstallKey -Name "InstallLocation" -Value $InstallDir
 Set-ItemProperty -Path $UninstallKey -Name "UninstallString" -Value "`"$InstallDir\uninstall-agent.cmd`""
@@ -119,24 +119,24 @@ Set-ItemProperty -Path $UninstallKey -Name "NoRepair" -Value 1 -Type DWord
 Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$StartAgentHiddenScript`"" -WorkingDirectory $InstallDir -WindowStyle Hidden
 
 $healthy = $false
-for ($i = 1; $i -le 12; $i++) {
-    Start-Sleep -Milliseconds 750
+for ($i = 1; $i -le 20; $i++) {
+    Start-Sleep -Milliseconds 1000
     try {
-        $response = Invoke-RestMethod -Uri $HealthUrl -TimeoutSec 2
+        $response = Invoke-RestMethod -Uri $HealthUrl -TimeoutSec 5
         if ($response.status -eq "ok") {
             $healthy = $true
             break
         }
     } catch {
-        Write-Host "Esperando agente local ($i/12)..."
+        Write-Host "Esperando agente local ($i/20)..."
     }
 }
 
 if (-not $healthy) {
-    throw "El agente se instalo, pero no respondio en $HealthUrl. Revisa que el puerto 3344 no este ocupado."
+    throw "El agente se instalo, pero no respondio en $HealthUrl. Revisa que el puerto 3344 no este bloqueado u ocupado."
 }
 
 Write-Host ""
 Write-Host "$AppName instalado correctamente."
-Write-Host "Endpoint: $HealthUrl"
+Write-Host "Endpoint: http://127.0.0.1:3344/health"
 Write-Host "Inicio automatico: $StartupMethod."

@@ -29,7 +29,24 @@ export interface TemplateRow {
   ref_attrs: Record<string, any>;
 }
 
- 
+const USE_DESTINATION_REF_ATTR_KEY = 'use_destination';
+const SYSTEM_REF_ATTR_KEYS = new Set([USE_DESTINATION_REF_ATTR_KEY]);
+
+function isSystemRefAttrKey(key: string): boolean {
+  return SYSTEM_REF_ATTR_KEYS.has(String(key || '').trim().toLowerCase());
+}
+
+function schemaHasRefAttrKey(schema: unknown, key: string): boolean {
+  return !!schema
+    && typeof schema === 'object'
+    && !Array.isArray(schema)
+    && Object.prototype.hasOwnProperty.call(schema, key);
+}
+
+function canCarryRefAttrKey(schema: unknown, key: string): boolean {
+  return isSystemRefAttrKey(key) || schemaHasRefAttrKey(schema, key);
+}
+
 function normalizeSchemaKeys(schema: any): string[] {
   if (!schema || typeof schema !== 'object') return [];
   return Object.keys(schema)
@@ -377,7 +394,17 @@ export async function buildMassImportTemplateXlsx(baseRows: { sku_complete: stri
     normalizeSchemaKeys(schema).forEach(k => allRefAttrKeys.add(k));
   }
   // Baseline columns to guide users even for brand-new families.
-  ['accessory_text', 'door_color_text', 'bisagras', 'canto_puertas', 'armado_con_lvm', 'assembled_flag', 'rh', 'carb2'].forEach(
+  [
+    USE_DESTINATION_REF_ATTR_KEY,
+    'accessory_text',
+    'door_color_text',
+    'bisagras',
+    'canto_puertas',
+    'armado_con_lvm',
+    'assembled_flag',
+    'rh',
+    'carb2',
+  ].forEach(
     k => allRefAttrKeys.add(k)
   );
 
@@ -451,14 +478,11 @@ export async function buildMassImportTemplateXlsx(baseRows: { sku_complete: stri
 
         const baseAttrs = safeJson(ref.ref_attrs) || {};
         if (baseAttrs && typeof baseAttrs === 'object') {
-          // Only inherit keys allowed by the family's schema (governed).
-          // This prevents propagating legacy/stale keys that are not part of ref_attrs_schema.
-          if (famSchemaValid && schema && typeof schema === 'object') {
-            for (const [k, v] of Object.entries(baseAttrs)) {
-              if ((schema as any)[k] !== undefined) ref_attrs[k] = v;
+          // Only inherit governed schema keys plus reference-level system overrides.
+          for (const [k, v] of Object.entries(baseAttrs)) {
+            if (canCarryRefAttrKey(schema, k)) {
+              ref_attrs[k] = v;
             }
-          } else {
-            // If there's no schema yet, do not auto-inherit attrs (preview should block anyway).
           }
         }
 
@@ -633,7 +657,7 @@ export async function buildMassImportTemplateXlsx(baseRows: { sku_complete: stri
             if (bAttrs && typeof bAttrs === 'object') {
               for (const [k, v] of Object.entries(bAttrs)) {
                 // Govern inheritance by schema to avoid propagating non-schema keys.
-                if (famSchemaValid && schema && typeof schema === 'object' && (schema as any)[k] === undefined) continue;
+                if (famSchemaValid && !canCarryRefAttrKey(schema, k)) continue;
                 if (!isMeaningfulAttrValue(ref_attrs[k]) && isMeaningfulAttrValue(v)) ref_attrs[k] = v;
               }
             }
@@ -733,6 +757,7 @@ export async function buildMassImportTemplateXlsx(baseRows: { sku_complete: stri
     '- Las columnas REF_ATTR_<key> se validan contra families.ref_attrs_schema.',
     '- Si una familia no tiene schema, el preview bloqueara la importacion y guiara a /configuration/reference-editor.',
     '- Si una key REF_ATTR_<key> no existe en el schema de la familia, se IGNORA (warning) y no se guarda.',
+    '- REF_ATTR_use_destination es excepcion de referencia: no requiere schema; vacio, NA, N/A o NULL quitan el override y heredan la familia.',
     '- Enums: se intentan mapear a allowed_values (normaliza trim/upper). Si no mapea, se guarda igual y deja warning para actualizar el schema.',
     '',
     'Notas:',

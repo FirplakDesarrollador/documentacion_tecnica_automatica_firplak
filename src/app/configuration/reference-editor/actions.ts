@@ -16,8 +16,53 @@ interface SearchFilters {
     familyCode: string
     referenceCode: string
     productName: string
+    designation: string
+    line: string
+    commercialMeasure: string
+    specialLabel: string
+    useDestination: string
     refAttrsKey: string
     refAttrsValue: string
+}
+
+type ReferenceSearchRow = {
+  ref_attrs: unknown
+  families: unknown
+}
+
+type FamilyFilterRow = {
+  product_type: string | null
+  family_code: string | null
+}
+
+type ReferenceFilterRow = {
+  reference_code: string | null
+  product_name: string | null
+  family_code: string | null
+  designation: string | null
+  line: string | null
+  commercial_measure: string | null
+  special_label: string | null
+  ref_attrs: Record<string, unknown> | null
+  families: unknown
+}
+
+function normalizeReferenceDestination(refAttrs: unknown, family: unknown) {
+  const attrs = refAttrs && typeof refAttrs === 'object' && !Array.isArray(refAttrs)
+    ? refAttrs as Record<string, unknown>
+    : {};
+  const familyRecord = Array.isArray(family)
+    ? family[0]
+    : family;
+  const familyUseDestination = familyRecord && typeof familyRecord === 'object'
+    ? (familyRecord as Record<string, unknown>).use_destination
+    : null;
+  const override = String(attrs.use_destination ?? '').trim();
+  const normalizedOverride = override.toUpperCase();
+  if (normalizedOverride && !['NA', 'N/A', 'NULL', 'UNDEFINED'].includes(normalizedOverride)) {
+    return normalizedOverride;
+  }
+  return String(familyUseDestination ?? '').trim().toUpperCase();
 }
 
 export async function searchReferences(filters: SearchFilters) {
@@ -30,6 +75,7 @@ export async function searchReferences(filters: SearchFilters) {
     family_code, 
     reference_code, 
     product_name, 
+    line,
     commercial_measure, 
     width_cm, 
     depth_cm, 
@@ -44,6 +90,10 @@ export async function searchReferences(filters: SearchFilters) {
   if (filters.familyCode) query = query.ilike('family_code', `%${filters.familyCode}%`);
   if (filters.referenceCode) query = query.ilike('reference_code', `%${filters.referenceCode}%`);
   if (filters.productName) query = query.ilike('product_name', `%${filters.productName}%`);
+  if (filters.designation) query = query.eq('designation', filters.designation);
+  if (filters.line) query = query.eq('line', filters.line);
+  if (filters.commercialMeasure) query = query.eq('commercial_measure', filters.commercialMeasure);
+  if (filters.specialLabel) query = query.eq('special_label', filters.specialLabel);
   if (filters.productType) query = query.eq('families.product_type', filters.productType);
 
   // Filtrado JSONB para ref_attrs (Ej: { "rh": "RH" })
@@ -59,10 +109,14 @@ export async function searchReferences(filters: SearchFilters) {
     // Let's implement only "Key = Value" filter for JSONB for simplicity right now.
   }
 
-  const { data, error } = await query.limit(500);
+  const { data, error } = await query.limit(5000);
 
   if (error) return { success: false, error: error.message };
-  return { success: true, data };
+  const rows = (data || []) as ReferenceSearchRow[];
+  const filteredData = filters.useDestination
+    ? rows.filter(row => normalizeReferenceDestination(row.ref_attrs, row.families) === filters.useDestination)
+    : rows;
+  return { success: true, data: filteredData };
 }
 
 export async function previewMassUpdateReferences(referenceIds: string[], normalUpdates: Record<string, unknown>, refAttrsUpdates: Record<string, unknown>) {
@@ -129,21 +183,26 @@ export async function deleteReferencesAction(referenceIds: string[]) {
 export async function getFilterOptions() {
   await assertAdminAccess();
 
-  // Fetch distinct product_type from families
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: famsRaw } = await (supabaseServer.from('families').select('product_type, family_code') as any) as { data: any[]; error: any };
-  // Fetch distinct reference_code, product_name from product_references
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: refsRaw } = await (supabaseServer.from('product_references').select('reference_code, product_name, family_code, ref_attrs') as any) as { data: any[]; error: any };
+  const famsResult = await supabaseServer
+    .from('families')
+    .select('product_type, family_code');
+  const refsResult = await supabaseServer
+    .from('product_references')
+    .select('reference_code, product_name, family_code, designation, line, commercial_measure, special_label, ref_attrs, families(product_type, use_destination)');
 
-  const fams = famsRaw || [];
-  const refs = refsRaw || [];
+  const fams = (famsResult.data || []) as FamilyFilterRow[];
+  const refs = (refsResult.data || []) as ReferenceFilterRow[];
 
   const productTypes = Array.from(new Set(fams.map(f => f.product_type).filter(Boolean))).sort();
   const familyCodes = Array.from(new Set(fams.map(f => f.family_code).filter(Boolean))).sort();
   
   const referenceCodes = Array.from(new Set(refs.map(r => r.reference_code).filter(Boolean))).sort();
   const productNames = Array.from(new Set(refs.map(r => r.product_name).filter(Boolean))).sort();
+  const designations = Array.from(new Set(refs.map(r => r.designation).filter(Boolean))).sort();
+  const lines = Array.from(new Set(refs.map(r => r.line).filter(Boolean))).sort();
+  const commercialMeasures = Array.from(new Set(refs.map(r => r.commercial_measure).filter(Boolean))).sort();
+  const specialLabels = Array.from(new Set(refs.map(r => r.special_label).filter(Boolean))).sort();
+  const useDestinations = Array.from(new Set(refs.map(r => normalizeReferenceDestination(r.ref_attrs, r.families)).filter(Boolean))).sort();
 
   // Extract all unique JSONB keys and values
   const jsonKeys = new Set<string>();
@@ -173,12 +232,30 @@ export async function getFilterOptions() {
     fc: r.family_code,
     rc: r.reference_code,
     pn: r.product_name,
+    des: r.designation,
+    line: r.line,
+    cm: r.commercial_measure,
+    sl: r.special_label,
+    ud: normalizeReferenceDestination(r.ref_attrs, r.families),
     pt: fams?.find(f => f.family_code === r.family_code)?.product_type || null,
     attrs: r.ref_attrs || {}
   })) || [];
 
   return { 
     success: true, 
-    data: { productTypes, familyCodes, referenceCodes, productNames, refAttrsKeys, refAttrsValues, rawData } 
+    data: {
+      productTypes,
+      familyCodes,
+      referenceCodes,
+      productNames,
+      designations,
+      lines,
+      commercialMeasures,
+      specialLabels,
+      useDestinations,
+      refAttrsKeys,
+      refAttrsValues,
+      rawData
+    }
   };
 }

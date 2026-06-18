@@ -1,17 +1,18 @@
 import { normalizeWeightKgTotal } from './labelParts'
 
+type AttrRecord = Record<string, unknown>
+
 export interface EffectiveContextOptions {
-/* eslint-disable @typescript-eslint/no-explicit-any */
     includeSkuOverrides?: boolean
 }
 
 export interface EffectiveProductContext {
-    family_defaults: Record<string, any>
-    ref_attrs: Record<string, any>
-    global_version_rules: Record<string, any>
-    version_attrs: Record<string, any>
-    sku_attrs: Record<string, any>
-    effective_attrs: Record<string, any>
+    family_defaults: AttrRecord
+    ref_attrs: AttrRecord
+    global_version_rules: AttrRecord
+    version_attrs: AttrRecord
+    sku_attrs: AttrRecord
+    effective_attrs: AttrRecord
     sku_status: string
     version_status: string
     ref_status: string
@@ -28,6 +29,7 @@ export interface EffectiveProductContext {
     resolved_height_cm: number | null
     resolved_weight_kg: number | null
     resolved_stacking_max: number | null
+    resolved_use_destination: string | null
 }
 
 const OVERRIDE_KEY_ALIASES: Record<string, string> = {
@@ -35,12 +37,13 @@ const OVERRIDE_KEY_ALIASES: Record<string, string> = {
 }
 
 const PLACEHOLDER_VALUES = new Set(['', 'NA', 'N/A', 'NULL', 'UNDEFINED'])
+const REFERENCE_ONLY_EFFECTIVE_KEYS = new Set(['use_destination'])
 
-function isPlainObject(value: unknown): value is Record<string, any> {
+function isPlainObject(value: unknown): value is AttrRecord {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function parseAttrs(input: unknown): Record<string, any> {
+function parseAttrs(input: unknown): AttrRecord {
     if (typeof input === 'string') {
         try {
             const parsed = JSON.parse(input)
@@ -58,6 +61,11 @@ function normalizeText(value: unknown): string | null {
     if (!normalized) return null
     if (PLACEHOLDER_VALUES.has(normalized.toUpperCase())) return null
     return normalized
+}
+
+function normalizeDestination(value: unknown): string | null {
+    const normalized = normalizeText(value)
+    return normalized ? normalized.toUpperCase() : null
 }
 
 function normalizeNumber(value: unknown): number | null {
@@ -94,9 +102,9 @@ export function canonicalizeOverrideKey(key: string): string {
     return OVERRIDE_KEY_ALIASES[key] || key
 }
 
-export function canonicalizeOverrideAttrs(input: unknown): Record<string, any> {
+export function canonicalizeOverrideAttrs(input: unknown): AttrRecord {
     const attrs = parseAttrs(input)
-    const canonical: Record<string, any> = {}
+    const canonical: AttrRecord = {}
 
     for (const [rawKey, rawValue] of Object.entries(attrs)) {
         const key = canonicalizeOverrideKey(rawKey)
@@ -115,7 +123,15 @@ export function canonicalizeOverrideAttrs(input: unknown): Record<string, any> {
     return canonical
 }
 
-function buildFamilyDefaults(row: Record<string, unknown>): Record<string, any> {
+function removeReferenceOnlyEffectiveKeys(attrs: AttrRecord): AttrRecord {
+    const filtered = { ...attrs }
+    for (const key of REFERENCE_ONLY_EFFECTIVE_KEYS) {
+        delete filtered[key]
+    }
+    return filtered
+}
+
+function buildFamilyDefaults(row: Record<string, unknown>): AttrRecord {
     const rhDefault = row?.rh_default ? 'RH' : 'NA'
     const assembledDefault = row?.assembled_default === true
     return {
@@ -148,16 +164,22 @@ export function buildEffectiveProductContext(
     const refAttrs = canonicalizeOverrideAttrs(row?.ref_attrs)
     const globalVersionRules = globalVersionRuleStatus === 'INACTIVO'
         ? {}
-        : canonicalizeOverrideAttrs(row?.automatic_version_rules)
-    const versionAttrs = canonicalizeOverrideAttrs(row?.version_attrs)
-    const skuAttrs = includeSkuOverrides ? canonicalizeOverrideAttrs(row?.sku_attrs) : {}
+        : removeReferenceOnlyEffectiveKeys(canonicalizeOverrideAttrs(row?.automatic_version_rules))
+    const versionAttrs = removeReferenceOnlyEffectiveKeys(canonicalizeOverrideAttrs(row?.version_attrs))
+    const skuAttrs = includeSkuOverrides
+        ? removeReferenceOnlyEffectiveKeys(canonicalizeOverrideAttrs(row?.sku_attrs))
+        : {}
+    const resolvedUseDestination =
+        normalizeDestination(refAttrs.use_destination) ??
+        normalizeDestination(row?.use_destination)
 
-    const effectiveAttrs = {
+    const effectiveAttrs: AttrRecord = {
         ...familyDefaults,
         ...refAttrs,
         ...globalVersionRules,
         ...versionAttrs,
         ...skuAttrs,
+        use_destination: resolvedUseDestination,
     }
 
     const resolvedColorName =
@@ -223,14 +245,15 @@ export function buildEffectiveProductContext(
         resolved_height_cm: resolvedHeightCm,
         resolved_weight_kg: resolvedWeightKg,
         resolved_stacking_max: resolvedStackingMax,
+        resolved_use_destination: resolvedUseDestination,
     }
 }
 
 export function getEffectiveOverrideValue(
     context: EffectiveProductContext,
     key: string,
-    row?: Record<string, any>
-): any {
+    row?: AttrRecord
+): unknown {
     const canonicalKey = canonicalizeOverrideKey(key)
 
     switch (canonicalKey) {
@@ -250,6 +273,8 @@ export function getEffectiveOverrideValue(
             return context.resolved_weight_kg
         case 'stacking_max':
             return context.resolved_stacking_max
+        case 'use_destination':
+            return context.resolved_use_destination
         default:
             return context.effective_attrs[canonicalKey] ?? row?.[canonicalKey] ?? null
     }

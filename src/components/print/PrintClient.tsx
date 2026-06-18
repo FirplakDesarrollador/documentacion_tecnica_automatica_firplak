@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import {
     Printer,
     Search,
@@ -65,11 +65,14 @@ interface PrintItem {
 }
 
 const PRINTER_CONFIG_KEY = 'samiGen-printer-config'
-const PRINT_AGENT_VERSION = '1.0.5'
+const PRINT_AGENT_VERSION = '1.0.6'
 const PRINT_AGENT_DOWNLOAD_URL = `/downloads/samigen-print-agent-setup-${PRINT_AGENT_VERSION}.exe`
 const PRINT_AGENT_PORTABLE_URL = `/downloads/samigen-print-agent-portable-${PRINT_AGENT_VERSION}.zip`
 const PRINT_RENDER_TIMEOUT_MS = 45000
 const PRINT_AGENT_TIMEOUT_MS = 60000
+const PRINT_AGENT_HEALTH_TIMEOUT_MS = 12000
+const PRINT_AGENT_CHECK_INTERVAL_MS = 15000
+const PRINT_AGENT_OFFLINE_FAILURES = 3
 
 type PrintFormat = 'pdf' | 'jpg'
 
@@ -126,6 +129,25 @@ function normalizeAgentHealth(value: unknown): AgentHealth {
     }
 }
 
+function normalizeAgentBaseUrl(value: string): string {
+    const trimmed = value.trim()
+    const fallback = defaultPrinterConfig.agentUrl
+    if (!trimmed) return fallback
+
+    const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`
+    try {
+        const url = new URL(withProtocol)
+        url.pathname = url.pathname.replace(/\/(?:health|ping|scan-usb|print)\/?$/i, '')
+        url.search = ''
+        url.hash = ''
+        return url.toString().replace(/\/$/, '')
+    } catch {
+        return trimmed
+            .replace(/\/(?:health|ping|scan-usb|print)\/?$/i, '')
+            .replace(/\/+$/, '') || fallback
+    }
+}
+
 function getTimeoutSignal(timeoutMs: number) {
     if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
         return AbortSignal.timeout(timeoutMs)
@@ -140,6 +162,14 @@ function getPrintRequestError(err: unknown, fallback: string) {
     if (err instanceof DOMException && err.name === 'TimeoutError') return fallback
     if (err instanceof DOMException && err.name === 'AbortError') return fallback
     return (err as Error)?.message || fallback
+}
+
+function getAgentCheckErrorMessage(err: unknown) {
+    if (err instanceof DOMException && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+        return 'La comprobacion del agente tardo mas de lo esperado. Se conserva el ultimo estado valido.'
+    }
+
+    return (err as Error)?.message || 'No se pudo comprobar el agente local.'
 }
 
 export function PrintClient({ templates, rules }: PrintClientProps) {
@@ -170,36 +200,69 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
     const [agentPrinters, setAgentPrinters] = useState<string[]>([])
     const [printerDetected, setPrinterDetected] = useState<boolean>(false)
     const [agentSupportsJobMetadata, setAgentSupportsJobMetadata] = useState<boolean>(false)
+    const [agentCheckIssue, setAgentCheckIssue] = useState<string | null>(null)
+    const agentFailureCountRef = useRef(0)
+    const agentHasRespondedRef = useRef(false)
+    const agentCheckedUrlRef = useRef<string | null>(null)
+
+    const normalizedAgentUrl = useMemo(
+        () => normalizeAgentBaseUrl(printerConfig.agentUrl),
+        [printerConfig.agentUrl]
+    )
 
     useEffect(() => {
         localStorage.setItem(PRINTER_CONFIG_KEY, JSON.stringify(printerConfig))
     }, [printerConfig])
 
     const checkAgent = useCallback(async () => {
+        if (agentCheckedUrlRef.current !== normalizedAgentUrl) {
+            agentCheckedUrlRef.current = normalizedAgentUrl
+            agentFailureCountRef.current = 0
+            agentHasRespondedRef.current = false
+            setAgentOnline(null)
+            setAgentPrinters([])
+            setPrinterDetected(false)
+            setAgentSupportsJobMetadata(false)
+            setAgentCheckIssue(null)
+        }
+
         try {
-            const res = await fetch(`${printerConfig.agentUrl}/health`, { signal: AbortSignal.timeout(3000) })
+            const res = await fetch(`${normalizedAgentUrl}/health`, {
+                cache: 'no-store',
+                signal: getTimeoutSignal(PRINT_AGENT_HEALTH_TIMEOUT_MS),
+            })
             if (res.ok) {
                 const data = normalizeAgentHealth(await res.json())
+                if (agentCheckedUrlRef.current !== normalizedAgentUrl) return
+
+                agentFailureCountRef.current = 0
+                agentHasRespondedRef.current = true
                 setAgentOnline(true)
                 setAgentPrinters(data.printers)
                 setPrinterDetected(data.printerDetected)
                 setAgentSupportsJobMetadata(data.supportsJobMetadata)
+                setAgentCheckIssue(null)
             } else {
+                throw new Error(`El agente respondio con estado HTTP ${res.status}.`)
+            }
+        } catch (err) {
+            if (agentCheckedUrlRef.current !== normalizedAgentUrl) return
+
+            agentFailureCountRef.current += 1
+            setAgentCheckIssue(getAgentCheckErrorMessage(err))
+
+            if (!agentHasRespondedRef.current || agentFailureCountRef.current >= PRINT_AGENT_OFFLINE_FAILURES) {
                 setAgentOnline(false)
+                setAgentPrinters([])
                 setPrinterDetected(false)
                 setAgentSupportsJobMetadata(false)
             }
-        } catch {
-            setAgentOnline(false)
-            setAgentPrinters([])
-            setPrinterDetected(false)
-            setAgentSupportsJobMetadata(false)
         }
-    }, [printerConfig.agentUrl])
+    }, [normalizedAgentUrl])
 
     useEffect(() => {
         checkAgent()
-        const interval = setInterval(checkAgent, 10000)
+        const interval = setInterval(checkAgent, PRINT_AGENT_CHECK_INTERVAL_MS)
         return () => clearInterval(interval)
     }, [checkAgent])
 
@@ -677,6 +740,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                         <Input
                                             value={printerConfig.agentUrl}
                                             onChange={(e) => setPrinterConfig(prev => ({ ...prev, agentUrl: e.target.value }))}
+                                            onBlur={() => setPrinterConfig(prev => ({ ...prev, agentUrl: normalizeAgentBaseUrl(prev.agentUrl) }))}
                                             placeholder="http://127.0.0.1:3344"
                                             className="text-sm font-mono flex-1"
                                         />
@@ -727,13 +791,20 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                                 </div>
                                             </div>
                                         ) : printerDetected ? (
-                                            <div className="flex items-center gap-2">
-                                                <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
-                                                <span>Impresora lista</span>
-                                                {agentPrinters.length > 0 && (
-                                                    <span className="text-xs text-green-600">
-                                                        ({agentPrinters.join(', ')})
-                                                    </span>
+                                            <div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
+                                                    <span>Impresora lista</span>
+                                                    {agentPrinters.length > 0 && (
+                                                        <span className="text-xs text-green-600">
+                                                            ({agentPrinters.join(', ')})
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {agentCheckIssue && (
+                                                    <p className="text-xs text-green-600 mt-1">
+                                                        Ultima comprobacion lenta o intermitente. Se mantiene la conexion porque el agente respondio recientemente.
+                                                    </p>
                                                 )}
                                             </div>
                                         ) : (

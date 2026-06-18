@@ -908,8 +908,6 @@ export async function executeUpdateAttrAllowedValues(familyCodes: string[], attr
         AND COALESCE(ref_attrs_schema, '{}'::jsonb) ? '${safeAttrKey}'
     `);
 
-    await markNamingStaleForFamilies(familyCodes, null, 'family_attr_allowed_values_update');
-    await processNamingJobsInline();
     revalidatePath('/families');
     revalidatePath('/configuration/families');
     revalidatePath('/configuration/reference-editor');

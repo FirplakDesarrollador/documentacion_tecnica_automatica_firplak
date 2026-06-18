@@ -11,6 +11,8 @@ const NORMAL_COLS = [
   { key: 'status', label: 'Estado (ACTIVO/INACTIVO)', type: 'text' }
 ];
 
+const REFERENCE_ONLY_SKU_ATTR_KEYS = new Set(['use_destination']);
+
 function formatKeyToLabel(key: string): string {
   const map: Record<string, string> = {
     color_name: 'Nombre del Color (Override)',
@@ -129,6 +131,7 @@ export default function MassEditClient() {
 
     const combined = [...baseCols];
     refKeys.forEach(k => {
+      if (REFERENCE_ONLY_SKU_ATTR_KEYS.has(k)) return;
       if (!combined.some(c => c.key === k)) {
         combined.push({
           key: k,

@@ -42,7 +42,15 @@ function esc(value: string) {
 }
 
 function normalizeOverridePayload(input: unknown) {
-  return canonicalizeOverrideAttrs(input || {});
+  const attrs = canonicalizeOverrideAttrs(input || {});
+  for (const key of Object.keys(attrs)) {
+    if (!isEditableSkuAttrKey(key)) delete attrs[key];
+  }
+  return attrs;
+}
+
+function isEditableSkuAttrKey(key: string) {
+  return canonicalizeOverrideKey(key) !== 'use_destination';
 }
 
 function getRecord(value: unknown): JsonRecord {
@@ -69,6 +77,8 @@ function mapSkuRow(row: JsonRecord): JsonRecord {
     resolved_color_name: effectiveContext.resolved_color_name,
     resolved_private_label_client_name: effectiveContext.resolved_private_label_client_name,
     resolved_special_label: effectiveContext.resolved_special_label,
+    resolved_use_destination: effectiveContext.resolved_use_destination,
+    use_destination: effectiveContext.resolved_use_destination,
     effective_status: effectiveContext.effective_status,
     is_exportable: effectiveContext.is_exportable,
     inactive_reasons: effectiveContext.inactive_reasons,
@@ -285,6 +295,7 @@ export async function getSkuFilterOptions() {
     if (skuAttrs && typeof skuAttrs === 'object') {
       Object.entries(skuAttrs).forEach(([rawKey, v]) => {
         const key = canonicalizeOverrideKey(rawKey);
+        if (!isEditableSkuAttrKey(key)) return;
         jsonKeysSku.add(key);
         if (!jsonValuesByKeySku[key]) jsonValuesByKeySku[key] = new Set();
         if (v !== null && v !== undefined) jsonValuesByKeySku[key].add(String(v));

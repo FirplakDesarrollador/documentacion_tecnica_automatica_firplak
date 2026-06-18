@@ -19,8 +19,16 @@ function esc(value: string) {
   return value.replace(/'/g, "''");
 }
 
-function normalizeOverridePayload(input: any) {
-  return canonicalizeOverrideAttrs(input || {});
+function normalizeOverridePayload(input: unknown) {
+  const attrs = canonicalizeOverrideAttrs(input || {});
+  for (const key of Object.keys(attrs)) {
+    if (!isEditableVersionAttrKey(key)) delete attrs[key];
+  }
+  return attrs;
+}
+
+function isEditableVersionAttrKey(key: string) {
+  return canonicalizeOverrideKey(key) !== 'use_destination';
 }
 
 function mapVersionRow(row: Record<string, unknown>) {
@@ -42,6 +50,8 @@ function mapVersionRow(row: Record<string, unknown>) {
     effective_attrs: effectiveContext.effective_attrs,
     resolved_private_label_client_name: effectiveContext.resolved_private_label_client_name,
     resolved_special_label: effectiveContext.resolved_special_label,
+    resolved_use_destination: effectiveContext.resolved_use_destination,
+    use_destination: effectiveContext.resolved_use_destination,
     effective_status: effectiveContext.effective_status,
     is_exportable: effectiveContext.is_exportable,
     inactive_reasons: effectiveContext.inactive_reasons,
@@ -221,6 +231,7 @@ export async function getVersionFilterOptions() {
     const versionAttrs = canonicalizeOverrideAttrs(row.version_attrs);
     Object.entries(versionAttrs).forEach(([rawKey, val]) => {
       const key = canonicalizeOverrideKey(rawKey);
+      if (!isEditableVersionAttrKey(key)) return;
       opts.versionAttrsKeys.add(key);
       if (!opts.versionAttrsValues[key]) opts.versionAttrsValues[key] = new Set();
       opts.versionAttrsValues[key].add(String(val));

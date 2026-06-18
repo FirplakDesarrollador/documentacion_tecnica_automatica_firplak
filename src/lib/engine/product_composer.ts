@@ -133,8 +133,11 @@ export function mapRowToComposedProduct(row: ViewProductRow, options: EffectiveC
     const referenceWeightPayload = row.weight_kg_payload ?? row.weight_kg;
 
     const resolveAttr = (key: string, defaultValue: string = 'NA') => {
-        return effectiveAttrs[key] !== undefined ? effectiveAttrs[key] : defaultValue;
+        const value = effectiveAttrs[key];
+        return value !== undefined && value !== null ? String(value) : defaultValue;
     };
+    const resolveOptionalString = (value: unknown) =>
+        value !== undefined && value !== null && value !== '' ? String(value) : null;
 
     return {
         // === Identity ===
@@ -152,7 +155,7 @@ export function mapRowToComposedProduct(row: ViewProductRow, options: EffectiveC
         // === Family-level ===
         product_type: row.product_type,
         zone_home: row.zone_home,
-        use_destination: row.use_destination,
+        use_destination: effectiveContext.resolved_use_destination,
         assembled_flag: row.assembled_default || false,
         allowed_lines: Array.isArray(row.allowed_lines) ? row.allowed_lines : [],
 
@@ -170,8 +173,8 @@ export function mapRowToComposedProduct(row: ViewProductRow, options: EffectiveC
         stacking_max: effectiveContext.resolved_stacking_max !== null
             ? parseInt(String(effectiveContext.resolved_stacking_max), 10)
             : null,
-        isometric_path: effectiveAttrs.isometric_path || row.isometric_path,
-        isometric_asset_id: effectiveAttrs.isometric_asset_id || row.isometric_asset_id,
+        isometric_path: resolveOptionalString(effectiveAttrs.isometric_path) || row.isometric_path,
+        isometric_asset_id: resolveOptionalString(effectiveAttrs.isometric_asset_id) || row.isometric_asset_id,
 
         // === Composed attributes ===
         rh: resolveAttr('rh'),
@@ -185,7 +188,7 @@ export function mapRowToComposedProduct(row: ViewProductRow, options: EffectiveC
 
         // === Version-level ===
         version_label: (effectiveAttrs.version_label !== undefined && effectiveAttrs.version_label !== null)
-            ? effectiveAttrs.version_label
+            ? String(effectiveAttrs.version_label)
             : row.version_label,
         final_base_name_es: row.final_base_name_es,
         final_base_name_en: row.final_base_name_en,

@@ -1,6 +1,6 @@
 {
   "name": "samigen-print-agent",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Agente local de impresión para SamiGen. Recibe documentos desde el app y los envía a la impresora de etiquetas 3nStar LTT334.",
   "main": "server.js",
   "scripts": {

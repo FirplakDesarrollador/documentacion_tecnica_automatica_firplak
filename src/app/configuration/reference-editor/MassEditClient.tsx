@@ -25,6 +25,10 @@ const NORMAL_COLS = [
   { key: 'weight_kg', label: 'Peso (kg)' }
 ];
 
+const USE_DESTINATION_OVERRIDE_KEY = 'use_destination';
+const SYSTEM_REF_ATTR_EDIT_KEYS = [USE_DESTINATION_OVERRIDE_KEY];
+const PLACEHOLDER_VALUES = new Set(['', 'NA', 'N/A', 'NULL', 'UNDEFINED']);
+
 interface ReferenceRow {
   id: string
   family_code: string
@@ -54,7 +58,12 @@ interface RawDataItem {
   rc: string | null
   pn: string | null
   pt: string | null
-  attrs: Record<string, string>
+  des: string | null
+  line: string | null
+  cm: string | null
+  sl: string | null
+  ud: string | null
+  attrs: Record<string, unknown>
 }
 
 interface SchemaData {
@@ -99,11 +108,34 @@ function normalizePreviewData(value: unknown, displayValue: string): PreviewData
   };
 }
 
+function normalizeMeaningfulText(value: unknown) {
+  if (value === null || value === undefined) return '';
+  const normalized = String(value).trim();
+  if (!normalized) return '';
+  return PLACEHOLDER_VALUES.has(normalized.toUpperCase()) ? '' : normalized;
+}
+
+function normalizeUseDestinationEditValue(value: string) {
+  const normalized = normalizeMeaningfulText(value).toUpperCase();
+  return normalized || null;
+}
+
+function getReferenceFamilyBaseDestination(reference: ReferenceRow) {
+  const family = Array.isArray(reference.families) ? reference.families[0] : reference.families;
+  return normalizeMeaningfulText(family?.use_destination).toUpperCase();
+}
+
+function getReferenceUseDestinationOverride(reference: ReferenceRow) {
+  return normalizeMeaningfulText(reference.ref_attrs?.[USE_DESTINATION_OVERRIDE_KEY]).toUpperCase();
+}
+
 function getReferenceFamilyInfo(reference: ReferenceRow) {
   const family = Array.isArray(reference.families) ? reference.families[0] : reference.families;
+  const baseDestination = getReferenceFamilyBaseDestination(reference);
+  const overrideDestination = getReferenceUseDestinationOverride(reference);
   return {
     productType: family?.product_type || '',
-    destination: family?.use_destination || family?.zone_home || '',
+    destination: overrideDestination || baseDestination,
   };
 }
 
@@ -161,6 +193,13 @@ function formatReferenceFieldValue(reference: ReferenceRow, editType: 'normal' |
   }
 
   const value = reference.ref_attrs?.[editField];
+  if (editField === USE_DESTINATION_OVERRIDE_KEY) {
+    const overrideValue = getReferenceUseDestinationOverride(reference);
+    const familyValue = getReferenceFamilyBaseDestination(reference);
+    if (overrideValue) return `Override: ${overrideValue}${familyValue ? ` | Familia: ${familyValue}` : ''}`;
+    return familyValue ? `Hereda familia: ${familyValue}` : '';
+  }
+
   if (editField === PACKAGE_QUANTITY_ATTR_KEY) {
     const weightSummary = formatWeightKgValue(reference.weight_kg, value);
     return weightSummary
@@ -177,6 +216,11 @@ export default function MassEditClient() {
     familyCode: '',
     referenceCode: '',
     productName: '',
+    designation: '',
+    line: '',
+    commercialMeasure: '',
+    specialLabel: '',
+    useDestination: '',
     refAttrsKey: '',
     refAttrsValue: ''
   });
@@ -241,6 +285,11 @@ export default function MassEditClient() {
       if (filters.familyCode && item.fc !== filters.familyCode) return false;
       if (filters.referenceCode && item.rc !== filters.referenceCode) return false;
       if (filters.productName && item.pn !== filters.productName) return false;
+      if (filters.designation && item.des !== filters.designation) return false;
+      if (filters.line && item.line !== filters.line) return false;
+      if (filters.commercialMeasure && item.cm !== filters.commercialMeasure) return false;
+      if (filters.specialLabel && item.sl !== filters.specialLabel) return false;
+      if (filters.useDestination && item.ud !== filters.useDestination) return false;
       if (filters.refAttrsKey) {
         const hasKey = item.attrs && Object.prototype.hasOwnProperty.call(item.attrs, filters.refAttrsKey);
         if (!hasKey) return false;
@@ -255,6 +304,11 @@ export default function MassEditClient() {
   const familyCodesOpt = Array.from(new Set(filteredData.map(d => d.fc).filter((v): v is string => !!v))).sort();
   const referenceCodesOpt = Array.from(new Set(filteredData.map(d => d.rc).filter((v): v is string => !!v))).sort();
   const productNamesOpt = Array.from(new Set(filteredData.map(d => d.pn).filter((v): v is string => !!v))).sort();
+  const designationsOpt = Array.from(new Set(filteredData.map(d => d.des).filter((v): v is string => !!v))).sort();
+  const linesOpt = Array.from(new Set(filteredData.map(d => d.line).filter((v): v is string => !!v))).sort();
+  const commercialMeasuresOpt = Array.from(new Set(filteredData.map(d => d.cm).filter((v): v is string => !!v))).sort();
+  const specialLabelsOpt = Array.from(new Set(filteredData.map(d => d.sl).filter((v): v is string => !!v))).sort();
+  const useDestinationsOpt = Array.from(new Set(filteredData.map(d => d.ud).filter((v): v is string => !!v))).sort();
   
   // JSONB Values specific to the selected Key
   const refAttrsValuesOpt = useMemo(() => {
@@ -285,14 +339,24 @@ export default function MassEditClient() {
         schema.ref_attrs_schema[editField].allowed_values.forEach((v: string) => vals.add(v));
       }
     });
+    if (editField === USE_DESTINATION_OVERRIDE_KEY) {
+      references.forEach(reference => {
+        if (!selectedIds.includes(reference.id)) return;
+        const overrideDestination = getReferenceUseDestinationOverride(reference);
+        const familyDestination = getReferenceFamilyBaseDestination(reference);
+        if (overrideDestination) vals.add(overrideDestination);
+        if (familyDestination) vals.add(familyDestination.toUpperCase());
+      });
+    }
     return Array.from(vals).sort();
   }, [editType, editField, selectedIds, references, schemasData]);
 
   const refAttrEditKeys = useMemo(() => {
-    return [
+    return Array.from(new Set([
+      ...SYSTEM_REF_ATTR_EDIT_KEYS,
       PACKAGE_QUANTITY_ATTR_KEY,
-      ...refAttrsKeys.filter(key => key !== PACKAGE_QUANTITY_ATTR_KEY),
-    ];
+      ...refAttrsKeys,
+    ]));
   }, [refAttrsKeys]);
 
   const selectedReferences = useMemo(
@@ -301,6 +365,7 @@ export default function MassEditClient() {
   );
 
   const isEditingPackageQuantity = editType === 'ref_attr' && editField === PACKAGE_QUANTITY_ATTR_KEY;
+  const isEditingUseDestinationOverride = editType === 'ref_attr' && editField === USE_DESTINATION_OVERRIDE_KEY;
 
   const selectedPackageBoxCount = useMemo(() => {
     if (selectedReferences.length === 0) return 1;
@@ -354,7 +419,19 @@ export default function MassEditClient() {
   };
 
   const handleClearFilters = () => {
-    setFilters({ productType: '', familyCode: '', referenceCode: '', productName: '', refAttrsKey: '', refAttrsValue: '' });
+    setFilters({
+      productType: '',
+      familyCode: '',
+      referenceCode: '',
+      productName: '',
+      designation: '',
+      line: '',
+      commercialMeasure: '',
+      specialLabel: '',
+      useDestination: '',
+      refAttrsKey: '',
+      refAttrsValue: ''
+    });
   };
 
   const buildUpdatePayload = () => {
@@ -374,6 +451,15 @@ export default function MassEditClient() {
       };
     }
 
+    if (isEditingUseDestinationOverride) {
+      const nextDestination = normalizeUseDestinationEditValue(editValue);
+      return {
+        normalUpdates: {},
+        refAttrsUpdates: { [USE_DESTINATION_OVERRIDE_KEY]: nextDestination },
+        displayValue: nextDestination ?? 'HEREDAR DESTINO DE FAMILIA',
+      };
+    }
+
     return {
       normalUpdates: editType === 'normal' ? { [editField.trim()]: editValue.trim() } : {},
       refAttrsUpdates: editType === 'ref_attr' ? { [editField.trim()]: editValue.trim() } : {},
@@ -384,7 +470,7 @@ export default function MassEditClient() {
   const handlePreview = async () => {
     if (selectedIds.length === 0) return toast.warning('Selecciona al menos una referencia');
     if (!editField) return toast.warning('Selecciona el campo a modificar');
-    if (!isEditingPackageQuantity && editValue.trim() === '') return toast.warning('Ingresa o selecciona un valor');
+    if (!isEditingPackageQuantity && !isEditingUseDestinationOverride && editValue.trim() === '') return toast.warning('Ingresa o selecciona un valor');
     if (isEditingPackageQuantity && packageBoxCount > 1 && packageWeightValues.some(value => !isValidWeightInput(value))) {
       return toast.warning('Ingresa un peso válido para cada caja');
     }
@@ -475,7 +561,7 @@ export default function MassEditClient() {
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
               <label className="block text-xs font-medium text-slate-500 mb-1">Product Type</label>
               <select value={filters.productType} onChange={e => setFilters({...filters, productType: e.target.value})} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
@@ -497,11 +583,46 @@ export default function MassEditClient() {
                 {referenceCodesOpt.map(o => <option key={o} value={o}>{o}</option>)}
               </select>
             </div>
-            <div className="md:col-span-3">
+            <div>
               <label className="block text-xs font-medium text-slate-500 mb-1">Nombre Exacto</label>
               <select value={filters.productName} onChange={e => setFilters({...filters, productName: e.target.value})} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
                 <option value="">Cualquiera</option>
                 {productNamesOpt.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Destino de uso</label>
+              <select value={filters.useDestination} onChange={e => setFilters({...filters, useDestination: e.target.value})} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
+                <option value="">Cualquiera</option>
+                {useDestinationsOpt.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Designacion</label>
+              <select value={filters.designation} onChange={e => setFilters({...filters, designation: e.target.value})} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
+                <option value="">Cualquiera</option>
+                {designationsOpt.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Linea</label>
+              <select value={filters.line} onChange={e => setFilters({...filters, line: e.target.value})} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
+                <option value="">Cualquiera</option>
+                {linesOpt.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Medida Comercial</label>
+              <select value={filters.commercialMeasure} onChange={e => setFilters({...filters, commercialMeasure: e.target.value})} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
+                <option value="">Cualquiera</option>
+                {commercialMeasuresOpt.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Etiqueta Especial</label>
+              <select value={filters.specialLabel} onChange={e => setFilters({...filters, specialLabel: e.target.value})} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
+                <option value="">Cualquiera</option>
+                {specialLabelsOpt.map(o => <option key={o} value={o}>{o}</option>)}
               </select>
             </div>
             <div>
@@ -713,13 +834,18 @@ export default function MassEditClient() {
                 list="allowed_values_list" 
                 value={editValue} 
                 onChange={e => setEditValue(e.target.value)} 
-                placeholder="Escribe o selecciona..." 
+                placeholder={isEditingUseDestinationOverride ? 'Ej. LAVATRAPEROS o deja vacio para heredar' : 'Escribe o selecciona...'}
                 className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white"
               />
               <datalist id="allowed_values_list">
                 {editType === 'ref_attr' && editAllowedValues.map(v => <option key={v} value={v} />)}
               </datalist>
-              {editType === 'ref_attr' && (
+              {isEditingUseDestinationOverride && (
+                <p className="text-[11px] text-slate-500 mt-1 leading-tight">
+                  Este override es especial de referencia y no requiere schema. Deja el valor vacio o usa NA/N/A/NULL para quitarlo y heredar el destino de la familia.
+                </p>
+              )}
+              {!isEditingUseDestinationOverride && editType === 'ref_attr' && (
                 <p className="text-[11px] text-slate-500 mt-1 leading-tight">
                   Las opciones del menú desplegable son los valores permitidos actuales. Puedes escribir uno nuevo, pero si no está en el esquema de la familia, fallará la validación.
                 </p>
@@ -766,9 +892,15 @@ export default function MassEditClient() {
                   <ul className="list-disc pl-5 space-y-1 text-sm">
                     {previewData.errors?.map((err: string, i: number) => <li key={i}>{err}</li>)}
                   </ul>
-                  <p className="mt-3 text-sm font-medium bg-red-100 p-2 rounded inline-block">
+                  {isEditingUseDestinationOverride ? (
+                    <p className="mt-3 text-sm font-medium bg-red-100 p-2 rounded inline-block">
+                      Para use_destination solo se aceptan texto escalar o vacio/null para heredar familia.
+                    </p>
+                  ) : (
+                    <p className="mt-3 text-sm font-medium bg-red-100 p-2 rounded inline-block">
                     Para forzar un valor nuevo, debes agregarlo primero en los &quot;Valores Permitidos&quot; de la Configuración de Esquema.
-                  </p>
+                    </p>
+                  )}
                 </div>
               )}
 

@@ -10,6 +10,11 @@ const packageJson = require('./package.json');
 
 const app = express();
 const PORT = process.env.PORT || 3344;
+const AGENT_CAPABILITIES = { jobMetadata: true, fastPing: true };
+const USB_HEALTH_CACHE_MS = 15000;
+
+let cachedUsbHealth = null;
+let pendingUsbHealth = null;
 
 const upload = multer({
     dest: path.join(os.tmpdir(), 'samigen-prints'),
@@ -29,19 +34,61 @@ app.use((_req, res, next) => {
 app.use(cors());
 app.use(express.json());
 
+function getAgentStatus() {
+    return {
+        status: 'ok',
+        name: packageJson.name,
+        version: packageJson.version,
+        capabilities: AGENT_CAPABILITIES,
+        endpoint: `http://127.0.0.1:${PORT}`,
+    };
+}
+
+function mapUsbHealth(printers, scanCached) {
+    return {
+        printerDetected: printers.length > 0,
+        printerName: printers.length > 0 ? printers[0].known : null,
+        printers: printers.map(p => p.known || `${p.vid}:${p.pid}`),
+        usbDevices: printers,
+        scanCached,
+        scannedAt: new Date().toISOString(),
+    };
+}
+
+async function getUsbHealth(forceRefresh = false) {
+    const now = Date.now();
+    if (
+        !forceRefresh &&
+        cachedUsbHealth &&
+        now - cachedUsbHealth.scannedAtMs < USB_HEALTH_CACHE_MS
+    ) {
+        return { ...cachedUsbHealth.payload, scanCached: true };
+    }
+
+    if (!pendingUsbHealth) {
+        pendingUsbHealth = scanUsbDevices()
+            .then((printers) => {
+                const payload = mapUsbHealth(printers, false);
+                cachedUsbHealth = { payload, scannedAtMs: Date.now() };
+                return payload;
+            })
+            .finally(() => {
+                pendingUsbHealth = null;
+            });
+    }
+
+    return pendingUsbHealth;
+}
+
+app.get('/ping', (_req, res) => {
+    res.json(getAgentStatus());
+});
+
 app.get('/health', async (_req, res) => {
     try {
-        const printers = await scanUsbDevices();
         res.json({
-            status: 'ok',
-            name: packageJson.name,
-            version: packageJson.version,
-            capabilities: { jobMetadata: true },
-            endpoint: `http://127.0.0.1:${PORT}`,
-            printerDetected: printers.length > 0,
-            printerName: printers.length > 0 ? printers[0].known : null,
-            printers: printers.map(p => p.known || `${p.vid}:${p.pid}`),
-            usbDevices: printers,
+            ...getAgentStatus(),
+            ...await getUsbHealth(false),
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -64,12 +111,8 @@ app.get('/debug-usb', async (_req, res) => {
 
 app.get('/scan-usb', async (_req, res) => {
     try {
-        const printers = await scanUsbDevices();
         res.json({
-            printerDetected: printers.length > 0,
-            printerName: printers.length > 0 ? printers[0].known : null,
-            printers: printers.map(p => p.known || `${p.vid}:${p.pid}`),
-            usbDevices: printers,
+            ...await getUsbHealth(true),
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
