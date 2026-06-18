@@ -99,8 +99,6 @@ export function Sidebar({
     const userEmail = access.user?.email ?? null
     const userInitials = getUserInitials(userEmail, roleLabel)
     const canManageNaming = access.permissions.includes('action:naming:manage')
-    const canViewServiceStatus = access.role === 'admin'
-
     useEffect(() => {
         const saved = localStorage.getItem('sidebar-collapsed')
 
@@ -298,23 +296,7 @@ export function Sidebar({
                         </div>
 
                         <div className="mt-auto p-4 border-t border-slate-800/60 bg-slate-950/50">
-                            {canViewServiceStatus && (
-                                <div className={cn('flex flex-col gap-2 mb-4 px-2', isCollapsed && 'items-center px-0')}>
-                                    {!isCollapsed ? (
-                                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Estado de servicios</p>
-                                    ) : (
-                                        <div className="h-px bg-slate-800/60 w-full mb-2" />
-                                    )}
-
-                                    <div className={cn('flex items-center justify-between w-full', isCollapsed && 'justify-center')}>
-                                        {!isCollapsed && <span className="text-[11px] text-slate-400">Base de datos</span>}
-                                        <div className={cn('flex items-center gap-1.5', isCollapsed && 'flex-col gap-0.5')}>
-                                            <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                            <span className="text-[10px] font-bold text-emerald-500/90 uppercase">{isCollapsed ? 'DB' : 'Activo'}</span>
-                                        </div>
-                                    </div>
-
-                                    {canManageNaming && (
+                            {canManageNaming && (
                                         isCollapsed ? (
                                             <button
                                                 type="button"
@@ -364,8 +346,6 @@ export function Sidebar({
                                             </div>
                                         )
                                     )}
-                                </div>
-                            )}
 
                             <div className={cn('flex flex-col gap-1', isCollapsed ? 'items-center' : 'gap-1.5')}>
                                 <div className={cn('flex items-center bg-slate-900/50 rounded-lg border border-slate-800/40 cursor-default transition-all', isCollapsed ? 'p-1.5 justify-center' : 'gap-3 p-3')}>
