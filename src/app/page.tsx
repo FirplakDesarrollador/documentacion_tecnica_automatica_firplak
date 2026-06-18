@@ -11,7 +11,7 @@ import {
 import { cn } from '@/lib/utils'
 import { decodeGenerateLastUrl, GENERATE_LAST_URL_COOKIE } from '@/lib/navigation/generateLastUrl'
 
-import { getPendingSummaryCached } from '@/lib/engine/validationActions'
+import { getPendingStructuralSummary } from '@/lib/engine/pendingStructural'
 import { requirePageRole } from '@/utils/auth/access'
 
 interface RecentProduct {
@@ -30,7 +30,7 @@ export default async function Home() {
   await requirePageRole('admin')
 
   // Fetch real KPIs and validation state
-  const pendingSummary = await getPendingSummaryCached()
+  const pendingSummary = await getPendingStructuralSummary()
   
   const kpiRows = await dbQuery(`
     SELECT
@@ -41,7 +41,7 @@ export default async function Home() {
   const kpi = kpiRows?.[0] || {}
   const totalProducts = parseInt(kpi.total_products || '0')
   const pendingCount = pendingSummary.pendingCount
-  const pendingCriticalCount = pendingSummary.pendingCriticalCount
+  const pendingCriticalCount = pendingSummary.criticalCount
   const activeTemplates = parseInt(kpi.active_templates || '0')
 
   // Recent activity
@@ -66,13 +66,13 @@ export default async function Home() {
     },
     {
       title: "Plantillas",
-      description: "Diseñador visual de documentos",
+      description: "Disenador visual de documentos",
       icon: <LayoutTemplate className="h-6 w-6 text-emerald-500" />,
       href: "/templates",
       color: "bg-emerald-50 border-emerald-100"
     },
     {
-      title: "Configuración",
+      title: "Configuracion",
       description: "Ajustes, diccionarios y reglas",
       icon: <GitMerge className="h-6 w-6 text-blue-500" />,
       href: "/configuration",
@@ -80,14 +80,14 @@ export default async function Home() {
     },
     {
       title: "Recursos",
-      description: "Librería de íconos, logos y SVG",
+      description: "Libreria de iconos, logos y SVG",
       icon: <FileImage className="h-6 w-6 text-amber-500" />,
       href: "/assets",
       color: "bg-amber-50 border-amber-100"
     },
     {
       title: "Generar",
-      description: "Exportación masiva de documentos",
+      description: "Exportacion masiva de documentos",
       icon: <FileText className="h-6 w-6 text-purple-500" />,
       href: generateHref,
       color: "bg-purple-50 border-purple-100"
@@ -102,7 +102,7 @@ export default async function Home() {
         <div>
           <h1 className="text-4xl font-extrabold tracking-tight text-slate-900 font-sans">Panel principal</h1>
           <p className="text-slate-500 mt-2 text-lg max-w-lg leading-relaxed font-sans">
-            Tu espacio de trabajo central para la gestión técnica y automatización de documentación.
+            Tu espacio de trabajo central para la gestion tecnica y automatizacion de documentacion.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -145,8 +145,8 @@ export default async function Home() {
               </div>
             </div>
             <div className="text-3xl font-extrabold text-slate-900 mt-3 tabular-nums">{pendingCount}</div>
-            <p className="text-[10px] text-amber-700 mt-1 font-bold">ACCIÓN REQUERIDA</p>
-            <p className="text-[10px] text-slate-400 mt-1 font-medium">Críticos: {pendingCriticalCount}</p>
+            <p className="text-[10px] text-amber-700 mt-1 font-bold">ACCION REQUERIDA</p>
+            <p className="text-[10px] text-slate-400 mt-1 font-medium">Criticos: {pendingCriticalCount}</p>
           </CardContent>
         </Card>
 
@@ -181,7 +181,7 @@ export default async function Home() {
         
         {/* Modules Grid */}
         <div className="lg:col-span-2 flex flex-col gap-4">
-          <h2 className="text-xl font-bold text-slate-900">Accesos Rápidos</h2>
+          <h2 className="text-xl font-bold text-slate-900">Accesos Rapidos</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {modules.map((m) => (
               <Link key={m.href} href={m.href} className="group outline-none">
@@ -208,7 +208,7 @@ export default async function Home() {
           <Card className="shadow-soft border-slate-200 h-full">
             <CardContent className="p-0 overflow-hidden">
               <div className="p-4 bg-slate-50/80 border-b border-slate-100 flex justify-between items-center">
-                <span className="text-sm font-semibold text-slate-700">Últimos Productos Editados</span>
+                <span className="text-sm font-semibold text-slate-700">Ultimos Productos Editados</span>
               </div>
               <div className="divide-y divide-slate-100">
                 {recentProducts.length > 0 ? recentProducts.map((p: RecentProduct) => (
@@ -247,7 +247,7 @@ export default async function Home() {
                  </div>
                  <div className="flex flex-col">
                     <span className="text-sm font-medium text-slate-900">{pendingCount} pendientes detectados</span>
-                    <span className="text-xs text-slate-500">Críticos: {pendingCriticalCount}</span>
+                    <span className="text-xs text-slate-500">Criticos: {pendingCriticalCount}</span>
                  </div>
               </div>
 

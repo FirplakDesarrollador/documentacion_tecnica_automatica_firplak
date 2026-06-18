@@ -52,6 +52,10 @@ type PreviewAddAttrRow = PreviewRemoveAttrRow & {
   refs_without_key?: number | string;
 };
 
+type PreviewUpdateAttrRow = PreviewRemoveAttrRow & {
+  refs_outside_allowed?: number | string;
+};
+
 type RpcResult<T> = {
   data: T;
   error: { message: string } | null;
@@ -781,6 +785,138 @@ export async function executeAddAttrToFamilies(familyCodes: string[], attrKey: s
   revalidatePath('/families');
   revalidatePath('/configuration/reference-editor');
   return { success: true };
+}
+
+export async function previewUpdateAttrAllowedValues(familyCodes: string[], attrKey: string, allowedValues: string[]) {
+  await assertAdminAccess();
+
+  const errors: string[] = [];
+
+  if (!attrKey || !attrKey.trim()) {
+    errors.push('Debes seleccionar un atributo a modificar');
+  }
+  if (!familyCodes || familyCodes.length === 0) {
+    errors.push('No hay familias seleccionadas');
+  }
+
+  if (errors.length > 0) {
+    return { success: true, data: { is_valid: false, affected_count: 0, errors, families: [] } };
+  }
+
+  const safeCodes = familyCodes.map(c => `'${c.replace(/'/g, "''")}'`).join(',');
+  const safeAttrKey = attrKey.replace(/'/g, "''");
+  const normalizedAllowed = Array.from(new Set(
+    allowedValues
+      .map(value => String(value || '').trim())
+      .filter(Boolean)
+  )).sort();
+  const allowedArray = normalizedAllowed.length > 0
+    ? `ARRAY[${normalizedAllowed.map(value => `'${value.replace(/'/g, "''")}'`).join(',')}]::text[]`
+    : 'ARRAY[]::text[]';
+  const outsideAllowedSql = normalizedAllowed.length > 0
+    ? `COUNT(pr.id) FILTER (
+        WHERE COALESCE(pr.ref_attrs, '{}'::jsonb) ? '${safeAttrKey}'
+          AND NOT ((pr.ref_attrs->>'${safeAttrKey}') = ANY(${allowedArray}))
+      )::int`
+    : '0::int';
+
+  const rows = await dbQuery(`
+    WITH selected_families AS (
+      SELECT family_code
+      FROM public.families
+      WHERE family_code IN (${safeCodes})
+        AND COALESCE(ref_attrs_schema, '{}'::jsonb) ? '${safeAttrKey}'
+    )
+    SELECT
+      sf.family_code,
+      COUNT(pr.id)::int AS total_refs,
+      COUNT(pr.id) FILTER (WHERE COALESCE(pr.ref_attrs, '{}'::jsonb) ? '${safeAttrKey}')::int AS refs_with_key,
+      ${outsideAllowedSql} AS refs_outside_allowed
+    FROM selected_families sf
+    LEFT JOIN public.product_references pr ON pr.family_code = sf.family_code
+    GROUP BY sf.family_code
+    ORDER BY sf.family_code ASC
+  `) || [];
+
+  const previewRows = rows as PreviewUpdateAttrRow[];
+  if (previewRows.length === 0) {
+    return {
+      success: true,
+      data: {
+        is_valid: false,
+        affected_count: 0,
+        errors: [`El atributo "${attrKey}" no existe en las familias seleccionadas.`],
+        families: [],
+      }
+    };
+  }
+
+  const refsOutsideAllowed = previewRows.reduce(
+    (acc, row) => acc + Number(row.refs_outside_allowed || 0),
+    0
+  );
+
+  return {
+    success: true,
+    data: {
+      is_valid: true,
+      affected_count: previewRows.length,
+      errors: [],
+      warnings: refsOutsideAllowed > 0
+        ? [`${refsOutsideAllowed} referencias tienen valores actuales que no quedan en la nueva lista permitida.`]
+        : [],
+      families: previewRows.map((row) => ({
+        family_code: row.family_code,
+        total_refs: Number(row.total_refs),
+        refs_with_key: Number(row.refs_with_key),
+        refs_outside_allowed: Number(row.refs_outside_allowed || 0),
+      })),
+    }
+  };
+}
+
+export async function executeUpdateAttrAllowedValues(familyCodes: string[], attrKey: string, allowedValues: string[]) {
+  await assertAdminAccess();
+
+  if (!attrKey || !attrKey.trim()) {
+    return { success: false, error: 'Debes seleccionar un atributo a modificar' };
+  }
+  if (!familyCodes || familyCodes.length === 0) {
+    return { success: false, error: 'No hay familias seleccionadas' };
+  }
+
+  const safeCodes = familyCodes.map(c => `'${c.replace(/'/g, "''")}'`).join(',');
+  const safeAttrKey = attrKey.replace(/'/g, "''");
+  const normalizedAllowed = Array.from(new Set(
+    allowedValues
+      .map(value => String(value || '').trim())
+      .filter(Boolean)
+  )).sort();
+  const allowedJson = JSON.stringify(normalizedAllowed).replace(/'/g, "''");
+
+  try {
+    await dbQuery(`
+      UPDATE public.families
+      SET ref_attrs_schema = jsonb_set(
+            COALESCE(ref_attrs_schema, '{}'::jsonb),
+            ARRAY['${safeAttrKey}', 'allowed_values']::text[],
+            '${allowedJson}'::jsonb,
+            false
+          ),
+          updated_at = now()
+      WHERE family_code IN (${safeCodes})
+        AND COALESCE(ref_attrs_schema, '{}'::jsonb) ? '${safeAttrKey}'
+    `);
+
+    await markNamingStaleForFamilies(familyCodes, null, 'family_attr_allowed_values_update');
+    await processNamingJobsInline();
+    revalidatePath('/families');
+    revalidatePath('/configuration/families');
+    revalidatePath('/configuration/reference-editor');
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 export async function previewRemoveAttrFromFamilies(familyCodes: string[], attrKey: string) {

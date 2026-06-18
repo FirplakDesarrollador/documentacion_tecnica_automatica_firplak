@@ -1,0 +1,359 @@
+CREATE OR REPLACE FUNCTION public.rpc_pending_structural_summary()
+RETURNS TABLE (
+  pending_count integer,
+  critical_count integer,
+  missing_isometric_count integer,
+  missing_template_field_count integer,
+  translation_candidate_count integer
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  RETURN QUERY
+  WITH template_elements AS (
+    SELECT
+      COALESCE(t.brand_scope, 'firplak') AS brand_scope,
+      NULLIF(upper(btrim(t.private_label_client_name)), '') AS private_label_client_name,
+      elem
+    FROM public.plantillas_doc_tec t
+    CROSS JOIN LATERAL jsonb_array_elements(public.pending_safe_jsonb_array(t.elements_json)) elem
+    WHERE t.active = true
+  ),
+  required_fields AS (
+    SELECT DISTINCT
+      CASE
+        WHEN elem->>'type' = 'image'
+          AND lower(btrim(COALESCE(elem->>'content', ''))) LIKE 'isom%'
+          THEN 'isometric'
+        WHEN elem->>'type' IN ('dynamic_text', 'barcode', 'dynamic_image')
+          THEN NULLIF(btrim(elem->>'dataField'), '')
+        ELSE NULL
+      END AS field,
+      brand_scope,
+      private_label_client_name
+    FROM template_elements
+    WHERE lower(COALESCE(elem->>'required', 'false')) = 'true'
+  ),
+  requirements AS (
+    SELECT
+      field,
+      bool_or(brand_scope = 'firplak') AS global_required,
+      array_remove(array_agg(DISTINCT private_label_client_name) FILTER (
+        WHERE brand_scope = 'private_label' AND private_label_client_name IS NOT NULL
+      ), NULL) AS required_clients
+    FROM required_fields
+    WHERE field IS NOT NULL
+      AND field NOT IN ('print_datetime', 'of_number', 'partes_texto')
+    GROUP BY field
+  ),
+  base AS MATERIALIZED (
+    SELECT
+      v.id,
+      v.validation_status,
+      v.final_complete_name_es,
+      v.final_complete_name_en,
+      v.effective_attrs,
+      v.effective_version_attrs,
+      v.isometric_asset_id,
+      v.isometric_path,
+      v.barcode_text,
+      v.resolved_color_name,
+      v.name_color_sap,
+      v.resolved_private_label_client_name,
+      v.private_label_client_name,
+      v.resolved_special_label,
+      v.special_label,
+      v.product_type,
+      v.product_name,
+      v.designation,
+      v.line,
+      v.commercial_measure,
+      v.use_destination,
+      v.zone_home,
+      v.version_label
+    FROM public.v_ui_generate_list v
+    WHERE COALESCE(v.is_exportable, true) = true
+      AND (v.effective_status IS NULL OR v.effective_status <> 'INACTIVO')
+  ),
+  missing_fields AS (
+    SELECT
+      b.id,
+      r.field
+    FROM base b
+    JOIN requirements r
+      ON r.global_required
+      OR upper(btrim(COALESCE(b.resolved_private_label_client_name, b.private_label_client_name, ''))) = ANY(COALESCE(r.required_clients, ARRAY[]::text[]))
+    CROSS JOIN LATERAL (
+      SELECT CASE r.field
+        WHEN 'isometric' THEN COALESCE(
+          NULLIF(b.effective_attrs->>'isometric_asset_id', ''),
+          NULLIF(b.effective_version_attrs->>'isometric_asset_id', ''),
+          NULLIF(b.isometric_asset_id, ''),
+          NULLIF(b.effective_attrs->>'isometric_path', ''),
+          NULLIF(b.effective_version_attrs->>'isometric_path', ''),
+          NULLIF(b.isometric_path, '')
+        )
+        WHEN 'barcode_text' THEN COALESCE(NULLIF(b.effective_attrs->>'barcode_text', ''), NULLIF(b.barcode_text, ''))
+        WHEN 'color_name' THEN COALESCE(NULLIF(b.effective_attrs->>'color_name', ''), NULLIF(b.resolved_color_name, ''), NULLIF(b.name_color_sap, ''))
+        WHEN 'private_label_client_name' THEN COALESCE(NULLIF(b.effective_attrs->>'private_label_client_name', ''), NULLIF(b.resolved_private_label_client_name, ''), NULLIF(b.private_label_client_name, ''))
+        WHEN 'special_label' THEN COALESCE(NULLIF(b.effective_attrs->>'special_label', ''), NULLIF(b.resolved_special_label, ''), NULLIF(b.special_label, ''))
+        WHEN 'product_type' THEN COALESCE(NULLIF(b.effective_attrs->>'product_type', ''), NULLIF(b.product_type, ''))
+        WHEN 'product_name' THEN COALESCE(NULLIF(b.effective_attrs->>'product_name', ''), NULLIF(b.product_name, ''))
+        WHEN 'designation' THEN COALESCE(NULLIF(b.effective_attrs->>'designation', ''), NULLIF(b.designation, ''))
+        WHEN 'line' THEN COALESCE(NULLIF(b.effective_attrs->>'line', ''), NULLIF(b.line, ''))
+        WHEN 'commercial_measure' THEN COALESCE(NULLIF(b.effective_attrs->>'commercial_measure', ''), NULLIF(b.commercial_measure, ''))
+        WHEN 'use_destination' THEN COALESCE(NULLIF(b.effective_attrs->>'use_destination', ''), NULLIF(b.use_destination, ''))
+        WHEN 'zone_home' THEN COALESCE(NULLIF(b.effective_attrs->>'zone_home', ''), NULLIF(b.zone_home, ''))
+        WHEN 'version_label' THEN COALESCE(NULLIF(b.effective_attrs->>'version_label', ''), NULLIF(b.version_label, ''))
+        ELSE NULLIF(b.effective_attrs->>r.field, '')
+      END AS field_value
+    ) resolved
+    WHERE CASE
+      WHEN r.field = 'isometric'
+        THEN resolved.field_value IS NULL OR upper(btrim(resolved.field_value)) IN ('NA', 'N/A', '-')
+      ELSE resolved.field_value IS NULL OR resolved.field_value = ''
+    END
+  ),
+  product_reasons AS (
+    SELECT
+      b.id,
+      bool_or(m.field = 'isometric') AS missing_isometric,
+      COALESCE(
+        array_agg(DISTINCT m.field) FILTER (WHERE m.field <> 'isometric'),
+        ARRAY[]::text[]
+      ) AS missing_template_fields
+    FROM base b
+    JOIN missing_fields m ON m.id = b.id
+    GROUP BY b.id
+  ),
+  translation_candidates AS (
+    SELECT COUNT(*)::integer AS count
+    FROM base b
+    JOIN public.product_skus s ON s.id = b.id
+    WHERE COALESCE(s.naming_stale_final_complete_name, false)
+       OR COALESCE(s.naming_stale_sap_description_recommended, false)
+       OR COALESCE(s.naming_stale, false)
+       OR b.validation_status = 'needs_review'
+       OR (
+          NULLIF(b.final_complete_name_es, '') IS NOT NULL
+          AND NULLIF(b.final_complete_name_en, '') IS NULL
+       )
+       OR (
+          NULLIF(s.sap_description_recommended_es, '') IS NOT NULL
+          AND NULLIF(s.sap_description_recommended_en, '') IS NULL
+       )
+  )
+  SELECT
+    COUNT(*)::integer AS pending_count,
+    COUNT(*)::integer AS critical_count,
+    COUNT(*) FILTER (WHERE pr.missing_isometric)::integer AS missing_isometric_count,
+    COUNT(*) FILTER (WHERE array_length(pr.missing_template_fields, 1) > 0)::integer AS missing_template_field_count,
+    COALESCE((SELECT count FROM translation_candidates), 0)::integer AS translation_candidate_count
+  FROM product_reasons pr;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.rpc_pending_structural_page(
+  p_page integer DEFAULT 1,
+  p_page_size integer DEFAULT 50,
+  p_reason text DEFAULT NULL
+)
+RETURNS TABLE (
+  product_id text,
+  product_code text,
+  product_name text,
+  severity text,
+  reasons jsonb,
+  total_count integer,
+  page integer,
+  page_size integer
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_page integer := GREATEST(COALESCE(p_page, 1), 1);
+  v_page_size integer := LEAST(GREATEST(COALESCE(p_page_size, 50), 1), 100);
+  v_reason text := NULLIF(upper(btrim(COALESCE(p_reason, ''))), '');
+BEGIN
+  RETURN QUERY
+  WITH template_elements AS (
+    SELECT
+      COALESCE(t.brand_scope, 'firplak') AS brand_scope,
+      NULLIF(upper(btrim(t.private_label_client_name)), '') AS private_label_client_name,
+      elem
+    FROM public.plantillas_doc_tec t
+    CROSS JOIN LATERAL jsonb_array_elements(public.pending_safe_jsonb_array(t.elements_json)) elem
+    WHERE t.active = true
+  ),
+  required_fields AS (
+    SELECT DISTINCT
+      CASE
+        WHEN elem->>'type' = 'image'
+          AND lower(btrim(COALESCE(elem->>'content', ''))) LIKE 'isom%'
+          THEN 'isometric'
+        WHEN elem->>'type' IN ('dynamic_text', 'barcode', 'dynamic_image')
+          THEN NULLIF(btrim(elem->>'dataField'), '')
+        ELSE NULL
+      END AS field,
+      brand_scope,
+      private_label_client_name
+    FROM template_elements
+    WHERE lower(COALESCE(elem->>'required', 'false')) = 'true'
+  ),
+  requirements AS (
+    SELECT
+      field,
+      bool_or(brand_scope = 'firplak') AS global_required,
+      array_remove(array_agg(DISTINCT private_label_client_name) FILTER (
+        WHERE brand_scope = 'private_label' AND private_label_client_name IS NOT NULL
+      ), NULL) AS required_clients
+    FROM required_fields
+    WHERE field IS NOT NULL
+      AND field NOT IN ('print_datetime', 'of_number', 'partes_texto')
+    GROUP BY field
+  ),
+  base AS MATERIALIZED (
+    SELECT
+      v.id,
+      v.sku_complete,
+      v.final_complete_name_es,
+      v.effective_attrs,
+      v.effective_version_attrs,
+      v.isometric_asset_id,
+      v.isometric_path,
+      v.barcode_text,
+      v.resolved_color_name,
+      v.name_color_sap,
+      v.resolved_private_label_client_name,
+      v.private_label_client_name,
+      v.resolved_special_label,
+      v.special_label,
+      v.product_type,
+      v.product_name,
+      v.designation,
+      v.line,
+      v.commercial_measure,
+      v.use_destination,
+      v.zone_home,
+      v.version_label
+    FROM public.v_ui_generate_list v
+    WHERE COALESCE(v.is_exportable, true) = true
+      AND (v.effective_status IS NULL OR v.effective_status <> 'INACTIVO')
+  ),
+  missing_fields AS (
+    SELECT
+      b.id,
+      r.field
+    FROM base b
+    JOIN requirements r
+      ON r.global_required
+      OR upper(btrim(COALESCE(b.resolved_private_label_client_name, b.private_label_client_name, ''))) = ANY(COALESCE(r.required_clients, ARRAY[]::text[]))
+    CROSS JOIN LATERAL (
+      SELECT CASE r.field
+        WHEN 'isometric' THEN COALESCE(
+          NULLIF(b.effective_attrs->>'isometric_asset_id', ''),
+          NULLIF(b.effective_version_attrs->>'isometric_asset_id', ''),
+          NULLIF(b.isometric_asset_id, ''),
+          NULLIF(b.effective_attrs->>'isometric_path', ''),
+          NULLIF(b.effective_version_attrs->>'isometric_path', ''),
+          NULLIF(b.isometric_path, '')
+        )
+        WHEN 'barcode_text' THEN COALESCE(NULLIF(b.effective_attrs->>'barcode_text', ''), NULLIF(b.barcode_text, ''))
+        WHEN 'color_name' THEN COALESCE(NULLIF(b.effective_attrs->>'color_name', ''), NULLIF(b.resolved_color_name, ''), NULLIF(b.name_color_sap, ''))
+        WHEN 'private_label_client_name' THEN COALESCE(NULLIF(b.effective_attrs->>'private_label_client_name', ''), NULLIF(b.resolved_private_label_client_name, ''), NULLIF(b.private_label_client_name, ''))
+        WHEN 'special_label' THEN COALESCE(NULLIF(b.effective_attrs->>'special_label', ''), NULLIF(b.resolved_special_label, ''), NULLIF(b.special_label, ''))
+        WHEN 'product_type' THEN COALESCE(NULLIF(b.effective_attrs->>'product_type', ''), NULLIF(b.product_type, ''))
+        WHEN 'product_name' THEN COALESCE(NULLIF(b.effective_attrs->>'product_name', ''), NULLIF(b.product_name, ''))
+        WHEN 'designation' THEN COALESCE(NULLIF(b.effective_attrs->>'designation', ''), NULLIF(b.designation, ''))
+        WHEN 'line' THEN COALESCE(NULLIF(b.effective_attrs->>'line', ''), NULLIF(b.line, ''))
+        WHEN 'commercial_measure' THEN COALESCE(NULLIF(b.effective_attrs->>'commercial_measure', ''), NULLIF(b.commercial_measure, ''))
+        WHEN 'use_destination' THEN COALESCE(NULLIF(b.effective_attrs->>'use_destination', ''), NULLIF(b.use_destination, ''))
+        WHEN 'zone_home' THEN COALESCE(NULLIF(b.effective_attrs->>'zone_home', ''), NULLIF(b.zone_home, ''))
+        WHEN 'version_label' THEN COALESCE(NULLIF(b.effective_attrs->>'version_label', ''), NULLIF(b.version_label, ''))
+        ELSE NULLIF(b.effective_attrs->>r.field, '')
+      END AS field_value
+    ) resolved
+    WHERE CASE
+      WHEN r.field = 'isometric'
+        THEN resolved.field_value IS NULL OR upper(btrim(resolved.field_value)) IN ('NA', 'N/A', '-')
+      ELSE resolved.field_value IS NULL OR resolved.field_value = ''
+    END
+  ),
+  product_reasons AS (
+    SELECT
+      b.id::text AS product_id,
+      b.sku_complete AS product_code,
+      COALESCE(NULLIF(b.final_complete_name_es, ''), 'Sin nombre') AS product_name,
+      bool_or(m.field = 'isometric') AS missing_isometric,
+      COALESCE(
+        array_agg(DISTINCT m.field) FILTER (WHERE m.field <> 'isometric'),
+        ARRAY[]::text[]
+      ) AS missing_template_fields
+    FROM base b
+    JOIN missing_fields m ON m.id = b.id
+    GROUP BY b.id, b.sku_complete, b.final_complete_name_es
+  ),
+  enriched AS (
+    SELECT
+      pr.product_id,
+      pr.product_code,
+      pr.product_name,
+      'critical'::text AS severity,
+      (
+        CASE WHEN pr.missing_isometric THEN
+          jsonb_build_array(jsonb_build_object(
+            'code', 'MISSING_ISOMETRIC',
+            'severity', 'critical',
+            'message', 'Falta isometrico (requerido por plantillas activas).',
+            'fields', jsonb_build_array('isometric')
+          ))
+        ELSE '[]'::jsonb END
+      ) ||
+      (
+        CASE WHEN array_length(pr.missing_template_fields, 1) > 0 THEN
+          jsonb_build_array(jsonb_build_object(
+            'code', 'MISSING_TEMPLATE_FIELD',
+            'severity', 'critical',
+            'message', 'Faltan campos requeridos por plantillas activas: ' || array_to_string(pr.missing_template_fields, ', ') || '.',
+            'fields', to_jsonb(pr.missing_template_fields)
+          ))
+        ELSE '[]'::jsonb END
+      ) AS reasons,
+      pr.missing_isometric,
+      array_length(pr.missing_template_fields, 1) > 0 AS missing_template_field
+    FROM product_reasons pr
+  ),
+  filtered AS (
+    SELECT *
+    FROM enriched e
+    WHERE v_reason IS NULL
+       OR (v_reason = 'MISSING_ISOMETRIC' AND e.missing_isometric)
+       OR (v_reason = 'MISSING_TEMPLATE_FIELD' AND e.missing_template_field)
+  ),
+  counted AS (
+    SELECT
+      f.*,
+      COUNT(*) OVER()::integer AS total_count
+    FROM filtered f
+    ORDER BY f.product_code ASC
+    LIMIT v_page_size
+    OFFSET (v_page - 1) * v_page_size
+  )
+  SELECT
+    c.product_id,
+    c.product_code,
+    c.product_name,
+    c.severity,
+    c.reasons,
+    c.total_count,
+    v_page AS page,
+    v_page_size AS page_size
+  FROM counted c;
+END;
+$$;
+
+NOTIFY pgrst, 'reload schema';

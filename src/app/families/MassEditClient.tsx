@@ -1,7 +1,7 @@
 'use client';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { 
   searchFamilies, getFamiliesFilterOptions,
@@ -9,6 +9,7 @@ import {
   previewProductTypeRenameImpactAction,
   getFamiliesWithSchema,
   previewAddAttrToFamilies, executeAddAttrToFamilies,
+  previewUpdateAttrAllowedValues, executeUpdateAttrAllowedValues,
   previewRemoveAttrFromFamilies, executeRemoveAttrFromFamilies,
   previewDeleteFamiliesAction, deleteFamiliesAction,
   getAvailableLines, updateFamilyLinesAction, deleteLineAction
@@ -25,6 +26,73 @@ const NORMAL_COLS = [
   { key: 'assembled_default', label: 'Armado por Defecto', type: 'boolean' },
 ];
 
+type SchemaMode = 'add' | 'update' | 'remove';
+
+type AllowedValuesEditorProps = {
+  values: string[];
+  pendingValue: string;
+  onPendingValueChange: (value: string) => void;
+  onAddValue: () => void;
+  onRemoveValue: (value: string) => void;
+  label: ReactNode;
+  placeholder?: string;
+};
+
+function AllowedValuesEditor({
+  values,
+  pendingValue,
+  onPendingValueChange,
+  onAddValue,
+  onRemoveValue,
+  label,
+  placeholder = 'Escribe un valor y presiona Enter...'
+}: AllowedValuesEditorProps) {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-slate-700 mb-1">{label}</label>
+      <div className="flex gap-2 mb-2">
+        <input
+          type="text"
+          value={pendingValue}
+          onChange={e => onPendingValueChange(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && pendingValue.trim()) {
+              e.preventDefault();
+              onAddValue();
+            }
+          }}
+          placeholder={placeholder}
+          className="flex-1 p-2 border rounded-md text-sm outline-none focus:ring-2 focus:ring-amber-500 bg-white"
+        />
+        <button
+          type="button"
+          onClick={onAddValue}
+          disabled={!pendingValue.trim()}
+          className="px-3 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 text-sm disabled:opacity-50"
+        >
+          <Plus className="w-4 h-4" />
+        </button>
+      </div>
+      {values.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 p-2 bg-slate-50 rounded-lg border min-h-[36px]">
+          {values.map(v => (
+            <span key={v} className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md text-xs font-medium">
+              {v}
+              <button
+                type="button"
+                onClick={() => onRemoveValue(v)}
+                className="hover:bg-amber-200 rounded p-0.5"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 type RenameImpact = {
   fromType: string | null;
   toType: string;
@@ -36,6 +104,10 @@ type RenameImpact = {
   canMigrateNamingModel: boolean;
   reason: string | null;
 };
+
+function getActionErrorMessage(result: { error?: unknown }) {
+  return typeof result.error === 'string' ? result.error : 'Error desconocido';
+}
 
 export default function MassEditClient() {
   const [filters, setFilters] = useState({
@@ -59,7 +131,7 @@ export default function MassEditClient() {
   const [editValue, setEditValue] = useState('');
 
   // Schema mode
-  const [schemaMode, setSchemaMode] = useState<'add' | 'remove'>('add');
+  const [schemaMode, setSchemaMode] = useState<SchemaMode>('add');
   const [familiesWithSchema, setFamiliesWithSchema] = useState<any[]>([]);
   const [newAttrKey, setNewAttrKey] = useState('');
   const [attrType, setAttrType] = useState<'string' | 'number' | 'boolean'>('string');
@@ -135,6 +207,34 @@ export default function MassEditClient() {
     return null;
   }, [editType, editField]);
 
+  const addAllowedValue = () => {
+    const v = newAllowedValue.trim();
+    if (v && !allowedValues.includes(v)) setAllowedValues(prev => [...prev, v].sort());
+    setNewAllowedValue('');
+  };
+
+  const collectAllowedValuesForAttr = (attrKey: string) => {
+    if (!attrKey) return [];
+    const selected = new Set(selectedIds);
+    const values = new Set<string>();
+
+    familiesWithSchema.forEach(f => {
+      if (selected.size > 0 && !selected.has(f.family_code)) return;
+      const schema = f.ref_attrs_schema;
+      if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return;
+      const def = schema[attrKey];
+      if (!def || typeof def !== 'object' || Array.isArray(def)) return;
+      const rawValues = def.allowed_values;
+      if (!Array.isArray(rawValues)) return;
+      rawValues.forEach(value => {
+        const normalized = String(value || '').trim();
+        if (normalized) values.add(normalized);
+      });
+    });
+
+    return Array.from(values).sort();
+  };
+
   const handleSearch = async () => {
     setLoading(true);
     const res = await searchFamilies(filters);
@@ -167,6 +267,7 @@ export default function MassEditClient() {
 
     if (editType === 'schema_attr') {
       if (schemaMode === 'add' && !newAttrKey.trim()) return toast.warning('Ingresa el nombre del nuevo atributo');
+      if (schemaMode === 'update' && !removeAttrKey) return toast.warning('Selecciona el atributo a modificar');
       if (schemaMode === 'remove' && !removeAttrKey) return toast.warning('Selecciona el atributo a eliminar');
     } else if (editType === 'normal') {
       if (!editField) return toast.warning('Selecciona el campo a modificar');
@@ -186,7 +287,7 @@ export default function MassEditClient() {
         } else {
           toast.error('Error en preview: ' + (res as any).error);
         }
-      } else {
+      } else if (schemaMode === 'remove') {
         setLoading(true);
         const res = await previewRemoveAttrFromFamilies(selectedIds, removeAttrKey);
         setLoading(false);
@@ -196,6 +297,17 @@ export default function MassEditClient() {
           setShowPreview(true);
         } else {
           toast.error('Error en preview: ' + (res as any).error);
+        }
+      } else {
+        setLoading(true);
+        const res = await previewUpdateAttrAllowedValues(selectedIds, removeAttrKey, allowedValues);
+        setLoading(false);
+        if (res.success) {
+          setPreviewData({ ...res.data, schemaAction: 'update', attrKey: removeAttrKey, allowedValues });
+          setMigrateNamingModel(false);
+          setShowPreview(true);
+        } else {
+          toast.error('Error en preview: Error desconocido');
         }
       }
     } else {
@@ -232,11 +344,18 @@ export default function MassEditClient() {
           try { attrDefObj = JSON.parse(previewData.attrDef); } catch { attrDefObj = { type: 'string', allowed_values: [] }; }
           const res = await executeAddAttrToFamilies(selectedIds, previewData.attrKey, attrDefObj, previewData.attrDefault);
           if (!res.success) throw new Error((res as any).error || 'Error desconocido');
-        } else {
+        } else if (previewData.schemaAction === 'remove') {
           const res = await executeRemoveAttrFromFamilies(selectedIds, previewData.attrKey);
           if (!res.success) throw new Error((res as any).error || 'Error desconocido');
+        } else {
+          const res = await executeUpdateAttrAllowedValues(selectedIds, previewData.attrKey, previewData.allowedValues || []);
+          if (!res.success) throw new Error(getActionErrorMessage(res));
         }
+        if (previewData.schemaAction === 'update') {
+          toast.success('Valores permitidos actualizados con exito');
+        } else {
         toast.success(editType === 'schema_attr' && schemaMode === 'add' ? 'Atributo agregado con éxito' : 'Atributo eliminado con éxito');
+        }
       } else {
         const parsedValue = currentFieldDef?.type === 'boolean' ? previewData.editValue === 'true' : previewData.editValue;
         const migrationOptions = previewData.editField === 'product_type' && previewData.renameImpact
@@ -563,8 +682,9 @@ export default function MassEditClient() {
               <>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Acción</label>
-                  <select value={schemaMode} onChange={e => { setSchemaMode(e.target.value as any); setNewAttrKey(''); setAttrType('string'); setAllowedValues([]); setNewAllowedValue(''); setNewAttrDefault(''); setRemoveAttrKey(''); }} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
+                  <select value={schemaMode} onChange={e => { setSchemaMode(e.target.value as SchemaMode); setNewAttrKey(''); setAttrType('string'); setAllowedValues([]); setNewAllowedValue(''); setNewAttrDefault(''); setRemoveAttrKey(''); }} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
                     <option value="add">Agregar Atributo</option>
+                    <option value="update">Modificar Valores Permitidos</option>
                     <option value="remove">Eliminar Atributo</option>
                   </select>
                 </div>
@@ -650,6 +770,40 @@ export default function MassEditClient() {
                   </>
                 )}
 
+                {schemaMode === 'update' && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Atributo a Modificar</label>
+                      <select
+                        value={removeAttrKey}
+                        onChange={e => {
+                          const attrKey = e.target.value;
+                          setRemoveAttrKey(attrKey);
+                          setAllowedValues(collectAllowedValuesForAttr(attrKey));
+                          setNewAllowedValue('');
+                        }}
+                        className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white"
+                      >
+                        <option value="">Seleccione...</option>
+                        {allSchemaKeys.map(k => <option key={k} value={k}>{k}</option>)}
+                      </select>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Se actualiza en todas las familias seleccionadas que ya tengan este atributo.
+                      </p>
+                    </div>
+                    {removeAttrKey && (
+                      <AllowedValuesEditor
+                        values={allowedValues}
+                        pendingValue={newAllowedValue}
+                        onPendingValueChange={setNewAllowedValue}
+                        onAddValue={addAllowedValue}
+                        onRemoveValue={(value) => setAllowedValues(prev => prev.filter(x => x !== value))}
+                        label={<>Valores Permitidos <span className="text-slate-400 font-normal">(vacio = cualquier valor)</span></>}
+                      />
+                    )}
+                  </>
+                )}
+
                 {schemaMode === 'remove' && (
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Atributo a Eliminar</label>
@@ -706,6 +860,15 @@ export default function MassEditClient() {
                 </div>
               )}
 
+              {previewData.is_valid && Array.isArray(previewData.warnings) && previewData.warnings.length > 0 && (
+                <div className="bg-yellow-50 text-yellow-800 p-4 rounded-lg border border-yellow-200">
+                  <h4 className="font-bold mb-2">Advertencias:</h4>
+                  <ul className="list-disc pl-5 space-y-1 text-sm">
+                    {previewData.warnings.map((warning: string, i: number) => <li key={i}>{warning}</li>)}
+                  </ul>
+                </div>
+              )}
+
               {previewData.is_valid && (
                 <>
                   <div className="grid grid-cols-2 gap-4">
@@ -719,6 +882,15 @@ export default function MassEditClient() {
                     <h4 className="font-semibold flex items-center gap-2 mb-2"><Info className="w-5 h-5" /> Resumen</h4>
                     {editType === 'schema_attr' ? (
                       <div className="mt-3 bg-white p-3 rounded border font-mono text-sm text-slate-700">
+                        {previewData.schemaAction === 'update' ? (
+                          <>
+                            <strong>Modificar valores permitidos de atributo</strong>: <span className="text-amber-600 font-bold">{previewData.attrKey}</span>
+                            <div className="mt-2 text-slate-500 text-xs">
+                              <p>Nuevos valores permitidos: <span className="text-slate-700 font-medium">{previewData.allowedValues?.length > 0 ? previewData.allowedValues.join(', ') : 'Cualquiera'}</span></p>
+                            </div>
+                          </>
+                        ) : (
+                          <>
                         <strong>{previewData.schemaAction === 'add' ? 'Agregar' : 'Eliminar'} atributo</strong>: <span className="text-amber-600 font-bold">{previewData.attrKey}</span>
                         {previewData.schemaAction === 'add' && (
                           <div className="mt-2 text-slate-500 text-xs">
@@ -726,6 +898,8 @@ export default function MassEditClient() {
                             <p>Valores permitidos: <span className="text-slate-700 font-medium">{allowedValues.length > 0 ? allowedValues.join(', ') : 'Cualquiera'}</span></p>
                             <p>Valor por defecto: <span className="text-slate-700 font-medium">{previewData.attrDefault || '(ninguno)'}</span></p>
                           </div>
+                        )}
+                          </>
                         )}
                       </div>
                     ) : (
@@ -766,7 +940,7 @@ export default function MassEditClient() {
                     </div>
                   )}
 
-                  {previewData.schemaAction === 'remove' && Array.isArray(previewData.families) && previewData.families.length > 0 && (
+                  {(previewData.schemaAction === 'remove' || previewData.schemaAction === 'update') && Array.isArray(previewData.families) && previewData.families.length > 0 && (
                     <div className="bg-white p-4 rounded-lg border">
                       <h4 className="font-semibold text-slate-700 mb-3 flex items-center gap-2">
                         <Layers className="w-4 h-4 text-amber-500" />
@@ -777,7 +951,9 @@ export default function MassEditClient() {
                           <tr>
                             <th className="p-2 border-b font-semibold text-slate-600">Familia</th>
                             <th className="p-2 border-b font-semibold text-slate-600 text-right">Referencias Totales</th>
-                            <th className="p-2 border-b font-semibold text-slate-600 text-right">Con este atributo</th>
+                            <th className="p-2 border-b font-semibold text-slate-600 text-right">
+                              {previewData.schemaAction === 'update' ? 'Fuera de lista' : 'Con este atributo'}
+                            </th>
                           </tr>
                         </thead>
                         <tbody className="divide-y">
@@ -786,8 +962,8 @@ export default function MassEditClient() {
                               <td className="p-2 font-mono font-medium text-slate-800">{f.family_code}</td>
                               <td className="p-2 text-right text-slate-600">{f.total_refs}</td>
                               <td className="p-2 text-right">
-                                <span className={`font-medium ${Number(f.refs_with_key) > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
-                                  {f.refs_with_key}
+                                <span className={`font-medium ${Number(previewData.schemaAction === 'update' ? f.refs_outside_allowed : f.refs_with_key) > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                                  {previewData.schemaAction === 'update' ? f.refs_outside_allowed : f.refs_with_key}
                                 </span>
                               </td>
                             </tr>
@@ -795,7 +971,13 @@ export default function MassEditClient() {
                         </tbody>
                       </table>
                       <p className="text-xs text-slate-400 mt-2">
+                        {previewData.schemaAction === 'update' ? (
+                          <>Se actualizaran los valores permitidos de <strong>{previewData.attrKey}</strong> en las familias seleccionadas que ya tengan el atributo.</>
+                        ) : (
+                          <>
                         Se eliminará el atributo <strong>{previewData.attrKey}</strong> del esquema y de todas las referencias de las familias seleccionadas.
+                          </>
+                        )}
                       </p>
                     </div>
                   )}

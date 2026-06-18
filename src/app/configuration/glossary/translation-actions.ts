@@ -1,13 +1,118 @@
 'use server'
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { dbQuery } from '@/lib/supabase'
 import { computeNameWithNamingComponents } from '@/lib/engine/namingComponentsEngine'
+import { mapRowToComposedProduct } from '@/lib/engine/product_composer'
 import type { ProductPayload } from '@/lib/engine/translator'
 import { assertRole } from '@/utils/auth/access'
 
 async function assertAdminAccess() {
     await assertRole('admin')
+}
+
+const SCAN_PRODUCT_PAGE_SIZE = 500
+
+const SCAN_PRODUCT_COLUMNS = [
+    'id',
+    'version_id',
+    'reference_id',
+    'sku_complete',
+    'family_code',
+    'reference_code',
+    'version_code',
+    'color_code',
+    'sku_base',
+    'product_type',
+    'zone_home',
+    'use_destination',
+    'assembled_default',
+    'rh_default',
+    'allowed_lines',
+    'product_name',
+    'designation',
+    'line',
+    'commercial_measure',
+    'version_label',
+    'final_base_name_es',
+    'final_base_name_en',
+    'validation_status',
+    'sap_description_original',
+    'final_complete_name_es',
+    'final_complete_name_en',
+    'barcode_text',
+    'barcode_path',
+    'isometric_path',
+    'isometric_asset_id',
+    'weight_kg',
+    'weight_kg_payload',
+    'stacking_max',
+    'status',
+    'version_status',
+    'ref_status',
+    'family_status',
+    'global_version_rule_status',
+    'inactive_reasons',
+    'sku_attrs',
+    'ref_attrs',
+    'automatic_version_rules',
+    'version_attrs',
+    'resolved_color_name',
+    'name_color_sap',
+    'resolved_private_label_client_name',
+    'private_label_client_name',
+    'resolved_special_label',
+    'special_label',
+    'resolved_width_cm',
+    'width_cm',
+    'resolved_depth_cm',
+    'depth_cm',
+    'resolved_height_cm',
+    'height_cm',
+    'resolved_weight_kg',
+    'resolved_stacking_max',
+] as const
+
+type ScanProductRow = Parameters<typeof mapRowToComposedProduct>[0]
+
+function escapeSqlLiteral(value: string) {
+    return value.replace(/'/g, "''")
+}
+
+async function loadScanProductRows(): Promise<ScanProductRow[]> {
+    const rows: ScanProductRow[] = []
+    let lastSkuComplete = ''
+
+    while (true) {
+        const cursorCondition = lastSkuComplete
+            ? `AND sku_complete > '${escapeSqlLiteral(lastSkuComplete)}'`
+            : ''
+
+        const pageResult = await dbQuery(`
+            SELECT ${SCAN_PRODUCT_COLUMNS.join(', ')}
+            FROM public.v_ui_generate_list
+            WHERE COALESCE(is_exportable, true) = true
+              AND (effective_status IS NULL OR effective_status <> 'INACTIVO')
+              AND (status IS NULL OR status = 'ACTIVO')
+              ${cursorCondition}
+            ORDER BY sku_complete ASC
+            LIMIT ${SCAN_PRODUCT_PAGE_SIZE}
+        `)
+        const page = (pageResult || []) as ScanProductRow[]
+
+        rows.push(...page)
+
+        if (page.length < SCAN_PRODUCT_PAGE_SIZE) {
+            break
+        }
+
+        lastSkuComplete = String(page[page.length - 1]?.sku_complete || '')
+
+        if (!lastSkuComplete) {
+            break
+        }
+    }
+
+    return rows
 }
 
 /**
@@ -19,21 +124,13 @@ export async function scanMissingGlossaryTermsAction(): Promise<{ success: boole
     await assertAdminAccess()
 
     try {
-        const rows =
-            (await dbQuery(`
-                SELECT *
-                FROM public.v_ui_generate_list
-                WHERE COALESCE(is_exportable, true) = true
-                  AND (effective_status IS NULL OR effective_status <> 'INACTIVO')
-                  AND (status IS NULL OR status = 'ACTIVO')
-            `)) || []
+        const rows = await loadScanProductRows()
 
         if (!rows || rows.length === 0) {
             return { success: true, missingTerms: [] }
         }
 
-        const { mapRowToComposedProduct } = await import('@/lib/engine/product_composer')
-        const products = rows.map((row: any) => mapRowToComposedProduct(row))
+        const products = rows.map(row => mapRowToComposedProduct(row))
 
         const termFrequency: Record<string, number> = {}
 
