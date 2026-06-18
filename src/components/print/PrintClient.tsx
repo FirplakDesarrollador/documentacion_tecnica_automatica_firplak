@@ -148,6 +148,19 @@ function normalizeAgentBaseUrl(value: string): string {
     }
 }
 
+function normalizePrinterConfig(value: unknown): PrinterConfig {
+    if (!isRecord(value)) return defaultPrinterConfig
+
+    return {
+        agentUrl: typeof value.agentUrl === 'string'
+            ? normalizeAgentBaseUrl(value.agentUrl)
+            : defaultPrinterConfig.agentUrl,
+        printerName: typeof value.printerName === 'string' && value.printerName.trim()
+            ? value.printerName
+            : defaultPrinterConfig.printerName,
+    }
+}
+
 function getTimeoutSignal(timeoutMs: number) {
     if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
         return AbortSignal.timeout(timeoutMs)
@@ -185,7 +198,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem(PRINTER_CONFIG_KEY)
             if (saved) {
-                try { return JSON.parse(saved) } catch { /* ignore */ }
+                try { return normalizePrinterConfig(JSON.parse(saved)) } catch { /* ignore */ }
             }
         }
         return defaultPrinterConfig
