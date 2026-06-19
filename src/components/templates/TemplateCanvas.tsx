@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, AlignVerticalJustifyEnd, AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Undo2, Redo2, Copy, Trash2, Shuffle, RotateCcw, LayoutGrid, Combine, FileEdit, AlertTriangle, CheckCircle2, ShieldAlert } from 'lucide-react'
+import { Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, AlignVerticalJustifyEnd, AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Undo2, Redo2, Copy, Trash2, Shuffle, RotateCcw, LayoutGrid, Combine, FileEdit, AlertTriangle, CheckCircle2, ShieldAlert, ZoomIn, ZoomOut, Ruler } from 'lucide-react'
 import { toast } from 'sonner'
 import { updateTemplate, getPreviewProduct, getRandomPreviewProduct, validateExportFilenameLength, getTemplateLinkedDatasetsAction } from '@/app/templates/actions'
 import { getDatasetsAction, FieldDef } from '@/app/datasets/actions'
@@ -95,6 +95,11 @@ export interface TemplateElement {
 
 
 const MAX_HISTORY = 10
+const MIN_CANVAS_ZOOM = 0.25
+const MAX_CANVAS_ZOOM = 1.5
+const CANVAS_ZOOM_STEP = 0.25
+const WORKBENCH_PADDING_PX = 32
+const PRINT_SAFE_MARGIN_MM = 5
 
 const FONT_WEIGHT_OPTIONS = [
     { value: '300', label: 'Light' },
@@ -1652,6 +1657,8 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
 
     const [elements, setElements] = useState<TemplateElement[]>(initialElements)
     const [selectedIds, setSelectedIds] = useState<string[]>([])
+    const [canvasZoom, setCanvasZoom] = useState(1)
+    const [showPrintGuides, setShowPrintGuides] = useState(true)
     const [isSaving, setIsSaving] = useState(false)
     const [isModified, setIsModifiedState] = useState(false)
     const isModifiedRef = useRef(false)
@@ -2011,10 +2018,34 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     ]
 
     const canvasRef = useRef<HTMLDivElement>(null)
+    const workbenchRef = useRef<HTMLDivElement>(null)
 
     // Layout configuration
     const CANVAS_WIDTH = template.width_mm * PIXELS_PER_MM
     const CANVAS_HEIGHT = template.height_mm * PIXELS_PER_MM
+    const scaledCanvasWidth = CANVAS_WIDTH * canvasZoom
+    const scaledCanvasHeight = CANVAS_HEIGHT * canvasZoom
+    const printSafeMarginPx = PRINT_SAFE_MARGIN_MM * PIXELS_PER_MM
+    const zoomPercent = Math.round(canvasZoom * 100)
+    const canZoomOut = canvasZoom > MIN_CANVAS_ZOOM
+    const canZoomIn = canvasZoom < MAX_CANVAS_ZOOM
+
+    const updateCanvasZoom = useCallback((nextZoom: number) => {
+        setCanvasZoom(Math.min(MAX_CANVAS_ZOOM, Math.max(MIN_CANVAS_ZOOM, nextZoom)))
+    }, [])
+
+    const zoomCanvasBy = useCallback((delta: number) => {
+        setCanvasZoom(prev => Math.min(MAX_CANVAS_ZOOM, Math.max(MIN_CANVAS_ZOOM, prev + delta)))
+    }, [])
+
+    const fitCanvasToWorkbench = useCallback(() => {
+        const workbench = workbenchRef.current
+        if (!workbench || CANVAS_WIDTH <= 0 || CANVAS_HEIGHT <= 0) return
+
+        const availableWidth = Math.max(workbench.clientWidth - WORKBENCH_PADDING_PX * 2, 1)
+        const availableHeight = Math.max(workbench.clientHeight - WORKBENCH_PADDING_PX * 2, 1)
+        updateCanvasZoom(Math.min(availableWidth / CANVAS_WIDTH, availableHeight / CANVAS_HEIGHT, 1))
+    }, [CANVAS_HEIGHT, CANVAS_WIDTH, updateCanvasZoom])
 
     // Warn before leaving if unsaved changes exist
     useEffect(() => {
@@ -2570,8 +2601,8 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
 
         if (!canvasRef.current || newSelectedIds.length === 0) return
         const rect = canvasRef.current.getBoundingClientRect()
-        const mouseX = e.clientX - rect.left
-        const mouseY = e.clientY - rect.top
+        const mouseX = (e.clientX - rect.left) / canvasZoom
+        const mouseY = (e.clientY - rect.top) / canvasZoom
 
         const offsets = newSelectedIds?.map(selectedId => {
             const el = elements.find(el => el.id === selectedId)
@@ -2600,8 +2631,8 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         const handleMouseMove = (e: globalThis.MouseEvent) => {
             if (isDragging && selectedIds.length > 0 && canvasRef.current) {
                 const rect = canvasRef.current.getBoundingClientRect()
-                const mouseX = e.clientX - rect.left
-                const mouseY = e.clientY - rect.top
+                const mouseX = (e.clientX - rect.left) / canvasZoom
+                const mouseY = (e.clientY - rect.top) / canvasZoom
 
                 setElements(prev => prev.map(el => {
                     if (selectedIds.includes(el.id)) {
@@ -2613,8 +2644,8 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                     return el
                 }))
             } else if (isResizing && resizingElementId && resizeStartRect && resizeStartMouse) {
-                const dx = e.clientX - resizeStartMouse.x
-                const dy = e.clientY - resizeStartMouse.y
+                const dx = (e.clientX - resizeStartMouse.x) / canvasZoom
+                const dy = (e.clientY - resizeStartMouse.y) / canvasZoom
 
                 setElements(prev => prev.map(el => {
                     if (el.id === resizingElementId) {
@@ -2657,7 +2688,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             window.removeEventListener('mousemove', handleMouseMove)
             window.removeEventListener('mouseup', handleMouseUp)
         }
-    }, [isDragging, isResizing, selectedIds, dragOffsets, resizeStartRect, resizeStartMouse, resizeHandle, resizingElementId, commitHistory, elements])
+    }, [canvasZoom, isDragging, isResizing, selectedIds, dragOffsets, resizeStartRect, resizeStartMouse, resizeHandle, resizingElementId, commitHistory, elements])
 
     const activeEl = selectedIds.length === 1 ? elements.find(e => e.id === selectedIds[0]) : null
     const effectiveTemplateFontFamily = getTemplateFontCssStack(templateFontFamily)
@@ -2782,6 +2813,53 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
 
                     </div>
                     <div className="flex gap-2 items-center">
+                        <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+                            <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                onClick={() => zoomCanvasBy(-CANVAS_ZOOM_STEP)}
+                                disabled={!canZoomOut}
+                                title="Alejar lienzo"
+                            >
+                                <ZoomOut className="h-4 w-4" />
+                            </Button>
+                            <button
+                                type="button"
+                                onClick={() => updateCanvasZoom(1)}
+                                className="min-w-12 rounded-md px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-white hover:text-slate-900"
+                                title="Volver a 100%"
+                            >
+                                {zoomPercent}%
+                            </button>
+                            <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                onClick={() => zoomCanvasBy(CANVAS_ZOOM_STEP)}
+                                disabled={!canZoomIn}
+                                title="Acercar lienzo"
+                            >
+                                <ZoomIn className="h-4 w-4" />
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={fitCanvasToWorkbench}
+                                title="Ajustar hoja al area visible"
+                                className="h-8 px-2 text-xs"
+                            >
+                                Ajustar
+                            </Button>
+                            <Button
+                                variant={showPrintGuides ? 'secondary' : 'ghost'}
+                                size="sm"
+                                onClick={() => setShowPrintGuides(prev => !prev)}
+                                title={`Mostrar u ocultar guia segura de impresion (${PRINT_SAFE_MARGIN_MM} mm)`}
+                                className="h-8 px-2 text-xs"
+                            >
+                                <Ruler className="mr-1.5 h-3.5 w-3.5" />
+                                Guia
+                            </Button>
+                        </div>
                         <Button variant={isPreviewMode ? 'default' : 'secondary'} className={isPreviewMode ? 'bg-indigo-600 hover:bg-indigo-700' : ''} onClick={handleTogglePreview}>
                             {isPreviewMode ? <EyeOff className="mr-2 h-4 w-4" /> : <Eye className="mr-2 h-4 w-4" />}
                             {isPreviewMode ? 'Salir de Preview' : 'Live Preview'}
@@ -2835,13 +2913,45 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                 )}
 
                 {/* The Canvas Area */}
-                <div className="flex-1 overflow-auto bg-slate-100 p-8 rounded-xl border flex items-center justify-center relative shadow-inner min-h-125">
+                <div
+                    ref={workbenchRef}
+                    className="flex-1 overflow-auto bg-slate-100 rounded-xl border relative shadow-inner min-h-125"
+                >
                     <div
-                        ref={canvasRef}
-                        onMouseDown={handleCanvasClick}
-                        style={{ width: CANVAS_WIDTH, height: CANVAS_HEIGHT }}
-                        className="bg-white shadow-xl relative ring-1 ring-slate-200 shrink-0 origin-center select-none overflow-hidden"
+                        className="min-h-full p-8 flex items-start justify-center"
+                        style={{ minWidth: scaledCanvasWidth + WORKBENCH_PADDING_PX * 2 }}
                     >
+                        <div
+                            style={{ width: scaledCanvasWidth, height: scaledCanvasHeight }}
+                            className="shrink-0"
+                        >
+                            <div
+                                ref={canvasRef}
+                                onMouseDown={handleCanvasClick}
+                                style={{
+                                    width: CANVAS_WIDTH,
+                                    height: CANVAS_HEIGHT,
+                                    transform: `scale(${canvasZoom})`,
+                                    transformOrigin: 'top left',
+                                }}
+                                className="bg-white shadow-xl relative ring-1 ring-slate-200 select-none overflow-hidden"
+                            >
+                        {showPrintGuides && (
+                            <div
+                                aria-hidden="true"
+                                className="pointer-events-none absolute z-0 border border-dashed border-indigo-400/80 bg-indigo-50/10"
+                                style={{
+                                    left: printSafeMarginPx,
+                                    top: printSafeMarginPx,
+                                    right: printSafeMarginPx,
+                                    bottom: printSafeMarginPx,
+                                }}
+                            >
+                                <span className="absolute -top-5 left-0 rounded bg-indigo-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-indigo-500">
+                                    margen seguro {PRINT_SAFE_MARGIN_MM} mm
+                                </span>
+                            </div>
+                        )}
                         {/* Render elements */}
                         {elements?.filter(e => !e.groupId).map((el) => {
                             const isSelected = selectedIds.includes(el.id);
@@ -3001,6 +3111,8 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                 </div>
                             )
                         })}
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
