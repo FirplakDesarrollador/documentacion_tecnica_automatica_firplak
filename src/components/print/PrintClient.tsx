@@ -42,6 +42,15 @@ import {
 } from '@/lib/printLayout'
 import { getFilteredProducts, resolvePrintAssetsAction, resolveZoneHomeEnForPrintAction } from '@/app/print/actions'
 import { defaultPrintSettings, normalizePrintColorMode, PRINT_SETTINGS_KEY } from '@/lib/printSettings'
+import { convertImageBlobToTspl } from '@/lib/print/browserTspl'
+import {
+    getWebUsbErrorMessage,
+    isWebUsbSupported,
+    reconnectAuthorizedWebUsbPrinter,
+    requestWebUsbPrinter,
+    sendWebUsbPrintJob,
+    type WebUsbPrinterConnection,
+} from '@/lib/print/webusb'
 import {
     buildPrintRuntimeValues,
     isValidOfNumber,
@@ -75,8 +84,10 @@ const PRINT_AGENT_CHECK_INTERVAL_MS = 15000
 const PRINT_AGENT_OFFLINE_FAILURES = 3
 
 type PrintFormat = 'pdf' | 'jpg'
+type PrintTransport = 'local_agent' | 'webusb'
 
 interface PrinterConfig {
+    transport: PrintTransport
     agentUrl: string
     printerName: string
 }
@@ -92,6 +103,7 @@ type PrintRuntimeOverrides = {
 }
 
 const defaultPrinterConfig: PrinterConfig = {
+    transport: 'local_agent',
     agentUrl: 'http://127.0.0.1:3344',
     printerName: '3nStar LTT334',
 }
@@ -148,10 +160,15 @@ function normalizeAgentBaseUrl(value: string): string {
     }
 }
 
+function normalizePrintTransport(value: unknown): PrintTransport {
+    return value === 'webusb' ? 'webusb' : 'local_agent'
+}
+
 function normalizePrinterConfig(value: unknown): PrinterConfig {
     if (!isRecord(value)) return defaultPrinterConfig
 
     return {
+        transport: normalizePrintTransport(value.transport),
         agentUrl: typeof value.agentUrl === 'string'
             ? normalizeAgentBaseUrl(value.agentUrl)
             : defaultPrinterConfig.agentUrl,
@@ -214,6 +231,10 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
     const [printerDetected, setPrinterDetected] = useState<boolean>(false)
     const [agentSupportsJobMetadata, setAgentSupportsJobMetadata] = useState<boolean>(false)
     const [agentCheckIssue, setAgentCheckIssue] = useState<string | null>(null)
+    const [webUsbSupported, setWebUsbSupported] = useState(false)
+    const [webUsbConnection, setWebUsbConnection] = useState<WebUsbPrinterConnection | null>(null)
+    const [webUsbConnecting, setWebUsbConnecting] = useState(false)
+    const [webUsbIssue, setWebUsbIssue] = useState<string | null>(null)
     const agentFailureCountRef = useRef(0)
     const agentHasRespondedRef = useRef(false)
     const agentCheckedUrlRef = useRef<string | null>(null)
@@ -274,10 +295,53 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
     }, [normalizedAgentUrl])
 
     useEffect(() => {
+        if (printerConfig.transport !== 'local_agent') return
+
         checkAgent()
         const interval = setInterval(checkAgent, PRINT_AGENT_CHECK_INTERVAL_MS)
         return () => clearInterval(interval)
-    }, [checkAgent])
+    }, [checkAgent, printerConfig.transport])
+
+    useEffect(() => {
+        const supported = isWebUsbSupported()
+        setWebUsbSupported(supported)
+        if (!supported || printerConfig.transport !== 'webusb') return
+
+        let cancelled = false
+        reconnectAuthorizedWebUsbPrinter()
+            .then((connection) => {
+                if (cancelled) return
+                if (connection) {
+                    setWebUsbConnection(connection)
+                    setWebUsbIssue(null)
+                }
+            })
+            .catch((err: unknown) => {
+                if (!cancelled) setWebUsbIssue(getWebUsbErrorMessage(err))
+            })
+
+        return () => {
+            cancelled = true
+        }
+    }, [printerConfig.transport])
+
+    const connectWebUsbPrinter = useCallback(async () => {
+        setWebUsbConnecting(true)
+        setWebUsbIssue(null)
+
+        try {
+            const connection = await requestWebUsbPrinter()
+            setWebUsbConnection(connection)
+            toast.success(`Impresora WebUSB conectada: ${connection.deviceName}`)
+        } catch (err: unknown) {
+            const message = getWebUsbErrorMessage(err)
+            setWebUsbIssue(message)
+            setWebUsbConnection(null)
+            toast.error(message)
+        } finally {
+            setWebUsbConnecting(false)
+        }
+    }, [])
 
     const selectedTemplate = useMemo(
         () => templates.find(t => t.id === selectedTemplateId) ?? null,
@@ -293,6 +357,9 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
 
     const selectedPrintTarget = normalizePrintTarget(selectedTemplate?.print_target)
     const requiresAgent = selectedPrintTarget === PRINT_TARGET_3NSTAR
+    const selectedPrintTransport = printerConfig.transport
+    const usesLocalAgent = requiresAgent && selectedPrintTransport === 'local_agent'
+    const usesWebUsb = requiresAgent && selectedPrintTransport === 'webusb'
     const thermalLayout = useMemo(() => {
         if (!selectedTemplate || !requiresAgent) return null
         return resolveThermalPrintLayout({
@@ -352,7 +419,14 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
 
     const filteredOutCount = products.length - validProducts.length
     const canPrintWithAgent = agentOnline === true && printerDetected
-    const canPrintSelected = !requiresAgent || (canPrintWithAgent && agentSupportsJobMetadata && thermalLayout?.ok === true)
+    const canPrintWithWebUsb = webUsbSupported && webUsbConnection !== null
+    const canPrintSelected = !requiresAgent || (
+        thermalLayout?.ok === true &&
+        (
+            (usesLocalAgent && canPrintWithAgent && agentSupportsJobMetadata) ||
+            (usesWebUsb && canPrintWithWebUsb)
+        )
+    )
 
     useEffect(() => {
         setSelectedIds([])
@@ -422,8 +496,11 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
             if (!thermalLayout?.ok) {
                 throw new Error(thermalLayout?.message || 'La plantilla no tiene una salida 3nStar valida')
             }
-            if (!agentSupportsJobMetadata) {
+            if (usesLocalAgent && !agentSupportsJobMetadata) {
                 throw new Error(`Actualiza el agente local a la version ${PRINT_AGENT_VERSION} para imprimir con tamanos de etiqueta.`)
+            }
+            if (usesWebUsb && !webUsbConnection) {
+                throw new Error('Conecta la impresora por WebUSB antes de imprimir.')
             }
 
             const preparedJobs: Array<{ blob: Blob; outputName: string }> = []
@@ -463,14 +540,33 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                 preparedJobs.push({ blob, outputName })
             }
 
-            const sendPreparedJobToAgent = async (
+            const sendPreparedJob = async (
                 job: { blob: Blob; outputName: string },
                 printCopies: number
             ) => {
+                const colorMode = getSavedPrintColorMode()
+
+                if (usesWebUsb) {
+                    if (!webUsbConnection) {
+                        throw new Error('Conecta la impresora por WebUSB antes de imprimir.')
+                    }
+
+                    const tspl = await convertImageBlobToTspl(job.blob, {
+                        copies: printCopies,
+                        colorMode,
+                        mediaWidthMm: thermalLayout.mediaWidthMm,
+                        mediaLengthMm: thermalLayout.mediaLengthMm,
+                        mediaGapMm: thermalLayout.mediaGapMm,
+                        rotation: thermalLayout.rotation,
+                    })
+                    await sendWebUsbPrintJob(webUsbConnection, tspl.bytes)
+                    return
+                }
+
                 const formData = new FormData()
                 formData.append('file', new File([job.blob], `${job.outputName}.jpg`, { type: 'image/jpeg' }))
                 formData.append('copies', String(printCopies))
-                formData.append('colorMode', getSavedPrintColorMode())
+                formData.append('colorMode', colorMode)
                 formData.append('job', JSON.stringify({
                     printTarget: PRINT_TARGET_3NSTAR,
                     designWidthMm: selectedTemplate.width_mm,
@@ -480,7 +576,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                     mediaGapMm: thermalLayout.mediaGapMm,
                 }))
 
-                const agentResponse = await fetch(`${printerConfig.agentUrl}/print`, {
+                const agentResponse = await fetch(`${normalizedAgentUrl}/print`, {
                     method: 'POST',
                     signal: getTimeoutSignal(PRINT_AGENT_TIMEOUT_MS),
                     body: formData,
@@ -496,7 +592,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
             }
 
             for (const preparedJob of preparedJobs) {
-                await sendPreparedJobToAgent(preparedJob, copies)
+                await sendPreparedJob(preparedJob, copies)
             }
 
             return true
@@ -738,13 +834,31 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                             <div className="grid grid-cols-1 gap-3">
                                 <div className="flex flex-col gap-2">
                                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                                        Agente local de impresi&oacute;n
+                                        Agente de impresi&oacute;n
                                     </label>
-                                    <div className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-slate-50 text-slate-600">
-                                        USB directo con agente local
+                                    <div className="flex flex-wrap bg-slate-100 p-0.5 rounded-lg w-fit">
+                                        <button
+                                            type="button"
+                                            onClick={() => setPrinterConfig(prev => ({ ...prev, transport: 'local_agent' }))}
+                                            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                                                selectedPrintTransport === 'local_agent' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                                            }`}
+                                        >
+                                            USB directo con agente local
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setPrinterConfig(prev => ({ ...prev, transport: 'webusb' }))}
+                                            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                                                selectedPrintTransport === 'webusb' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                                            }`}
+                                        >
+                                            Web USB
+                                        </button>
                                     </div>
                                 </div>
 
+                                {selectedPrintTransport === 'local_agent' && (
                                 <div className="flex flex-col gap-2">
                                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
                                         URL del agente
@@ -762,9 +876,11 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                         </Button>
                                     </div>
                                 </div>
+                                )}
                             </div>
 
-                            {/* Agent status */}
+                            {selectedPrintTransport === 'local_agent' && (
+                            /* Agent status */
                             <div className={`rounded-xl px-4 py-3 text-sm border ${
                                 agentOnline === true && (!requiresAgent || agentSupportsJobMetadata)
                                     ? 'bg-green-50 border-green-200 text-green-700'
@@ -874,6 +990,63 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                         <span>Verificando conexi&oacute;n...</span>
                                     )}
                             </div>
+                            )}
+
+                            {selectedPrintTransport === 'webusb' && (
+                                <div className={`rounded-xl px-4 py-3 text-sm border ${
+                                    webUsbConnection
+                                        ? 'bg-green-50 border-green-200 text-green-700'
+                                        : webUsbSupported
+                                        ? 'bg-amber-50 border-amber-200 text-amber-700'
+                                        : 'bg-slate-50 border-slate-200 text-slate-500'
+                                }`}>
+                                    {webUsbConnection ? (
+                                        <div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
+                                                <span>WebUSB conectado</span>
+                                                <span className="text-xs text-green-600">({webUsbConnection.deviceName})</span>
+                                            </div>
+                                            <p className="text-xs text-green-600 mt-1">
+                                                La etiqueta se enviara directo por USB desde Chrome/Edge, sin usar el agente local.
+                                            </p>
+                                        </div>
+                                    ) : webUsbSupported ? (
+                                        <div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                                                <span><strong>Conectar impresora por WebUSB</strong></span>
+                                            </div>
+                                            <p className="text-xs text-amber-600 mt-1">
+                                                Presiona conectar y selecciona la 4BARCODE 4B-2054TG cuando Chrome/Edge muestre el permiso USB.
+                                            </p>
+                                            {webUsbIssue && (
+                                                <p className="text-xs text-amber-700 mt-2">{webUsbIssue}</p>
+                                            )}
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={connectWebUsbPrinter}
+                                                disabled={webUsbConnecting}
+                                                className="mt-3 h-8 border-amber-300 text-amber-700 hover:bg-amber-100"
+                                            >
+                                                {webUsbConnecting ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Printer className="w-3.5 h-3.5 mr-1" />}
+                                                Conectar impresora USB
+                                            </Button>
+                                        </div>
+                                    ) : (
+                                        <div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="w-2 h-2 rounded-full bg-slate-400 shrink-0" />
+                                                <span><strong>WebUSB no soportado</strong></span>
+                                            </div>
+                                            <p className="text-xs text-slate-500 mt-1">
+                                                Usa Chrome o Edge actualizado en HTTPS, o cambia a USB directo con agente local.
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -928,7 +1101,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                     {' \u00b7 '}
                                     {copies} copia{copies > 1 ? 's' : ''} c/u
                                     {' \u00b7 '}
-                                    {requiresAgent ? '3NSTAR' : printFormat.toUpperCase()}
+                                    {requiresAgent ? (usesWebUsb ? 'WEB USB' : '3NSTAR') : printFormat.toUpperCase()}
                                 </p>
                                 {hasWarnings ? (
                                     <p className="text-xs text-amber-600 flex items-center gap-1 mt-0.5">
@@ -937,10 +1110,14 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                     </p>
                                 ) : requiresAgent && thermalLayout?.ok !== true ? (
                                     <p className="text-xs text-amber-600 mt-0.5">{thermalLayout?.message || 'Configura la salida 3nStar'}</p>
-                                ) : requiresAgent && !canPrintWithAgent ? (
+                                ) : usesLocalAgent && !canPrintWithAgent ? (
                                     <p className="text-xs text-amber-600 mt-0.5">Instala el agente y conecta la impresora</p>
-                                ) : requiresAgent && !agentSupportsJobMetadata ? (
+                                ) : usesLocalAgent && !agentSupportsJobMetadata ? (
                                     <p className="text-xs text-amber-600 mt-0.5">Actualiza el agente local para respetar el tama&ntilde;o de etiqueta</p>
+                                ) : usesWebUsb && !webUsbSupported ? (
+                                    <p className="text-xs text-amber-600 mt-0.5">WebUSB requiere Chrome o Edge compatible</p>
+                                ) : usesWebUsb && !webUsbConnection ? (
+                                    <p className="text-xs text-amber-600 mt-0.5">Conecta la impresora por WebUSB</p>
                                 ) : (
                                     <p className="text-xs text-green-600 mt-0.5">Listo para imprimir</p>
                                 )}
@@ -967,12 +1144,16 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                 title={
                                     requiresAgent && thermalLayout?.ok !== true
                                         ? thermalLayout?.message
-                                        : requiresAgent && agentOnline === false
+                                        : usesLocalAgent && agentOnline === false
                                         ? 'Instala o inicia el agente local de impresion'
-                                        : requiresAgent && agentOnline === true && !printerDetected
+                                        : usesLocalAgent && agentOnline === true && !printerDetected
                                         ? 'Conecta la impresora USB para imprimir'
-                                        : requiresAgent && !agentSupportsJobMetadata
+                                        : usesLocalAgent && !agentSupportsJobMetadata
                                         ? `Actualiza el agente local a la version ${PRINT_AGENT_VERSION}`
+                                        : usesWebUsb && !webUsbSupported
+                                        ? 'WebUSB requiere Chrome o Edge compatible'
+                                        : usesWebUsb && !webUsbConnection
+                                        ? 'Conecta la impresora por WebUSB antes de imprimir'
                                         : undefined
                                 }
                             >

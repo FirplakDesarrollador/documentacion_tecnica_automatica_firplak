@@ -8,7 +8,7 @@ echo.
 "%~dp0runtime\node.exe" "%~dp0install-service.js"
 if errorlevel 1 (
   echo.
-  echo No se pudo instalar la tarea programada.
+  echo No se pudo registrar el inicio automatico del agente.
   pause
   exit /b 1
 )

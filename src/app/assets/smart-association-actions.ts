@@ -115,9 +115,8 @@ type AssetPathRow = {
  * Compares two products to determine their compatibility level for reusing an isometric.
  */
 function calculateMatchLevel(missing: ProductRow, existing: ProductRow): IsometricSuggestion['matchLevel'] | null {
-    // Basic requirements: Family, Designation, Measure, Name MUST match
+    // Basic requirements: Designation, Measure, Name MUST match
     if (
-        missing.family_code !== existing.family_code ||
         missing.designation !== existing.designation ||
         missing.commercial_measure !== existing.commercial_measure ||
         missing.product_name !== existing.product_name
