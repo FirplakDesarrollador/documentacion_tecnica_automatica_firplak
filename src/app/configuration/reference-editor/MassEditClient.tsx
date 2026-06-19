@@ -22,7 +22,8 @@ const NORMAL_COLS = [
   { key: 'width_cm', label: 'Ancho (cm)' },
   { key: 'depth_cm', label: 'Fondo (cm)' },
   { key: 'height_cm', label: 'Alto (cm)' },
-  { key: 'weight_kg', label: 'Peso (kg)' }
+  { key: 'weight_kg', label: 'Peso (kg)' },
+  { key: 'status', label: 'Estado (ACTIVO/INACTIVO)' }
 ];
 
 const USE_DESTINATION_OVERRIDE_KEY = 'use_destination';
@@ -34,6 +35,7 @@ interface ReferenceRow {
   family_code: string
   reference_code: string
   product_name: string
+  status?: string
   commercial_measure?: string
   width_cm?: number
   depth_cm?: number
@@ -829,14 +831,21 @@ export default function MassEditClient() {
               ) : (
                 <>
               <label className="block text-sm font-medium text-slate-700 mb-1">Nuevo Valor</label>
-              <input 
-                type="text" 
-                list="allowed_values_list" 
-                value={editValue} 
-                onChange={e => setEditValue(e.target.value)} 
-                placeholder={isEditingUseDestinationOverride ? 'Ej. LAVATRAPEROS o deja vacio para heredar' : 'Escribe o selecciona...'}
-                className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white"
-              />
+              {editField === 'status' && editType === 'normal' ? (
+                <select value={editValue} onChange={e => setEditValue(e.target.value)} className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white">
+                  <option value="ACTIVO">ACTIVO</option>
+                  <option value="INACTIVO">INACTIVO</option>
+                </select>
+              ) : (
+                <input 
+                  type="text" 
+                  list="allowed_values_list" 
+                  value={editValue} 
+                  onChange={e => setEditValue(e.target.value)} 
+                  placeholder={isEditingUseDestinationOverride ? 'Ej. LAVATRAPEROS o deja vacio para heredar' : 'Escribe o selecciona...'}
+                  className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white"
+                />
+              )}
               <datalist id="allowed_values_list">
                 {editType === 'ref_attr' && editAllowedValues.map(v => <option key={v} value={v} />)}
               </datalist>

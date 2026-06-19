@@ -26,6 +26,7 @@ interface SearchFilters {
 }
 
 type ReferenceSearchRow = {
+  status?: string
   ref_attrs: unknown
   families: unknown
 }
@@ -84,6 +85,7 @@ export async function searchReferences(filters: SearchFilters) {
     special_label,
     designation,
     ref_attrs,
+    status,
     families!inner(product_type, zone_home, use_destination)
   `);
 

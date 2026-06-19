@@ -43,7 +43,7 @@ Compact, repo-specific rules for future OpenCode sessions.
 ## Hard constraints to preserve
 - **Collaborative safety (CRITICAL):** Before reverting, checking out, or touching any file, ALWAYS run `git diff --name-only` first. If a file has unstaged changes from BEFORE this session, LEAVE IT ALONE — those belong to another chat session. Never use `git checkout --` on files you did not personally create or modify in THIS session. Prefer surgical edits (`edit` tool) over bulk git reverts.
 - Firplak DB rule: do not use legacy `cabinet_products` for business logic unless explicitly requested; prefer master catalog tables (`product_skus`, `product_versions`, `product_references`).
-- Secret hygiene: never hardcode keys/tokens; use `.env`.
+- **Secret hygiene (CRITICAL):** Never hardcode keys/tokens; use `.env`. **Never** read, print, echo, or output `.env` contents or any environment variable *values* in tool output or messages — this includes `Get-Content .env`, `cat .env`, `npm run env:print`, and similar. To check if a variable exists, test its presence (`$env:VAR_NAME` in PowerShell) without revealing the value.
 - For major milestones, suggest running `/archive-session` to sync learnings into KIs and `AI_README.md`.
 
 ## Non-eludable code quality rules
