@@ -25,6 +25,7 @@ export const PERMISSIONS = [
   'module:generate',
   'module:print',
   'module:configuration',
+  'module:consulta-sap',
   'action:print',
   'action:naming:manage',
 ] as const

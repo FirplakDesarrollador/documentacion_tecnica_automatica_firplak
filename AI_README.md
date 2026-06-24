@@ -1,73 +1,120 @@
-# 🤖 README - AI Agent Context (SamiGen)
+# README - AI Agent Context (SamiGen)
 
 > [!IMPORTANT]
-> **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estratégico y operativo necesario para navegar y construir eficientemente en este proyecto.
+> **Si eres una Inteligencia Artificial trabajando en este repositorio, lee este archivo primero.** Este documento contiene el contexto estrategico y operativo necesario para navegar y construir eficientemente en este proyecto.
 
-## 📌 Visión General
-**Depuración de Deuda Técnica (V6 Final)**: Se ha completado la eliminación física de la tabla `cabinet_products` y la columna obsoleta `product_type` en `product_references`. El sistema opera ahora bajo un esquema relacional normalizado y optimizado.
-**Estandarización Global ({product_name})**: Se unificó la identidad de los productos reemplazando `cabinet_name` por `product_name` en toda la UI, lógica de negocio y motores de validación, garantizando consistencia en el Catálogo Maestro.
-**Gobernanza de Secretos (MCP Security)**: Implementación de sincronización automática de credenciales para el servidor MCP, eliminando tokens hardcoded y priorizando el uso de variables de entorno seguras.
-**Evolución Operativa (AI Agent Skills)**: Integración de un sistema de habilidades autónomas (`skills/`) y workflows refinados para la gestión del ciclo de vida del desarrollo (release, audit, archive).
-**Soporte de Variable `version_label`**: Integración de la variable `version_label` (de la tabla `product_versions`) en el constructor de reglas de nomenclatura en español, inglés (constructor de orden) y en el motor de traducción y parseo de código SKU SAP, permitiendo personalizar los nombres dinámicamente con la etiqueta de versión.
-**Traducción Adaptativa al Inglés Corregida**: Se solucionó la omisión del nombre del producto en las traducciones al inglés al corregir la variable desactualizada `cabinet_name` a `product_name` en la tabla de configuración `public.naming_config_en` de Supabase.
-**Filtro de Búsqueda Persistente en Generar**: Implementación de un filtro de texto por nombre/color en `/generate` que persiste al cambiar familia o referencia, con búsqueda híbrida cliente+servidor y límite dinámico de consulta (200→1000) para garantizar resultados de todas las familias seleccionadas.
+## Vision General
+**Depuracion de Deuda Tecnica (V6 Final)**: Se ha completado la eliminacion fisica de la tabla `cabinet_products` y la columna obsoleta `product_type` en `product_references`. El sistema opera ahora bajo un esquema relacional normalizado y optimizado.  
+**Estandarizacion Global ({product_name})**: Se unifico la identidad de los productos reemplazando `cabinet_name` por `product_name` en toda la UI, logica de negocio y motores de validacion, garantizando consistencia en el Catalogo Maestro.  
+**Gobernanza de Secretos (MCP Security)**: Implementacion de sincronizacion automatica de credenciales para el servidor MCP, eliminando tokens hardcoded y priorizando el uso de variables de entorno seguras.  
+**Evolucion Operativa (AI Agent Skills)**: Integracion de un sistema de habilidades autonomas (`skills/`) y workflows refinados para la gestion del ciclo de vida del desarrollo (release, audit, archive).  
+**Soporte de Variable `version_label`**: Integracion de la variable `version_label` (de la tabla `product_versions`) en el constructor de reglas de nomenclatura en espanol, ingles y en el motor de traduccion y parseo de codigo SKU SAP.  
+**Alta Individual V6 (`/new`)**: `version_label` esta disponible en el formulario, se autocompleta desde `sap_description` contra etiquetas existentes con matching normalizado, y se persiste en `product_versions.version_label`. Medidas y peso aceptan coma o punto decimal, normalizando a punto; `MUEBLES/MUEBLE` defaulta `canto_puertas = CANTO 2MM` si esta vacio o `NA`.  
+**Nomenclatura ES/EN Unificada**: La construccion de nombres base/completos/SAP recomendado vive en `public.naming_components`; `public.rules` y `public.naming_config_en` fueron eliminadas fisicamente en Supabase I+D.  
+**Alias UI de Nombre Core Firplak**: En `/generate` y `/print`, `final_name_es` es el valor visible "Nombre / Descripcion" y debe mapear a `product_skus.final_complete_name_es`; `final_base_name_es` queda como dato base de version.  
+**Datasets Genericos para Plantillas**: Las plantillas con `data_source='custom_datasets'` se vinculan a datasets mediante `public.template_dataset_links`; el mapping de variables se gobierna desde `/datasets` con keys canonicas en `schema_json.columns[].key`, y `/generate` solo lista datasets asociados y sincronizados.  
+**Etiquetas por Cajas**: La cantidad de cajas vive en `product_references.ref_attrs.q_package`; para `2+ CAJAS`, `product_references.weight_kg` usa JSONB `{ weights_kg, peso_total }` y las etiquetas se expanden temporalmente con `partes_texto` (`Caja 1/2`) sin duplicar registros.  
+**Filtro de Busqueda Persistente en Generar**: Implementacion de un filtro de texto por nombre/color en `/generate` con persistencia al cambiar familia o referencia y limite dinamico de consulta.  
+**RBAC v1 y Seguridad Supabase**: Supabase Auth sigue como autenticacion; la autorizacion vive en `public.user_profiles`, guards server-side y RLS. `production` solo accede a `/print`; `admin` conserva acceso total; `pending`, `designer` e `engineering` quedan sin modulos activos en v1.
 
-## 🏗️ Arquitectura de 3 Capas
+## Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
-1. **Layer 1: Directives (`directives/`)**: SOPs en Markdown que definen *qué* hacer.
-2. **Layer 2: Orchestration (Tú)**: Toma de decisiones y flujo lógico.
+1. **Layer 1: Directives (`directives/`)**: SOPs en Markdown que definen que hacer.
+2. **Layer 2: Orchestration**: Toma de decisiones y flujo logico.
 3. **Layer 3: Execution (`execution/`)**: Scripts en Python deterministas.
 
-## 📚 Knowledge Items (KIs) — Memoria Técnica
-- Los KIs del proyecto viven en `.gemini/antigravity/knowledge/` y están organizados por tema (subcarpetas).
-- KI Reciente (Editor Masivo y Mutación JSONB): `.gemini/antigravity/knowledge/mass_reference_editor_and_jsonb_mutations/artifacts/knowledge_item.md`
-- KI Reciente (isométricos/huérfanos/asociación masiva): `.gemini/antigravity/knowledge/isometrics_orphans_and_mass_association/KI.md`
-- KI Reciente (Mass Import V6 desde SAP): `.gemini/antigravity/knowledge/mass_import_v6_products/artifacts/knowledge_item.md`
-- KI NUEVO (Autocompletado Inteligente): `.gemini/antigravity/knowledge/smart_form_autocompletion_engine/artifacts/knowledge_item.md`
-- KI Actualizado (Motor Bilingüe y Diagnóstico): `.gemini/antigravity/knowledge/bilingual_translation_engine_v3_23/artifacts/translation_engine_guide.md`
+## Knowledge Items (KIs) - Memoria Tecnica
+- Los KIs del proyecto viven en `.gemini/antigravity/knowledge/` y estan organizados por tema.
+- Antes de leer KIs, revisar primero `.gemini/antigravity/knowledge/INDEX.md`.
+- KIs especialmente relevantes para el estado actual del repo:
+  - `.gemini/antigravity/knowledge/private-label_version-attrs_sentinels/KI.md`
+  - `.gemini/antigravity/knowledge/effective_overrides_and_visibility_status/artifacts/knowledge_item.md`
+  - `.gemini/antigravity/knowledge/mass_import_v6_products/artifacts/knowledge_item.md`
+  - `.gemini/antigravity/knowledge/mass_reference_editor_and_jsonb_mutations/artifacts/knowledge_item.md`
+  - `.gemini/antigravity/knowledge/naming_components_single_source_of_truth/KI.md`
+  - `.gemini/antigravity/knowledge/core_template_variable_catalog_and_naming_sync/KI.md`
+  - `.gemini/antigravity/knowledge/dynamic_translation_and_template_lifecycle/artifacts/knowledge_item.md`
+  - `.gemini/antigravity/knowledge/external_dataset_templates_and_export_validation/KI.md`
+  - `.gemini/antigravity/knowledge/template_barcode_elements/KI.md`
+  - `.gemini/antigravity/knowledge/template_builder_panel_modes_and_global_settings/KI.md`
+  - `.gemini/antigravity/knowledge/thermal_label_printing_and_agent_metadata/KI.md`
+  - `.gemini/antigravity/knowledge/reference_package_labels_and_box_weights/KI.md`
+  - `.gemini/antigravity/knowledge/agent_governance_and_v6_stabilization/artifacts/knowledge_item.md`
+  - `.gemini/antigravity/knowledge/supabase_auth_and_proxy_architecture/artifacts/knowledge_item.md`
 
-## 🛠️ Tecnologías Clave
+## Tecnologias Clave
 - **Frontend/Backend**: Next.js 16+ (App Router), React 19.
-- **Autenticación**: Supabase Auth con patrón **Proxy (ex-Middleware)**.
+- **Autenticacion**: Supabase Auth con patron **Proxy (ex-Middleware)**.
+- **RBAC v1**: roles `admin`, `production`, `pending`, `designer`, `engineering` desde `public.user_profiles`. `production` solo `/print`; `admin` todo; `pending`, `designer` e `engineering` redirigen a `/access-pending`.
 - **Base de Datos**: Prisma ORM con SQLite (local) y Supabase (Cloud).
-- **Supabase Source of Truth (REGLA)**: El proyecto Supabase operativo de este repo es siempre **I+D** (`nbifmxggfusipomspoly`, `https://nbifmxggfusipomspoly.supabase.co`). Toda migracion, RPC, SQL check, schema inspection o mutacion por MCP debe apuntar por defecto a ese proyecto. No tocar otros proyectos Supabase desde este workspace salvo confirmacion explicita del usuario en la misma tarea.
-- **Gobernanza de Supabase MCP**: Se prioriza la lógica DB-First: Usar Triggers, Funciones RPC y Views.
-- **Patrón JSONB Quirúrgico**: Uso de operadores `||` y `-` en RPCs para mutaciones atómicas en `ref_attrs`.
+- **Prisma Client (REGLA)**: el cliente se genera en `src/generated/prisma`; en `src/`, importar tipos desde `@/generated/prisma/client` y acceso DB desde `@/lib/prisma`. `@prisma/client` queda bloqueado por `npm run check:diff` para evitar fallos en Vercel clean install.
+- **IA externa (estado actual)**: no hay integraciones activas de IA generativa por API en runtime; no asumir Gemini u otro proveedor salvo que reaparezca implementacion real en `src/` o rutas del app.
+- **Supabase Source of Truth (REGLA)**: El proyecto Supabase operativo de este repo es siempre **I+D** (`nbifmxggfusipomspoly`, `https://nbifmxggfusipomspoly.supabase.co`). Toda migracion, RPC, SQL check, schema inspection o mutacion por MCP debe apuntar por defecto a ese proyecto.
+- **Confirmacion de Migraciones Supabase (REGLA)**: Si una tarea requiere DDL/RPC/triggers/views/indices/RLS/backfills, el agente debe explicar migraciones, impacto, riesgos, plan y verificacion, y pedir confirmacion explicita antes de aplicar; excepcion solo si el usuario pide ejecutarlas directamente en el mismo mensaje.
+- **Gobernanza de Supabase MCP**: Se prioriza la logica DB-First: usar Triggers, Funciones RPC y Views.
+- **Hardening Supabase RBAC**: no abrir grants a `anon` para depurar. `v_ui_generate_list` debe quedar `security_invoker=true`; RPCs administrativas y `exec_sql` solo deben ejecutarse desde servidor/MCP con `service_role`.
+- **Patron JSONB Quirurgico**: Uso de operadores `||` y `-` en RPCs para mutaciones atomicas en `ref_attrs`.
+- **Nomenclatura Supabase**: `public.naming_components` es la fuente unica ES/EN; la recomputacion usa cola `naming_recompute_jobs` + flags stale y se procesa desde sidebar/API, no inline. El glosario puntual v1 usa coincidencia exacta y reduce filas, pero no es EN-only real. Ver KI `naming_components_single_source_of_truth`.
 
-## 🖨️ Agente de Impresión Local (Print Agent)
+## Agente de Impresion Local (Print Agent)
 - **Puerto**: `3344`. Endpoints: `POST /print`, `GET /health`, `GET /scan-usb`.
-- **Comunicación USB**: PowerShell + Win32 `CreateFile`/`WriteFile` sobre el device path del Monitor USB de Windows. No requiere administrador ni drivers adicionales.
-- **Detección**: Lee el registro `HKLM\SYSTEM\CurrentControlSet\Control\Print\Monitors\USB Monitor\Ports` para encontrar el device path por VID/PID.
-- **Impresora conocida**: `4BARCODE 4B-2054TG` (3nStar LTT334) — `VID_2D84:PID_4CFB`. Puerto USB automático `USB001`.
-- **Pipeline**: JPG → Sharp (grayscale + threshold) → ZPL `^GF` → envía raw al device path USB.
-- **Scripts**: `npm run dev` corre Next.js + agente simultáneamente; `npm run start:local` para producción local.
-- `print-agent/usbService.js` — detección y escritura USB vía PowerShell.
-- `print-agent/printService.js` — conversión JPG→ZPL con Sharp.
-- `print-agent/server.js` — Express server.
-- **ZPL máximo**: 832 dots de ancho (4"@203 DPI). La imagen gira 90° si es más ancha que alta.
+- **Comunicacion USB**: PowerShell + Win32 `CreateFile`/`WriteFile` sobre el device path del Monitor USB de Windows.
+- **Deteccion**: Lee el registro `HKLM\SYSTEM\CurrentControlSet\Control\Print\Monitors\USB Monitor\Ports`.
+- **Impresora conocida**: `4BARCODE 4B-2054TG` (3nStar LTT334) - `VID_2D84:PID_4CFB`.
+- **Pipeline vigente 3nStar**: JPG/PNG -> Sharp o Canvas -> TSPL (`SIZE`, `GAP`, `BITMAP`, `PRINT`) -> envia raw al device path USB o WebUSB.
+- **Metadata de etiqueta**: las plantillas 3nStar usan `print_target='agent_3nstar'` y medio fisico `media_width_mm`, `media_length_mm`, `media_gap_mm`; la rotacion se deriva en `src/lib/printLayout.ts`, no se persiste.
+- **Capacidades del agente**: `/health` debe anunciar `jobMetadata`; la UI bloquea agentes viejos que no acepten metadata de trabajo.
+- **Distribucion Windows**: el agente productivo debe instalarse en `%LOCALAPPDATA%\SamiGenPrintAgent`, incluir Node/dependencias y autoarrancar sin ventana. Si Task Scheduler falla por politica local, usar fallback por usuario en `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+- **Scripts**: `npm run dev` corre Next.js + agente simultaneamente; `npm run start:local` para produccion local.
+- `print-agent/usbService.js` - deteccion y escritura USB via PowerShell.
+- `print-agent/printService.js` - conversion JPG/PNG -> TSPL con Sharp y metadata explicita de medio fisico.
+- `src/lib/print/tspl.ts` - empaquetado TSPL compartido.
+- `src/lib/print/browserTspl.ts` - conversion a TSPL en navegador para WebUSB.
+- `print-agent/server.js` - Express server.
+- **Limite termico**: 832 dots de ancho (104 mm a 8 dots/mm). La imagen rota solo cuando `resolveThermalPrintLayout(...)` detecta que el diseno y el medio fisico estan invertidos.
 
-## 🗝️ Información de Dominio (Firplak)
-- **Gobernanza de Esquema**: La familia (`families`) es la fuente de verdad técnica para los atributos de sus referencias.
-- **Patrón de Limpieza Profunda**: Al borrar un asset, se realiza una desconexión automática en JSONB y eliminación física del Storage.
-- **🛡️ Gobernanza de Contexto (REGLA)**: El Agente debe avisar proactivamente al usuario de archivar la sesión (`/archive-session`) tras hitos importantes.
+## Informacion de Dominio (Firplak)
+- **Gobernanza de Esquema**: La familia (`families`) es la fuente de verdad tecnica para los atributos de sus referencias.
+- **Patron de Limpieza Profunda**: Al borrar un asset, se realiza una desconexion automatica en JSONB y eliminacion fisica del Storage.
+- **BARCODE en plantillas**: El recurso `BARCODE` renderiza SVG real compartido entre builder, preview y export. Su formato/orientacion/dimension X/quiet zone viven en cada elemento de `elements_json`; la orientacion manual del elemento no debe mezclarse con la rotacion derivada de impresion termica.
+- **Variables core en plantillas**: `/templates/builder` debe reutilizar el catalogo de variables de nomenclatura para texto libre, elementos dinamicos y nombre de exportacion; nuevas variables deben preferir nombres canonicos como `final_base_name_es`, dejando aliases legacy solo por compatibilidad.
+- **Transformaciones de texto en plantillas**: `capitalize`/`sentence` deben resolverse como transformaciones semanticas post-hidratacion (helper compartido), preservando acronimos tecnicos y dejando unidades `mm/cm/in` en minuscula; no depender solo de CSS `text-transform`.
+- **Panel de propiedades en plantillas**: `/templates/builder` separa configuracion global de plantilla y propiedades de elemento mediante modos explicitos `Elemento` / `Plantilla`; sin seleccion abre `Plantilla`, con seleccion simple abre `Elemento`.
+- **Tipografia global de plantilla**: la familia efectiva vive en `plantillas_doc_tec.template_font_family`, se aplica a preview y render final, y el catalogo frontend debe mantenerse sincronizado con el `CHECK` de base de datos para evitar errores `23514`. `Mozaic Geos` se modela como una sola familia global con pesos reales via `fontWeight`.
+- **Vista del lienzo en builder**: zoom, ajuste a vista y guias de impresion son estado local del editor, no datos persistidos de plantilla; en formatos grandes como carta, anclar el canvas arriba con padding visible y corregir coordenadas de drag/resize segun el zoom.
+- **Plantillas con datasets externos**: `/print`, igual que `/generate`, debe respetar `plantillas_doc_tec.data_source`; datasets externos consultan `custom_dataset_rows`/`template_dataset_links`, mientras `core_firplak` usa `v_ui_generate_list` con `brand_scope`.
+- **Variables runtime de impresion**: las plantillas pueden usar `{print_datetime}` y `{of_number}`; la OF se captura en `/print` solo cuando la plantilla la usa, exige exactamente 4 digitos y se reinicia despues de imprimir/cancelar.
+- **Sidebar honesto**: no mantener indicadores de "Estado de Servicios" si no estan conectados a mediciones reales; `I. Artificial` y `Archivos` fueron retirados por ser placeholders sin telemetria efectiva.
+- **Gobernanza de calidad en `src/`**: no usar suppressions como salida facil. Si aparecen deudas de lint/TS en flujos sensibles (`/generate`, `/templates/builder`, `/new`, `/assets`), resolver con tipado, helpers y estado derivado, manteniendo cambios de superficie minima.
+- **Busquedas admin sobre catalogo**: en editores que consultan `v_ui_generate_list`, empujar filtros selectivos/keyword al SQL antes de mapear o filtrar en memoria. Timeouts `57014` pueden venir de calcular la vista completa, no de demasiados resultados finales. Ver KI `admin_catalog_search_performance`.
+- **Pendientes (`/pending`)**: el KPI de Home y la pantalla de pendientes usan RPC estructural paginado en Supabase; no volver al barrido TypeScript inicial. El escaneo real de conflictos de traduccion queda bajo boton/modal para evitar timeouts. Ver KI `pending_structural_rpc_and_translation_scan`.
+- **Gobernanza de Contexto (REGLA)**: El agente debe avisar proactivamente al usuario de archivar la sesion (`/archive-session`) tras hitos importantes.
 
-## 🚀 Próximos Pasos (Sugerencia)
-1.  **Impresión USB en producción**: Probar impresión real con una etiqueta SamiGen desde `/print`. Verificar que el agente esté corriendo (`npm run dev`).
-2.  **Mostrar estado USB en PrintClient**: Agregar indicador visual en la UI que muestre "Impresora detectada: 4BARCODE 4B-2054TG" cuando el agente esté online.
-3.  **Reset/ZPL de inicio**: Enviar `^XA^JZ^XZ` al detectar la impresora para evitar el avance de etiquetas en blanco al conectar USB.
-4.  **Soporte PDF en agente**: Convertir PDF→JPG (con Sharp/poppler) para imprimir PDFs en la térmica.
-5.  **Validar Nombres en Inglés**: Confirmar con el usuario la correcta generación de nombres en inglés en las plantillas PDF/JPG en caliente.
-6.  **Saneamiento Masivo**: Utilizar el nuevo Editor de Referencias para normalizar los campos `special_label` y `designation` en todo el catálogo.
-7.  **Integración de Atributos en Plantillas**: Configurar las plantillas de etiquetas para consumir los nuevos `dynamic_attrs` (ej. mostrar el sello PUR si existe).
-8.  **Migración de Base de Datos**: Mover los modelos de Prisma de SQLite a PostgreSQL (Supabase) para asegurar persistencia en Vercel.
-9.  **Mantenimiento de Secretos MCP**: Usar `node execution/sync_mcp_config.js` para mantener las claves de Antigravity sincronizadas con el `.env` del proyecto.
+## Proximos Pasos (Sugerencia)
+1. **Impresion USB en produccion**: Probar impresion real con una etiqueta SamiGen desde `/print`.
+2. **Mostrar estado USB en PrintClient**: Agregar indicador visual en la UI cuando el agente este online.
+3. **Reset/diagnostico TSPL de inicio**: Evaluar un comando seguro de inicializacion para evitar avance de etiquetas en blanco al conectar USB.
+4. **Soporte PDF en agente**: Convertir PDF -> JPG para imprimir PDFs en la termica.
+5. **Validar modelos de nomenclatura**: Probar `final_base_name`, `final_complete_name` y `sap_description_recommended` desde `public.naming_components` en creacion, importacion, `/generate`, `/pending` y glosario.
+6. **Saneamiento masivo**: Utilizar el editor de referencias para normalizar `special_label` y `designation`.
+7. **Integracion de atributos en plantillas**: Configurar las plantillas para consumir `dynamic_attrs`.
+8. **Migracion de base de datos**: Mover los modelos de Prisma de SQLite a PostgreSQL (Supabase).
+9. **Mantenimiento de secretos MCP**: Usar `node execution/sync_mcp_config.js` para mantener las claves de Antigravity sincronizadas con el `.env`.
 
----
-*Este archivo es mantenido autónomamente por los agentes de IA que colaboran en el proyecto.*
-
-## 💻 Entorno de Desarrollo (Windows)
+## Entorno de Desarrollo (Windows)
 - **Ruta NPM Global**: `C:\Users\oswaldo.rivera\AppData\Roaming\npm`
 - **PowerShell Policy**: `RemoteSigned`
 
-## 🛡️ Terminal Safety Policy
+## Clientes Marca Propia
+- `/configuration/clients` administra `public.clients`, detecta faltantes desde `v_ui_generate_list.private_label_client_name` y usa `public.rpc_rename_client(...)` para propagar renombres a versiones, SKUs, reglas globales y plantillas.
+- La regla vigente es: private label se define solo por `private_label_client_name`; ausencia real (`null`/vacio) significa "no aplica".
+- No usar `private_label_flag`, `private_label_client_id` ni persistir `"NA"` como valor semantico de marca propia.
+- El cierre end-to-end ya quedo aplicado en formularios, parser, payloads, export/render y editores masivos.
+- El preview de plantillas debe respetar ese mismo scope: si la plantilla es de un cliente marca propia, mostrar solo datos de ese cliente; si es Firplak sin cliente, mostrar solo datos core Firplak.
+- Ver KIs relacionados: `.gemini/antigravity/knowledge/private-label_version-attrs_sentinels/KI.md`, `.gemini/antigravity/knowledge/mass_import_v6_products/artifacts/knowledge_item.md`, `.gemini/antigravity/knowledge/navigation_information_architecture_2026_05/artifacts/knowledge_item.md`.
+
+## Terminal Safety Policy
 *(Ver archivo original)*
+
+---
+*Este archivo es mantenido autonomamente por los agentes de IA que colaboran en el proyecto.*

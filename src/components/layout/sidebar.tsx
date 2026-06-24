@@ -18,6 +18,7 @@ import {
     Loader2,
     Printer,
     RefreshCw,
+    Search,
 } from 'lucide-react'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -57,6 +58,7 @@ const NAV_ITEMS: NavItem[] = [
     { name: 'Generar', href: '/generate', icon: FileText, permission: 'module:generate' },
     { name: 'Impresion', href: '/print', icon: Printer, permission: 'module:print' },
     { name: 'Configuracion', href: '/configuration', icon: Settings, permission: 'module:configuration' },
+    { name: 'Consulta SAP', href: '/consulta-sap', icon: Search, permission: 'module:consulta-sap' },
 ]
 
 function getUserInitials(email: string | null, roleLabel: string) {
