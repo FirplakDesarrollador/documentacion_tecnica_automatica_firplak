@@ -397,6 +397,6 @@ export async function markNamingStaleForGlossaryTerms(
 }
 
 export async function processNamingJobsInline(maxRuntimeMs = 5000) {
-    void maxRuntimeMs
-    return { skipped: true, reason: 'naming_jobs_are_processed_by_sidebar_or_process_stale_endpoint' }
+    const { processNamingJobs } = await import('./namingProcessor')
+    return await processNamingJobs({ limit: 50, maxRuntimeMs, leaseSeconds: 30 })
 }

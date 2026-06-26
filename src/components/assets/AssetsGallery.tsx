@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from "react"
-import { Box, Image as ImageIcon, Database } from 'lucide-react'
+import { Box, Image as ImageIcon, Database, Layers } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { IsometricGroupView } from '@/components/assets/IsometricGroupView'
 import { FlatAssetGrid } from '@/components/assets/FlatAssetGrid'
@@ -28,20 +28,22 @@ interface Props {
     isometricRows: GroupedRow[]
     icons: AssetRow[]
     logos: AssetRow[]
+    otherAssets: AssetRow[]
     allAssets: AssetRow[]
     defaultNames: string[]
     searchQuery: string
 }
 
-type TabId = 'isometrics' | 'icons' | 'logos'
+type TabId = 'isometrics' | 'other' | 'icons' | 'logos'
 
 const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
     { id: 'isometrics', label: 'Isométricos', icon: <Box className="h-4 w-4" /> },
+    { id: 'other', label: 'Otros recursos', icon: <Layers className="h-4 w-4" /> },
     { id: 'icons', label: 'Iconos', icon: <ImageIcon className="h-4 w-4" /> },
     { id: 'logos', label: 'Logos', icon: <Database className="h-4 w-4" /> },
 ]
 
-export function AssetsGallery({ isometricRows, icons, logos, allAssets, defaultNames, searchQuery }: Props) {
+export function AssetsGallery({ isometricRows, icons, logos, otherAssets, allAssets, defaultNames, searchQuery }: Props) {
     const [activeTab, setActiveTab] = React.useState<TabId>('isometrics')
 
     const isSearching = searchQuery.trim().length > 0
@@ -86,6 +88,9 @@ export function AssetsGallery({ isometricRows, icons, logos, allAssets, defaultN
                     <div className="p-5">
                         {activeTab === 'isometrics' && (
                             <IsometricGroupView rows={isometricRows} defaultNames={defaultNames} />
+                        )}
+                        {activeTab === 'other' && (
+                            <FlatAssetGrid assets={otherAssets} defaultNames={defaultNames} />
                         )}
                         {activeTab === 'icons' && (
                             <FlatAssetGrid assets={icons} defaultNames={defaultNames} />

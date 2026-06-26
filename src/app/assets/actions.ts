@@ -21,12 +21,74 @@ type AssetFilePathRow = {
     file_path: string
 }
 
+type AssetTypeRow = {
+    type: string
+}
+
 type IdRow = {
     id: string
 }
 
 type UpdatedCountRow = {
     updated_count: number
+}
+
+type ProductResourceStatus = 'draft' | 'review' | 'approved' | 'replaced' | 'rejected'
+
+type ProductResourceAssociationData = {
+    assetId: string
+    assetType: string
+    referenceCodes: string[]
+    versionCodes?: string[]
+    publicSlug?: string
+    versionNumber?: number
+    status?: ProductResourceStatus
+    sortOrder?: number
+    revisionNote?: string
+}
+
+const PRODUCT_RESOURCE_STATUSES: ProductResourceStatus[] = ['draft', 'review', 'approved', 'replaced', 'rejected']
+
+function escapeSql(value: string) {
+    return value.replace(/'/g, "''")
+}
+
+function normalizeResourceStatus(value: unknown): ProductResourceStatus {
+    const normalized = String(value || 'approved').trim().toLowerCase()
+    return PRODUCT_RESOURCE_STATUSES.includes(normalized as ProductResourceStatus)
+        ? (normalized as ProductResourceStatus)
+        : 'approved'
+}
+
+function normalizePositiveInt(value: unknown, fallback: number) {
+    const parsed = Math.trunc(Number(value))
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function normalizeInt(value: unknown, fallback: number) {
+    const parsed = Math.trunc(Number(value))
+    return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function normalizePublicSlug(value: unknown) {
+    return String(value || '').trim().toLowerCase()
+}
+
+function buildReferenceConditions(referenceCodes: string[]) {
+    return referenceCodes
+        .map((raw) => {
+            const [familyCode, referenceCode, commercialMeasure] = raw.split('|||').map((part) => part.trim())
+            if (!familyCode || !referenceCode) return null
+            const parts = [
+                `family_code = '${escapeSql(familyCode)}'`,
+                `reference_code = '${escapeSql(referenceCode)}'`,
+            ]
+            if (commercialMeasure) {
+                parts.push(`commercial_measure = '${escapeSql(commercialMeasure)}'`)
+            }
+            return `(${parts.join(' AND ')})`
+        })
+        .filter((condition): condition is string => Boolean(condition))
 }
 
 async function revalidateValidationSweepEverywhere() {
@@ -135,7 +197,8 @@ export async function getAssetsByTypeAction(type: string) {
                 a.id,
                 (
                     (SELECT COUNT(*) FROM public.product_references r WHERE r.isometric_asset_id::text = a.id::text) + 
-                    (SELECT COUNT(*) FROM public.product_versions v WHERE v.version_attrs->>'isometric_asset_id' = a.id::text)
+                    (SELECT COUNT(*) FROM public.product_versions v WHERE v.version_attrs->>'isometric_asset_id' = a.id::text) +
+                    (SELECT COUNT(*) FROM public.product_asset_links pal WHERE pal.asset_id::text = a.id::text)
                 ) as total_relations
             FROM public.assets a
             WHERE a.type = '${safeType}'
@@ -150,6 +213,119 @@ export async function getAssetsByTypeAction(type: string) {
             (CASE WHEN ac.total_relations = 0 AND UPPER(a.type) = 'ISOMETRIC' THEN 0 ELSE 1 END) ASC,
             a.created_at DESC
     `) || []
+}
+
+export async function associateProductResourceAction(data: ProductResourceAssociationData) {
+    await assertAdminAccess()
+
+    const assetId = String(data.assetId || '').trim()
+    const assetType = String(data.assetType || '').trim().toLowerCase()
+    if (!assetId) throw new Error('Asset ID is required')
+    if (!assetType) throw new Error('El tipo de recurso es obligatorio.')
+    if (assetType === 'isometric') {
+        throw new Error('Los isometricos deben asociarse por el flujo legacy de isometricos.')
+    }
+
+    const assetRows = await dbQuery(`
+        SELECT type
+        FROM public.assets
+        WHERE id = '${escapeSql(assetId)}'
+        LIMIT 1
+    `) as AssetTypeRow[]
+    const asset = assetRows?.[0]
+    if (!asset) throw new Error('Asset not found')
+    if (String(asset.type || '').toLowerCase() !== assetType) {
+        throw new Error('El tipo del archivo seleccionado no coincide con el tipo de recurso.')
+    }
+
+    const referenceConditions = buildReferenceConditions(data.referenceCodes || [])
+    if (referenceConditions.length === 0) {
+        throw new Error('Selecciona al menos una referencia.')
+    }
+
+    const refRows = await dbQuery(`
+        SELECT id
+        FROM public.product_references
+        WHERE ${referenceConditions.join(' OR ')}
+    `) as IdRow[]
+    const referenceIds = refRows.map((row) => row.id).filter(Boolean)
+    if (referenceIds.length === 0) {
+        throw new Error('No se encontraron referencias para la seleccion.')
+    }
+
+    const versionCodes = (data.versionCodes || []).map((code) => String(code || '').trim()).filter(Boolean)
+    const targets: Array<{ column: 'reference_id' | 'version_id'; id: string }> = []
+
+    if (versionCodes.length > 0) {
+        const versions = await dbQuery(`
+            SELECT id
+            FROM public.product_versions
+            WHERE reference_id IN (${referenceIds.map((id) => `'${escapeSql(id)}'`).join(',')})
+              AND version_code IN (${versionCodes.map((code) => `'${escapeSql(code)}'`).join(',')})
+        `) as IdRow[]
+        for (const version of versions) {
+            if (version.id) targets.push({ column: 'version_id', id: version.id })
+        }
+        if (targets.length === 0) {
+            throw new Error('No se encontraron versiones para la seleccion.')
+        }
+    } else {
+        for (const referenceId of referenceIds) {
+            targets.push({ column: 'reference_id', id: referenceId })
+        }
+    }
+
+    const publicSlug = normalizePublicSlug(data.publicSlug)
+    if (assetType === 'instruction_pdf') {
+        if (!publicSlug) throw new Error('El slug publico es obligatorio para instructivos.')
+        if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(publicSlug)) {
+            throw new Error('El slug publico solo puede usar minusculas, numeros y guiones simples.')
+        }
+        if (targets.length !== 1) {
+            throw new Error('Para instructivos con QR selecciona una sola referencia o una sola version por operacion.')
+        }
+    }
+
+    const status = normalizeResourceStatus(data.status)
+    const versionNumber = normalizePositiveInt(data.versionNumber, 1)
+    const sortOrder = normalizeInt(data.sortOrder, 0)
+    const revisionNote = String(data.revisionNote || '').trim()
+
+    if (publicSlug && status === 'approved') {
+        await dbQuery(`
+            UPDATE public.product_asset_links
+            SET status = 'replaced',
+                updated_at = now()
+            WHERE public_slug = '${escapeSql(publicSlug)}'
+              AND status = 'approved'
+        `)
+    }
+
+    const values = targets.map((target) => {
+        const referenceValue = target.column === 'reference_id' ? `'${escapeSql(target.id)}'` : 'NULL'
+        const versionValue = target.column === 'version_id' ? `'${escapeSql(target.id)}'` : 'NULL'
+        const slugValue = publicSlug ? `'${escapeSql(publicSlug)}'` : 'NULL'
+        const noteValue = revisionNote ? `'${escapeSql(revisionNote)}'` : 'NULL'
+        return `('${escapeSql(assetId)}', ${referenceValue}, ${versionValue}, NULL, ${slugValue}, ${versionNumber}, '${status}', ${sortOrder}, ${noteValue})`
+    })
+
+    await dbQuery(`
+        INSERT INTO public.product_asset_links (
+            asset_id,
+            reference_id,
+            version_id,
+            sku_id,
+            public_slug,
+            version_number,
+            status,
+            sort_order,
+            revision_note
+        )
+        VALUES ${values.join(',')}
+    `)
+
+    revalidatePath('/assets')
+    return { success: true, insertedCount: targets.length }
 }
 
 export interface IsometricGroupRow {

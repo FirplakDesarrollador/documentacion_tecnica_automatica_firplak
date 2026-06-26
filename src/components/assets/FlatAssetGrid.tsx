@@ -1,7 +1,7 @@
 'use client'
 
 import Image from 'next/image'
-import { Image as ImageIcon } from 'lucide-react'
+import { FileText, Image as ImageIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { ViewAssetDialog } from '@/components/assets/ViewAssetDialog'
 import { EditAssetDialog } from '@/components/assets/EditAssetDialog'
@@ -18,6 +18,14 @@ interface AssetRow {
 interface Props {
     assets: AssetRow[]
     defaultNames: string[]
+}
+
+function isImageAsset(path: string) {
+    return /\.(svg|png|jpe?g|gif|webp)(?:\?|$)/i.test(path)
+}
+
+function isPdfAsset(path: string) {
+    return /\.pdf(?:\?|$)/i.test(path)
 }
 
 export function FlatAssetGrid({ assets, defaultNames }: Props) {
@@ -40,7 +48,7 @@ export function FlatAssetGrid({ assets, defaultNames }: Props) {
                     >
                         <ViewAssetDialog assetName={asset.name} assetUrl={asset.file_path}>
                             <div className="relative aspect-square bg-slate-50 flex items-center justify-center overflow-hidden cursor-pointer border-b border-slate-100">
-                                {asset.file_path ? (
+                                {asset.file_path && isImageAsset(asset.file_path) ? (
                                     <Image
                                         src={asset.file_path}
                                         alt={asset.name}
@@ -49,6 +57,8 @@ export function FlatAssetGrid({ assets, defaultNames }: Props) {
                                         sizes="(max-width: 640px) 50vw, (max-width: 768px) 33vw, (max-width: 1024px) 25vw, (max-width: 1280px) 20vw, 16vw"
                                         className="object-contain p-4"
                                     />
+                                ) : asset.file_path && isPdfAsset(asset.file_path) ? (
+                                    <FileText className="h-10 w-10 text-rose-500" />
                                 ) : (
                                     <ImageIcon className="h-10 w-10 text-slate-300" />
                                 )}

@@ -30,7 +30,17 @@ interface Option {
     label: string
 }
 
-const ASSET_TYPES = ['isometric', 'icon', 'logo']
+const ASSET_TYPES = [
+    'isometric',
+    'instruction_pdf',
+    'front_view_dimensioned',
+    'side_view_dimensioned',
+    'top_view_dimensioned',
+    'exploded_view',
+    'assembly_step',
+    'icon',
+    'logo',
+]
 
 interface Asset {
     id: string
@@ -71,25 +81,26 @@ export function UploadAssetDialog({ onUploadComplete, variant, className, label 
     const [selectedVersions, setSelectedVersions] = React.useState<string[]>([])
     const [submitting, setSubmitting] = React.useState(false)
 
-    // Load families when dialog opens
-    React.useEffect(() => {
-        if (open) {
-            /* eslint-disable react-hooks/set-state-in-effect */
-            setSelectedFile(null)
-            setName("")
-            setTypeVal("isometric")
-            setIsCustom(false)
-            setAssociateNow(false)
-            setSelectedFamilies([])
-            setSelectedReferences([])
-            setSelectedVersions([])
-            setReferences([])
-            setVersions([])
-            /* eslint-enable react-hooks/set-state-in-effect */
+    const resetForm = () => {
+        setSelectedFile(null)
+        setName("")
+        setTypeVal("isometric")
+        setIsCustom(false)
+        setAssociateNow(false)
+        setSelectedFamilies([])
+        setSelectedReferences([])
+        setSelectedVersions([])
+        setReferences([])
+        setVersions([])
+    }
 
+    const handleOpenChange = (nextOpen: boolean) => {
+        setOpen(nextOpen)
+        if (nextOpen) {
+            resetForm()
             getFamiliesAction().then(setFamilies).catch(() => {})
         }
-    }, [open])
+    }
 
     // Load references when families change
     React.useEffect(() => {
@@ -193,7 +204,7 @@ export function UploadAssetDialog({ onUploadComplete, variant, className, label 
     const isUploading = uploading || submitting
 
     return (
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog open={open} onOpenChange={handleOpenChange}>
             <DialogTrigger
                 render={
                     <Button
@@ -243,7 +254,7 @@ export function UploadAssetDialog({ onUploadComplete, variant, className, label 
                                 type="file"
                                 ref={fileInputRef}
                                 className="hidden"
-                                accept="image/png, image/jpeg, image/svg+xml"
+                                accept="application/pdf, image/png, image/jpeg, image/svg+xml, .pdf"
                                 onChange={handleFileSelect}
                             />
                             {selectedFile ? (

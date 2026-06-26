@@ -91,13 +91,6 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Pr
     const [selectedFile, setSelectedFile] = useState<File | null>(null)
     const router = useRouter()
 
-    useEffect(() => {
-        if (open) {
-            /* eslint-disable-next-line react-hooks/set-state-in-effect */
-            setTypeVal(assetType || 'icon')
-        }
-    }, [open, assetType])
-
     const loadRelationships = async () => {
         setIsLoadingRelationships(true)
         try {
@@ -191,6 +184,10 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Pr
         return (
             <Dialog open={open} onOpenChange={(v) => {
                 setOpen(v)
+                if (v) {
+                    setName(assetName)
+                    setTypeVal(assetType || 'icon')
+                }
                 if (!v) {
                     setShowRelationships(false)
                     setSelectedFile(null)
@@ -258,7 +255,7 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Pr
                                             ref={fileInputRef}
                                             onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
                                             className="hidden"
-                                            accept="image/png, image/jpeg, image/svg+xml"
+                                            accept="application/pdf, image/png, image/jpeg, image/svg+xml, .pdf"
                                         />
                                          <Button 
                                              variant="outline" 
@@ -467,7 +464,17 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Pr
     )
 }
 
-const ASSET_TYPE_OPTIONS = ['isometric', 'icon', 'logo']
+const ASSET_TYPE_OPTIONS = [
+    'isometric',
+    'instruction_pdf',
+    'front_view_dimensioned',
+    'side_view_dimensioned',
+    'top_view_dimensioned',
+    'exploded_view',
+    'assembly_step',
+    'icon',
+    'logo',
+]
 
 function TypeSelector({ typeVal, onChange }: { typeVal: string; onChange: (v: string) => void }) {
     const [isCustom, setIsCustom] = useState(!ASSET_TYPE_OPTIONS.includes(typeVal))

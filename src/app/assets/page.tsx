@@ -1,7 +1,6 @@
 import { dbQuery } from '@/lib/supabase'
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { UploadAssetButton } from '@/components/assets/UploadAssetButton'
-import { IsometricAssociationDialog } from '@/components/assets/IsometricAssociationDialog'
+import { ResourceAssociationDialog } from '@/components/assets/ResourceAssociationDialog'
 import { SmartIsometricSuggestionsDialog } from '@/components/assets/SmartIsometricSuggestionsDialog'
 import { SmartIsometricNormalizationDialog } from '@/components/assets/SmartIsometricNormalizationDialog'
 import { OrphanProductsDialog } from '@/components/assets/OrphanProductsDialog'
@@ -34,7 +33,8 @@ export default async function AssetsPage({
                 a.id,
                 (
                     (SELECT COUNT(*) FROM public.product_references r WHERE r.isometric_asset_id::text = a.id::text) + 
-                    (SELECT COUNT(*) FROM public.product_versions v WHERE v.version_attrs->>'isometric_asset_id' = a.id::text)
+                    (SELECT COUNT(*) FROM public.product_versions v WHERE v.version_attrs->>'isometric_asset_id' = a.id::text) +
+                    (SELECT COUNT(*) FROM public.product_asset_links pal WHERE pal.asset_id::text = a.id::text)
                 ) as total_relations
             FROM public.assets a
         )
@@ -47,7 +47,7 @@ export default async function AssetsPage({
         ORDER BY 
             (CASE WHEN ac.total_relations = 0 AND UPPER(a.type) = 'ISOMETRIC' THEN 0 ELSE 1 END) ASC,
             a.created_at DESC
-    `) as any[] || []
+    `) as AssetRow[] || []
 
     const defaultNames = [
         'Logo Empresa Pordefecto',
@@ -76,7 +76,7 @@ export default async function AssetsPage({
                     <SmartIsometricSuggestionsDialog />
                     <SmartIsometricNormalizationDialog />
                     <OrphanProductsDialog />
-                    <IsometricAssociationDialog />
+                    <ResourceAssociationDialog />
                     <UploadAssetButton 
                         className="h-10 px-6 font-bold shadow-sm bg-slate-900 hover:bg-slate-800 text-white transition-all"
                     />
@@ -91,6 +91,7 @@ export default async function AssetsPage({
                     isometricRows={!query ? (await getGroupedIsometricsAction() || []) : []}
                     icons={(assets || []).filter((a: AssetRow) => a.type?.toLowerCase() === 'icon')}
                     logos={(assets || []).filter((a: AssetRow) => a.type?.toLowerCase() === 'logo')}
+                    otherAssets={(assets || []).filter((a: AssetRow) => !['isometric', 'icon', 'logo'].includes(a.type?.toLowerCase()))}
                     allAssets={assets || []}
                     defaultNames={defaultNames}
                     searchQuery={query}
