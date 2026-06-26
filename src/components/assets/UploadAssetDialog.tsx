@@ -266,7 +266,7 @@ export function UploadAssetDialog({ onUploadComplete, variant, className, label 
                                 <>
                                     <ImageIcon className="h-8 w-8 text-slate-400 mx-auto mb-2" />
                                     <p className="text-sm font-medium text-slate-700">Haz clic o arrastra un archivo</p>
-                                    <p className="text-[10px] text-slate-500 mt-1">PNG, JPG o SVG</p>
+                                    <p className="text-[10px] text-slate-500 mt-1">SVG, JPG, PDF u otro</p>
                                 </>
                             )}
                         </div>

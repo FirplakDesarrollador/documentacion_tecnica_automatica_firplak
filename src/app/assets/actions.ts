@@ -91,6 +91,10 @@ function buildReferenceConditions(referenceCodes: string[]) {
         .filter((condition): condition is string => Boolean(condition))
 }
 
+function buildTargetConditions(targets: Array<{ column: 'reference_id' | 'version_id'; id: string }>) {
+    return targets.map((target) => `(${target.column} = '${escapeSql(target.id)}')`)
+}
+
 async function revalidateValidationSweepEverywhere() {
     // Local (same server) cache invalidation.
     revalidateTag('validation-sweep', { expire: 0 })
@@ -281,9 +285,6 @@ export async function associateProductResourceAction(data: ProductResourceAssoci
         if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(publicSlug)) {
             throw new Error('El slug publico solo puede usar minusculas, numeros y guiones simples.')
         }
-        if (targets.length !== 1) {
-            throw new Error('Para instructivos con QR selecciona una sola referencia o una sola version por operacion.')
-        }
     }
 
     const status = normalizeResourceStatus(data.status)
@@ -291,13 +292,15 @@ export async function associateProductResourceAction(data: ProductResourceAssoci
     const sortOrder = normalizeInt(data.sortOrder, 0)
     const revisionNote = String(data.revisionNote || '').trim()
 
-    if (publicSlug && status === 'approved') {
+    const targetConditions = buildTargetConditions(targets)
+    if (publicSlug && status === 'approved' && targetConditions.length > 0) {
         await dbQuery(`
             UPDATE public.product_asset_links
             SET status = 'replaced',
                 updated_at = now()
             WHERE public_slug = '${escapeSql(publicSlug)}'
               AND status = 'approved'
+              AND (${targetConditions.join(' OR ')})
         `)
     }
 
@@ -604,30 +607,86 @@ export async function getAssetRelationshipsAction(assetId: string) {
     // 1. Fetch references
     const refs = await dbQuery(`
         SELECT 
+            r.id as target_id,
             r.id, r.reference_code, r.product_name, r.commercial_measure,
             r.designation, r.ref_attrs->>'accessory_text' as accessory_text, r.special_label,
-            f.family_name as line_name
+            f.family_name as line_name,
+            r.id as relationship_id,
+            'legacy_isometric' as relationship_source,
+            NULL::text as public_slug,
+            NULL::text as status,
+            NULL::int as version_number
         FROM public.product_references r
         JOIN public.families f ON r.family_code = f.family_code
         WHERE r.isometric_asset_id::text = '${safeId}'
-        ORDER BY r.reference_code ASC
+        UNION ALL
+        SELECT
+            r.id as target_id,
+            r.id, r.reference_code, r.product_name, r.commercial_measure,
+            r.designation, r.ref_attrs->>'accessory_text' as accessory_text, r.special_label,
+            f.family_name as line_name,
+            pal.id as relationship_id,
+            'product_asset_link' as relationship_source,
+            pal.public_slug,
+            pal.status,
+            pal.version_number
+        FROM public.product_asset_links pal
+        JOIN public.product_references r ON r.id = pal.reference_id
+        JOIN public.families f ON r.family_code = f.family_code
+        WHERE pal.asset_id::text = '${safeId}'
+        ORDER BY reference_code ASC
     `) || []
 
     // 2. Fetch version overrides
     const versions = await dbQuery(`
         SELECT 
+            v.id as target_id,
             v.id, v.version_code, v.reference_id,
             r.reference_code, r.product_name, r.commercial_measure,
             r.designation, r.ref_attrs->>'accessory_text' as accessory_text, r.special_label,
-            f.family_name as line_name
+            f.family_name as line_name,
+            v.id as relationship_id,
+            'legacy_isometric' as relationship_source,
+            NULL::text as public_slug,
+            NULL::text as status,
+            NULL::int as version_number
         FROM public.product_versions v
         JOIN public.product_references r ON v.reference_id = r.id
         JOIN public.families f ON r.family_code = f.family_code
         WHERE v.version_attrs->>'isometric_asset_id' = '${safeId}'
-        ORDER BY r.reference_code ASC, v.version_code ASC
+        UNION ALL
+        SELECT
+            v.id as target_id,
+            v.id, v.version_code, v.reference_id,
+            r.reference_code, r.product_name, r.commercial_measure,
+            r.designation, r.ref_attrs->>'accessory_text' as accessory_text, r.special_label,
+            f.family_name as line_name,
+            pal.id as relationship_id,
+            'product_asset_link' as relationship_source,
+            pal.public_slug,
+            pal.status,
+            pal.version_number
+        FROM public.product_asset_links pal
+        JOIN public.product_versions v ON v.id = pal.version_id
+        JOIN public.product_references r ON v.reference_id = r.id
+        JOIN public.families f ON r.family_code = f.family_code
+        WHERE pal.asset_id::text = '${safeId}'
+        ORDER BY reference_code ASC, version_code ASC
     `) || []
 
     return { references: refs, versions }
+}
+
+export async function unlinkProductAssetLinkAction(linkId: string) {
+    await assertAdminAccess()
+
+    const safeId = linkId.replace(/'/g, "''")
+    await dbQuery(`
+        DELETE FROM public.product_asset_links
+        WHERE id = '${safeId}'
+    `)
+    revalidatePath('/assets')
+    return { success: true }
 }
 
 export async function unlinkReferenceAction(referenceId: string) {
@@ -681,6 +740,11 @@ export async function unlinkAllAssetRelationshipsAction(assetId: string) {
         SET version_attrs = version_attrs - 'isometric_asset_id' - 'isometric_path',
             updated_at = now()
         WHERE version_attrs->>'isometric_asset_id' = '${safeId}'
+    `)
+
+    await dbQuery(`
+        DELETE FROM public.product_asset_links
+        WHERE asset_id::text = '${safeId}'
     `)
 
     revalidatePath('/assets')

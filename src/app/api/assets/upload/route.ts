@@ -4,11 +4,24 @@ import { supabaseServer } from '@/lib/supabase'
 import { v4 as uuidv4 } from 'uuid'
 import { apiGuard } from '@/utils/auth/access'
 
+function getUploadErrorMessage(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error || '')
+    if (message.includes('assets_type_check')) {
+        return 'El tipo de recurso no esta permitido en assets.'
+    }
+    if (message.includes('DB Query Error')) {
+        return 'No se pudo registrar el recurso en la base de datos.'
+    }
+    return 'No se pudo subir el recurso.'
+}
+
 export async function POST(request: Request) {
     const guard = await apiGuard('admin')
     if (guard.response) {
         return guard.response
     }
+
+    let uploadedBucketPath: string | null = null
 
     try {
         const data = await request.formData()
@@ -48,6 +61,7 @@ export async function POST(request: Request) {
             await writeFile(localPath, buffer)
             filePath = `/uploads/${fileName}`
         } else {
+            uploadedBucketPath = bucketPath
             const { data: urlData } = supabaseServer.storage.from('assets').getPublicUrl(bucketPath)
             filePath = urlData.publicUrl
         }
@@ -75,6 +89,12 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: true, asset: rows?.[0] })
     } catch (error: unknown) {
         console.error('Upload Error:', error)
-        return NextResponse.json({ success: false, error: 'Failed to upload asset' }, { status: 500 })
+        if (uploadedBucketPath) {
+            const { error: cleanupError } = await supabaseServer.storage.from('assets').remove([uploadedBucketPath])
+            if (cleanupError) {
+                console.warn('Storage cleanup failed after asset upload error:', cleanupError.message)
+            }
+        }
+        return NextResponse.json({ success: false, error: getUploadErrorMessage(error) }, { status: 500 })
     }
 }

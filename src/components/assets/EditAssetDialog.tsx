@@ -35,6 +35,7 @@ import {
     getAssetRelationshipsAction,
     unlinkReferenceAction,
     unlinkVersionAction,
+    unlinkProductAssetLinkAction,
     unlinkAllAssetRelationshipsAction
 } from '@/app/assets/actions'
 import { cn } from '@/lib/utils'
@@ -49,6 +50,9 @@ interface AssetRow {
 
 interface ReferenceRow {
     id: string;
+    target_id?: string;
+    relationship_id?: string;
+    relationship_source?: 'legacy_isometric' | 'product_asset_link';
     reference_code: string;
     line_name: string;
     product_name: string;
@@ -56,10 +60,16 @@ interface ReferenceRow {
     commercial_measure: string;
     special_label: string | null;
     accessory_text: string | null;
+    public_slug?: string | null;
+    status?: string | null;
+    version_number?: number | null;
 }
 
 interface VersionRow {
     id: string;
+    target_id?: string;
+    relationship_id?: string;
+    relationship_source?: 'legacy_isometric' | 'product_asset_link';
     version_code: string;
     reference_code: string;
     line_name: string;
@@ -68,6 +78,9 @@ interface VersionRow {
     commercial_measure: string;
     special_label: string | null;
     accessory_text: string | null;
+    public_slug?: string | null;
+    status?: string | null;
+    version_number?: number | null;
 }
 
 interface Props {
@@ -149,9 +162,13 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Pr
         }
     }
 
-    const handleUnlinkRef = async (refId: string) => {
+    const handleUnlinkRef = async (ref: ReferenceRow) => {
         try {
-            await unlinkReferenceAction(refId)
+            if (ref.relationship_source === 'product_asset_link') {
+                await unlinkProductAssetLinkAction(ref.relationship_id || ref.id)
+            } else {
+                await unlinkReferenceAction(ref.target_id || ref.id)
+            }
             toast.success("Relación eliminada")
             loadRelationships()
         } catch {
@@ -159,9 +176,13 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Pr
         }
     }
 
-    const handleUnlinkVersion = async (vId: string) => {
+    const handleUnlinkVersion = async (version: VersionRow) => {
         try {
-            await unlinkVersionAction(vId)
+            if (version.relationship_source === 'product_asset_link') {
+                await unlinkProductAssetLinkAction(version.relationship_id || version.id)
+            } else {
+                await unlinkVersionAction(version.target_id || version.id)
+            }
             toast.success("Sobrescritura de versión eliminada")
             loadRelationships()
         } catch {
@@ -329,7 +350,7 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Pr
                                                     </div>
                                                 ) : (
                                                     relationships.references.map((ref) => (
-                                                        <div key={ref.id} className="group p-4 bg-white border border-slate-100 rounded-xl hover:border-indigo-200 hover:shadow-sm transition-all flex flex-col gap-3">
+                                                        <div key={`${ref.relationship_source || 'legacy'}-${ref.relationship_id || ref.id}`} className="group p-4 bg-white border border-slate-100 rounded-xl hover:border-indigo-200 hover:shadow-sm transition-all flex flex-col gap-3">
                                                             <div className="flex items-center justify-between">
                                                                 <div className="flex items-center gap-2">
                                                                     <Badge variant="outline" className="text-[10px] font-bold uppercase tracking-wider bg-slate-50 text-slate-600 border-slate-200">
@@ -338,11 +359,16 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Pr
                                                                     <Badge className="bg-indigo-50 text-indigo-700 border-indigo-100 text-[9px] font-bold uppercase">
                                                                         {ref.line_name}
                                                                     </Badge>
+                                                                    {ref.relationship_source === 'product_asset_link' && (
+                                                                        <Badge className="bg-emerald-50 text-emerald-700 border-emerald-100 text-[8px] font-bold uppercase">
+                                                                            {ref.status || 'link'}
+                                                                        </Badge>
+                                                                    )}
                                                                 </div>
                                                                 <Button 
                                                                     size="icon" 
                                                                     variant="ghost" 
-                                                                    onClick={() => handleUnlinkRef(ref.id)}
+                                                                    onClick={() => handleUnlinkRef(ref)}
                                                                     className="h-8 w-8 text-slate-300 hover:text-rose-600 hover:bg-rose-50 transition-all rounded-lg opacity-0 group-hover:opacity-100"
                                                                 >
                                                                     <Unlink className="h-3.5 w-3.5" />
@@ -353,6 +379,11 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Pr
                                                                 <p className="text-[12px] font-black text-slate-900 uppercase leading-tight">
                                                                     {ref.product_name} {ref.designation}
                                                                 </p>
+                                                                {ref.public_slug && (
+                                                                    <p className="font-mono text-[10px] font-bold text-emerald-600">
+                                                                        /i/{ref.public_slug}
+                                                                    </p>
+                                                                )}
                                                                 <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-bold uppercase tracking-tight text-slate-400">
                                                                     <span className="flex items-center gap-1.5">
                                                                         <Box className="h-3 w-3" />
@@ -385,7 +416,7 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Pr
                                                 </h4>
                                                 <div className="space-y-2 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar">
                                                     {relationships.versions.map((ver) => (
-                                                        <div key={ver.id} className="group p-4 bg-amber-50/20 border border-amber-100 rounded-xl hover:border-amber-300 hover:shadow-sm transition-all flex flex-col gap-3">
+                                                        <div key={`${ver.relationship_source || 'legacy'}-${ver.relationship_id || ver.id}`} className="group p-4 bg-amber-50/20 border border-amber-100 rounded-xl hover:border-amber-300 hover:shadow-sm transition-all flex flex-col gap-3">
                                                             <div className="flex items-center justify-between">
                                                                 <div className="flex items-center gap-2">
                                                                     <Badge className="bg-amber-100 text-amber-700 border-none text-[9px] font-bold uppercase tracking-wider">
@@ -395,11 +426,16 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Pr
                                                                     <Badge variant="outline" className="text-[8px] font-bold uppercase border-amber-200 text-amber-500">
                                                                         {ver.line_name}
                                                                     </Badge>
+                                                                    {ver.relationship_source === 'product_asset_link' && (
+                                                                        <Badge className="bg-emerald-50 text-emerald-700 border-emerald-100 text-[8px] font-bold uppercase">
+                                                                            {ver.status || 'link'}
+                                                                        </Badge>
+                                                                    )}
                                                                 </div>
                                                                 <Button 
                                                                     size="icon" 
                                                                     variant="ghost" 
-                                                                    onClick={() => handleUnlinkVersion(ver.id)}
+                                                                    onClick={() => handleUnlinkVersion(ver)}
                                                                     className="h-8 w-8 text-amber-300 hover:text-rose-600 hover:bg-rose-50 transition-all rounded-lg opacity-0 group-hover:opacity-100"
                                                                 >
                                                                     <Unlink className="h-3.5 w-3.5" />
@@ -410,6 +446,11 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Pr
                                                                 <p className="text-[12px] font-black text-slate-900 uppercase leading-tight">
                                                                     {ver.product_name} {ver.designation}
                                                                 </p>
+                                                                {ver.public_slug && (
+                                                                    <p className="font-mono text-[10px] font-bold text-emerald-600">
+                                                                        /i/{ver.public_slug}
+                                                                    </p>
+                                                                )}
                                                                 <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-bold uppercase tracking-tight text-slate-400">
                                                                     <span className="flex items-center gap-1.5">
                                                                         <Box className="h-3 w-3" />

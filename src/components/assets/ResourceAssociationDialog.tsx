@@ -219,11 +219,6 @@ export function ResourceAssociationDialog() {
     const isInstruction = resourceType === 'instruction_pdf'
     const isIsometric = resourceType === 'isometric'
     const isAssemblyStep = resourceType === 'assembly_step'
-    const hasMultipleInstructionTargets = isInstruction && (
-        selectedReferences.length > 1 ||
-        selectedVersions.length > 1 ||
-        (selectedReferences.length > 1 && selectedVersions.length > 0)
-    )
 
     const resetState = () => {
         setResourceType(DEFAULT_RESOURCE_TYPE)
@@ -387,10 +382,6 @@ export function ResourceAssociationDialog() {
             toast.error('El slug publico es obligatorio para instructivos.')
             return
         }
-        if (hasMultipleInstructionTargets) {
-            toast.error('Para instructivos con QR selecciona un solo destino por operacion.')
-            return
-        }
         if (isIsometric && blockingDiffFields.length > 0 && !confirmBlockingDiffs) {
             toast.error('Confirma las diferencias antes de asociar.')
             return
@@ -442,7 +433,7 @@ export function ResourceAssociationDialog() {
     const canSubmit = Boolean(selectedAssetId)
         && selectedFamilies.length > 0
         && selectedReferences.length > 0
-        && (!isInstruction || (Boolean(publicSlug) && !hasMultipleInstructionTargets))
+        && (!isInstruction || Boolean(publicSlug))
         && (!isIsometric || blockingDiffFields.length === 0 || confirmBlockingDiffs)
         && !submitting
         && !uploading
@@ -653,11 +644,9 @@ export function ResourceAssociationDialog() {
                                     <p className="text-[11px] text-slate-500">
                                         Link final: <span className="font-mono text-slate-800">/i/{publicSlug || 'slug-del-instructivo'}</span>
                                     </p>
-                                    {hasMultipleInstructionTargets && (
-                                        <p className="text-[11px] text-rose-600 font-semibold">
-                                            El QR requiere un slug unico; selecciona una sola referencia o una sola version por operacion.
-                                        </p>
-                                    )}
+                                    <p className="text-[11px] text-slate-500">
+                                        Un mismo slug puede relacionarse con varias referencias o versiones que compartan instructivo.
+                                    </p>
                                 </div>
                             )}
 
