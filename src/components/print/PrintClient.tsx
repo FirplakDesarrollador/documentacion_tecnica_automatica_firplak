@@ -14,6 +14,7 @@ import {
     ChevronUp,
     FileText,
     Download,
+    Plus,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -67,10 +68,22 @@ interface PrintClientProps {
 
 type PrintStatus = 'pending' | 'printing' | 'done' | 'error'
 
-interface PrintItem {
+interface PrintJob {
+    id: string
     product: GenerateProduct
+    copies: number
+    ofNumber?: string | null
+}
+
+interface PrintItem extends PrintJob {
     status: PrintStatus
     error?: string
+}
+
+interface OfPrintEntry {
+    id: string
+    ofNumber: string
+    copies: number
 }
 
 const PRINTER_CONFIG_KEY = 'samiGen-printer-config'
@@ -82,6 +95,8 @@ const PRINT_AGENT_TIMEOUT_MS = 60000
 const PRINT_AGENT_HEALTH_TIMEOUT_MS = 12000
 const PRINT_AGENT_CHECK_INTERVAL_MS = 15000
 const PRINT_AGENT_OFFLINE_FAILURES = 3
+const MIN_PRINT_COPIES = 1
+const MAX_PRINT_COPIES = 999
 
 type PrintFormat = 'pdf' | 'jpg'
 type PrintTransport = 'local_agent' | 'webusb'
@@ -100,6 +115,7 @@ interface AgentHealth {
 
 type PrintRuntimeOverrides = {
     ofNumber?: string | null
+    copies?: number
 }
 
 const defaultPrinterConfig: PrinterConfig = {
@@ -178,6 +194,32 @@ function normalizePrinterConfig(value: unknown): PrinterConfig {
     }
 }
 
+function normalizePrintCopyCount(value: number): number {
+    if (!Number.isFinite(value)) return MIN_PRINT_COPIES
+    return Math.max(MIN_PRINT_COPIES, Math.min(MAX_PRINT_COPIES, Math.trunc(value)))
+}
+
+function parsePrintCopyCount(value: string): number {
+    return normalizePrintCopyCount(Number.parseInt(value, 10))
+}
+
+function hasDuplicateOfNumbers(entries: OfPrintEntry[]): boolean {
+    const seen = new Set<string>()
+
+    for (const entry of entries) {
+        if (!isValidOfNumber(entry.ofNumber)) continue
+        if (seen.has(entry.ofNumber)) return true
+        seen.add(entry.ofNumber)
+    }
+
+    return false
+}
+
+function isDuplicateOfNumber(entries: OfPrintEntry[], ofNumber: string): boolean {
+    if (!isValidOfNumber(ofNumber)) return false
+    return entries.filter(entry => entry.ofNumber === ofNumber).length > 1
+}
+
 function getTimeoutSignal(timeoutMs: number) {
     if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
         return AbortSignal.timeout(timeoutMs)
@@ -225,7 +267,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
     const [isPrinting, setIsPrinting] = useState(false)
     const [showPrintDialog, setShowPrintDialog] = useState(false)
     const [showOfEntryDialog, setShowOfEntryDialog] = useState(false)
-    const [ofEntries, setOfEntries] = useState<Record<string, string>>({})
+    const [ofEntries, setOfEntries] = useState<Record<string, OfPrintEntry[]>>({})
     const [agentOnline, setAgentOnline] = useState<boolean | null>(null)
     const [agentPrinters, setAgentPrinters] = useState<string[]>([])
     const [printerDetected, setPrinterDetected] = useState<boolean>(false)
@@ -238,6 +280,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
     const agentFailureCountRef = useRef(0)
     const agentHasRespondedRef = useRef(false)
     const agentCheckedUrlRef = useRef<string | null>(null)
+    const ofEntryIdRef = useRef(0)
 
     const normalizedAgentUrl = useMemo(
         () => normalizeAgentBaseUrl(printerConfig.agentUrl),
@@ -386,9 +429,60 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         [validProducts, selectedIds]
     )
 
+    const createOfEntry = useCallback((productId: string): OfPrintEntry => {
+        ofEntryIdRef.current += 1
+        return {
+            id: `${productId}:${ofEntryIdRef.current}`,
+            ofNumber: '',
+            copies: normalizePrintCopyCount(copies),
+        }
+    }, [copies])
+
+    const addOfEntry = useCallback((productId: string) => {
+        setOfEntries(prev => ({
+            ...prev,
+            [productId]: [...(prev[productId] ?? []), createOfEntry(productId)],
+        }))
+    }, [createOfEntry])
+
+    const updateOfEntry = useCallback((
+        productId: string,
+        entryId: string,
+        patch: Partial<Pick<OfPrintEntry, 'ofNumber' | 'copies'>>
+    ) => {
+        setOfEntries(prev => ({
+            ...prev,
+            [productId]: (prev[productId] ?? []).map(entry =>
+                entry.id === entryId ? { ...entry, ...patch } : entry
+            ),
+        }))
+    }, [])
+
+    const removeOfEntry = useCallback((productId: string, entryId: string) => {
+        setOfEntries(prev => {
+            const entries = prev[productId] ?? []
+            if (entries.length <= 1) return prev
+
+            return {
+                ...prev,
+                [productId]: entries.filter(entry => entry.id !== entryId),
+            }
+        })
+    }, [])
+
     const invalidOfProducts = useMemo(
         () => templateRequiresOfNumber
-            ? selectedProducts.filter(product => !isValidOfNumber(ofEntries[product.id]))
+            ? selectedProducts.filter(product => {
+                const entries = ofEntries[product.id] ?? []
+                return entries.length === 0 ||
+                    entries.some(entry =>
+                        !isValidOfNumber(entry.ofNumber) ||
+                        !Number.isInteger(entry.copies) ||
+                        entry.copies < MIN_PRINT_COPIES ||
+                        entry.copies > MAX_PRINT_COPIES
+                    ) ||
+                    hasDuplicateOfNumbers(entries)
+            })
             : [],
         [ofEntries, selectedProducts, templateRequiresOfNumber]
     )
@@ -452,6 +546,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
 
     const handlePrintProduct = async (product: GenerateProduct, runtimeOverrides: PrintRuntimeOverrides = {}): Promise<boolean> => {
         if (!selectedTemplate) return false
+        const printCopies = normalizePrintCopyCount(runtimeOverrides.copies ?? copies)
 
         const elements: Record<string, unknown>[] = (() => {
             try { return JSON.parse(selectedTemplate.elements_json || '[]') }
@@ -592,14 +687,14 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
             }
 
             for (const preparedJob of preparedJobs) {
-                await sendPreparedJob(preparedJob, copies)
+                await sendPreparedJob(preparedJob, printCopies)
             }
 
             return true
         }
 
-        const gameCount = hasLabelBoxSet ? copies : 1
-        const requestCopies = hasLabelBoxSet ? 1 : copies
+        const gameCount = hasLabelBoxSet ? printCopies : 1
+        const requestCopies = hasLabelBoxSet ? 1 : printCopies
 
         for (let setIndex = 0; setIndex < gameCount; setIndex += 1) {
             for (const labelBoxProduct of labelBoxProducts) {
@@ -656,26 +751,34 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         return true
     }
 
-    const runPrintQueue = async (ofByProductId: Record<string, string> = {}) => {
-        if (!selectedTemplate || selectedProducts.length === 0) return
+    const runPrintQueue = async (jobs?: PrintJob[]) => {
+        const queue = jobs ?? selectedProducts.map((product): PrintJob => ({
+            id: product.id,
+            product,
+            copies: normalizePrintCopyCount(copies),
+        }))
+
+        if (!selectedTemplate || queue.length === 0) return
 
         setIsPrinting(true)
         setShowPrintDialog(true)
 
-        const items: PrintItem[] = selectedProducts.map(p => ({ product: p, status: 'pending' }))
+        const items: PrintItem[] = queue.map(job => ({ ...job, status: 'pending' }))
         setPrintItems(items)
 
         let done = 0
         let errors = 0
+        let sentCopies = 0
 
         for (let i = 0; i < items.length; i++) {
             const item = items[i]
             setPrintItems(prev => prev.map((p, idx) => idx === i ? { ...p, status: 'printing' } : p))
 
             try {
-                await handlePrintProduct(item.product, { ofNumber: ofByProductId[item.product.id] })
+                await handlePrintProduct(item.product, { ofNumber: item.ofNumber, copies: item.copies })
                 setPrintItems(prev => prev.map((p, idx) => idx === i ? { ...p, status: 'done' } : p))
                 done++
+                sentCopies += item.copies
             } catch (err: unknown) {
                 setPrintItems(prev => prev.map((p, idx) => idx === i ? { ...p, status: 'error', error: (err as Error)?.message } : p))
                 errors++
@@ -683,7 +786,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         }
 
         setIsPrinting(false)
-        const baseMsg = `${done} documento(s) enviado(s) a impresión`
+        const baseMsg = `${done} registro(s), ${sentCopies} impresion(es) enviada(s)`
         toast.success(errors > 0 ? `${baseMsg}, ${errors} error(es)` : baseMsg)
     }
 
@@ -691,8 +794,8 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         if (!selectedTemplate || selectedProducts.length === 0) return
 
         if (templateRequiresOfNumber) {
-            setOfEntries(selectedProducts.reduce<Record<string, string>>((next, product) => {
-                next[product.id] = ''
+            setOfEntries(selectedProducts.reduce<Record<string, OfPrintEntry[]>>((next, product) => {
+                next[product.id] = [createOfEntry(product.id)]
                 return next
             }, {}))
             setShowOfEntryDialog(true)
@@ -706,14 +809,22 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         if (!selectedTemplate || selectedProducts.length === 0) return
 
         if (invalidOfProducts.length > 0) {
-            toast.error('Cada OF debe tener exactamente 4 digitos.')
+            toast.error('Cada registro debe tener OF de 4 digitos, sin repetir, y copias validas.')
             return
         }
 
-        const ofByProductId = { ...ofEntries }
+        const jobs = selectedProducts.flatMap((product): PrintJob[] =>
+            (ofEntries[product.id] ?? []).map(entry => ({
+                id: entry.id,
+                product,
+                ofNumber: entry.ofNumber,
+                copies: entry.copies,
+            }))
+        )
+
         setShowOfEntryDialog(false)
         setOfEntries({})
-        await runPrintQueue(ofByProductId)
+        await runPrintQueue(jobs)
     }
 
     const statusIcon = (status: PrintStatus) => {
@@ -812,7 +923,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                 min={1}
                                 max={999}
                                 value={copies}
-                                onChange={(e) => setCopies(Math.max(1, Math.min(999, parseInt(e.target.value) || 1)))}
+                                onChange={(e) => setCopies(parsePrintCopyCount(e.target.value))}
                                 className="w-20 h-9 text-center"
                             />
                         </div>
@@ -1171,24 +1282,23 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                 setShowOfEntryDialog(open)
                 if (!open) setOfEntries({})
             }}>
-                <DialogContent className="max-w-2xl rounded-2xl max-h-[85vh] flex flex-col overflow-hidden">
+                <DialogContent className="max-w-3xl rounded-2xl max-h-[85vh] flex flex-col overflow-hidden">
                     <DialogHeader className="shrink-0">
                         <DialogTitle className="flex items-center gap-2 text-lg">
                             <FileText className="w-5 h-5 text-indigo-500" />
                             Orden de fabricacion (OF)
                         </DialogTitle>
                         <DialogDescription>
-                            Ingresa un numero de 4 digitos para cada producto seleccionado.
+                            Ingresa OF de 4 digitos y copias por cada producto seleccionado.
                         </DialogDescription>
                     </DialogHeader>
 
                     <div className="overflow-y-auto flex-1 min-h-0 divide-y divide-slate-100 border-y border-slate-100">
                         {selectedProducts.map((product) => {
-                            const value = ofEntries[product.id] || ''
-                            const isInvalid = !isValidOfNumber(value)
+                            const entries = ofEntries[product.id] ?? []
 
                             return (
-                                <div key={product.id} className="grid grid-cols-1 sm:grid-cols-[1fr_150px] gap-3 px-1 py-3 sm:items-center">
+                                <div key={product.id} className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(300px,390px)] gap-3 px-1 py-3 sm:items-start">
                                     <div className="min-w-0">
                                         <p className="font-mono text-sm font-semibold text-slate-800 truncate">
                                             {product.code}
@@ -1197,22 +1307,75 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                             <p className="text-xs text-slate-500 truncate">{product.final_name_es}</p>
                                         )}
                                     </div>
-                                    <div>
-                                        <Input
-                                            value={value}
-                                            inputMode="numeric"
-                                            maxLength={4}
-                                            placeholder="1234"
-                                            onChange={(event) => {
-                                                const nextValue = normalizeOfNumberInput(event.target.value)
-                                                setOfEntries(prev => ({ ...prev, [product.id]: nextValue }))
-                                            }}
-                                            className={`h-9 font-mono text-center ${isInvalid ? 'border-rose-300 focus-visible:ring-rose-200' : ''}`}
-                                            aria-label={`OF ${product.code}`}
-                                        />
-                                        {isInvalid && (
-                                            <p className="mt-1 text-[11px] text-rose-600">4 digitos requeridos</p>
-                                        )}
+                                    <div className="space-y-2">
+                                        <div className="grid grid-cols-[minmax(0,1fr)_36px_84px_36px] gap-2 px-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                            <span>OF</span>
+                                            <span aria-hidden="true" />
+                                            <span>Copias</span>
+                                            <span aria-hidden="true" />
+                                        </div>
+                                        {entries.map((entry, entryIndex) => {
+                                            const invalidOf = !isValidOfNumber(entry.ofNumber)
+                                            const duplicateOf = isDuplicateOfNumber(entries, entry.ofNumber)
+                                            const hasOfIssue = invalidOf || duplicateOf
+
+                                            return (
+                                                <div key={entry.id} className="grid grid-cols-[minmax(0,1fr)_36px_84px_36px] gap-2 items-start">
+                                                    <div>
+                                                        <Input
+                                                            value={entry.ofNumber}
+                                                            inputMode="numeric"
+                                                            maxLength={4}
+                                                            placeholder="1234"
+                                                            onChange={(event) => updateOfEntry(product.id, entry.id, {
+                                                                ofNumber: normalizeOfNumberInput(event.target.value),
+                                                            })}
+                                                            className={`h-9 font-mono text-center ${hasOfIssue ? 'border-rose-300 focus-visible:ring-rose-200' : ''}`}
+                                                            aria-label={`OF ${product.code} ${entryIndex + 1}`}
+                                                        />
+                                                        {hasOfIssue && (
+                                                            <p className="mt-1 text-[11px] text-rose-600">
+                                                                {duplicateOf ? 'OF repetida' : '4 digitos requeridos'}
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="icon"
+                                                        onClick={() => addOfEntry(product.id)}
+                                                        className="h-9 w-9"
+                                                        aria-label={`Agregar OF ${product.code}`}
+                                                        title="Agregar OF"
+                                                    >
+                                                        <Plus className="h-4 w-4" />
+                                                    </Button>
+                                                    <Input
+                                                        type="number"
+                                                        min={MIN_PRINT_COPIES}
+                                                        max={MAX_PRINT_COPIES}
+                                                        value={entry.copies}
+                                                        onChange={(event) => updateOfEntry(product.id, entry.id, {
+                                                            copies: parsePrintCopyCount(event.target.value),
+                                                        })}
+                                                        className="h-9 text-center"
+                                                        aria-label={`Copias ${product.code} ${entryIndex + 1}`}
+                                                    />
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        onClick={() => removeOfEntry(product.id, entry.id)}
+                                                        disabled={entries.length <= 1}
+                                                        className="h-9 w-9 text-slate-400 hover:text-rose-600 disabled:opacity-30"
+                                                        aria-label={`Quitar OF ${product.code} ${entryIndex + 1}`}
+                                                        title="Quitar OF"
+                                                    >
+                                                        <X className="h-4 w-4" />
+                                                    </Button>
+                                                </div>
+                                            )
+                                        })}
                                     </div>
                                 </div>
                             )
@@ -1262,7 +1425,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                             </div>
                         ) : (
                             printItems.map((item) => (
-                                <div key={item.product.id} className={`flex items-center gap-3 px-4 py-3 ${
+                                <div key={item.id} className={`flex items-center gap-3 px-4 py-3 ${
                                     item.status === 'printing' ? 'bg-indigo-50/50' :
                                     item.status === 'done' ? 'bg-green-50/30' :
                                     item.status === 'error' ? 'bg-red-50/30' : ''
@@ -1275,6 +1438,9 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                         {item.product.final_name_es && (
                                             <p className="text-xs text-slate-400 truncate">{item.product.final_name_es}</p>
                                         )}
+                                        <p className="text-xs text-slate-500 mt-0.5">
+                                            {item.ofNumber ? `OF ${item.ofNumber} - ` : ''}{item.copies} impresion{item.copies > 1 ? 'es' : ''}
+                                        </p>
                                         {item.error && (
                                             <p className="text-xs text-red-500 mt-0.5">{item.error}</p>
                                         )}
