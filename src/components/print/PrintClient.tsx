@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
+import Link from 'next/link'
 import {
     Printer,
     Search,
@@ -42,6 +43,7 @@ import {
     resolveThermalPrintLayout,
 } from '@/lib/printLayout'
 import { getFilteredProducts, resolvePrintAssetsAction, resolveZoneHomeEnForPrintAction } from '@/app/print/actions'
+import { resolvePublicDocumentUrlsForProductAction } from '@/app/templates/actions'
 import { defaultPrintSettings, normalizePrintColorMode, PRINT_SETTINGS_KEY } from '@/lib/printSettings'
 import { convertImageBlobToTspl } from '@/lib/print/browserTspl'
 import {
@@ -60,6 +62,7 @@ import {
     templateUsesPrintRuntimeVariable,
 } from '@/lib/templates/printRuntimeVariables'
 import { appendLabelBoxSuffix, expandLabelBoxProducts } from '@/lib/engine/labelParts'
+import { attachDocumentQrUrls, collectRelatedDocumentQrSlots } from '@/lib/templates/documentQrFields'
 
 interface PrintClientProps {
     templates: TemplateOption[]
@@ -100,6 +103,11 @@ const MAX_PRINT_COPIES = 999
 
 type PrintFormat = 'pdf' | 'jpg'
 type PrintTransport = 'local_agent' | 'webusb'
+type DocumentQrTemplateElement = {
+    type?: string
+    documentQrMode?: string | null
+    documentSlot?: string | null
+}
 
 interface PrinterConfig {
     transport: PrintTransport
@@ -228,6 +236,21 @@ function getTimeoutSignal(timeoutMs: number) {
     const controller = new AbortController()
     window.setTimeout(() => controller.abort(), timeoutMs)
     return controller.signal
+}
+
+async function attachResolvedDocumentQrUrls(
+    product: GenerateProduct,
+    elements: DocumentQrTemplateElement[]
+): Promise<GenerateProduct> {
+    const slots = collectRelatedDocumentQrSlots(elements)
+    if (slots.length === 0) return product
+
+    try {
+        const urls = await resolvePublicDocumentUrlsForProductAction(product as unknown as Record<string, unknown>, slots)
+        return attachDocumentQrUrls(product as unknown as Record<string, unknown>, urls) as unknown as GenerateProduct
+    } catch {
+        return product
+    }
 }
 
 function getPrintRequestError(err: unknown, fallback: string) {
@@ -548,7 +571,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         if (!selectedTemplate) return false
         const printCopies = normalizePrintCopyCount(runtimeOverrides.copies ?? copies)
 
-        const elements: Record<string, unknown>[] = (() => {
+        const elements: Array<Record<string, unknown> & DocumentQrTemplateElement> = (() => {
             try { return JSON.parse(selectedTemplate.elements_json || '[]') }
             catch { return [] }
         })()
@@ -601,7 +624,8 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
             const preparedJobs: Array<{ blob: Blob; outputName: string }> = []
 
             for (const labelBoxProduct of labelBoxProducts) {
-                const hydrated = await hydrateTemplateElements(elements, labelBoxProduct, assetMap)
+                const productWithDocumentQr = await attachResolvedDocumentQrUrls(labelBoxProduct as GenerateProduct, elements)
+                const hydrated = await hydrateTemplateElements(elements, productWithDocumentQr, assetMap)
                 const outputName = appendLabelBoxSuffix(product.code || 'etiqueta', labelBoxProduct)
                 const imageResponse = await fetch('/api/print', {
                     method: 'POST',
@@ -698,7 +722,8 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
 
         for (let setIndex = 0; setIndex < gameCount; setIndex += 1) {
             for (const labelBoxProduct of labelBoxProducts) {
-                const hydrated = await hydrateTemplateElements(elements, labelBoxProduct, assetMap)
+                const productWithDocumentQr = await attachResolvedDocumentQrUrls(labelBoxProduct as GenerateProduct, elements)
+                const hydrated = await hydrateTemplateElements(elements, productWithDocumentQr, assetMap)
                 const outputName = appendLabelBoxSuffix(product.code || 'etiqueta', labelBoxProduct)
 
                 const response = await fetch('/api/print', {
@@ -859,7 +884,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
 
             {!selectedTemplate && (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-700">
-                    No hay plantillas activas. Crea una desde <a href="/templates" className="underline">Plantillas</a>.
+                    No hay plantillas activas. Crea una desde <Link href="/templates" className="underline">Plantillas</Link>.
                 </div>
             )}
 

@@ -23,7 +23,9 @@ import {
     associateProductResourceAction,
     deleteAssetAction,
     getAssetsByTypeAction,
+    getDocumentSlugPrefixesAction,
     getFamiliesAction,
+    getProductResourceScopeOptionsAction,
     getReferencesByFamilyAction,
     getVersionsByFamilyAndRefAction,
 } from '@/app/assets/actions'
@@ -50,12 +52,21 @@ interface AssetItem {
 }
 
 type ResourceStatus = 'draft' | 'review' | 'approved' | 'replaced' | 'rejected'
+type RelationshipScope = 'reference' | 'family' | 'product_type' | 'manufacturing_process' | 'use_destination' | 'global'
 
 interface ResourceTypeConfig {
     value: string
     label: string
     description: string
     accept: string
+}
+
+interface DocumentPrefixOption {
+    document_slot: string
+    label: string
+    prefix: string
+    description?: string | null
+    active: boolean
 }
 
 const DEFAULT_RESOURCE_TYPE = 'instruction_pdf'
@@ -111,6 +122,15 @@ const STATUS_OPTIONS: Array<{ value: ResourceStatus; label: string }> = [
     { value: 'approved', label: 'Aprobado' },
     { value: 'replaced', label: 'Reemplazado' },
     { value: 'rejected', label: 'Rechazado' },
+]
+
+const RELATIONSHIP_SCOPE_OPTIONS: Array<{ value: RelationshipScope; label: string; description: string }> = [
+    { value: 'reference', label: 'Referencia / version', description: 'Relaciona a referencias y opcionalmente a versiones especificas.' },
+    { value: 'family', label: 'Familia', description: 'Relaciona el recurso a una familia completa.' },
+    { value: 'use_destination', label: 'Destino de uso', description: 'Relaciona por destino como LAVAMANOS, COCINA o LAVARROPAS.' },
+    { value: 'product_type', label: 'Tipo de producto', description: 'Relaciona por tipo tecnico de producto.' },
+    { value: 'manufacturing_process', label: 'Manufactura', description: 'Relaciona por proceso/planta de manufactura.' },
+    { value: 'global', label: 'Global', description: 'Documento general sin producto especifico.' },
 ]
 
 function getResourceConfig(type: string) {
@@ -195,13 +215,18 @@ export function ResourceAssociationDialog() {
     const [references, setReferences] = React.useState<Option[]>([])
     const [versions, setVersions] = React.useState<Option[]>([])
     const [assets, setAssets] = React.useState<AssetItem[]>([])
+    const [documentPrefixes, setDocumentPrefixes] = React.useState<DocumentPrefixOption[]>([])
+    const [relationshipScope, setRelationshipScope] = React.useState<RelationshipScope>('reference')
+    const [scopeOptions, setScopeOptions] = React.useState<Option[]>([])
+    const [selectedScopeTargets, setSelectedScopeTargets] = React.useState<string[]>([])
     const [selectedFamilies, setSelectedFamilies] = React.useState<string[]>([])
     const [selectedReferences, setSelectedReferences] = React.useState<string[]>([])
     const [selectedVersions, setSelectedVersions] = React.useState<string[]>([])
     const [selectedAssetId, setSelectedAssetId] = React.useState('')
     const [searchQuery, setSearchQuery] = React.useState('')
-    const [publicSlug, setPublicSlug] = React.useState('')
-    const [publicSlugTouched, setPublicSlugTouched] = React.useState(false)
+    const [createPublicLink, setCreatePublicLink] = React.useState(false)
+    const [documentSlot, setDocumentSlot] = React.useState('manual_instalacion')
+    const [documentLabel, setDocumentLabel] = React.useState('')
     const [versionNumber, setVersionNumber] = React.useState(1)
     const [status, setStatus] = React.useState<ResourceStatus>('approved')
     const [sortOrder, setSortOrder] = React.useState(0)
@@ -216,9 +241,15 @@ export function ResourceAssociationDialog() {
     const skipCleanupRef = React.useRef(false)
 
     const config = getResourceConfig(resourceType)
-    const isInstruction = resourceType === 'instruction_pdf'
     const isIsometric = resourceType === 'isometric'
     const isAssemblyStep = resourceType === 'assembly_step'
+    const activeDocumentPrefix = documentPrefixes.find((item) => item.document_slot === documentSlot)
+    const selectedAsset = assets.find((asset) => asset.id === selectedAssetId)
+    const previewSlugBody = slugify(documentLabel || selectedAsset?.name || 'documento')
+    const previewPublicSlug = activeDocumentPrefix && previewSlugBody
+        ? `${activeDocumentPrefix.prefix}/${previewSlugBody}`
+        : ''
+    const selectedScopeConfig = RELATIONSHIP_SCOPE_OPTIONS.find((item) => item.value === relationshipScope) || RELATIONSHIP_SCOPE_OPTIONS[0]
 
     const resetState = () => {
         setResourceType(DEFAULT_RESOURCE_TYPE)
@@ -226,13 +257,18 @@ export function ResourceAssociationDialog() {
         setReferences([])
         setVersions([])
         setAssets([])
+        setDocumentPrefixes([])
+        setRelationshipScope('reference')
+        setScopeOptions([])
+        setSelectedScopeTargets([])
         setSelectedFamilies([])
         setSelectedReferences([])
         setSelectedVersions([])
         setSelectedAssetId('')
         setSearchQuery('')
-        setPublicSlug('')
-        setPublicSlugTouched(false)
+        setCreatePublicLink(false)
+        setDocumentSlot('manual_instalacion')
+        setDocumentLabel('')
         setVersionNumber(1)
         setStatus('approved')
         setSortOrder(0)
@@ -246,12 +282,18 @@ export function ResourceAssociationDialog() {
     const loadInitialData = async (type: string) => {
         setLoading(true)
         try {
-            const [familyOptions, assetOptions] = await Promise.all([
+            const [familyOptions, assetOptions, prefixOptions] = await Promise.all([
                 getFamiliesAction(),
                 getAssetsByTypeAction(type),
+                getDocumentSlugPrefixesAction(),
             ])
             setFamilies(familyOptions as Option[])
             setAssets(assetOptions as AssetItem[])
+            const activePrefixes = (prefixOptions as DocumentPrefixOption[]).filter((item) => item.active)
+            setDocumentPrefixes(activePrefixes)
+            if (activePrefixes.length > 0 && !activePrefixes.some((item) => item.document_slot === documentSlot)) {
+                setDocumentSlot(activePrefixes[0].document_slot)
+            }
         } catch {
             toast.error('Error al cargar datos maestros')
         } finally {
@@ -276,11 +318,16 @@ export function ResourceAssociationDialog() {
 
     const handleResourceTypeChange = async (nextType: string) => {
         setResourceType(nextType)
+        if (nextType === 'isometric') {
+            setRelationshipScope('reference')
+            setSelectedScopeTargets([])
+            setScopeOptions([])
+        }
         setSelectedAssetId('')
         setAssets([])
         setSearchQuery('')
-        setPublicSlug('')
-        setPublicSlugTouched(false)
+        setCreatePublicLink(false)
+        setDocumentLabel('')
         setVersionNumber(1)
         setStatus('approved')
         setSortOrder(0)
@@ -288,6 +335,34 @@ export function ResourceAssociationDialog() {
         setBlockingDiffFields([])
         setConfirmBlockingDiffs(false)
         await loadInitialData(nextType)
+    }
+
+    const handleRelationshipScopeChange = async (nextScope: RelationshipScope) => {
+        setRelationshipScope(nextScope)
+        setSelectedFamilies([])
+        setSelectedReferences([])
+        setSelectedVersions([])
+        setReferences([])
+        setVersions([])
+        setSelectedScopeTargets(nextScope === 'global' ? ['global'] : [])
+        setScopeOptions([])
+        setBlockingDiffFields([])
+        setConfirmBlockingDiffs(false)
+
+        if (nextScope === 'reference') return
+
+        setLoading(true)
+        try {
+            const options = await getProductResourceScopeOptionsAction(nextScope)
+            setScopeOptions(options as Option[])
+            if (nextScope === 'global') {
+                setSelectedScopeTargets(['global'])
+            }
+        } catch {
+            toast.error('Error al cargar destinos del recurso')
+        } finally {
+            setLoading(false)
+        }
     }
 
     const handleFamiliesChange = async (values: string[]) => {
@@ -315,12 +390,6 @@ export function ResourceAssociationDialog() {
         const diffs = isIsometric ? normalizeReferenceDiffs(values, references) : []
         setBlockingDiffFields(diffs)
         setConfirmBlockingDiffs(false)
-
-        if (isInstruction && values.length === 1 && !publicSlugTouched) {
-            const selected = references.find((option) => option.value === values[0])
-            const label = selected?.label || values[0]
-            setPublicSlug(slugify(label))
-        }
 
         if (values.length === 0 && selectedFamilies.length === 0) return
         try {
@@ -357,8 +426,8 @@ export function ResourceAssociationDialog() {
             setAssets((prev) => [{ ...newAsset, relation_count: 0 }, ...prev])
             setSelectedAssetId(newAsset.id)
             uploadedAssetIdsRef.current = [...uploadedAssetIdsRef.current, newAsset.id]
-            if (isInstruction && !publicSlugTouched) {
-                setPublicSlug(slugify(getFileBaseName(file.name)))
+            if (!documentLabel.trim()) {
+                setDocumentLabel(getFileBaseName(file.name))
             }
             toast.success('Archivo subido y listo para asociar')
         } catch (error: unknown) {
@@ -374,12 +443,16 @@ export function ResourceAssociationDialog() {
             toast.error('Selecciona o sube un recurso.')
             return
         }
-        if (selectedFamilies.length === 0 || selectedReferences.length === 0) {
+        if (relationshipScope === 'reference' && (selectedFamilies.length === 0 || selectedReferences.length === 0)) {
             toast.error('Selecciona al menos una familia y una referencia.')
             return
         }
-        if (isInstruction && !publicSlug) {
-            toast.error('El slug publico es obligatorio para instructivos.')
+        if (relationshipScope !== 'reference' && selectedScopeTargets.length === 0) {
+            toast.error('Selecciona al menos un destino para el recurso.')
+            return
+        }
+        if (createPublicLink && !documentSlot) {
+            toast.error('Selecciona el tipo funcional del documento para generar el prefijo.')
             return
         }
         if (isIsometric && blockingDiffFields.length > 0 && !confirmBlockingDiffs) {
@@ -401,9 +474,13 @@ export function ResourceAssociationDialog() {
                 const result = await associateProductResourceAction({
                     assetId: selectedAssetId,
                     assetType: resourceType,
+                    relationshipScope,
                     referenceCodes: selectedReferences,
                     versionCodes: selectedVersions,
-                    publicSlug: isInstruction ? publicSlug : undefined,
+                    targetValues: relationshipScope === 'reference' ? [] : selectedScopeTargets,
+                    createPublicLink,
+                    documentSlot: createPublicLink ? documentSlot : undefined,
+                    documentLabel: documentLabel || selectedAsset?.name || undefined,
                     versionNumber,
                     status,
                     sortOrder: isAssemblyStep ? sortOrder : 0,
@@ -430,10 +507,13 @@ export function ResourceAssociationDialog() {
         return keywords.every((keyword) => name.includes(keyword) || path.includes(keyword))
     })
 
+    const hasValidTarget = relationshipScope === 'reference'
+        ? selectedFamilies.length > 0 && selectedReferences.length > 0
+        : selectedScopeTargets.length > 0
+
     const canSubmit = Boolean(selectedAssetId)
-        && selectedFamilies.length > 0
-        && selectedReferences.length > 0
-        && (!isInstruction || Boolean(publicSlug))
+        && hasValidTarget
+        && (!createPublicLink || Boolean(documentSlot))
         && (!isIsometric || blockingDiffFields.length === 0 || confirmBlockingDiffs)
         && !submitting
         && !uploading
@@ -512,7 +592,7 @@ export function ResourceAssociationDialog() {
                             <p className="text-sm font-medium text-slate-700">
                                 {uploading ? 'Subiendo archivo...' : `Subir ${config.label.toLowerCase()}`}
                             </p>
-                            <p className="text-[10px] text-slate-500 mt-1">Tambien puedes escoger un recurso existente abajo.</p>
+                            <p className="text-[10px] text-slate-500 mt-1">SVG, JPG, PDF u otro compatible. Tambien puedes escoger un recurso existente abajo.</p>
                         </div>
 
                         {assets.length > 0 && (
@@ -538,7 +618,10 @@ export function ResourceAssociationDialog() {
                                 {filteredAssets.map((asset) => (
                                     <div
                                         key={asset.id}
-                                        onClick={() => setSelectedAssetId(asset.id)}
+                                        onClick={() => {
+                                            setSelectedAssetId(asset.id)
+                                            if (!documentLabel.trim()) setDocumentLabel(asset.name)
+                                        }}
                                         className={cn(
                                             'flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer',
                                             selectedAssetId === asset.id
@@ -591,61 +674,130 @@ export function ResourceAssociationDialog() {
                     <div className="space-y-4 pt-4 border-t border-slate-100">
                         <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">3. Destino del recurso</Label>
                         <div className="space-y-2">
-                            <Label className="text-slate-700 font-medium">Familia(s)</Label>
-                            <MultiSelectSearchField
-                                options={families}
-                                values={selectedFamilies}
-                                onChange={(values) => void handleFamiliesChange(values)}
-                                placeholder="Seleccionar familias"
-                                className="h-11"
-                            />
+                            <Label className="text-slate-700 font-medium">Nivel de relacionamiento</Label>
+                            <select
+                                value={relationshipScope}
+                                onChange={(event) => void handleRelationshipScopeChange(event.target.value as RelationshipScope)}
+                                disabled={loading || uploading || submitting || isIsometric}
+                                className="w-full h-11 bg-slate-50 border border-slate-200 rounded-lg px-3 text-sm font-medium text-slate-900 focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                            >
+                                {RELATIONSHIP_SCOPE_OPTIONS.map((item) => (
+                                    <option key={item.value} value={item.value}>{item.label}</option>
+                                ))}
+                            </select>
+                            <p className="text-[11px] text-slate-500">{selectedScopeConfig.description}</p>
                         </div>
 
-                        <div className={cn('space-y-2 transition-opacity', selectedFamilies.length === 0 && 'opacity-50 pointer-events-none')}>
-                            <Label className="text-slate-700 font-medium">Ref - Desig - Medida - Nombre - Accesorio - Marca</Label>
-                            <MultiSelectSearchField
-                                options={references}
-                                values={selectedReferences}
-                                onChange={(values) => void handleReferencesChange(values)}
-                                placeholder="Seleccionar referencia"
-                                className="h-11"
-                                emptyMessage="Selecciona familias primero."
-                            />
-                        </div>
+                        {relationshipScope === 'reference' ? (
+                            <>
+                                <div className="space-y-2">
+                                    <Label className="text-slate-700 font-medium">Familia(s)</Label>
+                                    <MultiSelectSearchField
+                                        options={families}
+                                        values={selectedFamilies}
+                                        onChange={(values) => void handleFamiliesChange(values)}
+                                        placeholder="Seleccionar familias"
+                                        className="h-11"
+                                    />
+                                </div>
 
-                        <div className={cn('space-y-2 transition-opacity', selectedReferences.length === 0 && 'opacity-50 pointer-events-none')}>
-                            <Label className="text-slate-700 font-medium">Version(es) <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">(Opcional)</span></Label>
-                            <MultiSelectSearchField
-                                options={versions}
-                                values={selectedVersions}
-                                onChange={setSelectedVersions}
-                                placeholder="Todas las versiones"
-                                className="h-11"
-                                emptyMessage="Selecciona referencias primero."
-                            />
-                        </div>
+                                <div className={cn('space-y-2 transition-opacity', selectedFamilies.length === 0 && 'opacity-50 pointer-events-none')}>
+                                    <Label className="text-slate-700 font-medium">Ref - Desig - Medida - Nombre - Accesorio - Marca</Label>
+                                    <MultiSelectSearchField
+                                        options={references}
+                                        values={selectedReferences}
+                                        onChange={(values) => void handleReferencesChange(values)}
+                                        placeholder="Seleccionar referencia"
+                                        className="h-11"
+                                        emptyMessage="Selecciona familias primero."
+                                    />
+                                </div>
+
+                                <div className={cn('space-y-2 transition-opacity', selectedReferences.length === 0 && 'opacity-50 pointer-events-none')}>
+                                    <Label className="text-slate-700 font-medium">Version(es) <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">(Opcional)</span></Label>
+                                    <MultiSelectSearchField
+                                        options={versions}
+                                        values={selectedVersions}
+                                        onChange={setSelectedVersions}
+                                        placeholder="Todas las versiones"
+                                        className="h-11"
+                                        emptyMessage="Selecciona referencias primero."
+                                    />
+                                </div>
+                            </>
+                        ) : (
+                            <div className="space-y-2">
+                                <Label className="text-slate-700 font-medium">Destino(s)</Label>
+                                <MultiSelectSearchField
+                                    options={scopeOptions}
+                                    values={selectedScopeTargets}
+                                    onChange={setSelectedScopeTargets}
+                                    placeholder={`Seleccionar ${selectedScopeConfig.label.toLowerCase()}`}
+                                    className="h-11"
+                                    emptyMessage="No hay opciones disponibles para este alcance."
+                                />
+                            </div>
+                        )}
                     </div>
 
                     {!isIsometric && (
                         <div className="space-y-4 pt-4 border-t border-slate-100">
                             <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">4. Control del recurso</Label>
-                            {isInstruction && (
-                                <div className="space-y-2">
-                                    <Label className="text-slate-700 font-medium">Slug publico para QR</Label>
-                                    <Input
-                                        value={publicSlug}
-                                        onChange={(event) => {
-                                            setPublicSlugTouched(true)
-                                            setPublicSlug(slugify(event.target.value))
-                                        }}
-                                        placeholder="zacura-63x48-elevado"
-                                        className="h-11 bg-slate-50 border-slate-200 focus:bg-white"
-                                    />
+                            <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                                <input
+                                    type="checkbox"
+                                    className="mt-1"
+                                    checked={createPublicLink}
+                                    onChange={(event) => setCreatePublicLink(event.target.checked)}
+                                />
+                                <span className="space-y-1">
+                                    <span className="block font-bold">Crear enlace publico para QR</span>
+                                    <span className="block text-[11px] text-slate-500">
+                                        Si esta apagado, el recurso queda relacionado pero no se ofrece como QR ni link publico.
+                                    </span>
+                                </span>
+                            </label>
+
+                            {createPublicLink && (
+                                <div className="space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/30 p-3">
+                                    <div className="space-y-2">
+                                        <Label className="text-slate-700 font-medium">Tipo funcional / prefijo</Label>
+                                        <select
+                                            value={documentSlot}
+                                            onChange={(event) => setDocumentSlot(event.target.value)}
+                                            className="w-full h-11 bg-white border border-indigo-100 rounded-lg px-3 text-sm font-medium text-slate-900 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                                        >
+                                            {documentPrefixes.map((item) => (
+                                                <option key={item.document_slot} value={item.document_slot}>
+                                                    {item.prefix} - {item.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        {documentPrefixes.length === 0 && (
+                                            <p className="text-[11px] font-semibold text-rose-600">
+                                                No hay prefijos activos. Configuralos en Configuracion &gt; Nomenclatura.
+                                            </p>
+                                        )}
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label className="text-slate-700 font-medium">Etiqueta del documento</Label>
+                                        <Input
+                                            value={documentLabel}
+                                            onChange={(event) => setDocumentLabel(event.target.value)}
+                                            placeholder={selectedAsset?.name || 'Instructivo mueble elevado...'}
+                                            className="h-11 bg-white border-indigo-100 focus:bg-white"
+                                        />
+                                    </div>
+
                                     <p className="text-[11px] text-slate-500">
-                                        Link final: <span className="font-mono text-slate-800">/i/{publicSlug || 'slug-del-instructivo'}</span>
+                                        Preview aproximado:{' '}
+                                        <span className="font-mono text-slate-800">
+                                            /{previewPublicSlug || 'prefijo/slug-generado'}
+                                        </span>
                                     </p>
                                     <p className="text-[11px] text-slate-500">
-                                        Un mismo slug puede relacionarse con varias referencias o versiones que compartan instructivo.
+                                        El slug final se genera en servidor con la nomenclatura y abreviaturas configuradas.
                                     </p>
                                 </div>
                             )}

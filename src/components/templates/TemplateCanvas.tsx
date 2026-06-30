@@ -5,9 +5,9 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, AlignVerticalJustifyEnd, AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Undo2, Redo2, Copy, Trash2, Shuffle, RotateCcw, LayoutGrid, Combine, FileEdit, AlertTriangle, CheckCircle2, ShieldAlert, ZoomIn, ZoomOut, Ruler } from 'lucide-react'
+import { Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, AlignVerticalJustifyEnd, AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Undo2, Redo2, Copy, Trash2, Shuffle, RotateCcw, LayoutGrid, Combine, FileEdit, AlertTriangle, CheckCircle2, ShieldAlert, ZoomIn, ZoomOut, Ruler, QrCode } from 'lucide-react'
 import { toast } from 'sonner'
-import { updateTemplate, getPreviewProduct, getRandomPreviewProduct, validateExportFilenameLength, getTemplateLinkedDatasetsAction } from '@/app/templates/actions'
+import { updateTemplate, getPreviewProduct, getRandomPreviewProduct, validateExportFilenameLength, getTemplateLinkedDatasetsAction, getPublicDocumentQrOptionsAction, resolvePublicDocumentUrlsForProductAction } from '@/app/templates/actions'
 import { getDatasetsAction, FieldDef } from '@/app/datasets/actions'
 import { resolveAssetsAction } from '@/app/generate/actions'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -36,13 +36,15 @@ import {
 import { getTemplateFontCssStack, getTemplateFontLabel, normalizeTemplateFontFamily, TEMPLATE_FONT_OPTIONS, type TemplateFontFamily } from '@/lib/templates/templateTypography'
 import Image from 'next/image'
 import BarcodeElement from '@/components/export/BarcodeElement'
+import QrCodeElement from '@/components/export/QrCodeElement'
 import { resolveBarcodeFormat } from '@/lib/export/barcodeUtils'
 import { extractTemplateVariables } from '@/lib/templates/templateVariables'
 import { applyTemplateTextTransform, resolveCssTextTransform, type TemplateTextTransform } from '@/lib/templates/textTransforms'
 import { buildPrintRuntimePreviewValues, PRINT_RUNTIME_VARIABLE_KEYS, PRINT_RUNTIME_VARIABLE_OPTIONS } from '@/lib/templates/printRuntimeVariables'
 import { expandLabelBoxProducts } from '@/lib/engine/labelParts'
+import { collectRelatedDocumentQrSlots, resolveFixedDocumentQrUrl } from '@/lib/templates/documentQrFields'
 
-export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'box' | 'dashed_line' | 'dynamic_image' | 'icon_group'
+export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'document_qr' | 'box' | 'dashed_line' | 'dynamic_image' | 'icon_group'
 type TemplateBrandScope = 'firplak' | 'private_label'
 type PropertiesPanelTab = 'element' | 'template'
 
@@ -91,6 +93,13 @@ export interface TemplateElement {
     barcodeSvg?: string | null
     barcodeError?: string | null
     barcodeFormatResolved?: 'ean13' | 'code128'
+    documentQrMode?: 'related' | 'fixed'
+    documentSlot?: string | null
+    publicSlug?: string | null
+    qrValue?: string | null
+    qrSvg?: string | null
+    qrError?: string | null
+    qrHidden?: boolean | null
 }
 
 
@@ -132,6 +141,14 @@ type VariableOption = {
 type VariableOptionGroup = {
     group: string
     options: VariableOption[]
+}
+
+type PublicDocumentQrOption = {
+    documentSlot: string
+    documentLabel: string
+    slugPrefix: string
+    publicSlug: string
+    publicUrl: string
 }
 
 const TEMPLATE_RESULT_VARIABLE_FIELDS: NamingVariableField[] = [
@@ -1687,6 +1704,11 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         ...BASE_NAMING_VARIABLE_FIELDS,
         ...TEMPLATE_RESULT_VARIABLE_FIELDS,
     ])
+    const [publicDocumentQrOptions, setPublicDocumentQrOptions] = useState<PublicDocumentQrOption[]>([])
+    const [previewDocumentQrResult, setPreviewDocumentQrResult] = useState<{
+        key: string
+        urls: Record<string, string | null>
+    }>({ key: '', urls: {} })
 
     const [brandScope, setBrandScope] = useState<TemplateBrandScope>(
         template?.brand_scope === 'private_label' ? 'private_label' : 'firplak'
@@ -1883,6 +1905,44 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             .catch(() => setAvailableClients([]))
     }, [])
 
+    useEffect(() => {
+        getPublicDocumentQrOptionsAction()
+            .then((res) => setPublicDocumentQrOptions(Array.isArray(res) ? res as PublicDocumentQrOption[] : []))
+            .catch(() => setPublicDocumentQrOptions([]))
+    }, [])
+
+    const previewDocumentQrSlots = React.useMemo(() => {
+        if (!isPreviewMode || !previewData) return []
+        return collectRelatedDocumentQrSlots(elements)
+    }, [elements, isPreviewMode, previewData])
+
+    const previewDocumentQrKey = React.useMemo(() => {
+        if (!isPreviewMode || !previewData || previewDocumentQrSlots.length === 0) return ''
+        const productKey = String(previewData.id || previewData.code || 'preview')
+        return `${productKey}:${previewDocumentQrSlots.join('|')}`
+    }, [isPreviewMode, previewData, previewDocumentQrSlots])
+
+    const previewDocumentQrUrls = previewDocumentQrResult.key === previewDocumentQrKey
+        ? previewDocumentQrResult.urls
+        : {}
+
+    useEffect(() => {
+        if (!previewDocumentQrKey || !previewData || previewDocumentQrSlots.length === 0) return
+
+        let cancelled = false
+        resolvePublicDocumentUrlsForProductAction(previewData, previewDocumentQrSlots)
+            .then((urls) => {
+                if (!cancelled) setPreviewDocumentQrResult({ key: previewDocumentQrKey, urls })
+            })
+            .catch(() => {
+                if (!cancelled) setPreviewDocumentQrResult({ key: previewDocumentQrKey, urls: {} })
+            })
+
+        return () => {
+            cancelled = true
+        }
+    }, [previewData, previewDocumentQrKey, previewDocumentQrSlots])
+
     const handleDataSourceChange = async (newSource: string) => {
         setDataSource(newSource)
         setIsModified(true)
@@ -1941,6 +2001,14 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         () => buildTemplateVariableGroups(templateVariableFields),
         [templateVariableFields]
     )
+    const documentSlotOptions = React.useMemo(() => {
+        const bySlot = new Map<string, PublicDocumentQrOption>()
+        for (const option of publicDocumentQrOptions) {
+            if (!option.documentSlot || bySlot.has(option.documentSlot)) continue
+            bySlot.set(option.documentSlot, option)
+        }
+        return Array.from(bySlot.values())
+    }, [publicDocumentQrOptions])
 
     const isSchemaSyncedToTemplate = useCallback((schema_json: unknown) => {
         try {
@@ -2423,8 +2491,8 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             type,
             x: 20,
             y: 20,
-            width: type === 'barcode' ? 120 : (type === 'dashed_line' ? CANVAS_WIDTH - 40 : 100),
-            height: type === 'barcode' ? 40 : (type === 'dashed_line' ? 2 : 30),
+            width: type === 'barcode' ? 120 : (type === 'document_qr' ? 76 : (type === 'dashed_line' ? CANVAS_WIDTH - 40 : 100)),
+            height: type === 'barcode' ? 40 : (type === 'document_qr' ? 76 : (type === 'dashed_line' ? 2 : 30)),
             content: type === 'text' ? 'Texto Nuevo' : undefined,
             dataField: type === 'dynamic_text' ? 'final_name_es' : undefined,
             fontSize: 10, // Default 10 pt
@@ -2437,7 +2505,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             borderWidth: type === 'dashed_line' ? 2 : 0,
             lineOrientation: type === 'dashed_line' ? 'horizontal' : undefined,
             required: false,
-            backgroundColor: type === 'barcode' ? 'transparent' : undefined,
+            backgroundColor: type === 'barcode' || type === 'document_qr' ? 'transparent' : undefined,
             barcodeFormat: type === 'barcode' ? 'ean13' : undefined,
             barcodeXDimensionMm: type === 'barcode' ? 0.33 : undefined,
             barcodeBarHeightMm: type === 'barcode' ? 20 : undefined,
@@ -2463,6 +2531,12 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             // Make the element render immediately with the default preview product.
             newEl.dataField = 'barcode_text'
             newEl.barcodeOrientation = 'horizontal'
+        }
+
+        if (type === 'document_qr') {
+            newEl.documentQrMode = 'related'
+            newEl.documentSlot = documentSlotOptions[0]?.documentSlot || 'manual_instalacion'
+            newEl.publicSlug = publicDocumentQrOptions[0]?.publicSlug || null
         }
 
         commitHistory([...elements, newEl])
@@ -2693,6 +2767,11 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     const activeEl = selectedIds.length === 1 ? elements.find(e => e.id === selectedIds[0]) : null
     const effectiveTemplateFontFamily = getTemplateFontCssStack(templateFontFamily)
     const templateFontLabel = getTemplateFontLabel(templateFontFamily)
+    const activeDocumentQrPreviewUrl = activeEl?.type === 'document_qr'
+        ? activeEl.documentQrMode === 'fixed'
+            ? resolveFixedDocumentQrUrl(activeEl.publicSlug)
+            : resolveFixedDocumentQrUrl(previewDocumentQrUrls[String(activeEl.documentSlot || '')] || '')
+        : ''
 
     useEffect(() => {
         const nextTab =
@@ -2752,6 +2831,9 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                         </Button>
                         <Button variant="outline" size="sm" onClick={() => addElement('barcode')}>
                             ||| Barcode
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => addElement('document_qr')} title="QR para documentos publicos relacionados o fijos">
+                            <QrCode className="h-4 w-4 mr-2" /> QR documento
                         </Button>
                         <Button variant="outline" size="sm" onClick={() => addElement('dashed_line')}>
                             <Minus className="h-4 w-4 mr-2" /> Línea
@@ -3028,6 +3110,23 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                         />
                                     )}
 
+                                    {/* Public document QR type */}
+                                    {childEl.type === 'document_qr' && (() => {
+                                        const qrValue = childEl.documentQrMode === 'fixed'
+                                            ? resolveFixedDocumentQrUrl(childEl.publicSlug)
+                                            : resolveFixedDocumentQrUrl(previewDocumentQrUrls[String(childEl.documentSlot || '')] || '')
+                                        const qrHidden = isPreviewMode && !qrValue
+
+                                        return (
+                                            <QrCodeElement
+                                                el={{ ...childEl, qrHidden }}
+                                                rawValue={qrValue || undefined}
+                                                sampleWhenEmpty={!isPreviewMode || !qrValue}
+                                                className="pointer-events-none"
+                                            />
+                                        )
+                                    })()}
+
                                     {/* Text types */}
                                     {(childEl.type === 'dynamic_text' || childEl.type === 'text') && (
                                         <OverflowText
@@ -3172,7 +3271,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                             </div>
 
                             {/* Required Field Toggle */}
-                            {(activeEl.type === 'text' || activeEl.type === 'dynamic_text' || activeEl.type === 'image' || activeEl.type === 'barcode') && (
+                            {(activeEl.type === 'text' || activeEl.type === 'dynamic_text' || activeEl.type === 'image' || activeEl.type === 'barcode' || activeEl.type === 'document_qr') && (
                                 <div className="flex items-center space-x-2 bg-slate-100 p-2 rounded-md border border-slate-200">
                                     <input 
                                         type="checkbox" 
@@ -3555,6 +3654,90 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                             value={activeEl.barcodeQuietZoneX ?? 10}
                                             onChange={(e) => updateSelectedElements({ barcodeQuietZoneX: parseFloat(e.target.value) || 0 })}
                                         />
+                                    </div>
+                                </div>
+                            )}
+
+                            {activeEl.type === 'document_qr' && (
+                                <div className="space-y-3 border border-indigo-100 bg-indigo-50/30 p-3 rounded-lg shadow-sm">
+                                    <div>
+                                        <Label className="text-xs text-slate-700 font-semibold mb-1 block">Modo del QR</Label>
+                                        <select
+                                            className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                            value={activeEl.documentQrMode || 'related'}
+                                            onChange={(e) => {
+                                                const mode = e.target.value as TemplateElement['documentQrMode']
+                                                updateSelectedElements({
+                                                    documentQrMode: mode,
+                                                    documentSlot: mode === 'related'
+                                                        ? activeEl.documentSlot || documentSlotOptions[0]?.documentSlot || null
+                                                        : activeEl.documentSlot,
+                                                    publicSlug: mode === 'fixed'
+                                                        ? activeEl.publicSlug || publicDocumentQrOptions[0]?.publicSlug || null
+                                                        : activeEl.publicSlug,
+                                                })
+                                            }}
+                                        >
+                                            <option value="related">Documento relacionado al producto</option>
+                                            <option value="fixed">Documento fijo</option>
+                                        </select>
+                                    </div>
+
+                                    {(activeEl.documentQrMode || 'related') === 'related' ? (
+                                        <div>
+                                            <Label className="text-xs text-slate-700 font-semibold mb-1 block">Documento a resolver</Label>
+                                            {documentSlotOptions.length > 0 ? (
+                                                <select
+                                                    className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                    value={activeEl.documentSlot || documentSlotOptions[0]?.documentSlot || ''}
+                                                    onChange={(e) => updateSelectedElements({ documentSlot: e.target.value })}
+                                                >
+                                                    {documentSlotOptions.map((option) => (
+                                                        <option key={option.documentSlot} value={option.documentSlot}>
+                                                            {option.documentLabel || option.documentSlot} (/{option.slugPrefix})
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            ) : (
+                                                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                                                    Aun no hay documentos publicos aprobados para usar como QR relacionado.
+                                                </p>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div>
+                                            <Label className="text-xs text-slate-700 font-semibold mb-1 block">Documento fijo publico</Label>
+                                            {publicDocumentQrOptions.length > 0 ? (
+                                                <select
+                                                    className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                    value={activeEl.publicSlug || publicDocumentQrOptions[0]?.publicSlug || ''}
+                                                    onChange={(e) => updateSelectedElements({ publicSlug: e.target.value })}
+                                                >
+                                                    {publicDocumentQrOptions.map((option) => (
+                                                        <option key={option.publicSlug} value={option.publicSlug}>
+                                                            {option.documentLabel || option.publicSlug} - /{option.publicSlug}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            ) : (
+                                                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                                                    Aun no hay documentos publicos aprobados para fijar en el QR.
+                                                </p>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                                        <span className="block font-semibold text-slate-700">URL que codifica</span>
+                                        {activeDocumentQrPreviewUrl ? (
+                                            <span className="mt-1 block break-all font-mono text-[11px] text-indigo-700">
+                                                {activeDocumentQrPreviewUrl}
+                                            </span>
+                                        ) : (
+                                            <span className="mt-1 block text-slate-400">
+                                                Se resolvera por producto en preview/exportacion; si no aplica, el QR no se imprime.
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
                             )}

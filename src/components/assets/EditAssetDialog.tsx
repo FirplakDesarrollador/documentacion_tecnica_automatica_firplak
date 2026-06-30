@@ -83,6 +83,18 @@ interface VersionRow {
     version_number?: number | null;
 }
 
+interface OtherRelationshipRow {
+    relationship_id: string;
+    relationship_source?: 'product_asset_link';
+    scope_label: string;
+    target_label: string;
+    document_slot?: string | null;
+    document_label?: string | null;
+    public_slug?: string | null;
+    status?: string | null;
+    version_number?: number | null;
+}
+
 interface Props {
     assetId: string;
     assetName: string;
@@ -97,7 +109,7 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Pr
     const [isUpdating, setIsUpdating] = useState(false)
     const [open, setOpen] = useState(false)
     const [showRelationships, setShowRelationships] = useState(false)
-    const [relationships, setRelationships] = useState<{ references: ReferenceRow[], versions: VersionRow[] }>({ references: [], versions: [] })
+    const [relationships, setRelationships] = useState<{ references: ReferenceRow[], versions: VersionRow[], otherLinks: OtherRelationshipRow[] }>({ references: [], versions: [], otherLinks: [] })
     const [isLoadingRelationships, setIsLoadingRelationships] = useState(false)
     
     const fileInputRef = useRef<HTMLInputElement>(null)
@@ -187,6 +199,16 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Pr
             loadRelationships()
         } catch {
             toast.error("Error al eliminar relación")
+        }
+    }
+
+    const handleUnlinkOther = async (link: OtherRelationshipRow) => {
+        try {
+            await unlinkProductAssetLinkAction(link.relationship_id)
+            toast.success("Relacion eliminada")
+            loadRelationships()
+        } catch {
+            toast.error("Error al eliminar relacion")
         }
     }
 
@@ -381,7 +403,7 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Pr
                                                                 </p>
                                                                 {ref.public_slug && (
                                                                     <p className="font-mono text-[10px] font-bold text-emerald-600">
-                                                                        /i/{ref.public_slug}
+                                                                        /{ref.public_slug}
                                                                     </p>
                                                                 )}
                                                                 <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-bold uppercase tracking-tight text-slate-400">
@@ -448,7 +470,7 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Pr
                                                                 </p>
                                                                 {ver.public_slug && (
                                                                     <p className="font-mono text-[10px] font-bold text-emerald-600">
-                                                                        /i/{ver.public_slug}
+                                                                        /{ver.public_slug}
                                                                     </p>
                                                                 )}
                                                                 <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-bold uppercase tracking-tight text-slate-400">
@@ -467,6 +489,56 @@ export function EditAssetDialog({ assetId, assetName, assetType, isDefault }: Pr
                                                                         </span>
                                                                     )}
                                                                 </div>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {relationships.otherLinks.length > 0 && (
+                                            <div className="space-y-3">
+                                                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2">
+                                                    <Link2 className="h-3 w-3" />
+                                                    Otros alcances ({relationships.otherLinks.length})
+                                                </h4>
+                                                <div className="space-y-2 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar">
+                                                    {relationships.otherLinks.map((link) => (
+                                                        <div key={link.relationship_id} className="group p-4 bg-white border border-slate-100 rounded-xl hover:border-indigo-200 hover:shadow-sm transition-all flex flex-col gap-3">
+                                                            <div className="flex items-center justify-between">
+                                                                <div className="flex items-center gap-2">
+                                                                    <Badge variant="outline" className="text-[10px] font-bold uppercase tracking-wider bg-slate-50 text-slate-600 border-slate-200">
+                                                                        {link.scope_label}
+                                                                    </Badge>
+                                                                    {link.status && (
+                                                                        <Badge className="bg-emerald-50 text-emerald-700 border-emerald-100 text-[8px] font-bold uppercase">
+                                                                            {link.status}
+                                                                        </Badge>
+                                                                    )}
+                                                                </div>
+                                                                <Button
+                                                                    size="icon"
+                                                                    variant="ghost"
+                                                                    onClick={() => handleUnlinkOther(link)}
+                                                                    className="h-8 w-8 text-slate-300 hover:text-rose-600 hover:bg-rose-50 transition-all rounded-lg opacity-0 group-hover:opacity-100"
+                                                                >
+                                                                    <Unlink className="h-3.5 w-3.5" />
+                                                                </Button>
+                                                            </div>
+                                                            <div className="space-y-1">
+                                                                <p className="text-[12px] font-black text-slate-900 uppercase leading-tight">
+                                                                    {link.target_label}
+                                                                </p>
+                                                                {link.document_label && (
+                                                                    <p className="text-[10px] font-semibold text-slate-500">
+                                                                        {link.document_label}
+                                                                    </p>
+                                                                )}
+                                                                {link.public_slug && (
+                                                                    <p className="font-mono text-[10px] font-bold text-emerald-600">
+                                                                        /{link.public_slug}
+                                                                    </p>
+                                                                )}
                                                             </div>
                                                         </div>
                                                     ))}

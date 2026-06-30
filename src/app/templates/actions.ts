@@ -6,6 +6,10 @@ import { revalidatePath } from "next/cache"
 import { normalizeTemplateFontFamily } from "@/lib/templates/templateTypography"
 import { DEFAULT_MEDIA_GAP_MM, normalizePrintTarget, type PrintTarget } from "@/lib/printLayout"
 import { assertRole } from '@/utils/auth/access'
+import {
+    getPublicDocumentOptions,
+    resolvePublicDocumentForProduct,
+} from '@/lib/productDocuments'
 
 async function assertAdminAccess() {
     await assertRole('admin')
@@ -473,6 +477,28 @@ export async function deleteTemplate(id: string) {
     } catch (e) {
         return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
+}
+
+export async function getPublicDocumentQrOptionsAction() {
+    await assertAdminAccess()
+    return await getPublicDocumentOptions()
+}
+
+export async function resolvePublicDocumentUrlsForProductAction(
+    product: Record<string, unknown>,
+    documentSlots: string[]
+) {
+    await assertAdminAccess()
+
+    const uniqueSlots = Array.from(new Set((documentSlots || []).map((slot) => String(slot || '').trim()).filter(Boolean)))
+    const result: Record<string, string | null> = {}
+
+    for (const slot of uniqueSlots) {
+        const resolved = await resolvePublicDocumentForProduct(product, slot)
+        result[slot] = resolved?.publicUrl || null
+    }
+
+    return result
 }
 
 export async function getTemplatesAction() {

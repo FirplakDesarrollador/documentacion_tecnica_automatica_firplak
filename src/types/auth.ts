@@ -55,7 +55,6 @@ export const PUBLIC_ROUTE_PREFIXES = [
   '/downloads',
   '/favicon.ico',
   '/export-render',
-  '/i/',
 ]
 
 export const PUBLIC_FILE_EXTENSIONS = ['.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.exe', '.zip', '.msi']

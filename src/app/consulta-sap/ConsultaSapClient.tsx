@@ -1,7 +1,7 @@
 'use client'
 
 import { FormEvent, useMemo, useState } from 'react'
-import { Check, Loader2, RefreshCw, Search, X } from 'lucide-react'
+import { Check, ChevronRight, ChevronDown, Layers, Loader2, RefreshCw, Search, X } from 'lucide-react'
 
 type SapItem = Record<string, unknown>
 
@@ -19,6 +19,24 @@ type FieldDefinition = {
 type SapApiItemResponse =
   | { success: true; item: SapItem }
   | { success: false; error: string; sapCode?: string | number | null }
+
+type BomNode = {
+  itemCode: string
+  itemName: string
+  quantity: number
+  level: number
+  lines: BomNode[]
+  loaded: boolean
+}
+
+type BomApiResponse =
+  | { success: true; hasBom: true; tree: BomNode }
+  | { success: true; hasBom: false }
+  | { success: false; error: string }
+
+type BomChildrenResponse =
+  | { success: true; lines: BomNode[] }
+  | { success: false; error: string }
 
 const USER_FIELDS: FieldDefinition[] = [
   { label: 'Inventariable', key: 'U_Inventariable' },
@@ -160,11 +178,113 @@ function SapCheckbox({ label, checked, disabled = false }: { label: string; chec
   )
 }
 
+function countBomNodes(node: BomNode): number {
+  let count = 1
+  for (const child of node.lines) {
+    count += countBomNodes(child)
+  }
+  return count
+}
+
+function BomRowView({
+  node,
+  depth = 0,
+  onLoadChildren,
+  onNodeUpdated,
+}: {
+  node: BomNode
+  depth?: number
+  onLoadChildren: (itemCode: string) => Promise<BomNode[] | null>
+  onNodeUpdated: (updated: BomNode) => void
+}) {
+  const [loading, setLoading] = useState(false)
+  const [localError, setLocalError] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState(depth < 2)
+  const qty = Number.isInteger(node.quantity) ? String(node.quantity) : node.quantity.toFixed(4)
+  const canExpand = !node.loaded || node.lines.length > 0
+
+  async function handleToggle() {
+    if (!node.loaded && !loading) {
+      setLoading(true)
+      setLocalError(null)
+      try {
+        const children = await onLoadChildren(node.itemCode)
+        const updated: BomNode = {
+          ...node,
+          lines: children ?? [],
+          loaded: true,
+        }
+        onNodeUpdated(updated)
+        if (children) {
+          setExpanded(true)
+        } else {
+          setLocalError('Sin LDM')
+        }
+      } catch {
+        setLocalError('Error')
+      } finally {
+        setLoading(false)
+      }
+    } else {
+      setExpanded(!expanded)
+    }
+  }
+
+  return (
+    <div>
+      <div
+        className={`flex min-h-8 items-center gap-1 border-b border-slate-100 text-[13px] hover:bg-slate-50 ${
+          node.level === 0 ? 'bg-amber-50 font-semibold' : ''
+        }`}
+        style={{ paddingLeft: `${16 + depth * 20}px` }}
+      >
+        <span className="flex size-3.5 shrink-0 items-center justify-center">
+          {loading ? (
+            <Loader2 className="size-3 animate-spin text-slate-400" />
+          ) : canExpand ? (
+            <button
+              onClick={handleToggle}
+              className="flex size-3.5 items-center justify-center outline-none"
+            >
+              {expanded ? <ChevronDown className="size-3.5 text-slate-500" /> : <ChevronRight className="size-3.5 text-slate-500" />}
+            </button>
+          ) : (
+            <span className="size-3" />
+          )}
+        </span>
+        <span className="w-[180px] shrink-0 truncate font-mono text-slate-800">{node.itemCode}</span>
+        <span className="min-w-0 flex-1 truncate text-slate-600">
+          {node.itemName}
+          {localError ? <span className="ml-2 text-[11px] text-slate-400">({localError})</span> : null}
+        </span>
+        <span className="w-[80px] shrink-0 text-right text-slate-700">{qty}</span>
+      </div>
+      {expanded && node.loaded && node.lines.length > 0 && (
+        <div>
+          {node.lines.map((child, i) => (
+            <BomRowView
+              key={`${child.itemCode}-${i}`}
+              node={child}
+              depth={depth + 1}
+              onLoadChildren={onLoadChildren}
+              onNodeUpdated={onNodeUpdated}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function ConsultaSapClient({ initialCode, initialItem, initialError }: ConsultaSapClientProps) {
   const [code, setCode] = useState(initialCode)
   const [item, setItem] = useState<SapItem | null>(initialItem)
   const [error, setError] = useState<string | null>(initialError)
   const [loading, setLoading] = useState(false)
+  const [bomTree, setBomTree] = useState<BomNode | null>(null)
+  const [bomLoading, setBomLoading] = useState(false)
+  const [bomError, setBomError] = useState<string | null>(null)
+  const [showBom, setShowBom] = useState(false)
 
   const activeCode = itemValue(item, 'ItemCode') || code
   const priceListOne = useMemo(() => readPriceListOne(item), [item])
@@ -199,8 +319,69 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
     }
   }
 
+  async function fetchBom() {
+    const codeToFetch = activeCode
+    if (!codeToFetch) return
+
+    setBomLoading(true)
+    setBomError(null)
+
+    try {
+      const response = await fetch(`/api/sap/items/${encodeURIComponent(codeToFetch)}/bom`, {
+        headers: { Accept: 'application/json' },
+      })
+      const payload = await response.json() as BomApiResponse
+
+      if (!response.ok || !payload.success) {
+        setBomTree(null)
+        setBomError(payload.success ? 'No se pudo consultar LDM' : 'error' in payload ? payload.error : 'Error')
+        return
+      }
+
+      if (!payload.hasBom) {
+        setBomTree(null)
+        setBomError('Este articulo no tiene lista de materiales')
+        return
+      }
+
+      setBomTree(payload.tree)
+    } catch (e: unknown) {
+      setBomTree(null)
+      setBomError(e instanceof Error ? e.message : 'No se pudo consultar LDM')
+    } finally {
+      setBomLoading(false)
+    }
+  }
+
+  async function loadBomChildren(itemCode: string): Promise<BomNode[] | null> {
+    try {
+      const response = await fetch(`/api/sap/items/${encodeURIComponent(itemCode)}/bom?children=true`, {
+        headers: { Accept: 'application/json' },
+      })
+      const payload = await response.json() as BomChildrenResponse
+      if (!response.ok || !payload.success) return null
+      return payload.lines
+    } catch {
+      return null
+    }
+  }
+
+  function updateBomNode(updated: BomNode) {
+    setBomTree(prev => {
+      if (!prev) return prev
+      function replaceInTree(node: BomNode): BomNode {
+        if (node.itemCode === updated.itemCode) return updated
+        return { ...node, lines: node.lines.map(replaceInTree) }
+      }
+      return replaceInTree(prev)
+    })
+  }
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    setShowBom(false)
+    setBomTree(null)
+    setBomError(null)
     void fetchItem(code)
   }
 
@@ -234,6 +415,31 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
             <RefreshCw className="size-4" />
             Actualizar
           </button>
+          <button
+            type="button"
+            disabled={!item || bomLoading}
+            onClick={() => {
+              if (showBom) {
+                setShowBom(false)
+                if (bomError) setBomError(null)
+                return
+              }
+              if (bomTree && bomTree.itemCode === activeCode) {
+                setShowBom(true)
+                return
+              }
+              setShowBom(true)
+              void fetchBom()
+            }}
+            className={`inline-flex h-9 items-center gap-2 border px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60 ${
+              showBom
+                ? 'border-amber-600 bg-amber-400 text-slate-950 hover:bg-amber-300'
+                : 'border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            {bomLoading ? <Loader2 className="size-4 animate-spin" /> : <Layers className="size-4" />}
+            LDM
+          </button>
           <div className="ml-auto flex items-center gap-2 text-xs font-medium text-slate-600">
             <span className={`size-2 rounded-full ${error ? 'bg-red-500' : 'bg-emerald-500'}`} />
             Service Layer
@@ -259,97 +465,140 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
             </div>
           </aside>
 
-          <section className="min-w-0 border border-slate-300 bg-white">
-            <div className="border-b-4 border-amber-400 bg-slate-100 px-3 py-2 text-sm font-semibold">
-              Datos maestros de articulo
-            </div>
-
-            <div className="grid gap-4 p-3 xl:grid-cols-[minmax(0,1fr)_330px]">
-              <div className="grid gap-2">
-                <CompactInput label="Numero articulo" value={activeCode} />
-                <CompactInput label="Descripcion" value={itemValue(item, 'ItemName')} wide />
-                <CompactInput label="Nombre extranjero" value={itemValue(item, 'ForeignName')} wide />
-                <CompactInput label="Clase de articulo" value={readItemType(item)} />
-                <CompactInput label="Grupo de articulos" value={itemValue(item, 'ItemsGroupCode')} />
-                <CompactInput label="Grupo unid. medida" value={itemValue(item, 'UoMGroupEntry') === '-1' ? 'Manual' : itemValue(item, 'UoMGroupEntry')} />
-                <CompactInput label="Lista de precios" value={priceListOne || '1'} />
+          {showBom && bomLoading && !bomTree ? (
+            <section className="flex min-w-0 flex-col border border-slate-300 bg-white">
+              <div className="border-b-4 border-amber-400 bg-slate-100 px-3 py-2 text-sm font-semibold">
+                Lista de Materiales
+              </div>
+              <div className="flex items-center justify-center gap-2 p-8 text-sm text-slate-500">
+                <Loader2 className="size-5 animate-spin" />
+                Consultando lista de materiales...
+              </div>
+            </section>
+          ) : showBom && bomTree ? (
+            <section className="flex min-w-0 flex-col border border-slate-300 bg-white">
+              <div className="flex items-center justify-between border-b-4 border-amber-400 bg-slate-100 px-3 py-2 text-sm font-semibold">
+                <span>Lista de Materiales - {activeCode}</span>
+                <span className="text-xs font-normal text-slate-500">
+                  {countBomNodes(bomTree)} componentes
+                </span>
+              </div>
+              <div className="max-h-[calc(100vh-200px)] overflow-auto">
+                <div className="sticky top-0 z-10 flex border-b border-slate-200 bg-slate-50 px-3 py-1.5 text-[12px] font-semibold uppercase text-slate-500">
+                  <span className="w-[180px] shrink-0">Codigo</span>
+                  <span className="min-w-0 flex-1">Nombre</span>
+                  <span className="w-[80px] shrink-0 text-right">Cantidad</span>
+                </div>
+                <BomRowView
+                  node={bomTree}
+                  onLoadChildren={loadBomChildren}
+                  onNodeUpdated={updateBomNode}
+                />
+              </div>
+            </section>
+          ) : showBom && bomError ? (
+            <section className="flex min-w-0 flex-col border border-slate-300 bg-white">
+              <div className="border-b-4 border-amber-400 bg-slate-100 px-3 py-2 text-sm font-semibold">
+                Lista de Materiales
+              </div>
+              <div className="flex items-start gap-2 p-4 text-sm text-slate-600">
+                <X className="mt-0.5 size-4 shrink-0 text-slate-400" />
+                <span>{bomError}</span>
+              </div>
+            </section>
+          ) : (
+            <section className="min-w-0 border border-slate-300 bg-white">
+              <div className="border-b-4 border-amber-400 bg-slate-100 px-3 py-2 text-sm font-semibold">
+                Datos maestros de articulo
               </div>
 
-              <div className="grid content-start gap-2 border-l border-slate-200 pl-4">
-                <SapCheckbox label="Articulo de inventario" checked={sapBoolean(item?.InventoryItem)} />
-                <SapCheckbox label="Articulo venta" checked={sapBoolean(item?.SalesItem)} />
-                <SapCheckbox label="Articulo de compra" checked={sapBoolean(item?.PurchaseItem)} />
-                <SapCheckbox label="Indicador de activo fijo" checked={sapBoolean(item?.AssetItem)} disabled />
-                <CompactInput label="Codigo de barras" value={itemValue(item, 'BarCode')} />
-                <CompactInput label="Precio por unidad" value={itemValue(item, 'SalesUnit') || itemValue(item, 'InventoryUOM')} />
-              </div>
-            </div>
-
-            <div className="border-t border-slate-300 px-3 pt-2">
-              <div className="flex overflow-x-auto">
-                {TAB_LABELS.map((label, index) => (
-                  <div
-                    key={label}
-                    className={`min-w-max border border-b-0 border-slate-300 px-5 py-1.5 text-center text-[13px] ${
-                      index === 0 ? 'bg-white font-semibold' : 'bg-slate-100 text-slate-700'
-                    }`}
-                  >
-                    {label}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="m-3 min-h-[470px] border border-slate-300 bg-white p-4">
-              <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
-                <div className="grid content-start gap-2">
-                  <SapCheckbox label="Sujeto a retencion de impuesto" checked={false} />
-                  <SapCheckbox label="Sujeto a impuesto" checked={false} disabled />
-                  <SapCheckbox label="Impuesto indirecto" checked />
-                  <SapCheckbox label="No aplicar grupos de descuento" checked={false} />
-                  <div className="mt-2 grid gap-2">
-                    <CompactInput label="Fabricante" value={itemValue(item, 'Manufacturer')} />
-                    <CompactInput label="ID adicional" value={itemValue(item, 'SWW')} />
-                    <CompactInput label="Forma de envio" value={itemValue(item, 'ShipType')} />
-                    <CompactInput label="Numeros de serie y lote" value={sapBoolean(item?.ManageSerialNumbers) || sapBoolean(item?.ManageBatchNumbers) ? 'Si' : 'Ning.'} />
-                    <CompactInput label="Articulo gestionado por" value={sapBoolean(item?.ManageBatchNumbers) ? 'Lotes' : sapBoolean(item?.ManageSerialNumbers) ? 'Series' : 'Ning.'} />
-                  </div>
+              <div className="grid gap-4 p-3 xl:grid-cols-[minmax(0,1fr)_330px]">
+                <div className="grid gap-2">
+                  <CompactInput label="Numero articulo" value={activeCode} />
+                  <CompactInput label="Descripcion" value={itemValue(item, 'ItemName')} wide />
+                  <CompactInput label="Nombre extranjero" value={itemValue(item, 'ForeignName')} wide />
+                  <CompactInput label="Clase de articulo" value={readItemType(item)} />
+                  <CompactInput label="Grupo de articulos" value={itemValue(item, 'ItemsGroupCode')} />
+                  <CompactInput label="Grupo unid. medida" value={itemValue(item, 'UoMGroupEntry') === '-1' ? 'Manual' : itemValue(item, 'UoMGroupEntry')} />
+                  <CompactInput label="Lista de precios" value={priceListOne || '1'} />
                 </div>
 
-                <div className="grid content-between gap-6">
-                  <div className="grid gap-2 text-[13px]">
-                    <label className="flex items-center gap-2">
-                      <span className={`size-4 rounded-full border ${sapBoolean(item?.Valid) ? 'border-slate-500 bg-white' : 'border-slate-300'}`}>
-                        {sapBoolean(item?.Valid) ? <span className="m-1 block size-1.5 rounded-full bg-slate-700" /> : null}
-                      </span>
-                      Activo
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <span className="size-4 rounded-full border border-slate-300" />
-                      Inactivo
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <span className="size-4 rounded-full border border-slate-300" />
-                      Avanzado
-                    </label>
-                    <div className="mt-2 grid grid-cols-[70px_130px_55px_130px] items-center gap-2">
-                      <span>Desde</span>
-                      <span className="min-h-7 border border-slate-300 px-2 py-1">{formatDate(item?.ValidFrom)}</span>
-                      <span>Hasta</span>
-                      <span className="min-h-7 border border-slate-300 px-2 py-1">{formatDate(item?.ValidTo)}</span>
+                <div className="grid content-start gap-2 border-l border-slate-200 pl-4">
+                  <SapCheckbox label="Articulo de inventario" checked={sapBoolean(item?.InventoryItem)} />
+                  <SapCheckbox label="Articulo venta" checked={sapBoolean(item?.SalesItem)} />
+                  <SapCheckbox label="Articulo de compra" checked={sapBoolean(item?.PurchaseItem)} />
+                  <SapCheckbox label="Indicador de activo fijo" checked={sapBoolean(item?.AssetItem)} disabled />
+                  <CompactInput label="Codigo de barras" value={itemValue(item, 'BarCode')} />
+                  <CompactInput label="Precio por unidad" value={itemValue(item, 'SalesUnit') || itemValue(item, 'InventoryUOM')} />
+                </div>
+              </div>
+
+              <div className="border-t border-slate-300 px-3 pt-2">
+                <div className="flex overflow-x-auto">
+                  {TAB_LABELS.map((label, index) => (
+                    <div
+                      key={label}
+                      className={`min-w-max border border-b-0 border-slate-300 px-5 py-1.5 text-center text-[13px] ${
+                        index === 0 ? 'bg-white font-semibold' : 'bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      {label}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="m-3 min-h-[470px] border border-slate-300 bg-white p-4">
+                <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+                  <div className="grid content-start gap-2">
+                    <SapCheckbox label="Sujeto a retencion de impuesto" checked={false} />
+                    <SapCheckbox label="Sujeto a impuesto" checked={false} disabled />
+                    <SapCheckbox label="Impuesto indirecto" checked />
+                    <SapCheckbox label="No aplicar grupos de descuento" checked={false} />
+                    <div className="mt-2 grid gap-2">
+                      <CompactInput label="Fabricante" value={itemValue(item, 'Manufacturer')} />
+                      <CompactInput label="ID adicional" value={itemValue(item, 'SWW')} />
+                      <CompactInput label="Forma de envio" value={itemValue(item, 'ShipType')} />
+                      <CompactInput label="Numeros de serie y lote" value={sapBoolean(item?.ManageSerialNumbers) || sapBoolean(item?.ManageBatchNumbers) ? 'Si' : 'Ning.'} />
+                      <CompactInput label="Articulo gestionado por" value={sapBoolean(item?.ManageBatchNumbers) ? 'Lotes' : sapBoolean(item?.ManageSerialNumbers) ? 'Series' : 'Ning.'} />
                     </div>
                   </div>
 
-                  <div className="grid gap-2">
-                    <CompactInput label="Comentarios" value={itemValue(item, 'User_Text')} wide />
-                    <CompactInput label="Pais/region origen" value={itemValue(item, 'CountryOfOrigin')} wide />
-                    <CompactInput label="Identificacion estandar" value={itemValue(item, 'NCMCode')} wide />
-                    <CompactInput label="Clasificacion producto basico" value={itemValue(item, 'MaterialType')} wide />
+                  <div className="grid content-between gap-6">
+                    <div className="grid gap-2 text-[13px]">
+                      <label className="flex items-center gap-2">
+                        <span className={`size-4 rounded-full border ${sapBoolean(item?.Valid) ? 'border-slate-500 bg-white' : 'border-slate-300'}`}>
+                          {sapBoolean(item?.Valid) ? <span className="m-1 block size-1.5 rounded-full bg-slate-700" /> : null}
+                        </span>
+                        Activo
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <span className="size-4 rounded-full border border-slate-300" />
+                        Inactivo
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <span className="size-4 rounded-full border border-slate-300" />
+                        Avanzado
+                      </label>
+                      <div className="mt-2 grid grid-cols-[70px_130px_55px_130px] items-center gap-2">
+                        <span>Desde</span>
+                        <span className="min-h-7 border border-slate-300 px-2 py-1">{formatDate(item?.ValidFrom)}</span>
+                        <span>Hasta</span>
+                        <span className="min-h-7 border border-slate-300 px-2 py-1">{formatDate(item?.ValidTo)}</span>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-2">
+                      <CompactInput label="Comentarios" value={itemValue(item, 'User_Text')} wide />
+                      <CompactInput label="Pais/region origen" value={itemValue(item, 'CountryOfOrigin')} wide />
+                      <CompactInput label="Identificacion estandar" value={itemValue(item, 'NCMCode')} wide />
+                      <CompactInput label="Clasificacion producto basico" value={itemValue(item, 'MaterialType')} wide />
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          </section>
+            </section>
+          )}
         </section>
       </div>
     </main>

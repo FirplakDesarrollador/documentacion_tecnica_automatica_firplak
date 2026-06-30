@@ -45,7 +45,7 @@ type SapItemDuplicateInput = {
   omitFields?: string[]
 }
 
-const DEFAULT_TIMEOUT_MS = 30_000
+const DEFAULT_TIMEOUT_MS = 60_000
 const DEFAULT_SESSION_TIMEOUT_MINUTES = 30
 const DEFAULT_ITEM_CLONE_OMIT_FIELDS = [
   'odata.metadata',
@@ -456,6 +456,120 @@ export async function duplicateSapItem(input: SapItemDuplicateInput): Promise<{
   return {
     sourceItem,
     createPayload,
+  }
+}
+
+export type BomLine = {
+  ItemCode: string
+  ItemName: string
+  Quantity: number
+  Price: number
+  Currency: string
+  IssueMethod: string
+  InventoryUOM: string | null
+  ChildNum: number
+  ParentItem: string
+  Warehouse: string | null
+  Comment: string | null
+}
+
+export type BomNode = {
+  itemCode: string
+  itemName: string
+  quantity: number
+  level: number
+  lines: BomNode[]
+  loaded: boolean
+}
+
+function isBomLine(value: unknown): value is BomLine {
+  if (!isRecord(value)) return false
+  return typeof value.ItemCode === 'string'
+}
+
+function parseBomLines(lines: unknown): BomLine[] {
+  if (!Array.isArray(lines)) return []
+  return lines.filter(isBomLine)
+}
+
+export async function getSapItemBom(itemCode: string): Promise<{
+  treeCode: string
+  productDescription: string | null
+  treeType: string | null
+  quantity: number
+  lines: BomLine[]
+} | null> {
+  const normalizedCode = normalizeRequiredCode(itemCode, 'itemCode')
+  try {
+    const tree = await sapServiceLayerRequest<Record<string, unknown>>(
+      `/ProductTrees(${encodeODataString(normalizedCode)})`
+    )
+    if (!isRecord(tree)) return null
+    return {
+      treeCode: String(tree.TreeCode ?? ''),
+      productDescription: tree.ProductDescription != null ? String(tree.ProductDescription) : null,
+      treeType: tree.TreeType != null ? String(tree.TreeType) : null,
+      quantity: typeof tree.Quantity === 'number' ? tree.Quantity : 1,
+      lines: parseBomLines(tree.ProductTreeLines),
+    }
+  } catch (error) {
+    if (error instanceof SapServiceLayerError && error.statusCode === 404) {
+      return null
+    }
+    throw error
+  }
+}
+
+export async function getSapItemBomTree(
+  itemCode: string
+): Promise<{ tree: BomNode | null; error: string | null }> {
+  try {
+    const top = await getSapItemBom(itemCode)
+    if (!top) return { tree: null, error: null }
+
+    const root: BomNode = {
+      itemCode: top.treeCode,
+      itemName: top.productDescription ?? '',
+      quantity: top.quantity,
+      level: 0,
+      lines: top.lines.map(l => ({
+        itemCode: l.ItemCode,
+        itemName: l.ItemName || '',
+        quantity: l.Quantity,
+        level: 1,
+        lines: [],
+        loaded: false,
+      })),
+      loaded: true,
+    }
+
+    return { tree: root, error: null }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'BOM query failed'
+    return { tree: null, error: message }
+  }
+}
+
+export async function getSapItemBomChildren(
+  itemCode: string
+): Promise<{ lines: BomNode[]; error: string | null }> {
+  try {
+    const bom = await getSapItemBom(itemCode)
+    if (!bom) return { lines: [], error: null }
+
+    const lines = bom.lines.map(l => ({
+      itemCode: l.ItemCode,
+      itemName: l.ItemName || '',
+      quantity: l.Quantity,
+      level: 0,
+      lines: [],
+      loaded: false,
+    }))
+
+    return { lines, error: null }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'BOM children query failed'
+    return { lines: [], error: message }
   }
 }
 

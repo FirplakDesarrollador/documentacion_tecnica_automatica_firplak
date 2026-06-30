@@ -1,6 +1,11 @@
 import { dbQuery } from '@/lib/supabase'
 import { buildBarcode, resolveBarcodeFormat } from './barcodeUtils'
+import { buildQrCodeSvg } from './qrCodeUtils'
 import { applyTemplateTextTransform } from '@/lib/templates/textTransforms'
+import {
+    getAttachedDocumentQrUrl,
+    resolveFixedDocumentQrUrl,
+} from '@/lib/templates/documentQrFields'
 
 /**
  * Resolves the English translation for a zone_home value from the Supabase glossary.
@@ -53,6 +58,13 @@ interface HydratableTemplateElement extends Record<string, unknown> {
     barcodeValue?: string
     barcodeSvg?: string | null
     barcodeError?: string | null
+    documentQrMode?: string | null
+    documentSlot?: string | null
+    publicSlug?: string | null
+    qrValue?: string | null
+    qrSvg?: string | null
+    qrError?: string | null
+    qrHidden?: boolean | null
 }
 
 const normalizeString = (str: string) => {
@@ -156,7 +168,7 @@ export async function hydrateTemplateElements(
         return `${baseUrl}/storage/v1/object/public/assets/${cleanPath}`
     }
 
-    return elements.map((el): Record<string, unknown> => {
+    return Promise.all(elements.map(async (el): Promise<Record<string, unknown>> => {
         const cloned: HydratableTemplateElement = { ...el }
 
         // Resolución de activos de imagen (R8)
@@ -239,8 +251,29 @@ export async function hydrateTemplateElements(
             cloned.barcodeError = barcode.errorMessage
         }
 
+        if (cloned.type === 'document_qr') {
+            const mode = String(cloned.documentQrMode || 'related')
+            const documentSlot = String(cloned.documentSlot || '').trim()
+            const fixedUrl = mode === 'fixed' ? resolveFixedDocumentQrUrl(cloned.publicSlug) : ''
+            const relatedUrl = mode === 'fixed' ? '' : getAttachedDocumentQrUrl(enrichedProduct, documentSlot)
+            const qrValue = fixedUrl || relatedUrl || ''
+
+            if (!qrValue) {
+                cloned.qrHidden = true
+                cloned.qrValue = null
+                cloned.qrSvg = null
+                cloned.qrError = null
+            } else {
+                const qr = await buildQrCodeSvg(qrValue, Number(cloned.width) || undefined)
+                cloned.qrHidden = false
+                cloned.qrValue = qr.normalizedValue
+                cloned.qrSvg = qr.svgMarkup
+                cloned.qrError = qr.errorMessage
+            }
+        }
+
         return cloned
-    })
+    }))
 }
 
 /**

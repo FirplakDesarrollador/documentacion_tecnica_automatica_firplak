@@ -22,6 +22,7 @@ import { ValidationWarnings, getTemplateRequiredFields, getTemplateValidationIss
 import type { TemplateOption } from './TemplatePicker'
 import type { GenerateProduct } from './GenerateProductTable'
 import { resolveAssetsAction, getAllFilteredProductsAction } from '@/app/generate/actions'
+import { resolvePublicDocumentUrlsForProductAction } from '@/app/templates/actions'
 import { hydrateTemplateElements, hydrateText } from '@/lib/export/exportUtils'
 import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { evaluateProductRules } from '@/lib/engine/ruleEvaluator'
@@ -33,6 +34,7 @@ import {
     expandLabelBoxProducts,
     filenameFormatUsesLabelBoxVariable,
 } from '@/lib/engine/labelParts'
+import { attachDocumentQrUrls, collectRelatedDocumentQrSlots } from '@/lib/templates/documentQrFields'
 
 type RuleSet = Record<string, unknown>[]
 type RuleProduct = Parameters<typeof evaluateProductRules>[0]
@@ -43,6 +45,8 @@ type TemplateElement = {
     required?: boolean
     type?: string
     content?: string
+    documentQrMode?: string | null
+    documentSlot?: string | null
 }
 
 type BulkExportWritable = {
@@ -91,6 +95,18 @@ function sanitizeFilename(name: string): string {
     // Eliminar caracteres prohibidos en sistemas de archivos (\ / : * ? " < > |)
     // Especialmente el '/' que estaba causando el error del usuario
     return name.replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim()
+}
+
+async function attachResolvedDocumentQrUrls(product: GenerateProduct, elements: TemplateElement[]): Promise<GenerateProduct> {
+    const slots = collectRelatedDocumentQrSlots(elements)
+    if (slots.length === 0) return product
+
+    try {
+        const urls = await resolvePublicDocumentUrlsForProductAction(product as unknown as Record<string, unknown>, slots)
+        return attachDocumentQrUrls(product as unknown as Record<string, unknown>, urls) as unknown as GenerateProduct
+    } catch {
+        return product
+    }
 }
 
 
@@ -156,8 +172,9 @@ async function exportOneProduct(
 
     for (const labelBoxProduct of labelBoxProducts) {
         // 4. Hidratar la plantilla con los textos resueltos en tiempo real
-        const hydrated = await hydrateTemplateElements(elements, labelBoxProduct, assetMap)
-        const enriched = enrichProductDataWithIcons(labelBoxProduct, assetMap)
+        const productWithDocumentQr = await attachResolvedDocumentQrUrls(labelBoxProduct as GenerateProduct, elements)
+        const hydrated = await hydrateTemplateElements(elements, productWithDocumentQr, assetMap)
+        const enriched = enrichProductDataWithIcons(productWithDocumentQr, assetMap)
 
         // Obtenemos el nombre base y lo sanitizamos para evitar errores de sistema de archivos
         const rawDownloadName = hydrateText(filenameFormat, enriched)

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { LayoutTemplate, ChevronDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -48,12 +48,6 @@ export function TemplatePicker({ templates, selectedTemplateId, onSelect, update
     const router = useRouter()
     const searchParams = useSearchParams()
     
-    const [isMounted, setIsMounted] = useState(false)
-    useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setIsMounted(true)
-    }, [])
-
     const selected = templates.find(t => t.id === selectedTemplateId)
 
     const handleSelect = (id: string) => {
@@ -66,25 +60,11 @@ export function TemplatePicker({ templates, selectedTemplateId, onSelect, update
         }
     }
 
-    if (!isMounted) {
-        return (
-            <Button variant="outline" className="flex items-center gap-2 min-w-[200px] justify-between bg-white border-slate-200 opacity-50 cursor-wait">
-                <div className="flex items-center gap-2 min-w-0">
-                    <LayoutTemplate className="w-4 h-4 shrink-0 text-slate-400" />
-                    <span className="truncate text-sm font-medium text-slate-400">
-                        Cargando...
-                    </span>
-                </div>
-                <ChevronDown className="w-4 h-4 shrink-0 text-slate-300" />
-            </Button>
-        )
-    }
-
     if (templates.length === 0) {
         return (
             <div className="flex items-center gap-2 text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                 <LayoutTemplate className="w-4 h-4 shrink-0" />
-                <span>No hay plantillas activas. <a href="/templates" className="underline font-medium">Crear una plantilla</a></span>
+                <span>No hay plantillas activas. <Link href="/templates" className="underline font-medium">Crear una plantilla</Link></span>
             </div>
         )
     }

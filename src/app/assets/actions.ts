@@ -4,6 +4,15 @@ import { dbQuery } from '@/lib/supabase'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { getFamilyFilters, getReferenceFilters } from '@/lib/data/filters'
 import { assertRole } from '@/utils/auth/access'
+import {
+    buildProductAssetSlugBody,
+    composePublicSlug,
+    getDocumentPrefixBySlot,
+    getDocumentSlugPrefixes,
+    getPublicDocumentOptions,
+    type ProductAssetLinkScope,
+} from '@/lib/productDocuments'
+import { normalizeDocumentSlot } from '@/lib/documentLinks'
 
 async function assertAdminAccess() {
     await assertRole('admin')
@@ -21,8 +30,9 @@ type AssetFilePathRow = {
     file_path: string
 }
 
-type AssetTypeRow = {
+type AssetRecordRow = {
     type: string
+    name: string
 }
 
 type IdRow = {
@@ -38,9 +48,13 @@ type ProductResourceStatus = 'draft' | 'review' | 'approved' | 'replaced' | 'rej
 type ProductResourceAssociationData = {
     assetId: string
     assetType: string
+    relationshipScope?: ProductAssetLinkScope
     referenceCodes: string[]
     versionCodes?: string[]
-    publicSlug?: string
+    targetValues?: string[]
+    createPublicLink?: boolean
+    documentSlot?: string
+    documentLabel?: string
     versionNumber?: number
     status?: ProductResourceStatus
     sortOrder?: number
@@ -70,8 +84,35 @@ function normalizeInt(value: unknown, fallback: number) {
     return Number.isFinite(parsed) ? parsed : fallback
 }
 
-function normalizePublicSlug(value: unknown) {
-    return String(value || '').trim().toLowerCase()
+function normalizeOptionalText(value: unknown) {
+    const text = String(value || '').trim()
+    return text || null
+}
+
+function normalizeRelationshipScope(value: unknown): ProductAssetLinkScope {
+    const normalized = String(value || 'reference').trim().toLowerCase()
+    const scopes: ProductAssetLinkScope[] = [
+        'reference',
+        'version',
+        'sku',
+        'family',
+        'product_type',
+        'manufacturing_process',
+        'use_destination',
+        'global',
+    ]
+    return scopes.includes(normalized as ProductAssetLinkScope)
+        ? (normalized as ProductAssetLinkScope)
+        : 'reference'
+}
+
+function buildTargetConditions(targets: Array<{ column: string; id: string }>) {
+    return targets.map((target) => `(${target.column} = '${escapeSql(target.id)}')`)
+}
+
+function buildTargetInsertValue(targets: Array<{ column: string; id: string }>, column: string) {
+    const target = targets.find((item) => item.column === column)
+    return target ? `'${escapeSql(target.id)}'` : 'NULL'
 }
 
 function buildReferenceConditions(referenceCodes: string[]) {
@@ -89,10 +130,6 @@ function buildReferenceConditions(referenceCodes: string[]) {
             return `(${parts.join(' AND ')})`
         })
         .filter((condition): condition is string => Boolean(condition))
-}
-
-function buildTargetConditions(targets: Array<{ column: 'reference_id' | 'version_id'; id: string }>) {
-    return targets.map((target) => `(${target.column} = '${escapeSql(target.id)}')`)
 }
 
 async function revalidateValidationSweepEverywhere() {
@@ -219,11 +256,81 @@ export async function getAssetsByTypeAction(type: string) {
     `) || []
 }
 
+export async function getDocumentSlugPrefixesAction() {
+    await assertAdminAccess()
+    return await getDocumentSlugPrefixes(false)
+}
+
+export async function getPublicDocumentOptionsAction() {
+    await assertAdminAccess()
+    return await getPublicDocumentOptions()
+}
+
+export async function getProductResourceScopeOptionsAction(scope: ProductAssetLinkScope) {
+    await assertAdminAccess()
+
+    if (scope === 'global') {
+        return [{ value: 'global', label: 'Global - aplica sin producto especifico' }]
+    }
+
+    if (scope === 'family') {
+        return await getFamilyFilters()
+    }
+
+    if (scope === 'product_type') {
+        const rows = await dbQuery(`
+            SELECT DISTINCT product_type
+            FROM public.families
+            WHERE product_type IS NOT NULL
+              AND btrim(product_type) <> ''
+            ORDER BY product_type ASC
+        `) as Array<{ product_type?: string | null }>
+
+        return (rows || []).map((row) => ({
+            value: String(row.product_type || ''),
+            label: String(row.product_type || ''),
+        })).filter((row) => row.value)
+    }
+
+    if (scope === 'manufacturing_process') {
+        const rows = await dbQuery(`
+            SELECT DISTINCT manufacturing_process
+            FROM public.families
+            WHERE manufacturing_process IS NOT NULL
+              AND btrim(manufacturing_process) <> ''
+            ORDER BY manufacturing_process ASC
+        `) as Array<{ manufacturing_process?: string | null }>
+
+        return (rows || []).map((row) => ({
+            value: String(row.manufacturing_process || ''),
+            label: String(row.manufacturing_process || ''),
+        })).filter((row) => row.value)
+    }
+
+    if (scope === 'use_destination') {
+        const rows = await dbQuery(`
+            SELECT DISTINCT use_destination
+            FROM public.families
+            WHERE use_destination IS NOT NULL
+              AND btrim(use_destination) <> ''
+            ORDER BY use_destination ASC
+        `) as Array<{ use_destination?: string | null }>
+
+        return (rows || []).map((row) => ({
+            value: String(row.use_destination || ''),
+            label: String(row.use_destination || ''),
+        })).filter((row) => row.value)
+    }
+
+    return []
+}
+
 export async function associateProductResourceAction(data: ProductResourceAssociationData) {
     await assertAdminAccess()
 
     const assetId = String(data.assetId || '').trim()
     const assetType = String(data.assetType || '').trim().toLowerCase()
+    const requestedScope = normalizeRelationshipScope(data.relationshipScope)
     if (!assetId) throw new Error('Asset ID is required')
     if (!assetType) throw new Error('El tipo de recurso es obligatorio.')
     if (assetType === 'isometric') {
@@ -231,85 +338,188 @@ export async function associateProductResourceAction(data: ProductResourceAssoci
     }
 
     const assetRows = await dbQuery(`
-        SELECT type
+        SELECT type, name
         FROM public.assets
         WHERE id = '${escapeSql(assetId)}'
         LIMIT 1
-    `) as AssetTypeRow[]
+    `) as AssetRecordRow[]
     const asset = assetRows?.[0]
     if (!asset) throw new Error('Asset not found')
     if (String(asset.type || '').toLowerCase() !== assetType) {
         throw new Error('El tipo del archivo seleccionado no coincide con el tipo de recurso.')
     }
 
-    const referenceConditions = buildReferenceConditions(data.referenceCodes || [])
-    if (referenceConditions.length === 0) {
-        throw new Error('Selecciona al menos una referencia.')
-    }
-
-    const refRows = await dbQuery(`
-        SELECT id
-        FROM public.product_references
-        WHERE ${referenceConditions.join(' OR ')}
-    `) as IdRow[]
-    const referenceIds = refRows.map((row) => row.id).filter(Boolean)
-    if (referenceIds.length === 0) {
-        throw new Error('No se encontraron referencias para la seleccion.')
-    }
-
-    const versionCodes = (data.versionCodes || []).map((code) => String(code || '').trim()).filter(Boolean)
-    const targets: Array<{ column: 'reference_id' | 'version_id'; id: string }> = []
-
-    if (versionCodes.length > 0) {
-        const versions = await dbQuery(`
-            SELECT id
-            FROM public.product_versions
-            WHERE reference_id IN (${referenceIds.map((id) => `'${escapeSql(id)}'`).join(',')})
-              AND version_code IN (${versionCodes.map((code) => `'${escapeSql(code)}'`).join(',')})
-        `) as IdRow[]
-        for (const version of versions) {
-            if (version.id) targets.push({ column: 'version_id', id: version.id })
-        }
-        if (targets.length === 0) {
-            throw new Error('No se encontraron versiones para la seleccion.')
-        }
-    } else {
-        for (const referenceId of referenceIds) {
-            targets.push({ column: 'reference_id', id: referenceId })
-        }
-    }
-
-    const publicSlug = normalizePublicSlug(data.publicSlug)
-    if (assetType === 'instruction_pdf') {
-        if (!publicSlug) throw new Error('El slug publico es obligatorio para instructivos.')
-        if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(publicSlug)) {
-            throw new Error('El slug publico solo puede usar minusculas, numeros y guiones simples.')
-        }
-    }
-
     const status = normalizeResourceStatus(data.status)
     const versionNumber = normalizePositiveInt(data.versionNumber, 1)
     const sortOrder = normalizeInt(data.sortOrder, 0)
     const revisionNote = String(data.revisionNote || '').trim()
+    const targetValues = (data.targetValues || []).map((value) => String(value || '').trim()).filter(Boolean)
+    const versionCodes = (data.versionCodes || []).map((code) => String(code || '').trim()).filter(Boolean)
+    const targets: Array<{ column: string; id: string }> = []
+    let slugScope: ProductAssetLinkScope = requestedScope
+    let slugValues: string[] = targetValues
+
+    if (requestedScope === 'reference') {
+        const referenceConditions = buildReferenceConditions(data.referenceCodes || [])
+        if (referenceConditions.length === 0) {
+            throw new Error('Selecciona al menos una referencia.')
+        }
+
+        const refRows = await dbQuery(`
+            SELECT id
+            FROM public.product_references
+            WHERE ${referenceConditions.join(' OR ')}
+        `) as IdRow[]
+        const referenceIds = refRows.map((row) => row.id).filter(Boolean)
+        if (referenceIds.length === 0) {
+            throw new Error('No se encontraron referencias para la seleccion.')
+        }
+
+        if (versionCodes.length > 0) {
+            const versions = await dbQuery(`
+                SELECT id
+                FROM public.product_versions
+                WHERE reference_id IN (${referenceIds.map((id) => `'${escapeSql(id)}'`).join(',')})
+                  AND version_code IN (${versionCodes.map((code) => `'${escapeSql(code)}'`).join(',')})
+            `) as IdRow[]
+            for (const version of versions) {
+                if (version.id) targets.push({ column: 'version_id', id: version.id })
+            }
+            slugScope = 'version'
+            slugValues = versionCodes
+            if (targets.length === 0) {
+                throw new Error('No se encontraron versiones para la seleccion.')
+            }
+        } else {
+            for (const referenceId of referenceIds) {
+                targets.push({ column: 'reference_id', id: referenceId })
+            }
+            slugScope = 'reference'
+            slugValues = referenceIds
+        }
+    } else if (requestedScope === 'global') {
+        targets.push({ column: 'global_key', id: 'global' })
+        slugValues = ['global']
+    } else {
+        if (targetValues.length === 0) {
+            throw new Error('Selecciona al menos un destino para el recurso.')
+        }
+        const targetColumnByScope: Record<Exclude<ProductAssetLinkScope, 'reference' | 'version' | 'sku' | 'global'>, string> = {
+            family: 'family_code',
+            product_type: 'product_type',
+            manufacturing_process: 'manufacturing_process',
+            use_destination: 'use_destination',
+        }
+        const column = targetColumnByScope[requestedScope as Exclude<ProductAssetLinkScope, 'reference' | 'version' | 'sku' | 'global'>]
+        if (!column) throw new Error('Alcance de relacionamiento no soportado en esta pantalla.')
+        for (const value of targetValues) {
+            targets.push({ column, id: value })
+        }
+        slugValues = targetValues
+    }
+
+    if (targets.length === 0) {
+        throw new Error('No se encontraron destinos para asociar el recurso.')
+    }
+
+    const createPublicLink = Boolean(data.createPublicLink)
+    const documentSlot = normalizeDocumentSlot(data.documentSlot)
+    const documentLabel = normalizeOptionalText(data.documentLabel)
+    let publicSlug: string | null = null
+    let slugPrefix: string | null = null
+    let slugBody: string | null = null
+    let slugStrategyVersion = 1
+
+    if (createPublicLink) {
+        if (!documentSlot) {
+            throw new Error('Selecciona o crea el tipo funcional del documento antes de publicar QR.')
+        }
+
+        const prefixConfig = await getDocumentPrefixBySlot(documentSlot)
+        if (!prefixConfig) {
+            throw new Error(`No hay prefijo activo configurado para "${documentSlot}". Definelo en Configuracion > Nomenclatura.`)
+        }
+
+        const generatedSlugBody = await buildProductAssetSlugBody({
+            target: {
+                scope: slugScope,
+                ids: targets.map((target) => target.id),
+                values: slugValues,
+            },
+            documentLabel: documentLabel || prefixConfig.label,
+            assetName: asset.name,
+        })
+        const composedSlug = composePublicSlug(prefixConfig.prefix, generatedSlugBody)
+        publicSlug = composedSlug.publicSlug
+        slugPrefix = composedSlug.slugPrefix
+        slugBody = composedSlug.slugBody
+        slugStrategyVersion = composedSlug.slugStrategyVersion
+    }
 
     const targetConditions = buildTargetConditions(targets)
-    if (publicSlug && status === 'approved' && targetConditions.length > 0) {
-        await dbQuery(`
-            UPDATE public.product_asset_links
-            SET status = 'replaced',
-                updated_at = now()
+    if (publicSlug && status === 'approved') {
+        const conflicts = await dbQuery(`
+            SELECT asset_id::text as asset_id, max(version_number) as version_number
+            FROM public.product_asset_links
             WHERE public_slug = '${escapeSql(publicSlug)}'
               AND status = 'approved'
-              AND (${targetConditions.join(' OR ')})
-        `)
+            GROUP BY asset_id
+        `) as Array<{ asset_id?: string | null; version_number?: number | string | null }>
+
+        const differentAssetConflicts = (conflicts || []).filter((row) => String(row.asset_id || '') !== assetId)
+        if (differentAssetConflicts.length > 0) {
+            const maxExistingVersion = Math.max(...differentAssetConflicts.map((row) => Number(row.version_number) || 1))
+            if (versionNumber <= maxExistingVersion) {
+                throw new Error(`Ya existe un documento aprobado con el slug ${publicSlug}. Usa una version mayor si estas reemplazando el documento.`)
+            }
+            await dbQuery(`
+                UPDATE public.product_asset_links
+                SET status = 'replaced',
+                    updated_at = now()
+                WHERE public_slug = '${escapeSql(publicSlug)}'
+                  AND status = 'approved'
+            `)
+        } else if (targetConditions.length > 0) {
+            await dbQuery(`
+                UPDATE public.product_asset_links
+                SET status = 'replaced',
+                    updated_at = now()
+                WHERE public_slug = '${escapeSql(publicSlug)}'
+                  AND status = 'approved'
+                  AND (${targetConditions.join(' OR ')})
+            `)
+        }
     }
 
     const values = targets.map((target) => {
-        const referenceValue = target.column === 'reference_id' ? `'${escapeSql(target.id)}'` : 'NULL'
-        const versionValue = target.column === 'version_id' ? `'${escapeSql(target.id)}'` : 'NULL'
         const slugValue = publicSlug ? `'${escapeSql(publicSlug)}'` : 'NULL'
+        const slotValue = documentSlot ? `'${escapeSql(documentSlot)}'` : 'NULL'
+        const labelValue = documentLabel ? `'${escapeSql(documentLabel)}'` : 'NULL'
+        const prefixValue = slugPrefix ? `'${escapeSql(slugPrefix)}'` : 'NULL'
+        const bodyValue = slugBody ? `'${escapeSql(slugBody)}'` : 'NULL'
         const noteValue = revisionNote ? `'${escapeSql(revisionNote)}'` : 'NULL'
-        return `('${escapeSql(assetId)}', ${referenceValue}, ${versionValue}, NULL, ${slugValue}, ${versionNumber}, '${status}', ${sortOrder}, ${noteValue})`
+        return `(
+            '${escapeSql(assetId)}',
+            ${buildTargetInsertValue([target], 'reference_id')},
+            ${buildTargetInsertValue([target], 'version_id')},
+            ${buildTargetInsertValue([target], 'sku_id')},
+            ${buildTargetInsertValue([target], 'family_code')},
+            ${buildTargetInsertValue([target], 'product_type')},
+            ${buildTargetInsertValue([target], 'manufacturing_process')},
+            ${buildTargetInsertValue([target], 'use_destination')},
+            ${buildTargetInsertValue([target], 'global_key')},
+            ${createPublicLink ? 'true' : 'false'},
+            ${slotValue},
+            ${labelValue},
+            ${prefixValue},
+            ${bodyValue},
+            ${slugValue},
+            ${slugStrategyVersion},
+            ${versionNumber},
+            '${status}',
+            ${sortOrder},
+            ${noteValue}
+        )`
     })
 
     await dbQuery(`
@@ -318,7 +528,18 @@ export async function associateProductResourceAction(data: ProductResourceAssoci
             reference_id,
             version_id,
             sku_id,
+            family_code,
+            product_type,
+            manufacturing_process,
+            use_destination,
+            global_key,
+            is_public,
+            document_slot,
+            document_label,
+            slug_prefix,
+            slug_body,
             public_slug,
+            slug_strategy_version,
             version_number,
             status,
             sort_order,
@@ -674,7 +895,41 @@ export async function getAssetRelationshipsAction(assetId: string) {
         ORDER BY reference_code ASC, version_code ASC
     `) || []
 
-    return { references: refs, versions }
+    const otherLinks = await dbQuery(`
+        SELECT
+            pal.id as relationship_id,
+            'product_asset_link' as relationship_source,
+            pal.public_slug,
+            pal.status,
+            pal.version_number,
+            pal.document_slot,
+            pal.document_label,
+            CASE
+                WHEN pal.family_code IS NOT NULL THEN 'Familia'
+                WHEN pal.product_type IS NOT NULL THEN 'Tipo de producto'
+                WHEN pal.manufacturing_process IS NOT NULL THEN 'Manufactura'
+                WHEN pal.use_destination IS NOT NULL THEN 'Destino de uso'
+                WHEN pal.global_key IS NOT NULL THEN 'Global'
+                WHEN pal.sku_id IS NOT NULL THEN 'SKU'
+                ELSE 'Otro'
+            END as scope_label,
+            COALESCE(
+                pal.family_code || ' - ' || f.family_name,
+                pal.product_type,
+                pal.manufacturing_process,
+                pal.use_destination,
+                pal.global_key,
+                pal.sku_id::text
+            ) as target_label
+        FROM public.product_asset_links pal
+        LEFT JOIN public.families f ON f.family_code = pal.family_code
+        WHERE pal.asset_id::text = '${safeId}'
+          AND pal.reference_id IS NULL
+          AND pal.version_id IS NULL
+        ORDER BY scope_label ASC, target_label ASC
+    `) || []
+
+    return { references: refs, versions, otherLinks }
 }
 
 export async function unlinkProductAssetLinkAction(linkId: string) {

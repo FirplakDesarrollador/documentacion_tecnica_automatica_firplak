@@ -11,6 +11,14 @@ import {
 
 const ACCESS_PENDING_PATH = "/access-pending";
 
+function getPotentialPublicDocumentPrefix(pathname: string) {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length !== 2) return null;
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(parts[0])) return null;
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(parts[1])) return null;
+  return parts[0];
+}
+
 function redirectTo(request: NextRequest, pathname: string) {
   return NextResponse.redirect(new URL(pathname, request.url));
 }
@@ -50,13 +58,27 @@ export const updateSession = async (request: NextRequest) => {
     }
   );
 
+  const pathname = request.nextUrl.pathname;
+  const publicDocumentPrefix = getPotentialPublicDocumentPrefix(pathname);
+  if (publicDocumentPrefix) {
+    const { data: activePrefix } = await supabase
+      .from("document_slug_prefixes")
+      .select("prefix")
+      .eq("prefix", publicDocumentPrefix)
+      .eq("active", true)
+      .maybeSingle();
+
+    if (activePrefix) {
+      return response;
+    }
+  }
+
   // This will refresh session if expired - required for Server Components
   // https://supabase.com/docs/guides/auth/server-side/nextjs
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const pathname = request.nextUrl.pathname;
   const isApiRoute = pathname.startsWith("/api");
   const isLoginPage = pathname.startsWith("/login");
   const isPublicPath = isPublicRoute(pathname);

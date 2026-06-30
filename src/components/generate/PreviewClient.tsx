@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect, useRef } from 'react'
+import Link from 'next/link'
 import { Download, Loader2, LayoutTemplate, AlertTriangle, XCircle, Info } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -8,11 +9,13 @@ import { toast } from 'sonner'
 import { TemplatePicker, type TemplateOption } from '@/components/generate/TemplatePicker'
 import { ValidationWarnings, getTemplateRequiredFields, getTemplateValidationIssues } from '@/components/generate/ValidationWarnings'
 import { resolveAssetsAction } from '@/app/generate/actions'
+import { resolvePublicDocumentUrlsForProductAction } from '@/app/templates/actions'
 import { hydrateTemplateElements, hydrateText } from '@/lib/export/exportUtils'
 import { enrichProductDataWithIcons } from '@/lib/engine/productUtils'
 import { PIXELS_PER_MM } from '@/lib/constants'
 import DocumentRenderSurface from '@/components/export/DocumentRenderSurface'
 import { resolveZoneHomeEnAction } from '@/app/configuration/glossary/actions'
+import { attachDocumentQrUrls, collectRelatedDocumentQrSlots } from '@/lib/templates/documentQrFields'
 import {
     appendLabelBoxSuffix,
     expandLabelBoxProducts,
@@ -49,6 +52,8 @@ type PreviewProduct = Record<string, unknown> & {
 type TemplateElement = Record<string, unknown> & {
     content?: string
     dataField?: string
+    documentQrMode?: string | null
+    documentSlot?: string | null
     name?: string
     type?: string
 }
@@ -107,6 +112,18 @@ function normalizeHydratedElements(elements: Record<string, unknown>[]): Hydrate
             resolvedSrc,
         }
     })
+}
+
+async function attachResolvedDocumentQrUrls(product: PreviewProduct, elements: TemplateElement[]): Promise<PreviewProduct> {
+    const slots = collectRelatedDocumentQrSlots(elements)
+    if (slots.length === 0) return product
+
+    try {
+        const urls = await resolvePublicDocumentUrlsForProductAction(product, slots)
+        return attachDocumentQrUrls(product, urls) as PreviewProduct
+    } catch {
+        return product
+    }
 }
 
 export function PreviewClient({ product: rawProduct, templates, initialTemplateId, engineResult }: PreviewClientProps) {
@@ -202,7 +219,8 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
 
             const mapping = await resolveAssetsAction(assetIds)
             const nextHydratedItems = await Promise.all(previewProducts.map(async (previewProduct) => {
-                const hydrated = await hydrateTemplateElements(elements, previewProduct, mapping)
+                const productWithDocumentQr = await attachResolvedDocumentQrUrls(previewProduct, elements)
+                const hydrated = await hydrateTemplateElements(elements, productWithDocumentQr, mapping)
                 return {
                     product: previewProduct,
                     elements: normalizeHydratedElements(hydrated),
@@ -317,7 +335,8 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
             let exportedCount = 0
 
             for (const previewProduct of previewProducts) {
-                const hydrated = await hydrateTemplateElements(elements, previewProduct, assetMap)
+                const productWithDocumentQr = await attachResolvedDocumentQrUrls(previewProduct, elements)
+                const hydrated = await hydrateTemplateElements(elements, productWithDocumentQr, assetMap)
                 const zoneEn = await resolveZoneHomeEnAction(previewProduct.zone_home)
                 const productWithZone = zoneEn ? { ...previewProduct, zone_home_en: zoneEn } : previewProduct
                 const enrichedProduct = enrichProductDataWithIcons(productWithZone, assetMap)
@@ -421,9 +440,9 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                         <div className="text-center text-slate-400">
                             <LayoutTemplate className="w-10 h-10 mx-auto mb-2 opacity-40" />
                             <p className="text-sm">No hay plantillas activas disponibles.</p>
-                            <a href="/templates" className="text-indigo-500 underline text-xs mt-1 block">
+                            <Link href="/templates" className="text-indigo-500 underline text-xs mt-1 block">
                                 Ir a Plantillas →
-                            </a>
+                            </Link>
                         </div>
                     </div>
                 )}

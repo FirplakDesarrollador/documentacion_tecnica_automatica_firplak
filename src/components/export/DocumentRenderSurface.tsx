@@ -4,6 +4,7 @@ import React from 'react'
 import Image from 'next/image'
 import { getTemplateFontCssStack } from '@/lib/templates/templateTypography'
 import { resolveCssTextTransform } from '@/lib/templates/textTransforms'
+import QrCodeElement from '@/components/export/QrCodeElement'
 const PIXELS_PER_MM = 4
 
 interface TemplateElement {
@@ -31,6 +32,10 @@ interface TemplateElement {
     barcodeSvg?: string
     barcodeError?: string
     barcodeOrientation?: string
+    qrSvg?: string | null
+    qrError?: string | null
+    qrValue?: string | null
+    qrHidden?: boolean | null
     lineOrientation?: string
     borderStyle?: string
     borderWidth?: number
@@ -232,6 +237,14 @@ export default function DocumentRenderSurface({
                     />
                 </div>
             )
+        }
+
+        if (el.type === 'document_qr') {
+            if (el.qrHidden) {
+                return <div className="w-full h-full pointer-events-none" />
+            }
+
+            return <QrCodeElement el={el} className="pointer-events-none" />
         }
 
         if (el.type === 'dashed_line') {

@@ -5,23 +5,27 @@ import { PrintSettingsSection } from '@/components/configuration/PrintSettingsSe
 import { getNamingComponentsAction, getNamingModelStatusAction } from '@/app/rules/actions';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { Settings, Palette, PlusCircle, DatabaseZap, Layers, BookOpen, Users } from 'lucide-react';
+import { Settings, Palette, PlusCircle, DatabaseZap, Layers, BookOpen, Users, Tags } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
+
+type AppSettingRow = {
+  key: string
+  value: unknown
+}
 
 export default async function ConfigurationPage() {
   const namingComponents = await getNamingComponentsAction();
   const namingModelStatus = await getNamingModelStatusAction();
 
   // fetch app settings for mass import
-  const settingsRows = await dbQuery(`
+  const settingsRows = (await dbQuery(`
     SELECT key, value
     FROM public.app_settings
     WHERE key IN ('mass_import_execute_enabled','mass_import_safe_max_rows')
-  `) || [];
+  `) || []) as AppSettingRow[];
   const sByKey = new Map<string, unknown>();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  for (const r of (settingsRows as any[])) sByKey.set(String(r.key), r.value);
+  for (const r of settingsRows) sByKey.set(String(r.key), r.value);
   const initialExecuteEnabled = !!sByKey.get('mass_import_execute_enabled');
   const initialSafeMaxRows = Number(sByKey.get('mass_import_safe_max_rows') ?? 15);
 
@@ -66,6 +70,12 @@ export default async function ConfigurationPage() {
             <Button variant="outline" className="w-full sm:w-auto border-blue-200 text-blue-600 hover:bg-blue-50">
               <BookOpen className="mr-2 h-4 w-4" />
               Glosario
+            </Button>
+          </Link>
+          <Link href="/configuration/nomenclature">
+            <Button variant="outline" className="w-full sm:w-auto border-indigo-200 text-indigo-600 hover:bg-indigo-50">
+              <Tags className="mr-2 h-4 w-4" />
+              Nomenclatura
             </Button>
           </Link>
           <Link href="/configuration/versions">

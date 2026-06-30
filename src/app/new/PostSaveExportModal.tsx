@@ -1,11 +1,11 @@
 "use client"
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useMemo, useState } from "react"
 import { resolveAssetsAction } from "@/app/generate/actions"
 import { composeProductByIdAction } from "./actions"
 import { resolveZoneHomeEnAction } from "@/app/configuration/glossary/actions"
-import { getTemplatesAction } from "@/app/templates/actions"
+import { getTemplatesAction, resolvePublicDocumentUrlsForProductAction } from "@/app/templates/actions"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
@@ -13,8 +13,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { PIXELS_PER_MM } from "@/lib/constants"
 import { hydrateTemplateElements, hydrateText } from "@/lib/export/exportUtils"
 import { enrichProductDataWithIcons } from "@/lib/engine/productUtils"
+import { attachDocumentQrUrls, collectRelatedDocumentQrSlots } from "@/lib/templates/documentQrFields"
 import { CheckCircle2, Download, Loader2 } from "lucide-react"
 import { toast } from "sonner"
+
+type TemplateElement = {
+    type?: string
+    content?: string
+    documentQrMode?: string | null
+    documentSlot?: string | null
+}
 
 function sanitizeFilename(name: string): string {
     return String(name || "").replace(/[\\/:*?"<>|]/g, "_").trim()
@@ -31,6 +39,18 @@ function deriveSkuBase(code: unknown): string {
     const parts = raw.split("-").filter(Boolean)
     if (parts.length >= 3) return parts.slice(0, 3).join("-")
     return raw
+}
+
+async function attachResolvedDocumentQrUrls(product: Record<string, unknown>, elements: TemplateElement[]) {
+    const slots = collectRelatedDocumentQrSlots(elements)
+    if (slots.length === 0) return product
+
+    try {
+        const urls = await resolvePublicDocumentUrlsForProductAction(product as Record<string, unknown>, slots)
+        return attachDocumentQrUrls(product as Record<string, unknown>, urls)
+    } catch {
+        return product
+    }
 }
 
 interface PostSaveExportModalProps {
@@ -96,10 +116,12 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
 
     const selectedTemplate = templates.find((t) => t.id === selectedTemplateId)
     const selectedTemplateLabel = selectedTemplate ? getTemplateDisplayName(selectedTemplate) : ""
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    const allowedFormats = selectedTemplate?.export_formats
-        ? selectedTemplate.export_formats.split(",").map((f: string) => f.trim().toLowerCase())
-        : ["pdf", "jpg"]
+    const allowedFormats = useMemo(
+        () => selectedTemplate?.export_formats
+            ? selectedTemplate.export_formats.split(",").map((f: string) => f.trim().toLowerCase())
+            : ["pdf", "jpg"],
+        [selectedTemplate]
+    )
 
     useEffect(() => {
         if (selectedTemplate && !allowedFormats.includes(exportFormat)) {
@@ -153,10 +175,11 @@ export function PostSaveExportModal({ isOpen, product, onClose }: PostSaveExport
                 const sku_base = (exportProduct as any).sku_base || deriveSkuBase((exportProduct as any).code)
                 const baseProduct = sku_base ? { ...(exportProduct as any), sku_base } : (exportProduct as any)
                 const productWithZone = zoneEn ? { ...baseProduct, zone_home_en: zoneEn } : baseProduct
+                const productWithDocumentQr = await attachResolvedDocumentQrUrls(productWithZone, elements)
 
-                const hydratedData = await hydrateTemplateElements(elements, productWithZone, assetMap)
+                const hydratedData = await hydrateTemplateElements(elements, productWithDocumentQr, assetMap)
 
-                const enrichedProduct = enrichProductDataWithIcons(productWithZone, assetMap)
+                const enrichedProduct = enrichProductDataWithIcons(productWithDocumentQr, assetMap)
                 const rawDownloadName = hydrateText(
                     (selectedTemplate as any).export_filename_format || "{sku_base}_{final_name_es}",
                     enrichedProduct
