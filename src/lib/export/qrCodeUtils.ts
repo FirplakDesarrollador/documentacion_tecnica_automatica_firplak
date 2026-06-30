@@ -6,7 +6,7 @@ export type QrCodeBuildResult = {
     normalizedValue: string
 }
 
-export async function buildQrCodeSvg(value: unknown, width?: number | string, margin = 1): Promise<QrCodeBuildResult> {
+export async function buildQrCodeSvg(value: unknown, width?: number | string, margin = 4): Promise<QrCodeBuildResult> {
     const normalizedValue = String(value ?? '').trim()
     if (!normalizedValue) {
         return {

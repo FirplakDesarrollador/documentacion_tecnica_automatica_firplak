@@ -81,11 +81,11 @@ export default function QrCodeElement({
 
     return (
         <div
-            className={`w-full h-full pointer-events-none overflow-hidden bg-white flex items-center justify-center ${className}`}
+            className={`w-full h-full pointer-events-none bg-white flex items-center justify-center overflow-hidden ${className}`}
             title={computed.normalizedValue || undefined}
         >
             <div
-                className="w-full h-full flex items-center justify-center bg-white"
+                className="w-full h-full flex items-center justify-center bg-white [&_svg]:block [&_svg]:h-full [&_svg]:w-full [&_svg]:max-h-full [&_svg]:max-w-full"
                 dangerouslySetInnerHTML={{ __html: computed.svgMarkup }}
             />
         </div>
