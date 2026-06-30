@@ -36,9 +36,11 @@ Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
   - `.gemini/antigravity/knowledge/dynamic_translation_and_template_lifecycle/artifacts/knowledge_item.md`
   - `.gemini/antigravity/knowledge/external_dataset_templates_and_export_validation/KI.md`
   - `.gemini/antigravity/knowledge/template_barcode_elements/KI.md`
+  - `.gemini/antigravity/knowledge/product_public_document_links_and_qr/KI.md`
   - `.gemini/antigravity/knowledge/template_builder_panel_modes_and_global_settings/KI.md`
   - `.gemini/antigravity/knowledge/thermal_label_printing_and_agent_metadata/KI.md`
   - `.gemini/antigravity/knowledge/reference_package_labels_and_box_weights/KI.md`
+  - `.gemini/antigravity/knowledge/sap_service_layer_item_master_and_bom/KI.md`
   - `.gemini/antigravity/knowledge/agent_governance_and_v6_stabilization/artifacts/knowledge_item.md`
   - `.gemini/antigravity/knowledge/supabase_auth_and_proxy_architecture/artifacts/knowledge_item.md`
 
@@ -49,12 +51,14 @@ Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
 - **Base de Datos**: Prisma ORM con SQLite (local) y Supabase (Cloud).
 - **Prisma Client (REGLA)**: el cliente se genera en `src/generated/prisma`; en `src/`, importar tipos desde `@/generated/prisma/client` y acceso DB desde `@/lib/prisma`. `@prisma/client` queda bloqueado por `npm run check:diff` para evitar fallos en Vercel clean install.
 - **IA externa (estado actual)**: no hay integraciones activas de IA generativa por API en runtime; no asumir Gemini u otro proveedor salvo que reaparezca implementacion real en `src/` o rutas del app.
+- **SAP Service Layer Runtime**: `/consulta-sap` y `/api/sap/**` consultan SAP B1 Service Layer server-side via `src/lib/sap/serviceLayer.ts` (`Items` y `ProductTrees`). Usar Node/HTTPS para diagnostico; `Invoke-WebRequest` puede dar falsos `400`. Escrituras SAP requieren `SAP_ENABLE_WRITES=true` y dry-run/confirmacion humana. Ver KI `sap_service_layer_item_master_and_bom`.
 - **Supabase Source of Truth (REGLA)**: El proyecto Supabase operativo de este repo es siempre **I+D** (`nbifmxggfusipomspoly`, `https://nbifmxggfusipomspoly.supabase.co`). Toda migracion, RPC, SQL check, schema inspection o mutacion por MCP debe apuntar por defecto a ese proyecto.
 - **Confirmacion de Migraciones Supabase (REGLA)**: Si una tarea requiere DDL/RPC/triggers/views/indices/RLS/backfills, el agente debe explicar migraciones, impacto, riesgos, plan y verificacion, y pedir confirmacion explicita antes de aplicar; excepcion solo si el usuario pide ejecutarlas directamente en el mismo mensaje.
 - **Gobernanza de Supabase MCP**: Se prioriza la logica DB-First: usar Triggers, Funciones RPC y Views.
 - **Hardening Supabase RBAC**: no abrir grants a `anon` para depurar. `v_ui_generate_list` debe quedar `security_invoker=true`; RPCs administrativas y `exec_sql` solo deben ejecutarse desde servidor/MCP con `service_role`.
 - **Patron JSONB Quirurgico**: Uso de operadores `||` y `-` en RPCs para mutaciones atomicas en `ref_attrs`.
 - **Nomenclatura Supabase**: `public.naming_components` es la fuente unica ES/EN; la recomputacion usa cola `naming_recompute_jobs` + flags stale y se procesa desde sidebar/API, no inline. El glosario puntual v1 usa coincidencia exacta y reduce filas, pero no es EN-only real. Ver KI `naming_components_single_source_of_truth`.
+- **Schema `ref_attrs` y nombres**: modificar solo `families.ref_attrs_schema.*.allowed_values` cambia opciones/validacion, no valores efectivos; el trigger de familia ignora esos cambios para no encolar nomenclatura. Agregar/quitar atributos del schema sigue siendo cambio estructural.
 
 ## Agente de Impresion Local (Print Agent)
 - **Puerto**: `3344`. Endpoints: `POST /print`, `GET /health`, `GET /scan-usb`.
@@ -75,6 +79,8 @@ Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
 
 ## Informacion de Dominio (Firplak)
 - **Gobernanza de Esquema**: La familia (`families`) es la fuente de verdad tecnica para los atributos de sus referencias.
+- **Excepcion `use_destination`**: `families.use_destination` sigue siendo el default tecnico, pero una referencia puede sobrescribirlo con `product_references.ref_attrs.use_destination`; version, SKU y reglas globales no deben pisar este campo efectivo.
+- **Documentos publicos y QR**: Los documentos publicables usan `product_asset_links` como fuente relacional. `public_slug` incluye prefijo (`ins/...`, `gar/...`, `cui/...`) y debe ser humano/estable, sin codigos internos tipo `BAN24-0001` salvo excepciones temporales antes de publicar. El dominio objetivo es `doc.firplak.com/{prefijo}/{slug}`; prefijos y abreviaturas viven en `/configuration/nomenclature`.
 - **Patron de Limpieza Profunda**: Al borrar un asset, se realiza una desconexion automatica en JSONB y eliminacion fisica del Storage.
 - **BARCODE en plantillas**: El recurso `BARCODE` renderiza SVG real compartido entre builder, preview y export. Su formato/orientacion/dimension X/quiet zone viven en cada elemento de `elements_json`; la orientacion manual del elemento no debe mezclarse con la rotacion derivada de impresion termica.
 - **Variables core en plantillas**: `/templates/builder` debe reutilizar el catalogo de variables de nomenclatura para texto libre, elementos dinamicos y nombre de exportacion; nuevas variables deben preferir nombres canonicos como `final_base_name_es`, dejando aliases legacy solo por compatibilidad.
@@ -83,7 +89,7 @@ Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
 - **Tipografia global de plantilla**: la familia efectiva vive en `plantillas_doc_tec.template_font_family`, se aplica a preview y render final, y el catalogo frontend debe mantenerse sincronizado con el `CHECK` de base de datos para evitar errores `23514`. `Mozaic Geos` se modela como una sola familia global con pesos reales via `fontWeight`.
 - **Vista del lienzo en builder**: zoom, ajuste a vista y guias de impresion son estado local del editor, no datos persistidos de plantilla; en formatos grandes como carta, anclar el canvas arriba con padding visible y corregir coordenadas de drag/resize segun el zoom.
 - **Plantillas con datasets externos**: `/print`, igual que `/generate`, debe respetar `plantillas_doc_tec.data_source`; datasets externos consultan `custom_dataset_rows`/`template_dataset_links`, mientras `core_firplak` usa `v_ui_generate_list` con `brand_scope`.
-- **Variables runtime de impresion**: las plantillas pueden usar `{print_datetime}` y `{of_number}`; la OF se captura en `/print` solo cuando la plantilla la usa, exige exactamente 4 digitos y se reinicia despues de imprimir/cancelar.
+- **Variables runtime de impresion**: las plantillas pueden usar `{print_datetime}` y `{of_number}`; la OF se captura en `/print` solo cuando la plantilla la usa, exige exactamente 4 digitos y permite multiples OF por registro, cada una con copias propias, sin duplicar datos en BD.
 - **Sidebar honesto**: no mantener indicadores de "Estado de Servicios" si no estan conectados a mediciones reales; `I. Artificial` y `Archivos` fueron retirados por ser placeholders sin telemetria efectiva.
 - **Gobernanza de calidad en `src/`**: no usar suppressions como salida facil. Si aparecen deudas de lint/TS en flujos sensibles (`/generate`, `/templates/builder`, `/new`, `/assets`), resolver con tipado, helpers y estado derivado, manteniendo cambios de superficie minima.
 - **Busquedas admin sobre catalogo**: en editores que consultan `v_ui_generate_list`, empujar filtros selectivos/keyword al SQL antes de mapear o filtrar en memoria. Timeouts `57014` pueden venir de calcular la vista completa, no de demasiados resultados finales. Ver KI `admin_catalog_search_performance`.
