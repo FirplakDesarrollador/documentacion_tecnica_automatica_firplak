@@ -141,6 +141,7 @@ function ProductsImportClient() {
 
   const previewRows: RpcRow[] = previewResult?.rows || []
   const previewSummary = summarizeRows(previewRows)
+  const previewErrorRows = previewRows.filter(row => (row.errors || []).length > 0).slice(0, 8)
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -217,6 +218,16 @@ function ProductsImportClient() {
                 Si hay `REF_ATTR_*` desconocidos o familias sin schema, ve a{' '}
                 <Link className="underline" href="/configuration/reference-editor">/configuration/reference-editor</Link>.
               </div>
+              {previewErrorRows.length > 0 && (
+                <div className="mt-3 space-y-1 text-xs text-red-800">
+                  {previewErrorRows.map(row => (
+                    <div key={row.sku_complete} className="rounded border border-red-200 bg-white/70 px-2 py-1">
+                      <span className="font-semibold">{row.sku_complete || 'Fila sin SKU'}:</span>{' '}
+                      {(row.errors || []).join(' | ')}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

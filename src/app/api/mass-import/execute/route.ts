@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { dbQuery, supabaseServer } from '@/lib/supabase';
 import { readTemplateXlsx } from '@/lib/massImport/io';
+import { buildMassImportPayload, summarizeStrictIssues } from '@/lib/massImport/payload';
 import { composeProductById } from '@/lib/engine/product_composer';
 import { computeMasterNamePreview } from '@/lib/engine/masterNaming';
 import { markNamingStaleForSkus, processNamingJobsInline } from '@/lib/engine/namingQueue';
@@ -219,6 +220,19 @@ export async function POST(req: Request) {
     if (!file) return NextResponse.json({ success: false, error: 'No file uploaded' }, { status: 400 });
 
     const parsed = await readTemplateXlsx(file);
+    const strictValidation = await buildMassImportPayload(parsed);
+    if (strictValidation.strictIssues.length > 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: summarizeStrictIssues(strictValidation.strictIssues),
+          error_code: 'MASS_IMPORT_STRICT_REF_ATTR_VALUE',
+          details: { strict_ref_attr_errors: strictValidation.strictIssues },
+        },
+        { status: 400 }
+      );
+    }
+
     const basePayload = buildPayloadFromTemplate(parsed);
     const payload: any = {
       rows: basePayload.rows,
