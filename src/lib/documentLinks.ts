@@ -1,4 +1,5 @@
 export const PUBLIC_DOCUMENT_SLUG_STRATEGY_VERSION = 1
+export const PUBLIC_DOCUMENTS_CANONICAL_BASE_URL = 'https://doc.firplak.com'
 
 export function slugifyDocumentPart(value: unknown) {
     return String(value ?? '')
@@ -33,13 +34,29 @@ export function buildPublicSlug(prefix: unknown, body: unknown) {
 export function getPublicDocumentsBaseUrl() {
     return (
         process.env.NEXT_PUBLIC_DOCS_BASE_URL ||
-        process.env.NEXT_PUBLIC_APP_URL ||
-        ''
+        PUBLIC_DOCUMENTS_CANONICAL_BASE_URL
     ).replace(/\/$/, '')
 }
 
 export function buildPublicDocumentUrl(publicSlug: unknown, baseUrl = getPublicDocumentsBaseUrl()) {
-    const cleanSlug = String(publicSlug ?? '').trim().replace(/^\/+/, '')
+    const rawValue = String(publicSlug ?? '').trim()
+    if (!rawValue) return ''
+
+    if (/^https?:\/\//i.test(rawValue)) {
+        try {
+            const absoluteUrl = new URL(rawValue)
+            const absoluteSlug = absoluteUrl.pathname.replace(/^\/+|\/+$/g, '')
+            if (isValidPublicDocumentSlug(absoluteSlug)) {
+                return buildPublicDocumentUrl(absoluteSlug, baseUrl)
+            }
+        } catch {
+            return rawValue
+        }
+
+        return rawValue
+    }
+
+    const cleanSlug = rawValue.replace(/^\/+/, '')
     if (!cleanSlug) return ''
     const cleanBase = String(baseUrl || '').trim().replace(/\/$/, '')
     const browserBase = typeof window !== 'undefined' ? window.location.origin : ''

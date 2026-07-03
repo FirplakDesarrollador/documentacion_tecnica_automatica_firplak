@@ -31,6 +31,7 @@ import {
 } from '@/app/assets/actions'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import { buildPublicDocumentUrl } from '@/lib/documentLinks'
 
 interface Option {
     value: string
@@ -249,6 +250,7 @@ export function ResourceAssociationDialog() {
     const previewPublicSlug = activeDocumentPrefix && previewSlugBody
         ? `${activeDocumentPrefix.prefix}/${previewSlugBody}`
         : ''
+    const previewPublicUrl = previewPublicSlug ? buildPublicDocumentUrl(previewPublicSlug) : ''
     const selectedScopeConfig = RELATIONSHIP_SCOPE_OPTIONS.find((item) => item.value === relationshipScope) || RELATIONSHIP_SCOPE_OPTIONS[0]
 
     const resetState = () => {
@@ -793,7 +795,7 @@ export function ResourceAssociationDialog() {
                                     <p className="text-[11px] text-slate-500">
                                         Preview aproximado:{' '}
                                         <span className="font-mono text-slate-800">
-                                            /{previewPublicSlug || 'prefijo/slug-generado'}
+                                            {previewPublicUrl || buildPublicDocumentUrl('prefijo/slug-generado')}
                                         </span>
                                     </p>
                                     <p className="text-[11px] text-slate-500">
