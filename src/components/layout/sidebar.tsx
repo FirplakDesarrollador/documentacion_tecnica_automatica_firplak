@@ -57,6 +57,8 @@ const NAV_ITEMS: NavItem[] = [
     { name: 'Recursos', href: '/assets', icon: ImageIcon, permission: 'module:assets' },
     { name: 'Generar', href: '/generate', icon: FileText, permission: 'module:generate' },
     { name: 'Impresion', href: '/print', icon: Printer, permission: 'module:print' },
+    { name: 'Diseño de producto', href: '/product-design', icon: Package, permission: 'module:product-design' },
+    { name: 'Modulos productivos', href: '/productive-modules', icon: Database, permission: 'module:productive-modules' },
     { name: 'Configuracion', href: '/configuration', icon: Settings, permission: 'module:configuration' },
     { name: 'Consulta SAP', href: '/consulta-sap', icon: Search, permission: 'module:consulta-sap' },
 ]

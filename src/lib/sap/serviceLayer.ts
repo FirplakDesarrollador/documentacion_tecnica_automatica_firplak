@@ -2,6 +2,7 @@ import 'server-only'
 
 import { request as httpsRequest, type RequestOptions } from 'node:https'
 import type { IncomingHttpHeaders } from 'node:http'
+import { dbQuery } from '@/lib/supabase'
 
 export type SapEntityPayload = Record<string, unknown>
 
@@ -51,6 +52,7 @@ const DEFAULT_ITEM_CLONE_OMIT_FIELDS = [
   'odata.metadata',
   'odata.etag',
 ]
+const SAP_WRITES_SETTING_KEY = 'sap_writes_enabled'
 
 let cachedSession: SapSession | null = null
 let loginPromise: Promise<SapSession> | null = null
@@ -82,6 +84,12 @@ function readBooleanEnv(name: string, fallback: boolean): boolean {
   const value = process.env[name]?.trim().toLowerCase()
   if (!value) return fallback
   return value === 'true' || value === '1' || value === 'yes' || value === 'si'
+}
+
+function readBooleanSetting(value: unknown): boolean {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') return ['true', '1', 'yes', 'si'].includes(value.trim().toLowerCase())
+  return false
 }
 
 function readNumberEnv(name: string, fallback: number): number {
@@ -363,16 +371,23 @@ function normalizeRequiredCode(value: string, fieldName: string): string {
   return normalized
 }
 
-export function sapWritesEnabled(): boolean {
-  return readBooleanEnv('SAP_ENABLE_WRITES', false)
+export async function sapWritesEnabled(): Promise<boolean> {
+  const rows = await dbQuery(
+    `SELECT value
+     FROM public.app_settings
+     WHERE key = $1
+     LIMIT 1`,
+    [SAP_WRITES_SETTING_KEY]
+  )
+  return readBooleanSetting(rows?.[0]?.value)
 }
 
-export function assertSapWritesEnabled(): void {
-  if (sapWritesEnabled()) return
+export async function assertSapWritesEnabled(): Promise<void> {
+  if (await sapWritesEnabled()) return
 
-  throw new SapServiceLayerError('SAP write operations are disabled. Set SAP_ENABLE_WRITES=true to allow creates/updates.', {
+  throw new SapServiceLayerError('SAP write operations are disabled in Configuracion del Sistema.', {
     statusCode: 403,
-    sapCode: 'SAP_WRITES_DISABLED',
+    sapCode: 'SAP_WRITES_DISABLED_BY_APP_SETTINGS',
   })
 }
 
@@ -435,7 +450,7 @@ export function buildSapItemDuplicatePayload(input: SapItemDuplicateInput & { so
 }
 
 export async function createSapItem(payload: SapEntityPayload): Promise<unknown> {
-  assertSapWritesEnabled()
+  await assertSapWritesEnabled()
   return sapServiceLayerRequest('/Items', {
     method: 'POST',
     body: payload,
@@ -574,7 +589,7 @@ export async function getSapItemBomChildren(
 }
 
 export async function updateSapItem(itemCode: string, fields: SapEntityPayload): Promise<unknown> {
-  assertSapWritesEnabled()
+  await assertSapWritesEnabled()
   const normalizedCode = normalizeRequiredCode(itemCode, 'itemCode')
   return sapServiceLayerRequest(`/Items(${encodeODataString(normalizedCode)})`, {
     method: 'PATCH',

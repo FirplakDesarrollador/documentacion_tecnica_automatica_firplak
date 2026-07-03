@@ -22,6 +22,10 @@ export default async function AccessPendingPage() {
         redirect('/print')
     }
 
+    if (access.role === 'designer') {
+        redirect('/product-design')
+    }
+
     return (
         <div className="flex min-h-full items-center justify-center py-10">
             <div className="w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
@@ -44,8 +48,9 @@ export default async function AccessPendingPage() {
                             Rol detectado: <span className="font-semibold text-slate-900">{USER_ROLE_LABELS[access.role]}</span>.
                         </p>
                         <p className="mt-4 text-sm leading-relaxed text-slate-600">
-                            En esta primera version solo estan habilitados los roles <span className="font-semibold text-slate-900">Admin</span> y
-                            <span className="font-semibold text-slate-900"> Produccion</span>. Si tu cuenta debe acceder al sistema, un administrador
+                            En esta version estan habilitados los roles <span className="font-semibold text-slate-900">Admin</span>,
+                            <span className="font-semibold text-slate-900"> Produccion</span> y
+                            <span className="font-semibold text-slate-900"> Diseno</span>. Si tu cuenta debe acceder al sistema, un administrador
                             debe asignarte el rol correcto en Supabase.
                         </p>
                     </div>

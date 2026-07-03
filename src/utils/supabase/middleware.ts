@@ -134,7 +134,9 @@ export const updateSession = async (request: NextRequest) => {
       return isAllowedUserApi(pathname, role) ? response : jsonError("Forbidden", 403);
     }
 
-    return pathname.startsWith("/print") ? response : redirectTo(request, homePath);
+    return pathname.startsWith("/print") || pathname.startsWith("/productive-modules")
+      ? response
+      : redirectTo(request, homePath);
   }
 
   if (pathname === ACCESS_PENDING_PATH) {

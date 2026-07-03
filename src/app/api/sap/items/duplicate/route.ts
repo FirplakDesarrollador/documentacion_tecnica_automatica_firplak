@@ -60,7 +60,7 @@ export async function POST(request: Request) {
       })
     }
 
-    assertSapWritesEnabled()
+    await assertSapWritesEnabled()
     const createdItem = await createSapItem(duplicate.createPayload)
 
     return NextResponse.json({

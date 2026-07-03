@@ -24,6 +24,8 @@ export const PERMISSIONS = [
   'module:assets',
   'module:generate',
   'module:print',
+  'module:product-design',
+  'module:productive-modules',
   'module:configuration',
   'module:consulta-sap',
   'action:print',
@@ -35,8 +37,8 @@ export type Permission = (typeof PERMISSIONS)[number]
 export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   pending: [],
   admin: [...PERMISSIONS],
-  production: ['module:print', 'action:print'],
-  designer: [],
+  production: ['module:print', 'module:productive-modules', 'action:print'],
+  designer: ['module:product-design'],
   engineering: [],
 }
 
@@ -44,7 +46,7 @@ export const ROLE_HOME_PATH: Record<UserRole, string> = {
   pending: '/access-pending',
   admin: '/',
   production: '/print',
-  designer: '/access-pending',
+  designer: '/product-design',
   engineering: '/access-pending',
 }
 
@@ -79,7 +81,7 @@ export function hasPermission(role: UserRole, permission: Permission): boolean {
 }
 
 export function isPendingLikeRole(role: UserRole): boolean {
-  return role === 'pending' || role === 'designer' || role === 'engineering'
+  return role === 'pending' || role === 'engineering'
 }
 
 export function isPublicRoute(pathname: string): boolean {

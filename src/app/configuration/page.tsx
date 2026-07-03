@@ -2,6 +2,7 @@ import { dbQuery } from '@/lib/supabase';
 import { NomenclaturesSection } from '@/components/rules/NomenclaturesSection';
 import { MassImportSettingsSection } from '@/components/rules/MassImportSettingsSection';
 import { PrintSettingsSection } from '@/components/configuration/PrintSettingsSection';
+import { SapWriteSettingsSection } from '@/components/configuration/SapWriteSettingsSection';
 import { getNamingComponentsAction, getNamingModelStatusAction } from '@/app/rules/actions';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -14,6 +15,12 @@ type AppSettingRow = {
   value: unknown
 }
 
+function readBooleanSetting(value: unknown): boolean {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') return ['true', '1', 'yes', 'si'].includes(value.trim().toLowerCase())
+  return false
+}
+
 export default async function ConfigurationPage() {
   const namingComponents = await getNamingComponentsAction();
   const namingModelStatus = await getNamingModelStatusAction();
@@ -22,12 +29,13 @@ export default async function ConfigurationPage() {
   const settingsRows = (await dbQuery(`
     SELECT key, value
     FROM public.app_settings
-    WHERE key IN ('mass_import_execute_enabled','mass_import_safe_max_rows')
+    WHERE key IN ('mass_import_execute_enabled','mass_import_safe_max_rows','sap_writes_enabled')
   `) || []) as AppSettingRow[];
   const sByKey = new Map<string, unknown>();
   for (const r of settingsRows) sByKey.set(String(r.key), r.value);
-  const initialExecuteEnabled = !!sByKey.get('mass_import_execute_enabled');
+  const initialExecuteEnabled = readBooleanSetting(sByKey.get('mass_import_execute_enabled'));
   const initialSafeMaxRows = Number(sByKey.get('mass_import_safe_max_rows') ?? 15);
+  const initialSapWritesEnabled = readBooleanSetting(sByKey.get('sap_writes_enabled'));
 
   return (
     <div className="container mx-auto py-6">
@@ -114,6 +122,9 @@ export default async function ConfigurationPage() {
           </p>
         </div>
         <PrintSettingsSection />
+        <SapWriteSettingsSection
+          initialEnabled={initialSapWritesEnabled}
+        />
         <MassImportSettingsSection
           initialExecuteEnabled={initialExecuteEnabled}
           initialSafeMaxRows={Number.isFinite(initialSafeMaxRows) ? initialSafeMaxRows : 15}

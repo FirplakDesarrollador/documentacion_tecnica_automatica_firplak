@@ -15,7 +15,8 @@
 **Datasets Genericos para Plantillas**: Las plantillas con `data_source='custom_datasets'` se vinculan a datasets mediante `public.template_dataset_links`; el mapping de variables se gobierna desde `/datasets` con keys canonicas en `schema_json.columns[].key`, y `/generate` solo lista datasets asociados y sincronizados.  
 **Etiquetas por Cajas**: La cantidad de cajas vive en `product_references.ref_attrs.q_package`; para `2+ CAJAS`, `product_references.weight_kg` usa JSONB `{ weights_kg, peso_total }` y las etiquetas se expanden temporalmente con `partes_texto` (`Caja 1/2`) sin duplicar registros.  
 **Filtro de Busqueda Persistente en Generar**: Implementacion de un filtro de texto por nombre/color en `/generate` con persistencia al cambiar familia o referencia y limite dinamico de consulta.  
-**RBAC v1 y Seguridad Supabase**: Supabase Auth sigue como autenticacion; la autorizacion vive en `public.user_profiles`, guards server-side y RLS. `production` solo accede a `/print`; `admin` conserva acceso total; `pending`, `designer` e `engineering` quedan sin modulos activos en v1.
+**RBAC v1 y Seguridad Supabase**: Supabase Auth sigue como autenticacion; la autorizacion vive en `public.user_profiles`, guards server-side y RLS. `admin` conserva acceso total; `production` accede a `/print` y `/productive-modules`; `designer` accede a `/product-design`; `pending` e `engineering` quedan sin modulos activos.
+**Informacion Productiva de Productos V1**: Se inicio el frente universal de LDM/BOM SAP + documentos productivos. La LDM base vive en `product_references.product_bom_structure`, componentes no `V` en `component_items`, overrides en `global_version_rules.bom_overrides`/`product_versions.bom_overrides`, y la resolucion por SKU/color en `resolved_bom_for_sku`. Las hojas de ruta nuevas usan `product_route_documents`; `hojas_de_ruta` queda como legado/referencia.
 
 ## Arquitectura de 3 Capas
 Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
@@ -41,17 +42,18 @@ Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
   - `.gemini/antigravity/knowledge/thermal_label_printing_and_agent_metadata/KI.md`
   - `.gemini/antigravity/knowledge/reference_package_labels_and_box_weights/KI.md`
   - `.gemini/antigravity/knowledge/sap_service_layer_item_master_and_bom/KI.md`
+  - `.gemini/antigravity/knowledge/product_production_information_bom_and_routes/KI.md`
   - `.gemini/antigravity/knowledge/agent_governance_and_v6_stabilization/artifacts/knowledge_item.md`
   - `.gemini/antigravity/knowledge/supabase_auth_and_proxy_architecture/artifacts/knowledge_item.md`
 
 ## Tecnologias Clave
 - **Frontend/Backend**: Next.js 16+ (App Router), React 19.
 - **Autenticacion**: Supabase Auth con patron **Proxy (ex-Middleware)**.
-- **RBAC v1**: roles `admin`, `production`, `pending`, `designer`, `engineering` desde `public.user_profiles`. `production` solo `/print`; `admin` todo; `pending`, `designer` e `engineering` redirigen a `/access-pending`.
+- **RBAC v1**: roles `admin`, `production`, `pending`, `designer`, `engineering` desde `public.user_profiles`. `admin` todo; `production` accede a `/print` y `/productive-modules`; `designer` accede a `/product-design`; `pending` e `engineering` redirigen a `/access-pending` mientras no tengan modulos activos.
 - **Base de Datos**: Prisma ORM con SQLite (local) y Supabase (Cloud).
 - **Prisma Client (REGLA)**: el cliente se genera en `src/generated/prisma`; en `src/`, importar tipos desde `@/generated/prisma/client` y acceso DB desde `@/lib/prisma`. `@prisma/client` queda bloqueado por `npm run check:diff` para evitar fallos en Vercel clean install.
 - **IA externa (estado actual)**: no hay integraciones activas de IA generativa por API en runtime; no asumir Gemini u otro proveedor salvo que reaparezca implementacion real en `src/` o rutas del app.
-- **SAP Service Layer Runtime**: `/consulta-sap` y `/api/sap/**` consultan SAP B1 Service Layer server-side via `src/lib/sap/serviceLayer.ts` (`Items` y `ProductTrees`). Usar Node/HTTPS para diagnostico; `Invoke-WebRequest` puede dar falsos `400`. Escrituras SAP requieren `SAP_ENABLE_WRITES=true` y dry-run/confirmacion humana. Ver KI `sap_service_layer_item_master_and_bom`.
+- **SAP Service Layer Runtime**: `/consulta-sap` y `/api/sap/**` consultan SAP B1 Service Layer server-side via `src/lib/sap/serviceLayer.ts` (`Items` y `ProductTrees`). Usar Node/HTTPS para diagnostico; `Invoke-WebRequest` puede dar falsos `400`. Escrituras SAP se activan/inactivan desde `/configuration` con `app_settings.sap_writes_enabled` y mantienen dry-run/confirmacion humana. Ver KI `sap_service_layer_item_master_and_bom`.
 - **Supabase Source of Truth (REGLA)**: El proyecto Supabase operativo de este repo es siempre **I+D** (`nbifmxggfusipomspoly`, `https://nbifmxggfusipomspoly.supabase.co`). Toda migracion, RPC, SQL check, schema inspection o mutacion por MCP debe apuntar por defecto a ese proyecto.
 - **Confirmacion de Migraciones Supabase (REGLA)**: Si una tarea requiere DDL/RPC/triggers/views/indices/RLS/backfills, el agente debe explicar migraciones, impacto, riesgos, plan y verificacion, y pedir confirmacion explicita antes de aplicar; excepcion solo si el usuario pide ejecutarlas directamente en el mismo mensaje.
 - **Gobernanza de Supabase MCP**: Se prioriza la logica DB-First: usar Triggers, Funciones RPC y Views.
@@ -79,6 +81,7 @@ Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
 
 ## Informacion de Dominio (Firplak)
 - **Gobernanza de Esquema**: La familia (`families`) es la fuente de verdad tecnica para los atributos de sus referencias.
+- **Informacion productiva de productos**: La LDM/BOM y documentos productivos deben modelarse de forma universal, no por tablas especificas de muebles/fibra/marmol/quartzstone. La referencia es la base productiva, la version modifica y el SKU/color resuelve componentes concretos. Ver KI `product_production_information_bom_and_routes`.
 - **Excepcion `use_destination`**: `families.use_destination` sigue siendo el default tecnico, pero una referencia puede sobrescribirlo con `product_references.ref_attrs.use_destination`; version, SKU y reglas globales no deben pisar este campo efectivo.
 - **Documentos publicos y QR**: Los documentos publicables usan `product_asset_links` como fuente relacional. `public_slug` incluye prefijo (`ins/...`, `gar/...`, `cui/...`) y debe ser humano/estable, sin codigos internos tipo `BAN24-0001` salvo excepciones temporales antes de publicar. El dominio productivo canonico es `https://doc.firplak.com/{prefijo}/{slug}`; QRs productivos no deben codificar localhost ni el dominio `.vercel.app`. `src/lib/documentLinks.ts` centraliza la resolucion con `NEXT_PUBLIC_DOCS_BASE_URL` y fallback a `https://doc.firplak.com`; prefijos y abreviaturas viven en `/configuration/nomenclature`.
 - **Patron de Limpieza Profunda**: Al borrar un asset, se realiza una desconexion automatica en JSONB y eliminacion fisica del Storage.
@@ -97,13 +100,13 @@ Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
 - **Gobernanza de Contexto (REGLA)**: El agente debe avisar proactivamente al usuario de archivar la sesion (`/archive-session`) tras hitos importantes.
 
 ## Proximos Pasos (Sugerencia)
-1. **Impresion USB en produccion**: Probar impresion real con una etiqueta SamiGen desde `/print`.
-2. **Mostrar estado USB en PrintClient**: Agregar indicador visual en la UI cuando el agente este online.
-3. **Reset/diagnostico TSPL de inicio**: Evaluar un comando seguro de inicializacion para evitar avance de etiquetas en blanco al conectar USB.
-4. **Soporte PDF en agente**: Convertir PDF -> JPG para imprimir PDFs en la termica.
-5. **Validar modelos de nomenclatura**: Probar `final_base_name`, `final_complete_name` y `sap_description_recommended` desde `public.naming_components` en creacion, importacion, `/generate`, `/pending` y glosario.
-6. **Saneamiento masivo**: Utilizar el editor de referencias para normalizar `special_label` y `designation`.
-7. **Integracion de atributos en plantillas**: Configurar las plantillas para consumir `dynamic_attrs`.
+1. **Piloto BOM SAP**: Importar manualmente los 3 SKUs piloto (`VBAN12-0081-000-0437`, `VROP03-0001-000-0100`, `VCOC01-0066-000-0437`) y comparar `resolved_bom_for_sku` contra SAP.
+2. **Hojas de ruta productivas**: Probar edicion en `/product-design/route-sheets/furniture` y vista/impresion carta en `/productive-modules/route-sheets/furniture`.
+3. **Escrituras SAP controladas**: Validar desde `/configuration` que `sap_writes_enabled` active/inactive PATCH/POST reales y que el flujo conserve dry-run + confirmacion humana.
+4. **Overrides BOM reales**: Probar `replace_line`, `add_line`, `remove_line` con casos vigentes de manija/riel/bisagra antes de ampliar a creacion de codigos.
+5. **Subestructuras profundas**: Completar expansion recursiva de `item_bom_structure` para subproducidos, kits y estructuras inventariables/no inventariables.
+6. **Impresion USB en produccion**: Probar impresion real con una etiqueta SamiGen desde `/print`.
+7. **Mostrar estado USB en PrintClient**: Agregar indicador visual en la UI cuando el agente este online.
 8. **Migracion de base de datos**: Mover los modelos de Prisma de SQLite a PostgreSQL (Supabase).
 9. **Mantenimiento de secretos MCP**: Usar `node execution/sync_mcp_config.js` para mantener las claves de Antigravity sincronizadas con el `.env`.
 

@@ -14,7 +14,7 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       ...health,
-      writesEnabled: sapWritesEnabled(),
+      writesEnabled: await sapWritesEnabled(),
     })
   } catch (error: unknown) {
     return sapApiErrorResponse(error)
