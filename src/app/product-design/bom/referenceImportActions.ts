@@ -6,13 +6,18 @@ import { dbQuery } from '@/lib/supabase'
 import { readSapFrozen, readSapValid } from '@/lib/bom/sapMapping'
 import {
   analyzeReferenceBomImport,
+  applyReferenceImportIssueMethod,
+  confirmReferenceImportMaterialGroup,
+  confirmReferenceImportMaterialProfile,
   confirmReferenceImportColorRule,
   getReferenceImportWorkspace,
   listReferenceImportCandidates,
   publishReferenceBomImportRun,
   resolveReferenceImportFinding,
+  saveReferenceImportManualColorOverride,
 } from '@/lib/bom/referenceImport'
 import type { ReferenceImportWorkspace } from '@/lib/bom/referenceImportTypes'
+import type { ReferenceProductApplicationScope } from '@/lib/bom/referenceImportScopes'
 import { getSapItem } from '@/lib/sap/serviceLayer'
 import { assertPermission } from '@/utils/auth/access'
 
@@ -97,6 +102,99 @@ export async function confirmReferenceBomColorRuleAction(input: {
     return { success: true, message: 'Regla global de color confirmada.', workspace }
   } catch (error) {
     return failure(error, 'No se pudo confirmar la regla de color.')
+  }
+}
+
+export async function confirmReferenceBomMaterialGroupAction(input: {
+  runId: string
+  findingId: string
+  confirmationText: string
+}): Promise<ActionResult> {
+  const access = await assertPermission('module:product-design')
+  try {
+    await confirmReferenceImportMaterialGroup({
+      ...input,
+      actorId: access.user?.id ?? null,
+    })
+    const workspace = await getReferenceImportWorkspace(input.runId)
+    return { success: true, message: 'Grupo de materiales confirmado.', workspace }
+  } catch (error) {
+    return failure(error, 'No se pudo confirmar el grupo de materiales.')
+  }
+}
+
+export async function confirmReferenceBomMaterialProfileAction(input: {
+  runId: string
+  findingId: string
+  confirmationText: string
+}): Promise<ActionResult> {
+  const access = await assertPermission('module:product-design')
+  try {
+    await confirmReferenceImportMaterialProfile({
+      ...input,
+      actorId: access.user?.id ?? null,
+    })
+    const workspace = await getReferenceImportWorkspace(input.runId)
+    return { success: true, message: 'Perfil de material guardado en el color.', workspace }
+  } catch (error) {
+    return failure(error, 'No se pudo guardar el perfil de material.')
+  }
+}
+
+export async function saveReferenceBomManualColorOverrideAction(input: {
+  runId: string
+  findingId: string
+  level: 'reference' | 'version' | 'sku'
+  skuComplete: string | null
+  sourceColorCode: string
+  scope: ReferenceProductApplicationScope
+  targetColorCode: string | null
+  materialProfile: string | null
+  baseItemCode: string | null
+  reason: string
+}): Promise<ActionResult> {
+  const access = await assertPermission('module:product-design')
+  try {
+    await saveReferenceImportManualColorOverride({
+      ...input,
+      actorId: access.user?.id ?? null,
+    })
+    const workspace = await getReferenceImportWorkspace(input.runId)
+    return { success: true, message: 'Override guardado en Supabase.', workspace }
+  } catch (error) {
+    return failure(error, 'No se pudo guardar el override en Supabase.')
+  }
+}
+
+export async function applyReferenceBomIssueMethodAction(input: {
+  runId: string
+  findingId: string
+  targetIssueMethod: string
+  dryRun: boolean
+  confirmationText: string
+}): Promise<ActionResult & {
+  issueMethodResult?: Awaited<ReturnType<typeof applyReferenceImportIssueMethod>>
+}> {
+  const access = await assertPermission('module:product-design')
+  try {
+    const issueMethodResult = await applyReferenceImportIssueMethod({
+      ...input,
+      actorId: access.user?.id ?? null,
+    })
+    const workspace = await getReferenceImportWorkspace(input.runId)
+    const failedCount = issueMethodResult.results.filter(result => !result.success).length
+    return {
+      success: failedCount === 0,
+      message: input.dryRun
+        ? `Dry-run revisado: ${issueMethodResult.results.length} linea(s), ${failedCount} con error.`
+        : failedCount === 0
+          ? 'Metodo de salida actualizado y verificado en SAP.'
+          : `SAP tuvo ${failedCount} error(es); la revision sigue pendiente.`,
+      workspace,
+      issueMethodResult,
+    }
+  } catch (error) {
+    return { ...failure(error, 'No se pudo homologar el metodo de salida.'), issueMethodResult: undefined }
   }
 }
 

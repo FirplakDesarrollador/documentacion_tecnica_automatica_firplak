@@ -22,12 +22,16 @@ import { Label } from '@/components/ui/label'
 import {
     COLOR_APPLICATION_SCOPE_KEYS,
     COLOR_APPLICATION_SCOPE_LABELS,
+    MATERIAL_PROFILE_LABELS,
+    MATERIAL_PROFILE_OPTIONS,
     COLOR_MODE_LABELS,
     COLOR_MODE_OPTIONS,
     SAP_COLOR_CODE_PATTERN,
     type ColorApplicationMap,
     type ColorApplicationScope,
+    type ColorMaterialProfileMap,
     type ColorMode,
+    type MaterialProfile,
 } from './productiveScopes'
 
 interface ColorEntry {
@@ -35,6 +39,7 @@ interface ColorEntry {
     name_color_sap: string
     color_mode: ColorMode
     application_colors_json: ColorApplicationMap
+    application_material_profiles_json: ColorMaterialProfileMap
     allowed_product_types: string[]
     allowed_manufacturing_processes: string[]
     is_active: boolean
@@ -47,7 +52,11 @@ interface ColorsClientProps {
     productTypes: string[]
 }
 
-type EditableColor = Partial<ColorEntry> & { isNew?: boolean }
+type EditableColor = Omit<Partial<ColorEntry>, 'application_colors_json' | 'application_material_profiles_json'> & {
+    application_colors_json?: Record<ColorApplicationScope, string>
+    application_material_profiles_json?: EditableMaterialProfileMap
+    isNew?: boolean
+}
 
 function createEmptyApplicationColors(): Record<ColorApplicationScope, string> {
     const values = {} as Record<ColorApplicationScope, string>
@@ -57,10 +66,29 @@ function createEmptyApplicationColors(): Record<ColorApplicationScope, string> {
     return values
 }
 
-function getEditableApplicationColors(color?: Partial<ColorEntry> | null): Record<ColorApplicationScope, string> {
+function getEditableApplicationColors(color?: { application_colors_json?: Partial<Record<ColorApplicationScope, string>> } | null): Record<ColorApplicationScope, string> {
     const values = createEmptyApplicationColors()
     for (const scope of COLOR_APPLICATION_SCOPE_KEYS) {
         values[scope] = color?.application_colors_json?.[scope] ?? ''
+    }
+    return values
+}
+
+type EditableMaterialProfileMap = Record<ColorApplicationScope, MaterialProfile | ''>
+
+function createEmptyMaterialProfiles(): EditableMaterialProfileMap {
+    const values = {} as EditableMaterialProfileMap
+    for (const scope of COLOR_APPLICATION_SCOPE_KEYS) values[scope] = ''
+    return values
+}
+
+function getEditableMaterialProfiles(color?: { application_material_profiles_json?: Partial<Record<ColorApplicationScope, string>> } | null): EditableMaterialProfileMap {
+    const values = createEmptyMaterialProfiles()
+    for (const scope of COLOR_APPLICATION_SCOPE_KEYS) {
+        const profile = color?.application_material_profiles_json?.[scope]
+        values[scope] = MATERIAL_PROFILE_OPTIONS.includes(profile as MaterialProfile)
+            ? profile as MaterialProfile
+            : ''
     }
     return values
 }
@@ -76,6 +104,17 @@ function getApplicationColorsPayload(applicationColors: ColorApplicationMap | un
     for (const scope of COLOR_APPLICATION_SCOPE_KEYS) {
         const code = applicationColors?.[scope]?.trim().toUpperCase() ?? ''
         if (code) payload[scope] = code
+    }
+    return payload
+}
+
+function getMaterialProfilesPayload(materialProfiles: Partial<Record<ColorApplicationScope, string>> | undefined): ColorMaterialProfileMap {
+    const payload: ColorMaterialProfileMap = {}
+    for (const scope of COLOR_APPLICATION_SCOPE_KEYS) {
+        const profile = materialProfiles?.[scope]?.trim().toUpperCase() ?? ''
+        if (MATERIAL_PROFILE_OPTIONS.includes(profile as (typeof MATERIAL_PROFILE_OPTIONS)[number])) {
+            payload[scope] = profile as (typeof MATERIAL_PROFILE_OPTIONS)[number]
+        }
     }
     return payload
 }
@@ -144,6 +183,7 @@ export default function ColorsClient({ initialData, manufacturingProcesses, prod
                 allowed_manufacturing_processes: normalizeTextArray(color.allowed_manufacturing_processes),
                 allowed_product_types: normalizeTextArray(color.allowed_product_types),
                 application_colors_json: getEditableApplicationColors(color),
+                application_material_profiles_json: getEditableMaterialProfiles(color),
                 color_mode: color.color_mode ?? 'full',
                 isNew: false,
                 is_active: color.is_active ?? true,
@@ -154,6 +194,7 @@ export default function ColorsClient({ initialData, manufacturingProcesses, prod
                 allowed_manufacturing_processes: [],
                 allowed_product_types: [],
                 application_colors_json: createEmptyApplicationColors(),
+                application_material_profiles_json: createEmptyMaterialProfiles(),
                 code_4dig: '',
                 color_mode: 'full',
                 isNew: true,
@@ -172,6 +213,19 @@ export default function ColorsClient({ initialData, manufacturingProcesses, prod
             application_colors_json: {
                 ...getEditableApplicationColors(prev),
                 [scope]: code,
+            },
+        } : prev)
+    }
+
+    const updateMaterialProfile = (scope: ColorApplicationScope, rawValue: string) => {
+        const profile = MATERIAL_PROFILE_OPTIONS.includes(rawValue as MaterialProfile)
+            ? rawValue as MaterialProfile
+            : ''
+        setEditingColor(prev => prev ? {
+            ...prev,
+            application_material_profiles_json: {
+                ...getEditableMaterialProfiles(prev),
+                [scope]: profile,
             },
         } : prev)
     }
@@ -222,6 +276,7 @@ export default function ColorsClient({ initialData, manufacturingProcesses, prod
                 allowed_manufacturing_processes: normalizeTextArray(editingColor.allowed_manufacturing_processes),
                 allowed_product_types: normalizeTextArray(editingColor.allowed_product_types),
                 application_colors_json: getApplicationColorsPayload(editingColor.application_colors_json),
+                application_material_profiles_json: getMaterialProfilesPayload(editingColor.application_material_profiles_json),
                 color_mode: editingColor.color_mode ?? 'full',
                 isNew: editingColor.isNew,
                 is_active: editingColor.is_active ?? true,
@@ -559,6 +614,34 @@ export default function ColorsClient({ initialData, manufacturingProcesses, prod
                                         </div>
                                     )
                                 })}
+                            </div>
+                        </div>
+                        <div className="border-t border-slate-100 pt-3">
+                            <div className="mb-2">
+                                <Label className="text-sm font-bold text-slate-800">Perfil de material por uso</Label>
+                                <p className="text-xs text-slate-500">
+                                    Define la familia base del material. Los codigos de color SAP siguen configurandose arriba.
+                                </p>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                                {COLOR_APPLICATION_SCOPE_KEYS.map((scope) => (
+                                    <div key={scope} className="grid gap-1">
+                                        <Label htmlFor={`material-profile-${scope}`} className="truncate text-[11px] font-semibold text-slate-600">
+                                            {COLOR_APPLICATION_SCOPE_LABELS[scope]}
+                                        </Label>
+                                        <select
+                                            id={`material-profile-${scope}`}
+                                            className="h-8 min-w-0 rounded-md border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700"
+                                            value={editingColor?.application_material_profiles_json?.[scope] ?? ''}
+                                            onChange={(event) => updateMaterialProfile(scope, event.target.value)}
+                                        >
+                                            <option value="">Sin definir</option>
+                                            {MATERIAL_PROFILE_OPTIONS.map((profile) => (
+                                                <option key={profile} value={profile}>{MATERIAL_PROFILE_LABELS[profile]}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                ))}
                             </div>
                         </div>
                         </div>
