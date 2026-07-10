@@ -3,10 +3,10 @@
 import { supabaseServer, dbQuery } from '@/lib/supabase';
 import { markNamingStaleForReferences, processNamingJobsInline } from '@/lib/engine/namingQueue';
 import { revalidatePath } from 'next/cache';
-import { assertRole } from '@/utils/auth/access';
+import { assertPermission } from '@/utils/auth/access';
 
 async function assertAdminAccess() {
-  await assertRole('admin');
+  await assertPermission('module:configuration');
 }
 
 // --- FLUJO B: MASS EDIT ---

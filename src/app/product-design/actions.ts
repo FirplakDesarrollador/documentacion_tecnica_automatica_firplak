@@ -1,14 +1,31 @@
 'use server'
 
+import { Buffer } from 'node:buffer'
 import { revalidatePath } from 'next/cache'
 
 import { dbQuery } from '@/lib/supabase'
 import { supabaseTable } from '@/lib/supabaseDynamic'
 import { assertPermission, assertRole } from '@/utils/auth/access'
 import { getSapItem, updateSapItem, type SapEntityPayload } from '@/lib/sap/serviceLayer'
-import { importPilotSapBoms, importSapBomForSku } from '@/lib/bom/sapImport'
 import { PILOT_SKUS, type ResolvedBomLine } from '@/lib/bom/types'
-import { parseSalesSku, readSapFrozen, readSapValid } from '@/lib/bom/sapMapping'
+import { readSapFrozen, readSapValid } from '@/lib/bom/sapMapping'
+import { parseCabinetRouteWorkbook } from '@/lib/routeSheets/cabinetRouteExcel'
+import {
+  CABINET_ROUTE_SCHEMA_VERSION,
+  buildCabinetRouteMatchReport,
+  deriveCabinetBomCandidates,
+  applyOriginalRouteImport,
+  isCabinetRouteStatus,
+  normalizeCabinetRouteData,
+  reconcileCabinetRouteData,
+  withCabinetRouteSource,
+  type CabinetBomCandidate,
+  type CabinetBomLine,
+  type CabinetBomSourceMode,
+  type CabinetRouteData,
+  type CabinetRouteMatchReport,
+  type CabinetRouteStatus,
+} from '@/lib/routeSheets/cabinets'
 
 export type PilotBomSummary = {
   sku_complete: string
@@ -30,12 +47,23 @@ export type PilotBomSummary = {
 export type RouteDocumentState = {
   id: string | null
   reference_id: string
+  reference_code: string | null
   version_id: string | null
   sku_complete: string
-  route_type: 'furniture'
+  route_type: 'cabinet'
   schema_version: number
-  route_data_json: Record<string, unknown>
-  status: string
+  route_data_json: CabinetRouteData
+  status: CabinetRouteStatus
+}
+
+export type CabinetRouteWorkspace = {
+  document: RouteDocumentState | null
+  lines: CabinetBomLine[]
+  candidates: CabinetBomCandidate[]
+  matchReport: CabinetRouteMatchReport
+  bomSourceMode: CabinetBomSourceMode
+  bomWarning: string | null
+  error: string | null
 }
 
 export type SapStatusUpdateInput = {
@@ -56,6 +84,18 @@ type PilotBomRow = {
   reference_code: string | null
   product_name: string | null
   line_count: number | string | null
+}
+
+type SkuScope = {
+  referenceId: string
+  referenceCode: string | null
+  versionId: string | null
+}
+
+type CabinetBomReadResult = {
+  lines: CabinetBomLine[]
+  sourceMode: CabinetBomSourceMode
+  warning: string | null
 }
 
 function quoteSql(value: string): string {
@@ -95,6 +135,43 @@ async function getResolvedLines(skuComplete: string): Promise<ResolvedBomLine[]>
   )
 
   return rows as ResolvedBomLine[]
+}
+
+async function getCabinetRouteBomLines(skuComplete: string): Promise<CabinetBomReadResult> {
+  try {
+    const rows = await dbQuery(
+      `SELECT rb.*, ci.component_category
+       FROM public.resolved_bom_expanded_for_sku($1) rb
+       LEFT JOIN public.component_items ci ON ci.item_code = rb.resolved_item_code
+       ORDER BY rb.sort_path, rb.sort_order, rb.line_id`,
+      [skuComplete]
+    )
+
+    return { lines: rows as CabinetBomLine[], sourceMode: 'expanded', warning: null }
+  } catch (error) {
+    if (!isMissingExpandedBomFunctionError(error)) throw error
+  }
+
+  const rows = await dbQuery(
+    `SELECT
+       rb.*,
+       NULL::text AS parent_line_id,
+       rb.line_id AS root_line_id,
+       NULL::text AS sort_path,
+       rb.qty AS effective_qty,
+       false AS is_cycle,
+       ci.component_category
+     FROM public.resolved_bom_for_sku($1) rb
+     LEFT JOIN public.component_items ci ON ci.item_code = rb.resolved_item_code
+     ORDER BY rb.sort_order, rb.line_id`,
+    [skuComplete]
+  )
+
+  return {
+    lines: rows as CabinetBomLine[],
+    sourceMode: 'direct',
+    warning: 'BOM directa sin subestructuras: resolved_bom_expanded_for_sku no esta disponible en Supabase.',
+  }
 }
 
 export async function getPilotBomSummariesAction(): Promise<{ summaries: PilotBomSummary[]; error: string | null }> {
@@ -153,47 +230,9 @@ export async function getPilotBomSummariesAction(): Promise<{ summaries: PilotBo
   }
 }
 
-export async function getResolvedBomAction(skuComplete: string): Promise<{ lines: ResolvedBomLine[]; error: string | null }> {
-  await assertPermission('module:product-design')
-
-  try {
-    return { lines: await getResolvedLines(normalizeSkuInput(skuComplete)), error: null }
-  } catch (error) {
-    return { lines: [], error: error instanceof Error ? error.message : 'No se pudo resolver la LdM' }
-  }
-}
-
-export async function importPilotBomsAction(): Promise<{ success: boolean; message: string }> {
-  await assertPermission('module:product-design')
-
-  try {
-    const results = await importPilotSapBoms(PILOT_SKUS.map(pilot => pilot.sku))
-    return {
-      success: true,
-      message: `Importados ${results.length} SKUs piloto desde SAP.`,
-    }
-  } catch (error) {
-    return { success: false, message: error instanceof Error ? error.message : 'Falló la importación SAP' }
-  }
-}
-
-export async function importSingleBomAction(skuComplete: string): Promise<{ success: boolean; message: string }> {
-  await assertPermission('module:product-design')
-
-  try {
-    const result = await importSapBomForSku(normalizeSkuInput(skuComplete))
-    return {
-      success: true,
-      message: `${result.skuComplete}: ${result.importedLineCount} líneas y ${result.componentUpsertCount} componentes importados.`,
-    }
-  } catch (error) {
-    return { success: false, message: error instanceof Error ? error.message : 'Falló la importación SAP' }
-  }
-}
-
-async function getSkuScope(skuComplete: string): Promise<{ referenceId: string; versionId: string | null }> {
+async function getSkuScope(skuComplete: string): Promise<SkuScope> {
   const rows = await dbQuery(
-    `SELECT r.id AS reference_id, v.id AS version_id
+    `SELECT r.id AS reference_id, r.reference_code, v.id AS version_id
      FROM public.product_skus s
      JOIN public.product_versions v ON v.id = s.version_id
      JOIN public.product_references r ON r.id = v.reference_id
@@ -208,6 +247,7 @@ async function getSkuScope(skuComplete: string): Promise<{ referenceId: string; 
 
   return {
     referenceId,
+    referenceCode: readString(row?.reference_code),
     versionId: readString(row?.version_id),
   }
 }
@@ -222,11 +262,10 @@ export async function getRouteDocumentAction(skuComplete: string): Promise<{ doc
       `SELECT id, reference_id, version_id, route_type, schema_version, route_data_json, status
        FROM public.product_route_documents
        WHERE reference_id = $1
-         AND route_type = 'furniture'
-         AND (version_id = $2 OR version_id IS NULL)
-       ORDER BY version_id NULLS LAST
+         AND route_type = 'cabinet'
+         AND version_id IS NULL
        LIMIT 1`,
-      [scope.referenceId, scope.versionId]
+      [scope.referenceId]
     )
 
     const row = rows[0]
@@ -234,12 +273,13 @@ export async function getRouteDocumentAction(skuComplete: string): Promise<{ doc
       document: {
         id: readString(row?.id),
         reference_id: scope.referenceId,
-        version_id: scope.versionId,
+        reference_code: scope.referenceCode,
+        version_id: null,
         sku_complete: sku,
-        route_type: 'furniture',
-        schema_version: typeof row?.schema_version === 'number' ? row.schema_version : 1,
-        route_data_json: asRecord(row?.route_data_json),
-        status: readString(row?.status) ?? 'draft',
+        route_type: 'cabinet',
+        schema_version: typeof row?.schema_version === 'number' ? row.schema_version : CABINET_ROUTE_SCHEMA_VERSION,
+        route_data_json: normalizeCabinetRouteData(row?.route_data_json),
+        status: toRouteStatus(readString(row?.status)),
       },
       error: null,
     }
@@ -248,9 +288,123 @@ export async function getRouteDocumentAction(skuComplete: string): Promise<{ doc
   }
 }
 
+export async function getCabinetRouteWorkspaceAction(skuComplete: string): Promise<CabinetRouteWorkspace> {
+  await assertPermission('module:product-design')
+
+  try {
+    const sku = normalizeSkuInput(skuComplete)
+    const [documentResult, bomResult] = await Promise.all([
+      getRouteDocumentAction(sku),
+      getCabinetRouteBomLines(sku),
+    ])
+    if (documentResult.error) throw new Error(documentResult.error)
+
+    const candidates = deriveCabinetBomCandidates(bomResult.lines, bomResult.sourceMode)
+    const missingBomCount = bomResult.lines.filter(line => line.resolution_status !== 'resolved').length
+    const document = documentResult.document
+      ? {
+          ...documentResult.document,
+          route_data_json: reconcileCabinetRouteData(withCabinetRouteSource(documentResult.document.route_data_json, {
+            analysisSkuComplete: sku,
+            referenceId: documentResult.document.reference_id,
+            referenceCode: documentResult.document.reference_code,
+            bomLineCount: bomResult.lines.length,
+            missingBomCount,
+            bomSourceMode: bomResult.sourceMode,
+            bomWarning: bomResult.warning,
+          }), candidates),
+        }
+      : null
+
+    return {
+      document,
+      lines: bomResult.lines,
+      candidates,
+      matchReport: buildCabinetRouteMatchReport(document?.route_data_json ?? normalizeCabinetRouteData(null), candidates),
+      bomSourceMode: bomResult.sourceMode,
+      bomWarning: bomResult.warning,
+      error: null,
+    }
+  } catch (error) {
+    return {
+      document: null,
+      lines: [],
+      candidates: [],
+      matchReport: buildCabinetRouteMatchReport(normalizeCabinetRouteData(null), []),
+      bomSourceMode: 'direct',
+      bomWarning: null,
+      error: error instanceof Error ? error.message : 'No se pudo preparar hoja de ruta cabinets',
+    }
+  }
+}
+
+export async function parseOriginalCabinetRouteSheetAction(formData: FormData): Promise<{
+  success: boolean
+  message: string
+  routeData: CabinetRouteData | null
+  warnings: string[]
+}> {
+  await assertPermission('module:product-design')
+
+  try {
+    const file = formData.get('file')
+    if (!(file instanceof File) || file.size === 0) {
+      throw new Error('Selecciona una hoja de ruta original en formato .xlsx.')
+    }
+    if (!file.name.toLowerCase().endsWith('.xlsx')) {
+      throw new Error('Por ahora solo se aceptan hojas originales .xlsx.')
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      throw new Error('La hoja original supera el límite de 10 MB.')
+    }
+
+    const currentRouteData = normalizeCabinetRouteData(parseRouteDataJson(formData.get('routeData')))
+    const sku = readString(formData.get('skuComplete'))
+    const buffer = Buffer.from(await file.arrayBuffer())
+    const imported = await parseCabinetRouteWorkbook(buffer, file.name)
+    let routeData = applyOriginalRouteImport(currentRouteData, imported, file.name)
+    const warnings = [...imported.warnings]
+
+    if (sku) {
+      try {
+        const normalizedSku = normalizeSkuInput(sku)
+        const scope = await getSkuScope(normalizedSku)
+        const bomResult = await getCabinetRouteBomLines(normalizedSku)
+        const candidates = deriveCabinetBomCandidates(bomResult.lines, bomResult.sourceMode)
+        routeData = reconcileCabinetRouteData(withCabinetRouteSource(routeData, {
+          analysisSkuComplete: normalizedSku,
+          referenceId: scope.referenceId,
+          referenceCode: scope.referenceCode,
+          bomLineCount: bomResult.lines.length,
+          missingBomCount: bomResult.lines.filter(line => line.resolution_status !== 'resolved').length,
+          bomSourceMode: bomResult.sourceMode,
+          bomWarning: bomResult.warning,
+        }), candidates)
+        if (bomResult.warning) warnings.push(bomResult.warning)
+      } catch (error) {
+        warnings.push(error instanceof Error ? `No se pudo conciliar contra SAP: ${error.message}` : 'No se pudo conciliar contra SAP.')
+      }
+    }
+
+    return {
+      success: true,
+      message: `Hoja original importada: ${imported.pieces.length} piezas, ${imported.hardware_rows.length} herrajes y ${imported.packing_rows.length} elementos de empaque.`,
+      routeData,
+      warnings,
+    }
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : 'No se pudo importar la hoja original.',
+      routeData: null,
+      warnings: [],
+    }
+  }
+}
+
 export async function saveRouteDocumentAction(input: {
   skuComplete: string
-  routeData: Record<string, unknown>
+  routeData: CabinetRouteData
   status: string
 }): Promise<{ success: boolean; message: string }> {
   await assertPermission('module:product-design')
@@ -258,24 +412,36 @@ export async function saveRouteDocumentAction(input: {
   try {
     const sku = normalizeSkuInput(input.skuComplete)
     const scope = await getSkuScope(sku)
+    const bomResult = await getCabinetRouteBomLines(sku)
+    const candidates = deriveCabinetBomCandidates(bomResult.lines, bomResult.sourceMode)
+    const routeData = reconcileCabinetRouteData(withCabinetRouteSource(normalizeCabinetRouteData(input.routeData), {
+      analysisSkuComplete: sku,
+      referenceId: scope.referenceId,
+      referenceCode: scope.referenceCode,
+      bomLineCount: bomResult.lines.length,
+      missingBomCount: bomResult.lines.filter(line => line.resolution_status !== 'resolved').length,
+      bomSourceMode: bomResult.sourceMode,
+      bomWarning: bomResult.warning,
+    }), candidates)
+    const status = toRouteStatus(input.status)
     const existing = await dbQuery(
       `SELECT id
        FROM public.product_route_documents
        WHERE reference_id = $1
-         AND route_type = 'furniture'
-         AND (version_id = $2 OR version_id IS NULL)
-       ORDER BY version_id NULLS LAST
+         AND route_type = 'cabinet'
+         AND version_id IS NULL
        LIMIT 1`,
-      [scope.referenceId, scope.versionId]
+      [scope.referenceId]
     )
 
     const existingId = readString(existing[0]?.id)
     if (existingId) {
       const { error } = await supabaseTable('product_route_documents')
         .update({
-          version_id: scope.versionId,
-          route_data_json: input.routeData,
-          status: input.status,
+          version_id: null,
+          schema_version: CABINET_ROUTE_SCHEMA_VERSION,
+          route_data_json: routeData,
+          status,
         })
         .eq('id', existingId)
       if (error) throw new Error(error.message)
@@ -283,17 +449,17 @@ export async function saveRouteDocumentAction(input: {
       const { error } = await supabaseTable('product_route_documents')
         .insert({
           reference_id: scope.referenceId,
-          version_id: scope.versionId,
-          route_type: 'furniture',
-          schema_version: 1,
-          route_data_json: input.routeData,
-          status: input.status,
+          version_id: null,
+          route_type: 'cabinet',
+          schema_version: CABINET_ROUTE_SCHEMA_VERSION,
+          route_data_json: routeData,
+          status,
         })
       if (error) throw new Error(error.message)
     }
 
-    revalidatePath('/product-design/route-sheets/furniture')
-    revalidatePath('/productive-modules/route-sheets/furniture')
+    revalidatePath('/product-design/route-sheets/cabinets')
+    revalidatePath('/productive-modules/route-sheets/cabinets')
     return { success: true, message: 'Hoja de ruta guardada.' }
   } catch (error) {
     return { success: false, message: error instanceof Error ? error.message : 'No se pudo guardar hoja de ruta' }
@@ -367,12 +533,20 @@ export async function updateSapItemStatusAction(input: SapStatusUpdateInput): Pr
   }
 }
 
-export async function getPilotSkusAction() {
-  await assertPermission('module:product-design')
-  return PILOT_SKUS
+function toRouteStatus(value: string | null): CabinetRouteStatus {
+  return value && isCabinetRouteStatus(value) ? value : 'draft'
 }
 
-export async function parseSkuForDisplayAction(skuComplete: string) {
-  await assertPermission('module:product-design')
-  return parseSalesSku(skuComplete)
+function parseRouteDataJson(value: FormDataEntryValue | null): unknown {
+  if (typeof value !== 'string' || !value.trim()) return null
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return null
+  }
+}
+
+function isMissingExpandedBomFunctionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('resolved_bom_expanded_for_sku') || message.includes('does not exist') || message.includes('42883')
 }

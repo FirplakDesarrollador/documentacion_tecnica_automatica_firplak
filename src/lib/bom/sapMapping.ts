@@ -1,5 +1,5 @@
-import type { BomLine, SapEntityPayload } from '@/lib/sap/serviceLayer'
-import type { ComponentCategory, ProductApplicationScope } from './types'
+import type { SapEntityPayload } from '@/lib/sap/serviceLayer'
+import type { ComponentCategory } from './types'
 
 export type ParsedSapCode = {
   itemCode: string
@@ -86,13 +86,6 @@ export function inferComponentCategory(itemCode: string, itemName: string): Comp
   return 'unknown'
 }
 
-export function inferProductApplicationScope(line: BomLine): ProductApplicationScope {
-  const parsed = parseSapItemCode(line.ItemCode)
-  if (parsed.variantCode4 === '0000') return 'NA'
-  if (inferComponentCategory(line.ItemCode, line.ItemName) !== 'material') return 'NA'
-  return 'full_product'
-}
-
 export function readSapItemName(item: SapEntityPayload, fallback: string): string {
   return cleanString(item.ItemName) ?? fallback
 }
@@ -114,6 +107,11 @@ export function readSapInventoryItem(item: SapEntityPayload): boolean | null {
 }
 
 export function inferBaseItemName(itemName: string, variantCode4: string): string {
-  if (variantCode4 === '0000') return itemName
-  return itemName.replace(/\s{2,}/g, ' ').trim()
+  const normalizedName = itemName.replace(/\s{2,}/g, ' ').trim()
+  if (variantCode4 === '0000') return normalizedName
+
+  const dimensionMatch = normalizedName.match(/\b\d+(?:[.,]\d+)?(?:\s?X\s?\d+(?:[.,]\d+)?)*\s?(?:MM|CM|M|IN)\b/i)
+  if (!dimensionMatch || dimensionMatch.index === undefined) return normalizedName
+
+  return normalizedName.slice(0, dimensionMatch.index + dimensionMatch[0].length).trim()
 }

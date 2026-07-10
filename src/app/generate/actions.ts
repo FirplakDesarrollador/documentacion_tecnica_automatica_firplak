@@ -2,10 +2,10 @@
 
 import { supabaseServer } from '@/lib/supabase'
 import type { ProductFilters } from '@/lib/engine/product_composer'
-import { assertRole } from '@/utils/auth/access'
+import { assertPermission } from '@/utils/auth/access'
 
 async function assertAdminAccess() {
-    await assertRole('admin')
+    await assertPermission('module:generate')
 }
 
 export async function resolveAssetsAction(assetIds: string[]) {

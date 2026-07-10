@@ -3,14 +3,16 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
-import { Package, Lock, Mail, Loader2, AlertCircle } from 'lucide-react'
+import { Package, Lock, Mail, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export default function LoginPage() {
     const [email, setEmail] = useState('')
     const [password, setPassword] = useState('')
     const [loading, setLoading] = useState(false)
+    const [recoveryLoading, setRecoveryLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
+    const [notice, setNotice] = useState<string | null>(null)
     const router = useRouter()
     const supabase = createClient()
 
@@ -18,10 +20,11 @@ export default function LoginPage() {
         e.preventDefault()
         setLoading(true)
         setError(null)
+        setNotice(null)
 
         try {
             const { error: authError } = await supabase.auth.signInWithPassword({
-                email,
+                email: email.trim(),
                 password,
             })
 
@@ -38,6 +41,35 @@ export default function LoginPage() {
             setError('Ocurrió un error inesperado. Inténtalo de nuevo.')
         } finally {
             setLoading(false)
+        }
+    }
+
+    const handlePasswordRecovery = async () => {
+        const safeEmail = email.trim()
+        if (!safeEmail) {
+            setError('Ingresa tu correo para enviarte el enlace de recuperacion.')
+            setNotice(null)
+            return
+        }
+
+        setRecoveryLoading(true)
+        setError(null)
+        setNotice(null)
+
+        try {
+            const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent('/auth/update-password')}`
+            const { error: recoveryError } = await supabase.auth.resetPasswordForEmail(safeEmail, { redirectTo })
+
+            if (recoveryError) {
+                setError('No se pudo procesar la solicitud de recuperacion. Intentalo de nuevo o contacta a un administrador.')
+                return
+            }
+
+            setNotice('Si el correo esta autorizado, recibiras un enlace para actualizar tu contrasena.')
+        } catch {
+            setError('Ocurrio un error inesperado. Intentalo de nuevo.')
+        } finally {
+            setRecoveryLoading(false)
         }
     }
 
@@ -105,6 +137,13 @@ export default function LoginPage() {
                             </div>
                         )}
 
+                        {notice && (
+                            <div className="flex items-start gap-3 bg-emerald-500/10 border border-emerald-500/20 p-4 rounded-xl text-emerald-300 animate-in fade-in slide-in-from-top-2">
+                                <CheckCircle2 className="h-5 w-5 shrink-0" />
+                                <p className="text-xs leading-relaxed">{notice}</p>
+                            </div>
+                        )}
+
                         <button
                             type="submit"
                             disabled={loading}
@@ -123,6 +162,14 @@ export default function LoginPage() {
                             ) : (
                                 "Ingresar"
                             )}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handlePasswordRecovery}
+                            disabled={loading || recoveryLoading}
+                            className="w-full text-center text-xs font-semibold text-slate-400 transition-colors hover:text-indigo-300 disabled:cursor-not-allowed disabled:text-slate-600"
+                        >
+                            {recoveryLoading ? 'Enviando enlace...' : 'Olvide mi contrasena'}
                         </button>
                     </form>
                 </div>

@@ -2,7 +2,19 @@
 
 import { dbQuery } from '@/lib/supabase'
 import { assertPermission } from '@/utils/auth/access'
-import { PILOT_SKUS, type ResolvedBomLine } from '@/lib/bom/types'
+import { PILOT_SKUS } from '@/lib/bom/types'
+import {
+  buildCabinetRouteMatchReport,
+  deriveCabinetBomCandidates,
+  normalizeCabinetRouteData,
+  reconcileCabinetRouteData,
+  withCabinetRouteSource,
+  type CabinetBomCandidate,
+  type CabinetBomLine,
+  type CabinetBomSourceMode,
+  type CabinetRouteData,
+  type CabinetRouteMatchReport,
+} from '@/lib/routeSheets/cabinets'
 
 export type ProductiveRouteSheet = {
   sku_complete: string
@@ -14,15 +26,19 @@ export type ProductiveRouteSheet = {
   product_name: string | null
   family_code: string | null
   reference_code: string | null
-  route_data_json: Record<string, unknown>
+  route_data_json: CabinetRouteData
   route_status: string | null
-  lines: ResolvedBomLine[]
+  lines: CabinetBomLine[]
+  candidates: CabinetBomCandidate[]
+  match_report: CabinetRouteMatchReport
+  bom_source_mode: CabinetBomSourceMode
+  bom_warning: string | null
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {}
+type CabinetBomReadResult = {
+  lines: CabinetBomLine[]
+  sourceMode: CabinetBomSourceMode
+  warning: string | null
 }
 
 function readString(value: unknown): string | null {
@@ -33,15 +49,41 @@ function normalizeSku(value: string): string {
   return value.trim().toUpperCase()
 }
 
-async function getResolvedLines(skuComplete: string): Promise<ResolvedBomLine[]> {
+async function getCabinetRouteBomLines(skuComplete: string): Promise<CabinetBomReadResult> {
+  try {
+    const rows = await dbQuery(
+      `SELECT rb.*, ci.component_category
+       FROM public.resolved_bom_expanded_for_sku($1) rb
+       LEFT JOIN public.component_items ci ON ci.item_code = rb.resolved_item_code
+       ORDER BY rb.sort_path, rb.sort_order, rb.line_id`,
+      [skuComplete]
+    )
+
+    return { lines: rows as CabinetBomLine[], sourceMode: 'expanded', warning: null }
+  } catch (error) {
+    if (!isMissingExpandedBomFunctionError(error)) throw error
+  }
+
   const rows = await dbQuery(
-    `SELECT *
-     FROM public.resolved_bom_for_sku($1)
-     ORDER BY sort_order, line_id`,
+    `SELECT
+       rb.*,
+       NULL::text AS parent_line_id,
+       rb.line_id AS root_line_id,
+       NULL::text AS sort_path,
+       rb.qty AS effective_qty,
+       false AS is_cycle,
+       ci.component_category
+     FROM public.resolved_bom_for_sku($1) rb
+     LEFT JOIN public.component_items ci ON ci.item_code = rb.resolved_item_code
+     ORDER BY rb.sort_order, rb.line_id`,
     [skuComplete]
   )
 
-  return rows as ResolvedBomLine[]
+  return {
+    lines: rows as CabinetBomLine[],
+    sourceMode: 'direct',
+    warning: 'BOM directa sin subestructuras: resolved_bom_expanded_for_sku no esta disponible en Supabase.',
+  }
 }
 
 export async function getProductivePilotSkusAction() {
@@ -74,9 +116,8 @@ export async function getProductiveRouteSheetAction(skuComplete: string): Promis
          SELECT route_data_json, status
          FROM public.product_route_documents d
          WHERE d.reference_id = r.id
-           AND d.route_type = 'furniture'
-           AND (d.version_id = v.id OR d.version_id IS NULL)
-         ORDER BY d.version_id NULLS LAST
+           AND d.route_type = 'cabinet'
+           AND d.version_id IS NULL
          LIMIT 1
        ) d ON TRUE
        WHERE s.sku_complete = $1
@@ -86,6 +127,18 @@ export async function getProductiveRouteSheetAction(skuComplete: string): Promis
 
     const row = rows[0]
     if (!row) return { sheet: null, error: `No existe ${sku} en el catálogo del app.` }
+
+    const bomResult = await getCabinetRouteBomLines(sku)
+    const candidates = deriveCabinetBomCandidates(bomResult.lines, bomResult.sourceMode)
+    const routeData = reconcileCabinetRouteData(withCabinetRouteSource(normalizeCabinetRouteData(row.route_data_json), {
+      analysisSkuComplete: sku,
+      referenceId: readString(row.reference_id) || '',
+      referenceCode: readString(row.reference_code),
+      bomLineCount: bomResult.lines.length,
+      missingBomCount: bomResult.lines.filter(line => line.resolution_status !== 'resolved').length,
+      bomSourceMode: bomResult.sourceMode,
+      bomWarning: bomResult.warning,
+    }), candidates)
 
     return {
       sheet: {
@@ -98,13 +151,22 @@ export async function getProductiveRouteSheetAction(skuComplete: string): Promis
         product_name: readString(row.product_name),
         family_code: readString(row.family_code),
         reference_code: readString(row.reference_code),
-        route_data_json: asRecord(row.route_data_json),
+        route_data_json: routeData,
         route_status: readString(row.route_status),
-        lines: await getResolvedLines(sku),
+        lines: bomResult.lines,
+        candidates,
+        match_report: buildCabinetRouteMatchReport(routeData, candidates),
+        bom_source_mode: bomResult.sourceMode,
+        bom_warning: bomResult.warning,
       },
       error: null,
     }
   } catch (error) {
     return { sheet: null, error: error instanceof Error ? error.message : 'No se pudo cargar hoja de ruta productiva' }
   }
+}
+
+function isMissingExpandedBomFunctionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('resolved_bom_expanded_for_sku') || message.includes('does not exist') || message.includes('42883')
 }

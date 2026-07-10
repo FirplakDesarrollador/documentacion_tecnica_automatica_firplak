@@ -9,10 +9,10 @@ import {
 import { parseProductCode } from '@/lib/engine/codeParser';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { assertRole } from '@/utils/auth/access';
+import { assertPermission } from '@/utils/auth/access';
 
 async function assertAdminAccess() {
-  await assertRole('admin');
+  await assertPermission('module:configuration');
 }
 
 type FamilyFilterOptionsRow = {

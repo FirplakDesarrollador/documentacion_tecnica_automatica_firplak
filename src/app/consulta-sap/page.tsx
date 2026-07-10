@@ -1,4 +1,4 @@
-import { requirePageRole } from '@/utils/auth/access'
+import { requirePagePermission } from '@/utils/auth/access'
 import { getSapItem, SapServiceLayerError, type SapEntityPayload } from '@/lib/sap/serviceLayer'
 import { ConsultaSapClient } from './ConsultaSapClient'
 
@@ -33,7 +33,7 @@ async function loadInitialItem(itemCode: string): Promise<{
 }
 
 export default async function ConsultaSapPage({ searchParams }: ConsultaSapPageProps) {
-  await requirePageRole('admin')
+  await requirePagePermission('module:consulta-sap')
 
   const params = await searchParams
   const initialCode = params?.code?.trim() || DEFAULT_ITEM_CODE

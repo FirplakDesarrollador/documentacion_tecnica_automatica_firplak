@@ -3,7 +3,7 @@
 import { dbQuery } from '@/lib/supabase'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { getFamilyFilters, getReferenceFilters } from '@/lib/data/filters'
-import { assertRole } from '@/utils/auth/access'
+import { assertPermission } from '@/utils/auth/access'
 import {
     buildProductAssetSlugBody,
     composePublicSlug,
@@ -15,7 +15,7 @@ import {
 import { normalizeDocumentSlot } from '@/lib/documentLinks'
 
 async function assertAdminAccess() {
-    await assertRole('admin')
+    await assertPermission('module:assets')
 }
 
 type MeasureRecord = {

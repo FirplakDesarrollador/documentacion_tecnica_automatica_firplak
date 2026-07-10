@@ -208,7 +208,7 @@ function buildPayloadFromTemplate(parsed: Awaited<ReturnType<typeof readTemplate
 }
 
 export async function POST(req: Request) {
-  const guard = await apiGuard('admin');
+  const guard = await apiGuard('module:dashboard');
   if (guard.response) return guard.response;
 
   const { executeEnabled, safeMaxRows } = await getMassImportSettings();

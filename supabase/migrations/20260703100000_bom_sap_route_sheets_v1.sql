@@ -1,4 +1,4 @@
--- BOM SAP + Hojas de ruta muebles V1
+-- BOM SAP + Hojas de ruta cabinets V1
 
 ALTER TABLE public.product_references
   ADD COLUMN IF NOT EXISTS product_bom_structure jsonb NOT NULL DEFAULT jsonb_build_object(
@@ -107,13 +107,13 @@ CREATE TABLE IF NOT EXISTS public.product_route_documents (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   reference_id uuid NOT NULL REFERENCES public.product_references(id) ON DELETE CASCADE,
   version_id uuid REFERENCES public.product_versions(id) ON DELETE CASCADE,
-  route_type text NOT NULL DEFAULT 'furniture',
+  route_type text NOT NULL DEFAULT 'cabinet',
   schema_version integer NOT NULL DEFAULT 1,
   route_data_json jsonb NOT NULL DEFAULT '{}'::jsonb,
   status text NOT NULL DEFAULT 'draft',
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT product_route_documents_route_type_check CHECK (route_type = ANY (ARRAY['furniture'])),
+  CONSTRAINT product_route_documents_route_type_check CHECK (route_type = ANY (ARRAY['cabinet'])),
   CONSTRAINT product_route_documents_status_check CHECK (status = ANY (ARRAY['draft', 'review', 'approved', 'archived']))
 );
 

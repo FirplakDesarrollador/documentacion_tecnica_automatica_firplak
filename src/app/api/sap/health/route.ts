@@ -6,7 +6,7 @@ import { sapApiErrorResponse } from '../_utils'
 export const runtime = 'nodejs'
 
 export async function GET() {
-  const guard = await apiGuard('admin')
+  const guard = await apiGuard('module:consulta-sap')
   if (guard.response) return guard.response
 
   try {

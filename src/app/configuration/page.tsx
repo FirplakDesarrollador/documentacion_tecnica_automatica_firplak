@@ -6,7 +6,7 @@ import { SapWriteSettingsSection } from '@/components/configuration/SapWriteSett
 import { getNamingComponentsAction, getNamingModelStatusAction } from '@/app/rules/actions';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { Settings, Palette, PlusCircle, DatabaseZap, Layers, BookOpen, Users, Tags } from 'lucide-react';
+import { Settings, Palette, PlusCircle, DatabaseZap, Layers, BookOpen, Users, Tags, UserCog } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -102,6 +102,12 @@ export default async function ConfigurationPage() {
             <Button variant="secondary" className="w-full sm:w-auto">
               <Users className="mr-2 h-4 w-4 text-slate-700" />
               Editor de clientes
+            </Button>
+          </Link>
+          <Link href="/configuration/users">
+            <Button variant="outline" className="w-full sm:w-auto border-slate-300 text-slate-700 hover:bg-slate-50">
+              <UserCog className="mr-2 h-4 w-4 text-slate-700" />
+              Usuarios y roles
             </Button>
           </Link>
         </div>

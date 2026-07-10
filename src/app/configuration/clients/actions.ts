@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { dbQuery } from '@/lib/supabase'
-import { assertRole } from '@/utils/auth/access'
+import { assertPermission } from '@/utils/auth/access'
 
 type ClientRow = {
   id: string
@@ -19,7 +19,7 @@ type ClientPickerRow = {
 }
 
 async function assertAdminAccess() {
-  await assertRole('admin')
+  await assertPermission('module:configuration')
 }
 
 function normalizeClientName(raw: string) {

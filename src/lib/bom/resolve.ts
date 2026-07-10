@@ -36,6 +36,11 @@ function normalizeScope(value: unknown): ProductApplicationScope {
     || normalized === 'front'
     || normalized === 'structure'
     || normalized === 'inner_structure'
+    || normalized === 'drawer_bottom'
+    || normalized === 'edge_band_body'
+    || normalized === 'edge_band_front'
+    || normalized === 'edge_band_inner'
+    || normalized === 'edge_band_drawer_bottom'
     || normalized === 'NA'
   ) {
     return normalized

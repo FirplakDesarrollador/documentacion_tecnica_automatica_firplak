@@ -2,10 +2,10 @@
 
 import { dbQuery } from '@/lib/supabase'
 import { revalidatePath, revalidateTag, unstable_noStore as noStore } from 'next/cache'
-import { assertRole } from '@/utils/auth/access'
+import { assertPermission } from '@/utils/auth/access'
 
 async function assertAdminAccess() {
-  await assertRole('admin')
+  await assertPermission('module:assets')
 }
 
 export type OrphanReferenceRow = {

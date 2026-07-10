@@ -4,10 +4,10 @@ import { dbQuery } from '@/lib/supabase'
 import { computeNameWithNamingComponents } from '@/lib/engine/namingComponentsEngine'
 import { mapRowToComposedProduct } from '@/lib/engine/product_composer'
 import type { ProductPayload } from '@/lib/engine/translator'
-import { assertRole } from '@/utils/auth/access'
+import { assertPermission } from '@/utils/auth/access'
 
 async function assertAdminAccess() {
-    await assertRole('admin')
+    await assertPermission('module:configuration')
 }
 
 const SCAN_PRODUCT_PAGE_SIZE = 500

@@ -8,7 +8,7 @@ import {
   canonicalizeOverrideKey,
 } from '@/lib/engine/effectiveProduct';
 import { markNamingStaleForSkus, processNamingJobsInline } from '@/lib/engine/namingQueue';
-import { assertRole } from '@/utils/auth/access';
+import { assertPermission } from '@/utils/auth/access';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -34,7 +34,7 @@ type RpcResult = {
 type SupabaseRpc = (fn: string, args: JsonRecord) => Promise<RpcResult>;
 
 async function assertAdminAccess() {
-  await assertRole('admin');
+  await assertPermission('module:configuration');
 }
 
 function esc(value: string) {

@@ -3,10 +3,10 @@
 import { revalidatePath } from 'next/cache'
 import { dbQuery } from '@/lib/supabase'
 import { normalizeDocumentSlot, normalizeSlugPrefix } from '@/lib/documentLinks'
-import { assertRole } from '@/utils/auth/access'
+import { assertPermission } from '@/utils/auth/access'
 
 async function assertAdminAccess() {
-    await assertRole('admin')
+    await assertPermission('module:configuration')
 }
 
 function escapeSql(value: unknown) {

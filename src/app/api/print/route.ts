@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 
 import { launchBrowser } from '@/lib/export/launchBrowser'
+import { dbQuery } from '@/lib/supabase'
 import { apiGuard } from '@/utils/auth/access'
 
 export const runtime = 'nodejs'
@@ -8,6 +9,8 @@ export const maxDuration = 60
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const ALLOWED_FORMATS = new Set(['pdf', 'jpg'])
+const CORE_FIRPLAK_SOURCE = 'core_firplak'
+const GENERIC_DATASETS_SOURCE = 'custom_datasets'
 
 type TemplateElement = Record<string, unknown> & {
     type?: string
@@ -17,6 +20,7 @@ type TemplateElement = Record<string, unknown> & {
 }
 
 type PrintPayload = {
+    templateId: string
     productId: string | null
     isExternalSource: boolean
     elements: TemplateElement[]
@@ -27,8 +31,80 @@ type PrintPayload = {
     copies: number
 }
 
+type PrintTemplateSource = {
+    id: string
+    data_source: string | null
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function sqlLiteral(value: string): string {
+    return `'${value.replace(/'/g, "''")}'`
+}
+
+function normalizeDataSource(value: string | null | undefined): string {
+    return String(value || CORE_FIRPLAK_SOURCE).trim()
+}
+
+function isExternalDataSource(dataSource: string): boolean {
+    return dataSource === GENERIC_DATASETS_SOURCE || UUID_RE.test(dataSource)
+}
+
+async function getActiveTemplateSource(templateId: string): Promise<PrintTemplateSource | null> {
+    const rows = await dbQuery(
+        `SELECT id, data_source
+         FROM public.plantillas_doc_tec
+         WHERE id = $1
+           AND active = true
+         LIMIT 1`,
+        [templateId]
+    ) as PrintTemplateSource[]
+
+    return rows[0] ?? null
+}
+
+async function getLinkedDatasetIds(templateId: string): Promise<string[]> {
+    const rows = await dbQuery(
+        `SELECT dataset_id
+         FROM public.template_dataset_links
+         WHERE template_id = $1`,
+        [templateId]
+    ) as { dataset_id: string | null }[]
+
+    return rows
+        .map((row) => row.dataset_id)
+        .filter((id): id is string => Boolean(id && UUID_RE.test(id)))
+}
+
+async function getAllowedDatasetIdsForTemplate(template: PrintTemplateSource): Promise<string[]> {
+    const dataSource = normalizeDataSource(template.data_source)
+    if (dataSource === GENERIC_DATASETS_SOURCE) {
+        return getLinkedDatasetIds(template.id)
+    }
+
+    if (UUID_RE.test(dataSource)) {
+        return [dataSource]
+    }
+
+    return []
+}
+
+async function externalDatasetRowExists(productId: string, datasetIds: string[]): Promise<boolean> {
+    if (datasetIds.length === 0) return false
+
+    const datasetList = datasetIds.map(sqlLiteral).join(',')
+    const rows = await dbQuery(
+        `SELECT id
+         FROM public.custom_dataset_rows
+         WHERE id = $1
+           AND dataset_id IN (${datasetList})
+         LIMIT 1`,
+        [productId]
+    )
+
+    return rows.length > 0
 }
 
 function parsePrintPayload(raw: unknown): { value: PrintPayload | null; error: string | null } {
@@ -36,6 +112,7 @@ function parsePrintPayload(raw: unknown): { value: PrintPayload | null; error: s
         return { value: null, error: 'Payload invalido' }
     }
 
+    const templateId = raw.templateId == null ? '' : String(raw.templateId).trim()
     const productId = raw.productId == null ? null : String(raw.productId).trim()
     const isExternalSource = raw.isExternalSource === true
     const format = String(raw.format ?? 'pdf').trim().toLowerCase()
@@ -46,6 +123,10 @@ function parsePrintPayload(raw: unknown): { value: PrintPayload | null; error: s
     const elements = Array.isArray(raw.elements)
         ? raw.elements.filter((item): item is TemplateElement => isPlainObject(item))
         : null
+
+    if (!templateId || !UUID_RE.test(templateId)) {
+        return { value: null, error: 'templateId invalido' }
+    }
 
     if (!elements || elements.length === 0) {
         return { value: null, error: 'Faltan elementos de la plantilla' }
@@ -81,6 +162,7 @@ function parsePrintPayload(raw: unknown): { value: PrintPayload | null; error: s
 
     return {
         value: {
+            templateId,
             productId,
             isExternalSource,
             elements,
@@ -111,9 +193,13 @@ export async function POST(req: Request) {
 
         const payload = parsed.value
 
-        if (guard.access?.role === 'production' && payload.isExternalSource) {
-            return NextResponse.json({ error: 'External source printing is not allowed for production' }, { status: 403 })
+        const templateSource = await getActiveTemplateSource(payload.templateId)
+        if (!templateSource) {
+            return NextResponse.json({ error: 'Plantilla no encontrada o inactiva' }, { status: 404 })
         }
+
+        const dataSource = normalizeDataSource(templateSource.data_source)
+        const templateUsesExternalRows = isExternalDataSource(dataSource)
 
         const invalidRequiredBarcodes = payload.elements.filter((element) =>
             element.type === 'barcode' && element.required === true && Boolean(element.barcodeError)
@@ -129,7 +215,25 @@ export async function POST(req: Request) {
             }, { status: 409 })
         }
 
-        if (payload.productId) {
+        if (templateUsesExternalRows) {
+            if (!payload.productId) {
+                return NextResponse.json({ error: 'Registro externo requerido para imprimir' }, { status: 400 })
+            }
+
+            const allowedDatasetIds = await getAllowedDatasetIdsForTemplate(templateSource)
+            if (allowedDatasetIds.length === 0) {
+                return NextResponse.json({
+                    error: 'La plantilla no tiene una base de datos asociada para imprimir',
+                }, { status: 409 })
+            }
+
+            const rowExists = await externalDatasetRowExists(payload.productId, allowedDatasetIds)
+            if (!rowExists) {
+                return NextResponse.json({
+                    error: 'El registro no pertenece a una base de datos asociada a esta plantilla',
+                }, { status: 403 })
+            }
+        } else if (payload.productId) {
             const { composeProductById } = await import('@/lib/engine/product_composer')
             const exportProduct = await composeProductById(payload.productId)
             if (exportProduct) {
@@ -139,7 +243,7 @@ export async function POST(req: Request) {
                         inactive_reasons: exportProduct.inactive_reasons,
                     }, { status: 409 })
                 }
-            } else if (!payload.isExternalSource) {
+            } else {
                 return NextResponse.json({ error: 'Producto no encontrado' }, { status: 404 })
             }
         }

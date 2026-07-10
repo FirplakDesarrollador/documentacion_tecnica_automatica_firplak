@@ -43,7 +43,7 @@ function parseDuplicateRequest(body: unknown): DuplicateRequest {
 }
 
 export async function POST(request: Request) {
-  const guard = await apiGuard('admin')
+  const guard = await apiGuard('module:consulta-sap')
   if (guard.response) return guard.response
 
   try {

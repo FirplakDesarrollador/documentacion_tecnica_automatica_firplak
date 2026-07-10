@@ -50,7 +50,7 @@ function buildExpectedSvgFilename(similarityCode: string, g: OrphanReferenceRow)
 }
 
 export async function GET() {
-  const guard = await apiGuard('admin')
+  const guard = await apiGuard('module:assets')
   if (guard.response) return guard.response
 
   try {

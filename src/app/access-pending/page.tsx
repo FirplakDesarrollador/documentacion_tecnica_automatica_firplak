@@ -2,7 +2,6 @@ import Link from 'next/link'
 import { Clock3 } from 'lucide-react'
 import { redirect } from 'next/navigation'
 
-import { USER_ROLE_LABELS } from '@/types/auth'
 import { getAccessContext } from '@/utils/auth/access'
 
 export const dynamic = 'force-dynamic'
@@ -45,7 +44,7 @@ export default async function AccessPendingPage() {
                             Sesion iniciada como <span className="font-semibold text-slate-900">{access.user.email || 'usuario autenticado'}</span>.
                         </p>
                         <p className="mt-2 text-sm text-slate-600">
-                            Rol detectado: <span className="font-semibold text-slate-900">{USER_ROLE_LABELS[access.role]}</span>.
+                            Rol detectado: <span className="font-semibold text-slate-900">{access.roleLabel}</span>.
                         </p>
                         <p className="mt-4 text-sm leading-relaxed text-slate-600">
                             En esta version estan habilitados los roles <span className="font-semibold text-slate-900">Admin</span>,

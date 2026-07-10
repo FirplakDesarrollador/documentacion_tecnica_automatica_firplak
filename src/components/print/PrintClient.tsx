@@ -100,6 +100,9 @@ const PRINT_AGENT_CHECK_INTERVAL_MS = 15000
 const PRINT_AGENT_OFFLINE_FAILURES = 3
 const MIN_PRINT_COPIES = 1
 const MAX_PRINT_COPIES = 999
+const CORE_FIRPLAK_SOURCE = 'core_firplak'
+const GENERIC_DATASETS_SOURCE = 'custom_datasets'
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 type PrintFormat = 'pdf' | 'jpg'
 type PrintTransport = 'local_agent' | 'webusb'
@@ -186,6 +189,11 @@ function normalizeAgentBaseUrl(value: string): string {
 
 function normalizePrintTransport(value: unknown): PrintTransport {
     return value === 'webusb' ? 'webusb' : 'local_agent'
+}
+
+function isExternalTemplateDataSource(value: string | null | undefined): boolean {
+    const dataSource = String(value || CORE_FIRPLAK_SOURCE).trim()
+    return dataSource === GENERIC_DATASETS_SOURCE || UUID_RE.test(dataSource)
 }
 
 function normalizePrinterConfig(value: unknown): PrinterConfig {
@@ -413,6 +421,9 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         () => templates.find(t => t.id === selectedTemplateId) ?? null,
         [templates, selectedTemplateId]
     )
+    const selectedTemplateUsesExternalRows = isExternalTemplateDataSource(selectedTemplate?.data_source)
+    const recordLabel = selectedTemplateUsesExternalRows ? 'registro' : 'producto'
+    const recordLabelPlural = selectedTemplateUsesExternalRows ? 'registros' : 'productos'
 
     const templateRequiresOfNumber = useMemo(
         () => selectedTemplate
@@ -537,6 +548,17 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
     const filteredOutCount = products.length - validProducts.length
     const canPrintWithAgent = agentOnline === true && printerDetected
     const canPrintWithWebUsb = webUsbSupported && webUsbConnection !== null
+    const localAgentPrintIssueMessage = !usesLocalAgent
+        ? null
+        : agentOnline === null
+        ? 'Verificando agente local'
+        : agentOnline === false
+        ? 'Instala o inicia el agente local'
+        : !printerDetected
+        ? 'Conecta la impresora USB'
+        : !agentSupportsJobMetadata
+        ? `Actualiza el agente local a la version ${PRINT_AGENT_VERSION}`
+        : null
     const canPrintSelected = !requiresAgent || (
         thermalLayout?.ok === true &&
         (
@@ -570,6 +592,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
     const handlePrintProduct = async (product: GenerateProduct, runtimeOverrides: PrintRuntimeOverrides = {}): Promise<boolean> => {
         if (!selectedTemplate) return false
         const printCopies = normalizePrintCopyCount(runtimeOverrides.copies ?? copies)
+        const usesExternalRows = selectedTemplateUsesExternalRows || product.is_external === true
 
         const elements: Array<Record<string, unknown> & DocumentQrTemplateElement> = (() => {
             try { return JSON.parse(selectedTemplate.elements_json || '[]') }
@@ -588,21 +611,30 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
             .map((el) => el.content as string)
 
         const assetMap = await resolvePrintAssetsAction(assetIds)
-        const engineResult = evaluateProductRules(product as unknown as Parameters<typeof evaluateProductRules>[0], rules as unknown as Parameters<typeof evaluateProductRules>[1])
-        const finalNameEs = engineResult.finalNameEs || product.final_name_es || ''
+        let updatedProduct: GenerateProduct & Record<string, unknown>
 
-        const { translateProductToEnglish } = await import('@/lib/engine/translator')
-        const productType = (product.product_type || 'MUEBLE').toUpperCase()
-        const translationResult = await translateProductToEnglish(product as unknown as ProductPayload, productType, engineResult.activeVariableIds)
-        const finalNameEn = translationResult.translatedName || product.final_name_en || ''
+        if (usesExternalRows) {
+            updatedProduct = {
+                ...product,
+                ...buildPrintRuntimeValues({ ofNumber: runtimeOverrides.ofNumber }),
+            }
+        } else {
+            const engineResult = evaluateProductRules(product as unknown as Parameters<typeof evaluateProductRules>[0], rules as unknown as Parameters<typeof evaluateProductRules>[1])
+            const finalNameEs = engineResult.finalNameEs || product.final_name_es || ''
 
-        const zoneEn = await resolveZoneHomeEnForPrintAction(product.zone_home as string | null | undefined)
-        const updatedProduct = {
-            ...product,
-            final_name_es: finalNameEs,
-            final_name_en: finalNameEn,
-            zone_home_en: zoneEn || undefined,
-            ...buildPrintRuntimeValues({ ofNumber: runtimeOverrides.ofNumber }),
+            const { translateProductToEnglish } = await import('@/lib/engine/translator')
+            const productType = (product.product_type || 'MUEBLE').toUpperCase()
+            const translationResult = await translateProductToEnglish(product as unknown as ProductPayload, productType, engineResult.activeVariableIds)
+            const finalNameEn = translationResult.translatedName || product.final_name_en || ''
+
+            const zoneEn = await resolveZoneHomeEnForPrintAction(product.zone_home as string | null | undefined)
+            updatedProduct = {
+                ...product,
+                final_name_es: finalNameEs,
+                final_name_en: finalNameEn,
+                zone_home_en: zoneEn || undefined,
+                ...buildPrintRuntimeValues({ ofNumber: runtimeOverrides.ofNumber }),
+            }
         }
 
         const labelBoxProducts = expandLabelBoxProducts(updatedProduct)
@@ -624,7 +656,9 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
             const preparedJobs: Array<{ blob: Blob; outputName: string }> = []
 
             for (const labelBoxProduct of labelBoxProducts) {
-                const productWithDocumentQr = await attachResolvedDocumentQrUrls(labelBoxProduct as GenerateProduct, elements)
+                const productWithDocumentQr = usesExternalRows
+                    ? labelBoxProduct
+                    : await attachResolvedDocumentQrUrls(labelBoxProduct as GenerateProduct, elements)
                 const hydrated = await hydrateTemplateElements(elements, productWithDocumentQr, assetMap)
                 const outputName = appendLabelBoxSuffix(product.code || 'etiqueta', labelBoxProduct)
                 const imageResponse = await fetch('/api/print', {
@@ -632,8 +666,9 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                     signal: getTimeoutSignal(PRINT_RENDER_TIMEOUT_MS),
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
+                        templateId: selectedTemplate.id,
                         productId: product.id,
-                        isExternalSource: product.is_external === true,
+                        isExternalSource: usesExternalRows,
                         format: 'jpg',
                         elements: hydrated,
                         width: widthPx,
@@ -722,7 +757,9 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
 
         for (let setIndex = 0; setIndex < gameCount; setIndex += 1) {
             for (const labelBoxProduct of labelBoxProducts) {
-                const productWithDocumentQr = await attachResolvedDocumentQrUrls(labelBoxProduct as GenerateProduct, elements)
+                const productWithDocumentQr = usesExternalRows
+                    ? labelBoxProduct
+                    : await attachResolvedDocumentQrUrls(labelBoxProduct as GenerateProduct, elements)
                 const hydrated = await hydrateTemplateElements(elements, productWithDocumentQr, assetMap)
                 const outputName = appendLabelBoxSuffix(product.code || 'etiqueta', labelBoxProduct)
 
@@ -731,8 +768,9 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                     signal: getTimeoutSignal(PRINT_RENDER_TIMEOUT_MS),
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
+                        templateId: selectedTemplate.id,
                         productId: product.id,
-                        isExternalSource: product.is_external === true,
+                        isExternalSource: usesExternalRows,
                         format: printFormat,
                         elements: hydrated,
                         width: widthPx,
@@ -916,7 +954,9 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                     </Button>
                 </div>
                 <p className="text-xs text-slate-400 mt-2">
-                    Busca en código, nombre, color, referencia, medida comercial
+                    {selectedTemplateUsesExternalRows
+                        ? 'Busca en los campos disponibles de la base de datos asociada'
+                        : 'Busca en codigo, nombre, color, referencia, medida comercial'}
                 </p>
             </div>
 
@@ -1193,7 +1233,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                 <div className="flex flex-col items-center justify-center py-20 text-slate-400 border-2 border-dashed border-slate-200 rounded-xl">
                     <Search className="w-12 h-12 mb-3 text-slate-300" />
                     <p className="text-lg font-medium">Selecciona filtros y presiona <strong>Buscar</strong></p>
-                    <p className="text-sm">para ver los productos disponibles</p>
+                    <p className="text-sm">para ver los {recordLabelPlural} disponibles</p>
                 </div>
             ) : loading ? (
                 <div className="flex items-center justify-center py-20">
@@ -1203,20 +1243,23 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                 <div className="flex flex-col items-center justify-center py-20 text-slate-400 border-2 border-dashed border-slate-200 rounded-xl">
                     <X className="w-12 h-12 mb-3 text-slate-300" />
                     <p className="text-lg font-medium">Sin resultados</p>
-                    <p className="text-sm">{products.length > 0 ? `${products.length} producto(s) incompleto(s) para esta plantilla` : 'Prueba con otros filtros o término de búsqueda'}</p>
+                    <p className="text-sm">{products.length > 0 ? `${products.length} ${recordLabel}(s) incompleto(s) para esta plantilla` : 'Prueba con otros filtros o termino de busqueda'}</p>
                 </div>
             ) : (
                 <>
                 {filteredOutCount > 0 && (
                     <p className="text-xs text-amber-600 -mt-3">
-                        {filteredOutCount} producto(s) oculto(s) por no cumplir con la plantilla
+                        {filteredOutCount} {recordLabel}(s) oculto(s) por no cumplir con la plantilla
                     </p>
                 )}
-                <div className="overflow-x-auto [&_table]:w-full [&_table]:table-fixed [&_th:nth-child(1)]:w-10 [&_td:nth-child(1)]:w-10 [&_th:nth-child(2)]:w-36 [&_td:nth-child(2)]:w-36 [&_td:nth-child(2)]:whitespace-normal [&_td:nth-child(2)]:break-all [&_td:nth-child(2)]:overflow-hidden [&_th:nth-child(3)]:w-auto [&_td:nth-child(3)]:whitespace-normal [&_td:nth-child(3)]:break-words [&_td:nth-child(3)]:min-w-0 [&_th:nth-child(4)]:w-32 [&_td:nth-child(4)]:w-32 [&_td:nth-child(4)]:break-words">
+                <div className={selectedTemplateUsesExternalRows
+                    ? 'overflow-x-auto [&_table]:min-w-full'
+                    : 'overflow-x-auto [&_table]:w-full [&_table]:table-fixed [&_th:nth-child(1)]:w-10 [&_td:nth-child(1)]:w-10 [&_th:nth-child(2)]:w-36 [&_td:nth-child(2)]:w-36 [&_td:nth-child(2)]:whitespace-normal [&_td:nth-child(2)]:break-all [&_td:nth-child(2)]:overflow-hidden [&_th:nth-child(3)]:w-auto [&_td:nth-child(3)]:whitespace-normal [&_td:nth-child(3)]:break-words [&_td:nth-child(3)]:min-w-0 [&_th:nth-child(4)]:w-32 [&_td:nth-child(4)]:w-32 [&_td:nth-child(4)]:break-words'}>
                 <GenerateProductTable
                     products={validProducts}
                     onSelectionChange={setSelectedIds}
                     selectedIds={selectedIds}
+                    isExternalSource={selectedTemplateUsesExternalRows}
                     hideActions
                 />
                 </div>
@@ -1233,7 +1276,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                             </div>
                             <div>
                                 <p className="text-sm font-semibold text-slate-800">
-                                    {selectedIds.length} producto{selectedIds.length > 1 ? 's' : ''} seleccionado{selectedIds.length > 1 ? 's' : ''}
+                                    {selectedIds.length} {selectedIds.length > 1 ? recordLabelPlural : recordLabel} seleccionado{selectedIds.length > 1 ? 's' : ''}
                                     {' \u00b7 '}
                                     {copies} copia{copies > 1 ? 's' : ''} c/u
                                     {' \u00b7 '}
@@ -1246,10 +1289,8 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                     </p>
                                 ) : requiresAgent && thermalLayout?.ok !== true ? (
                                     <p className="text-xs text-amber-600 mt-0.5">{thermalLayout?.message || 'Configura la salida 3nStar'}</p>
-                                ) : usesLocalAgent && !canPrintWithAgent ? (
-                                    <p className="text-xs text-amber-600 mt-0.5">Instala el agente y conecta la impresora</p>
-                                ) : usesLocalAgent && !agentSupportsJobMetadata ? (
-                                    <p className="text-xs text-amber-600 mt-0.5">Actualiza el agente local para respetar el tama&ntilde;o de etiqueta</p>
+                                ) : localAgentPrintIssueMessage ? (
+                                    <p className="text-xs text-amber-600 mt-0.5">{localAgentPrintIssueMessage}</p>
                                 ) : usesWebUsb && !webUsbSupported ? (
                                     <p className="text-xs text-amber-600 mt-0.5">WebUSB requiere Chrome o Edge compatible</p>
                                 ) : usesWebUsb && !webUsbConnection ? (
@@ -1280,12 +1321,8 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                 title={
                                     requiresAgent && thermalLayout?.ok !== true
                                         ? thermalLayout?.message
-                                        : usesLocalAgent && agentOnline === false
-                                        ? 'Instala o inicia el agente local de impresion'
-                                        : usesLocalAgent && agentOnline === true && !printerDetected
-                                        ? 'Conecta la impresora USB para imprimir'
-                                        : usesLocalAgent && !agentSupportsJobMetadata
-                                        ? `Actualiza el agente local a la version ${PRINT_AGENT_VERSION}`
+                                        : localAgentPrintIssueMessage
+                                        ? localAgentPrintIssueMessage
                                         : usesWebUsb && !webUsbSupported
                                         ? 'WebUSB requiere Chrome o Edge compatible'
                                         : usesWebUsb && !webUsbConnection

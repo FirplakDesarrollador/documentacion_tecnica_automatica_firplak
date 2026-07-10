@@ -3,6 +3,11 @@ export const PRODUCT_APPLICATION_SCOPES = [
   'front',
   'structure',
   'inner_structure',
+  'drawer_bottom',
+  'edge_band_body',
+  'edge_band_front',
+  'edge_band_inner',
+  'edge_band_drawer_bottom',
   'NA',
 ] as const
 

@@ -3,12 +3,12 @@
 import { revalidatePath } from 'next/cache'
 
 import { dbQuery } from '@/lib/supabase'
-import { assertRole } from '@/utils/auth/access'
+import { assertPermission } from '@/utils/auth/access'
 
 const SAP_WRITES_SETTING_KEY = 'sap_writes_enabled'
 
 export async function saveSapWriteSettingsAction(input: { enabled: boolean }) {
-  await assertRole('admin')
+  await assertPermission('module:configuration')
 
   const enabled = input.enabled === true
   await dbQuery(`
@@ -20,7 +20,7 @@ export async function saveSapWriteSettingsAction(input: { enabled: boolean }) {
   `)
 
   revalidatePath('/configuration')
-  revalidatePath('/product-design/route-sheets/furniture')
+  revalidatePath('/product-design/route-sheets/cabinets')
 
   return { success: true, enabled }
 }

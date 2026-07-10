@@ -29,7 +29,7 @@ import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
 import { Toaster } from '@/components/ui/sonner'
 import { cn } from '@/lib/utils'
 import { GENERATE_LAST_URL_STORAGE_KEY, normalizeGenerateLastUrl } from '@/lib/navigation/generateLastUrl'
-import { USER_ROLE_LABELS, type Permission, type UserRole } from '@/types/auth'
+import { type Permission, type UserRole } from '@/types/auth'
 import { createClient } from '@/utils/supabase/client'
 
 type SidebarAccess = {
@@ -38,6 +38,7 @@ type SidebarAccess = {
         email: string | null
     } | null
     role: UserRole
+    roleLabel: string
     permissions: Permission[]
     isAuthenticated: boolean
 }
@@ -79,6 +80,10 @@ function isItemActive(pathname: string, href: string) {
         || (href === '/' && (pathname === '/new' || pathname === '/mass-import'))
 }
 
+function isStandaloneRoute(pathname: string | null) {
+    return pathname?.startsWith('/export-render') || pathname === '/login' || pathname?.startsWith('/auth')
+}
+
 export function Sidebar({
     children,
     access,
@@ -99,7 +104,7 @@ export function Sidebar({
     const router = useRouter()
     const supabase = createClient()
     const visibleNavItems = NAV_ITEMS.filter((item) => access.permissions.includes(item.permission))
-    const roleLabel = USER_ROLE_LABELS[access.role]
+    const roleLabel = access.roleLabel
     const userEmail = access.user?.email ?? null
     const userInitials = getUserInitials(userEmail, roleLabel)
     const canManageNaming = access.permissions.includes('action:naming:manage')
@@ -118,7 +123,7 @@ export function Sidebar({
         : initialGenerateHref
 
     const refreshNamingStatus = useCallback(async () => {
-        if (!canManageNaming || pathname?.startsWith('/export-render') || pathname === '/login') return
+        if (!canManageNaming || isStandaloneRoute(pathname)) return
         try {
             const status = await getNamingWorkStatusAction()
             setNamingStatus(status)
@@ -164,7 +169,7 @@ export function Sidebar({
 
     useEffect(() => {
         if (!mounted || !canManageNaming || !namingStatus?.hasWork) return
-        if (pathname?.startsWith('/export-render') || pathname === '/login') return
+        if (isStandaloneRoute(pathname)) return
 
         const initialId = window.setTimeout(() => {
             void processNamingWork('auto')
@@ -205,7 +210,7 @@ export function Sidebar({
         )
     }
 
-    if (pathname?.startsWith('/export-render') || pathname === '/login') {
+    if (isStandaloneRoute(pathname)) {
         return <>{children}</>
     }
 

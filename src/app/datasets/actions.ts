@@ -3,10 +3,10 @@
 
 import { dbQuery } from "@/lib/supabase"
 import { revalidatePath } from "next/cache"
-import { assertRole } from '@/utils/auth/access'
+import { assertPermission } from '@/utils/auth/access'
 
 async function assertAdminAccess() {
-    await assertRole('admin')
+    await assertPermission('module:datasets')
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────

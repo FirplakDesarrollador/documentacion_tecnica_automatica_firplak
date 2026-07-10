@@ -9,7 +9,7 @@ function toArray(values: string[] | undefined) {
 }
 
 export async function GET(request: Request) {
-    const guard = await apiGuard('admin')
+    const guard = await apiGuard('module:generate')
     if (guard.response) return guard.response
 
     const url = new URL(request.url)

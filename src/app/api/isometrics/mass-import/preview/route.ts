@@ -146,7 +146,7 @@ function isAiFile(baseName: string, ext: string) {
 }
 
 export async function POST(req: Request) {
-  const guard = await apiGuard('admin')
+  const guard = await apiGuard('module:assets')
   if (guard.response) return guard.response
 
   try {

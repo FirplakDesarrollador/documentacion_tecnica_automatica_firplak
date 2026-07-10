@@ -37,6 +37,7 @@ type SapRequestOptions = {
   body?: SapEntityPayload
   headers?: Record<string, string>
   retryOnUnauthorized?: boolean
+  timeoutMs?: number
 }
 
 type SapItemDuplicateInput = {
@@ -207,6 +208,16 @@ function buildSelectQuery(select?: string[]): string {
   return `?$select=${encodeURIComponent(fields.join(','))}`
 }
 
+function buildCollectionQuery(input: { select?: string[]; filter?: string; top?: number }): string {
+  const params: string[] = []
+  const fields = input.select?.map(field => field.trim()).filter(Boolean) ?? []
+  if (fields.length > 0) params.push(`$select=${encodeURIComponent(fields.join(','))}`)
+  if (input.filter) params.push(`$filter=${encodeURIComponent(input.filter)}`)
+  if (typeof input.top === 'number') params.push(`$top=${input.top}`)
+
+  return params.length > 0 ? `?${params.join('&')}` : ''
+}
+
 async function sapHttpRequest(
   url: URL,
   options: {
@@ -333,6 +344,7 @@ async function sapServiceLayerRequest<T = unknown>(
   const response = await sapHttpRequest(buildSapUrl(path), {
     method: options.method ?? 'GET',
     body: options.body,
+    timeoutMs: options.timeoutMs,
     headers: {
       Cookie: session.cookieHeader,
       ...options.headers,
@@ -429,6 +441,56 @@ export async function getSapItem(itemCode: string, select?: string[]): Promise<S
   }
 
   return item
+}
+
+export async function getSapItemsByCodes(
+  itemCodes: string[],
+  select?: string[],
+  options?: { timeoutMs?: number }
+): Promise<Map<string, SapEntityPayload>> {
+  const normalizedCodes = [...new Set(itemCodes.map(code => normalizeRequiredCode(code, 'itemCode')))]
+  if (normalizedCodes.length === 0) return new Map()
+
+  const filter = normalizedCodes
+    .map(code => `ItemCode eq ${encodeODataString(code)}`)
+    .join(' or ')
+  const query = buildCollectionQuery({
+    select,
+    filter,
+    top: normalizedCodes.length,
+  })
+  const response = await sapServiceLayerRequest<unknown>(`/Items${query}`, {
+    timeoutMs: options?.timeoutMs,
+  })
+  const rows = isRecord(response) && Array.isArray(response.value) ? response.value : []
+  const items = new Map<string, SapEntityPayload>()
+
+  for (const row of rows) {
+    if (!isRecord(row) || typeof row.ItemCode !== 'string') continue
+    items.set(row.ItemCode.trim().toUpperCase(), row)
+  }
+
+  return items
+}
+
+export async function getSapItemsByPrefix(
+  itemCodePrefix: string,
+  select?: string[],
+  options?: { timeoutMs?: number; top?: number }
+): Promise<SapEntityPayload[]> {
+  const normalizedPrefix = normalizeRequiredCode(itemCodePrefix, 'itemCodePrefix')
+  const query = buildCollectionQuery({
+    select,
+    filter: `startswith(ItemCode, ${encodeODataString(normalizedPrefix)})`,
+    top: options?.top ?? 200,
+  })
+  const response = await sapServiceLayerRequest<unknown>(`/Items${query}`, {
+    timeoutMs: options?.timeoutMs,
+  })
+
+  return isRecord(response) && Array.isArray(response.value)
+    ? response.value.filter(isRecord)
+    : []
 }
 
 export function buildSapItemDuplicatePayload(input: SapItemDuplicateInput & { sourceItem: SapEntityPayload }): SapEntityPayload {

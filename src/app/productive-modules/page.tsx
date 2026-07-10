@@ -18,7 +18,7 @@ export default async function ProductiveModulesPage() {
         </div>
 
         <Link
-          href="/productive-modules/route-sheets/furniture"
+          href="/productive-modules/route-sheets/cabinets"
           className="group max-w-xl rounded-lg border border-slate-200 bg-white p-5 shadow-sm transition hover:border-emerald-300 hover:shadow-md"
         >
           <div className="flex items-start gap-4">
@@ -26,7 +26,7 @@ export default async function ProductiveModulesPage() {
               <ClipboardList className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="font-semibold text-slate-900">Hojas de ruta vista - Muebles</h2>
+              <h2 className="font-semibold text-slate-900">Hojas de ruta vista - Cabinets</h2>
               <p className="mt-1 text-sm text-slate-600">
                 Selecciona SKU piloto, orden y cantidad para visualizar e imprimir la hoja de ruta.
               </p>

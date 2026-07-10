@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils'
 import { decodeGenerateLastUrl, GENERATE_LAST_URL_COOKIE } from '@/lib/navigation/generateLastUrl'
 
 import { getPendingStructuralSummary } from '@/lib/engine/pendingStructural'
-import { requirePageRole } from '@/utils/auth/access'
+import { requirePagePermission } from '@/utils/auth/access'
 
 interface RecentProduct {
   id: string
@@ -27,7 +27,7 @@ export default async function Home() {
   const generateHref =
     decodeGenerateLastUrl(cookieStore.get(GENERATE_LAST_URL_COOKIE)?.value) ?? '/generate'
 
-  await requirePageRole('admin')
+  await requirePagePermission('module:dashboard')
 
   // Fetch real KPIs and validation state
   const pendingSummary = await getPendingStructuralSummary()

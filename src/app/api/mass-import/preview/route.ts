@@ -15,7 +15,7 @@ type SupabaseRpcClient = {
 };
 
 export async function POST(req: Request) {
-  const guard = await apiGuard('admin');
+  const guard = await apiGuard('module:dashboard');
   if (guard.response) return guard.response;
 
   try {

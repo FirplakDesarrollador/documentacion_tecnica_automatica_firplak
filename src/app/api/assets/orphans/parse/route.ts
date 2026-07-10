@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import ExcelJS from 'exceljs'
+import { Buffer } from 'node:buffer'
 import { normalizeText } from '@/lib/isometrics/bulkMatch'
 import { apiGuard } from '@/utils/auth/access'
 
@@ -23,7 +24,7 @@ function isUuid(v: string) {
 }
 
 export async function POST(req: Request) {
-  const guard = await apiGuard('admin')
+  const guard = await apiGuard('module:assets')
   if (guard.response) return guard.response
 
   try {
@@ -33,8 +34,8 @@ export async function POST(req: Request) {
 
     const buf = await file.arrayBuffer()
     const wb = new ExcelJS.Workbook()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await wb.xlsx.load(buf as any)
+    const workbookBuffer = Buffer.from(buf) as unknown as Parameters<typeof wb.xlsx.load>[0]
+    await wb.xlsx.load(workbookBuffer)
 
     const ws = wb.getWorksheet('ORPHANS') || wb.worksheets[0]
     if (!ws) return NextResponse.json({ success: false, error: 'No worksheet found' }, { status: 400 })

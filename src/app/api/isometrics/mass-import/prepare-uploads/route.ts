@@ -17,7 +17,7 @@ function isValidSha256Hex(v: string) {
 }
 
 export async function POST(req: Request) {
-  const guard = await apiGuard('admin')
+  const guard = await apiGuard('module:assets')
   if (guard.response) return guard.response
 
   const { executeEnabled, safeMaxFilesPerApply } = await getIsometricMassImportSettings()

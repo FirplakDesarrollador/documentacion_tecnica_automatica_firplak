@@ -14,11 +14,11 @@ import { upsertVersionAction } from '@/app/rules/versions/actions'
 import {
     createClientAction as createClientActionFromConfiguration,
 } from '@/app/configuration/clients/actions'
-import { assertRole } from '@/utils/auth/access'
+import { assertPermission } from '@/utils/auth/access'
 import { buildLabelBoxesAttr, buildPackageQuantityLabel } from '@/lib/engine/labelParts'
 
 async function assertAdminAccess() {
-    await assertRole('admin')
+    await assertPermission('module:dashboard')
 }
 
 function normalizeCanto(val: unknown) {

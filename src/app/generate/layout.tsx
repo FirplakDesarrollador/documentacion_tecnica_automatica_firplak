@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react'
 
-import { requirePageRole } from '@/utils/auth/access'
+import { requirePagePermission } from '@/utils/auth/access'
 
 export default async function GenerateLayout({ children }: { children: ReactNode }) {
-    await requirePageRole('admin')
+    await requirePagePermission('module:generate')
 
     return children
 }

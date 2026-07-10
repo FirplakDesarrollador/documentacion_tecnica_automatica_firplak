@@ -6,7 +6,7 @@ export async function GET(
   request: Request,
   { params: paramsPromise }: { params: Promise<{ code: string }> }
 ) {
-  const guard = await apiGuard('admin')
+  const guard = await apiGuard('module:configuration')
   if (guard.response) return guard.response
 
   const params = await paramsPromise

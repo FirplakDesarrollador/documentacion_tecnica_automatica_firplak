@@ -4,10 +4,10 @@ import { dbQuery } from '@/lib/supabase'
 import { markNamingStaleForGlossaryTerms, processNamingJobsInline } from '@/lib/engine/namingQueue'
 import { resetGlossaryCache } from '@/lib/engine/translator'
 import { revalidatePath, revalidateTag } from 'next/cache'
-import { assertRole } from '@/utils/auth/access'
+import { assertPermission } from '@/utils/auth/access'
 
 async function assertAdminAccess() {
-    await assertRole('admin')
+    await assertPermission('module:configuration')
 }
 
 export async function getGlossaryAction() {

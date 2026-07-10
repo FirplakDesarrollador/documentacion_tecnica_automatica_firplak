@@ -5,10 +5,11 @@ import { redirect } from 'next/navigation'
 import { NextResponse } from 'next/server'
 
 import {
-  ROLE_HOME_PATH,
-  ROLE_PERMISSIONS,
   hasPermission,
+  isPermission,
   normalizeUserRole,
+  resolveRoleAccess,
+  type AppRoleRecord,
   type Permission,
   type UserRole,
 } from '@/types/auth'
@@ -30,6 +31,7 @@ export interface AccessContext {
     email: string | null
   } | null
   role: UserRole
+  roleLabel: string
   permissions: Permission[]
   isAuthenticated: boolean
   isAdmin: boolean
@@ -40,6 +42,7 @@ function createAnonymousAccessContext(): AccessContext {
   return {
     user: null,
     role: 'pending',
+    roleLabel: 'Pendiente',
     permissions: [],
     isAuthenticated: false,
     isAdmin: false,
@@ -65,17 +68,27 @@ const readAccessContext = cache(async (): Promise<AccessContext> => {
     .maybeSingle()
 
   const role = normalizeUserRole(profile?.role)
+  const { data: appRole, error: appRoleError } = await supabase
+    .from('app_roles')
+    .select('key,label,description,allowed_modules,active,is_system')
+    .eq('key', role)
+    .maybeSingle()
+
+  const roleAccess = resolveRoleAccess(role, appRole as AppRoleRecord | null, {
+    fallbackToDefaults: Boolean(appRoleError),
+  })
 
   return {
     user: {
       id: user.id,
       email: profile?.email ?? user.email ?? null,
     },
-    role,
-    permissions: [...ROLE_PERMISSIONS[role]],
+    role: roleAccess.role,
+    roleLabel: roleAccess.roleLabel,
+    permissions: roleAccess.permissions,
     isAuthenticated: true,
-    isAdmin: role === 'admin',
-    homePath: ROLE_HOME_PATH[role],
+    isAdmin: roleAccess.isAdmin,
+    homePath: roleAccess.homePath,
   }
 })
 
@@ -101,7 +114,7 @@ export async function assertRole(...allowedRoles: UserRole[]): Promise<AccessCon
 
 export async function assertPermission(permission: Permission): Promise<AccessContext> {
   const access = await assertAuthenticated()
-  if (!hasPermission(access.role, permission)) {
+  if (!hasPermission(access.permissions, permission)) {
     throw new AuthorizationError('Forbidden', 403)
   }
   return access
@@ -128,16 +141,27 @@ export async function requirePagePermission(permission: Permission): Promise<Acc
     redirect('/login')
   }
 
-  if (!hasPermission(access.role, permission)) {
+  if (!hasPermission(access.permissions, permission)) {
     redirect(access.homePath)
   }
 
   return access
 }
 
-export async function apiGuard(...allowedRoles: UserRole[]) {
+export async function apiGuard(...allowedAccess: Array<UserRole | Permission>) {
   try {
-    const access = await assertRole(...allowedRoles)
+    const access = await assertAuthenticated()
+    const allowedRoles = allowedAccess.filter((item): item is UserRole => !isPermission(item))
+    const allowedPermissions = allowedAccess.filter((item): item is Permission => isPermission(item))
+    const allowedByRole = allowedRoles.includes(access.role)
+    const allowedByPermission = allowedPermissions.some((permission) => hasPermission(access.permissions, permission))
+    const allowedByPrintPermission = allowedRoles.includes('production')
+      && hasPermission(access.permissions, 'module:print')
+
+    if (!allowedByRole && !allowedByPermission && !allowedByPrintPermission) {
+      throw new AuthorizationError('Forbidden', 403)
+    }
+
     return { access, response: null as NextResponse | null }
   } catch (error) {
     if (error instanceof AuthorizationError) {

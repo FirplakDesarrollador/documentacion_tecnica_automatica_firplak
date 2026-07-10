@@ -1,12 +1,14 @@
 import { createServerClient } from "@supabase/ssr";
 import { type NextRequest, NextResponse } from "next/server";
 import {
-  ROLE_HOME_PATH,
+  type AppRoleRecord,
+  getRoutePermission,
+  hasPermission,
   isAllowedUserApi,
-  isPendingLikeRole,
   isPublicRoute,
   isSystemSecretApi,
   normalizeUserRole,
+  resolveRoleAccess,
 } from "@/types/auth";
 
 const ACCESS_PENDING_PATH = "/access-pending";
@@ -103,7 +105,16 @@ export const updateSession = async (request: NextRequest) => {
     .maybeSingle();
 
   const role = normalizeUserRole(profile?.role);
-  const homePath = ROLE_HOME_PATH[role];
+  const { data: appRole, error: appRoleError } = await supabase
+    .from("app_roles")
+    .select("key,label,description,allowed_modules,active,is_system")
+    .eq("key", role)
+    .maybeSingle();
+  const roleAccess = resolveRoleAccess(role, appRole as AppRoleRecord | null, {
+    fallbackToDefaults: Boolean(appRoleError),
+  });
+  const homePath = roleAccess.homePath;
+  const hasModuleAccess = roleAccess.permissions.some((permission) => permission.startsWith("module:"));
 
   if (isLoginPage) {
     return redirectTo(request, homePath);
@@ -113,7 +124,7 @@ export const updateSession = async (request: NextRequest) => {
     return response;
   }
 
-  if (isPendingLikeRole(role)) {
+  if (!hasModuleAccess) {
     if (pathname === ACCESS_PENDING_PATH) {
       return response;
     }
@@ -125,21 +136,16 @@ export const updateSession = async (request: NextRequest) => {
     return redirectTo(request, ACCESS_PENDING_PATH);
   }
 
-  if (role === "production") {
-    if (pathname === ACCESS_PENDING_PATH) {
-      return redirectTo(request, homePath);
-    }
-
-    if (isApiRoute) {
-      return isAllowedUserApi(pathname, role) ? response : jsonError("Forbidden", 403);
-    }
-
-    return pathname.startsWith("/print") || pathname.startsWith("/productive-modules")
-      ? response
-      : redirectTo(request, homePath);
+  if (pathname === ACCESS_PENDING_PATH) {
+    return redirectTo(request, homePath);
   }
 
-  if (pathname === ACCESS_PENDING_PATH) {
+  if (isApiRoute) {
+    return isAllowedUserApi(pathname, roleAccess.role, roleAccess.permissions) ? response : jsonError("Forbidden", 403);
+  }
+
+  const routePermission = getRoutePermission(pathname);
+  if (routePermission && !hasPermission(roleAccess.permissions, routePermission)) {
     return redirectTo(request, homePath);
   }
 

@@ -5,14 +5,14 @@ import { dbQuery } from "@/lib/supabase"
 import { revalidatePath } from "next/cache"
 import { normalizeTemplateFontFamily } from "@/lib/templates/templateTypography"
 import { DEFAULT_MEDIA_GAP_MM, normalizePrintTarget, type PrintTarget } from "@/lib/printLayout"
-import { assertRole } from '@/utils/auth/access'
+import { assertPermission } from '@/utils/auth/access'
 import {
     getPublicDocumentOptions,
     resolvePublicDocumentForProduct,
 } from '@/lib/productDocuments'
 
 async function assertAdminAccess() {
-    await assertRole('admin')
+    await assertPermission('module:templates')
 }
 
 /**

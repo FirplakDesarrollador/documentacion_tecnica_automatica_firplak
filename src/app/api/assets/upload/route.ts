@@ -16,7 +16,7 @@ function getUploadErrorMessage(error: unknown) {
 }
 
 export async function POST(request: Request) {
-    const guard = await apiGuard('admin')
+    const guard = await apiGuard('module:assets')
     if (guard.response) {
         return guard.response
     }
