@@ -306,10 +306,13 @@ const LOW_SIGNAL_TOKENS = new Set([
 ])
 
 const CABINET_PIECE_NAME_PATTERN =
-  /\b(BASE|LATERAL|COSTADO|PUERTA|FRENTE|FONDO|ESPALDAR|REPISA|ENTREPANO|DIVISION|DIVISOR|PANEL|PISO|TECHO|TRAVESANO|FALDON|CAJON|TAPA|TAPETA|SOBRE|CUBIERTA|REFUERZO)\b/
+  /\b(BASE|LATERAL|LAT|COSTADO|PUERTA|FRENTE|FONDO|ESPALDAR|REPISA|ENTREPANO|DIVISION|DIVISOR|PANEL|PISO|TECHO|TRAVESANO|FALDON|CAJON|TAPA|TAPETA|SOBRE|CUBIERTA|REFUERZO|REF)\b/
 
 const RAW_MATERIAL_NAME_PATTERN =
   /\b(TABLERO|CANTO|CANTOS|LAMINA|LAMINADO|MELAMINA|MDP|MDF|AGLOMERADO|FORMICA|PVC|ROLLO|CHAPA|ENCHAPE|PEGANTE|ADHESIVO|BORDE|PERFIL)\b/
+
+const CABINET_PIECE_CODE_PREFIX = 'CMPD09'
+const CABINET_PACKAGING_CODE_PREFIX = 'CEMP'
 
 const MATCH_STATUSES: CabinetMatchStatus[] = [
   'matched',
@@ -570,17 +573,16 @@ export function classifyCabinetItem(
   itemName: string | null,
   category: ComponentCategory | null = null
 ): CabinetBomCandidateKind {
-  if (category === 'hardware') return 'hardware'
-  if (category === 'packaging') return 'packaging'
-  if (category === 'substructure' || category === 'child_sku' || category === 'process') return 'other'
-  if (category === 'material') return 'material'
-
   const code = (itemCode || '').toUpperCase()
   const name = normalizeText(itemName)
 
+  if (code.startsWith(CABINET_PACKAGING_CODE_PREFIX)) return 'packaging'
   if (/(KITTING|KIT\s)/.test(name)) return 'other'
 
-  if (code.startsWith('CEMP') || /(BOLSA|CARTON|GRAPA|ETIQUETA|INSTRUCTIVO|EMPAQUE|CAJA|STRETCH|ZUNCHO)/.test(name)) {
+  if (category === 'hardware') return 'hardware'
+  if (category === 'packaging') return 'packaging'
+  if (category === 'substructure' || category === 'child_sku' || category === 'process') return 'other'
+  if (/(BOLSA|CARTON|GRAPA|ETIQUETA|INSTRUCTIVO|EMPAQUE|CAJA|STRETCH|ZUNCHO)/.test(name)) {
     return 'packaging'
   }
 
@@ -591,6 +593,7 @@ export function classifyCabinetItem(
     return 'hardware'
   }
 
+  if (category === 'material') return 'material'
   if (code || name) return 'material'
   return 'other'
 }
@@ -1096,10 +1099,12 @@ function scorePossibleMatch(itemName: string, quantity: number, candidate: Cabin
 
 function isCabinetPieceCandidate(candidate: CabinetBomCandidate): boolean {
   if (candidate.kind !== 'material') return false
+  if (candidate.item_code.toUpperCase().startsWith(CABINET_PIECE_CODE_PREFIX)) return true
   return textLooksLikeCabinetPiece(candidate.item_name || candidate.item_code)
 }
 
 function rowLooksLikeCabinetPiece(row: CabinetPieceRow): boolean {
+  if (row.sap_item_code?.toUpperCase().startsWith(CABINET_PIECE_CODE_PREFIX)) return true
   return textLooksLikeCabinetPiece(row.sap_item_name || row.piece_name || row.material_label)
 }
 

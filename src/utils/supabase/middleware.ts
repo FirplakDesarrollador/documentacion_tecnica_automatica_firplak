@@ -29,6 +29,22 @@ function jsonError(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
 }
 
+function redirectBareAuthCodeToCallback(request: NextRequest) {
+  const code = request.nextUrl.searchParams.get("code");
+  if (request.nextUrl.pathname !== "/" || !code) {
+    return null;
+  }
+
+  // Supabase falls back to the Site URL when a callback URL is not allowlisted.
+  // Preserve the PKCE code so recovery and invitation links can still finish.
+  const callbackUrl = request.nextUrl.clone();
+  callbackUrl.pathname = "/auth/callback";
+  callbackUrl.search = "";
+  callbackUrl.searchParams.set("code", code);
+  callbackUrl.searchParams.set("next", "/auth/update-password");
+  return NextResponse.redirect(callbackUrl);
+}
+
 export const updateSession = async (request: NextRequest) => {
   // Create an unmodified response
   let response = NextResponse.next({
@@ -61,6 +77,11 @@ export const updateSession = async (request: NextRequest) => {
   );
 
   const pathname = request.nextUrl.pathname;
+  const bareAuthCodeRedirect = redirectBareAuthCodeToCallback(request);
+  if (bareAuthCodeRedirect) {
+    return bareAuthCodeRedirect;
+  }
+
   const publicDocumentPrefix = getPotentialPublicDocumentPrefix(pathname);
   if (publicDocumentPrefix) {
     const { data: activePrefix } = await supabase
