@@ -4,6 +4,7 @@ export const REFERENCE_PRODUCT_APPLICATION_SCOPES = [
   'front',
   'inner_structure',
   'drawer_bottom',
+  'edge_band_full_product',
   'edge_band_body',
   'edge_band_front',
   'edge_band_inner',

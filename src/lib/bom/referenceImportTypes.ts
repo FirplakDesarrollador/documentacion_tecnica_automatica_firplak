@@ -1,4 +1,9 @@
 import type { ReferenceProductApplicationScope } from './referenceImportScopes'
+import type {
+  BomConsumption,
+  BomMaterialAlternative,
+  ComponentTechnicalMetadata,
+} from './types'
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
 export type JsonRecord = { [key: string]: JsonValue }
@@ -38,6 +43,7 @@ export type NormalizedSapBomLine = {
   warehouse: string | null
   issueMethod: string | null
   inventoryUom: string | null
+  technicalMetadata: ComponentTechnicalMetadata | null
 }
 
 export type DirectBomSnapshot = {
@@ -56,15 +62,18 @@ export type DirectBomSnapshot = {
 export type ReferenceBomLine = {
   line_id: string
   sort_order: number
-  base_item_code: string
+  line_kind: 'fixed' | 'material_group'
+  base_item_code: string | null
   product_application_scope: ReferenceProductApplicationScope
-  qty: number
+  qty: number | null
   input_warehouse_code: string | null
   issue_method_override: string | null
+  alternatives: BomMaterialAlternative[]
+  consumptions: BomConsumption[]
 }
 
 export type ReferenceBomStructure = {
-  schema_version: 1
+  schema_version: 2
   structure_type: 'production' | 'sales_kit'
   input_warehouse_code: string | null
   output_warehouse_code: string | null
@@ -73,7 +82,9 @@ export type ReferenceBomStructure = {
 
 export type ColorConfiguration = {
   code4dig: string
+  colorMode: 'full' | 'dual' | 'balance' | 'equivalent'
   applicationColors: Record<string, string>
+  applicationMaterialProfiles: Record<string, string>
   allowedProductTypes: string[]
   allowedManufacturingProcesses: string[]
 }
@@ -109,6 +120,7 @@ export type ComponentBomLine = {
   warehouse: string | null
   issueMethod: string | null
   inventoryUom: string | null
+  technicalMetadata: ComponentTechnicalMetadata | null
 }
 
 export type ComponentTreeSnapshot = {
@@ -156,9 +168,22 @@ export type ReferenceImportSnapshotSummary = {
   capturedAt: string
 }
 
+export type ReferenceImportActiveOverride = {
+  level: 'reference' | 'global_version' | 'version' | 'sku'
+  skuComplete: string | null
+  colorCode: string
+  productApplicationScope: ReferenceProductApplicationScope
+  baseItemCode: string | null
+  targetColorCode: string | null
+  materialProfile: string | null
+  reason: string
+  createdAt: string | null
+}
+
 export type ReferenceImportWorkspace = {
   run: ReferenceImportRunSummary
   findings: ReferenceImportFinding[]
   snapshots: ReferenceImportSnapshotSummary[]
   proposalItemNames: Record<string, string>
+  activeOverrides: ReferenceImportActiveOverride[]
 }

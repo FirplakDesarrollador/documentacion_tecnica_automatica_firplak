@@ -4,6 +4,7 @@ export const COLOR_APPLICATION_SCOPE_KEYS = [
   'front',
   'inner_structure',
   'drawer_bottom',
+  'edge_band_full_product',
   'edge_band_body',
   'edge_band_front',
   'edge_band_inner',
@@ -13,6 +14,18 @@ export const COLOR_APPLICATION_SCOPE_KEYS = [
 export type ColorApplicationScope = (typeof COLOR_APPLICATION_SCOPE_KEYS)[number]
 
 export type ColorApplicationMap = Partial<Record<ColorApplicationScope, string>>
+
+export const MATERIAL_PROFILE_OPTIONS = ['ST', 'RH', 'CARB2'] as const
+
+export type MaterialProfile = (typeof MATERIAL_PROFILE_OPTIONS)[number]
+
+export type ColorMaterialProfileMap = Partial<Record<ColorApplicationScope, MaterialProfile>>
+
+export const MATERIAL_PROFILE_LABELS: Record<MaterialProfile, string> = {
+  ST: 'ST',
+  RH: 'RH',
+  CARB2: 'CARB2',
+}
 
 export const COLOR_MODE_OPTIONS = ['full', 'dual', 'balance', 'equivalent'] as const
 
@@ -31,6 +44,7 @@ export const COLOR_APPLICATION_SCOPE_LABELS: Record<ColorApplicationScope, strin
   front: 'Frente',
   inner_structure: 'Estructura interna',
   drawer_bottom: 'Fondo cajon',
+  edge_band_full_product: 'Canto producto completo',
   edge_band_body: 'Canto cuerpo',
   edge_band_front: 'Canto frente',
   edge_band_inner: 'Canto interno',

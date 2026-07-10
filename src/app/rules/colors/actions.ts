@@ -7,9 +7,11 @@ import { assertPermission } from '@/utils/auth/access'
 import {
   COLOR_APPLICATION_SCOPE_KEYS,
   COLOR_MODE_OPTIONS,
+  MATERIAL_PROFILE_OPTIONS,
   SAP_COLOR_CODE_PATTERN,
   type ColorApplicationMap,
   type ColorApplicationScope,
+  type ColorMaterialProfileMap,
   type ColorMode,
 } from './productiveScopes'
 
@@ -18,6 +20,7 @@ export type ColorEntry = {
   name_color_sap: string
   color_mode: ColorMode
   application_colors_json: ColorApplicationMap
+  application_material_profiles_json: ColorMaterialProfileMap
   allowed_product_types: string[]
   allowed_manufacturing_processes: string[]
   is_active: boolean
@@ -34,6 +37,7 @@ type UpsertColorInput = {
   notes?: string | null
   isNew?: boolean
   application_colors_json?: Partial<Record<ColorApplicationScope, string | null | undefined>> | null
+  application_material_profiles_json?: Partial<Record<ColorApplicationScope, string | null | undefined>> | null
 }
 
 const COLOR_SELECT_COLUMNS = `
@@ -41,6 +45,7 @@ const COLOR_SELECT_COLUMNS = `
   name_color_sap,
   COALESCE(color_mode, 'full') AS color_mode,
   COALESCE(application_colors_json, '{}'::jsonb) AS application_colors_json,
+  COALESCE(application_material_profiles_json, '{}'::jsonb) AS application_material_profiles_json,
   COALESCE(allowed_product_types, '{}'::text[]) AS allowed_product_types,
   COALESCE(allowed_manufacturing_processes, '{}'::text[]) AS allowed_manufacturing_processes,
   COALESCE(is_active, true) AS is_active,
@@ -138,12 +143,27 @@ function normalizeApplicationColors(value: unknown): ColorApplicationMap {
   return normalized
 }
 
+function normalizeApplicationMaterialProfiles(value: unknown): ColorMaterialProfileMap {
+  const source = parseJsonRecord(value)
+  const normalized: ColorMaterialProfileMap = {}
+  for (const scope of COLOR_APPLICATION_SCOPE_KEYS) {
+    const rawValue = source[scope]
+    if (typeof rawValue !== 'string') continue
+    const profile = rawValue.trim().toUpperCase()
+    if (MATERIAL_PROFILE_OPTIONS.includes(profile as (typeof MATERIAL_PROFILE_OPTIONS)[number])) {
+      normalized[scope] = profile as (typeof MATERIAL_PROFILE_OPTIONS)[number]
+    }
+  }
+  return normalized
+}
+
 function normalizeColorRow(row: Record<string, unknown>): ColorEntry {
   return {
     code_4dig: typeof row.code_4dig === 'string' ? row.code_4dig : '',
     name_color_sap: typeof row.name_color_sap === 'string' ? row.name_color_sap : '',
     color_mode: normalizeColorMode(row.color_mode),
     application_colors_json: normalizeApplicationColors(row.application_colors_json),
+    application_material_profiles_json: normalizeApplicationMaterialProfiles(row.application_material_profiles_json),
     allowed_product_types: normalizeTextArray(row.allowed_product_types),
     allowed_manufacturing_processes: normalizeTextArray(row.allowed_manufacturing_processes),
     is_active: typeof row.is_active === 'boolean' ? row.is_active : true,
@@ -182,6 +202,22 @@ function normalizeApplicationColorPatch(input: unknown) {
     patch[scope] = code
   }
 
+  return patch
+}
+
+function normalizeApplicationMaterialProfilePatch(input: unknown) {
+  if (input === undefined) return null
+  if (!isRecord(input)) return {}
+  const patch: ColorMaterialProfileMap = {}
+  for (const scope of COLOR_APPLICATION_SCOPE_KEYS) {
+    const rawValue = input[scope]
+    const profile = typeof rawValue === 'string' ? rawValue.trim().toUpperCase() : ''
+    if (!profile) continue
+    if (!MATERIAL_PROFILE_OPTIONS.includes(profile as (typeof MATERIAL_PROFILE_OPTIONS)[number])) {
+      throw new Error(`El perfil de material "${scope}" debe ser ST, RH o CARB2`)
+    }
+    patch[scope] = profile as (typeof MATERIAL_PROFILE_OPTIONS)[number]
+  }
   return patch
 }
 
@@ -237,6 +273,7 @@ export async function upsertColorAction(data: UpsertColorInput) {
   const isActive = data.is_active ?? true
   const notes = normalizeOptionalNotes(data.notes)
   const applicationColorPatch = normalizeApplicationColorPatch(data.application_colors_json)
+  const applicationMaterialProfilePatch = normalizeApplicationMaterialProfilePatch(data.application_material_profiles_json)
 
   if (isNew) {
     const existing = await dbQuery(
@@ -247,119 +284,77 @@ export async function upsertColorAction(data: UpsertColorInput) {
       throw new Error(`El código de color "${code}" ya existe en la base de datos`)
     }
 
-    const result = applicationColorPatch === null
-      ? await dbQuery(
-          `INSERT INTO public.colors (
-             code_4dig,
-             name_color_sap,
-             color_mode,
-             allowed_product_types,
-             allowed_manufacturing_processes,
-             is_active,
-             notes
-           )
-           SELECT
-             $1,
-             $2,
-             $3,
-             ARRAY(SELECT jsonb_array_elements_text($4::jsonb)),
-             ARRAY(SELECT jsonb_array_elements_text($5::jsonb)),
-             $6,
-             $7
-           RETURNING ${COLOR_SELECT_COLUMNS}`,
-          [
-            code,
-            name,
-            colorMode,
-            JSON.stringify(allowedProductTypes),
-            JSON.stringify(allowedManufacturingProcesses),
-            isActive,
-            notes,
-          ]
-        )
-      : await dbQuery(
-          `INSERT INTO public.colors (
-             code_4dig,
-             name_color_sap,
-             color_mode,
-             allowed_product_types,
-             allowed_manufacturing_processes,
-             is_active,
-             notes,
-             application_colors_json
-           )
-           SELECT
-             $1,
-             $2,
-             $3,
-             ARRAY(SELECT jsonb_array_elements_text($4::jsonb)),
-             ARRAY(SELECT jsonb_array_elements_text($5::jsonb)),
-             $6,
-             $7,
-             $8::jsonb
-           RETURNING ${COLOR_SELECT_COLUMNS}`,
-          [
-            code,
-            name,
-            colorMode,
-            JSON.stringify(allowedProductTypes),
-            JSON.stringify(allowedManufacturingProcesses),
-            isActive,
-            notes,
-            JSON.stringify(applicationColorPatch),
-          ]
-        )
+    const result = await dbQuery(
+      `INSERT INTO public.colors (
+         code_4dig,
+         name_color_sap,
+         color_mode,
+         allowed_product_types,
+         allowed_manufacturing_processes,
+         is_active,
+         notes,
+         application_colors_json,
+         application_material_profiles_json
+       )
+       SELECT
+         $1,
+         $2,
+         $3,
+         ARRAY(SELECT jsonb_array_elements_text($4::jsonb)),
+         ARRAY(SELECT jsonb_array_elements_text($5::jsonb)),
+         $6,
+         $7,
+         COALESCE($8::jsonb, '{}'::jsonb),
+         COALESCE($9::jsonb, '{}'::jsonb)
+       RETURNING ${COLOR_SELECT_COLUMNS}`,
+      [
+        code,
+        name,
+        colorMode,
+        JSON.stringify(allowedProductTypes),
+        JSON.stringify(allowedManufacturingProcesses),
+        isActive,
+        notes,
+        applicationColorPatch === null ? null : JSON.stringify(applicationColorPatch),
+        applicationMaterialProfilePatch === null ? null : JSON.stringify(applicationMaterialProfilePatch),
+      ]
+    )
     await markNamingStaleForColor(code, null, 'color_upsert')
     await processNamingJobsInline()
     revalidatePath('/rules/colors')
     revalidatePath('/configuration/colors')
     return normalizeColorRow(getFirstRecordRow(result))
   } else {
-    const result = applicationColorPatch === null
-      ? await dbQuery(
-          `UPDATE public.colors
-           SET name_color_sap = $1,
-               color_mode = $2,
-               allowed_product_types = ARRAY(SELECT jsonb_array_elements_text($3::jsonb)),
-               allowed_manufacturing_processes = ARRAY(SELECT jsonb_array_elements_text($4::jsonb)),
-               is_active = $5,
-               notes = $6
-           WHERE code_4dig = $7
-           RETURNING ${COLOR_SELECT_COLUMNS}`,
-          [
-            name,
-            colorMode,
-            JSON.stringify(allowedProductTypes),
-            JSON.stringify(allowedManufacturingProcesses),
-            isActive,
-            notes,
-            code,
-          ]
-        )
-      : await dbQuery(
-          `UPDATE public.colors
-           SET name_color_sap = $1,
-               color_mode = $2,
-               allowed_product_types = ARRAY(SELECT jsonb_array_elements_text($3::jsonb)),
-               allowed_manufacturing_processes = ARRAY(SELECT jsonb_array_elements_text($4::jsonb)),
-               is_active = $5,
-               notes = $6,
-               application_colors_json = (
-                 COALESCE(application_colors_json, '{}'::jsonb)${REMOVE_MANAGED_APPLICATION_SCOPES_SQL}
-               ) || $7::jsonb
-           WHERE code_4dig = $8
-           RETURNING ${COLOR_SELECT_COLUMNS}`,
-          [
-            name,
-            colorMode,
-            JSON.stringify(allowedProductTypes),
-            JSON.stringify(allowedManufacturingProcesses),
-            isActive,
-            notes,
-            JSON.stringify(applicationColorPatch),
-            code,
-          ]
-        )
+    const result = await dbQuery(
+      `UPDATE public.colors
+       SET name_color_sap = $1,
+           color_mode = $2,
+           allowed_product_types = ARRAY(SELECT jsonb_array_elements_text($3::jsonb)),
+           allowed_manufacturing_processes = ARRAY(SELECT jsonb_array_elements_text($4::jsonb)),
+           is_active = $5,
+           notes = $6,
+           application_colors_json = CASE
+             WHEN $7::jsonb IS NULL THEN application_colors_json
+             ELSE (COALESCE(application_colors_json, '{}'::jsonb)${REMOVE_MANAGED_APPLICATION_SCOPES_SQL}) || $7::jsonb
+           END,
+           application_material_profiles_json = CASE
+             WHEN $8::jsonb IS NULL THEN application_material_profiles_json
+             ELSE $8::jsonb
+           END
+       WHERE code_4dig = $9
+       RETURNING ${COLOR_SELECT_COLUMNS}`,
+      [
+        name,
+        colorMode,
+        JSON.stringify(allowedProductTypes),
+        JSON.stringify(allowedManufacturingProcesses),
+        isActive,
+        notes,
+        applicationColorPatch === null ? null : JSON.stringify(applicationColorPatch),
+        applicationMaterialProfilePatch === null ? null : JSON.stringify(applicationMaterialProfilePatch),
+        code,
+      ]
+    )
     await markNamingStaleForColor(code, null, 'color_update')
     await processNamingJobsInline()
     revalidatePath('/rules/colors')

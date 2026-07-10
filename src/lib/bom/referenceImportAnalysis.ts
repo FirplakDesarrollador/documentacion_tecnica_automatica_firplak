@@ -1,10 +1,16 @@
+import type {
+  BomColorMode,
+  BomConsumption,
+  BomMaterialAlternative,
+  ComponentTechnicalMetadata,
+  MaterialProfile,
+} from './types'
 import {
   type ColorConfiguration,
   type DirectBomSnapshot,
   type JsonRecord,
   type NormalizedSapBomLine,
   type ReferenceBomLine,
-  type ReferenceBomStructure,
   type ReferenceImportAnalysis,
   type ReferenceImportContext,
   type ReferenceImportFindingDraft,
@@ -16,26 +22,26 @@ type LineEvidence = {
   line: NormalizedSapBomLine
 }
 
-type ColorPattern =
-  | 'primary_sku_color'
-  | 'neutral_component'
-  | 'constant_internal_color'
-  | 'productive_scope_pattern'
-  | 'variation_without_pattern'
-
-type ScopeAssessment = {
+type LogicalEvidence = {
+  key: string
+  lines: Array<{ lineIdentity: string; evidence: LineEvidence[] }>
+  isMaterialGroup: boolean
+  alternatives: BomMaterialAlternative[]
+  sortOrder: number
   scope: ReferenceProductApplicationScope
-  pattern: ColorPattern
-  requiresHumanReview: boolean
 }
 
-type RuleProposal = {
-  sourceColorCode: string
-  targetColorCode: string
+type QuantityObservation = {
+  colorMode: BomColorMode
   scope: ReferenceProductApplicationScope
-  lineIdentities: Set<string>
-  baseItemCodes: Set<string>
+  profile: MaterialProfile
+  formatKey: string | null
+  qty: number
+  skuComplete: string
 }
+
+const EPSILON = 0.000001
+const BOARD_THICKNESS_TOLERANCE_MM = 0.5
 
 const SCOPE_BY_BASE_ITEM_CODE: Record<string, ReferenceProductApplicationScope> = {
   'CMPD06-0030-000': 'drawer_bottom',
@@ -52,7 +58,6 @@ function mostCommonString(values: Array<string | null>): string | null {
     if (!normalized) continue
     counts.set(normalized, (counts.get(normalized) ?? 0) + 1)
   }
-
   return [...counts.entries()]
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0] ?? null
 }
@@ -60,85 +65,58 @@ function mostCommonString(values: Array<string | null>): string | null {
 function mostCommonNumber(values: number[]): number {
   const counts = new Map<number, number>()
   for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1)
-
   return [...counts.entries()]
     .sort((left, right) => right[1] - left[1] || left[0] - right[0])[0]?.[0] ?? 0
 }
 
 function allSameNumber(values: number[]): boolean {
-  return values.every(value => Math.abs(value - values[0]) < 0.000001)
+  return values.every(value => Math.abs(value - values[0]) < EPSILON)
 }
 
 function allSameText(values: Array<string | null>): boolean {
   return new Set(values.map(value => value?.trim() ?? '')).size <= 1
 }
 
-function skuVariantMap(evidence: LineEvidence[]): JsonRecord {
-  const result: JsonRecord = {}
-  for (const item of evidence) {
-    result[item.snapshot.skuComplete] = item.line.variantCode4
-  }
-  return result
+function asColorMode(configuration: ColorConfiguration | undefined): BomColorMode {
+  if (configuration?.colorMode === 'dual' || configuration?.colorMode === 'balance') return configuration.colorMode
+  return 'full'
 }
 
-function scopeFromSemantics(line: NormalizedSapBomLine): ReferenceProductApplicationScope | null {
+function colorScopeForMode(mode: BomColorMode): ReferenceProductApplicationScope[] {
+  if (mode === 'dual') return ['structure', 'front']
+  if (mode === 'balance') return ['structure', 'front', 'inner_structure']
+  return ['full_product']
+}
+
+function metadataFor(line: NormalizedSapBomLine): ComponentTechnicalMetadata | null {
+  return line.technicalMetadata
+}
+
+function scopeFromSemantics(
+  line: NormalizedSapBomLine,
+  evidence: LineEvidence[],
+  colorConfigurations: Map<string, ColorConfiguration>
+): ReferenceProductApplicationScope {
   const fromCode = SCOPE_BY_BASE_ITEM_CODE[line.baseItemCode]
   if (fromCode) return fromCode
 
+  if (line.technicalMetadata?.material_kind === 'board') return 'full_product'
+
   const name = normalizedText(line.itemName)
   if (name.includes('FONDO') && (name.includes('CAJON') || name.includes('DRAWER'))) return 'drawer_bottom'
-
   if (name.includes('CANTO')) {
     if (name.includes('FRENTE') || name.includes('PUERTA') || name.includes('FRONTAL')) return 'edge_band_front'
     if (name.includes('INTERIOR') || name.includes('INTERNA') || name.includes('CAJON')) return 'edge_band_inner'
-    return 'edge_band_body'
+    const includesStructuredColor = evidence.some(item => {
+      const colorCode = item.snapshot.skuColorCode
+      return colorCode ? asColorMode(colorConfigurations.get(colorCode)) !== 'full' : false
+    })
+    return includesStructuredColor ? 'edge_band_body' : 'edge_band_full_product'
   }
-
   if (name.includes('ESTRUCTURA') || name.includes('COSTADO') || name.includes('LATERAL')) return 'structure'
   if (name.includes('INTERIOR') || name.includes('INTERNA')) return 'inner_structure'
   if (name.includes('FRENTE') || name.includes('PUERTA') || name.includes('FRONTAL')) return 'front'
-
-  return null
-}
-
-function assessScope(evidence: LineEvidence[]): ScopeAssessment {
-  const variants = evidence.map(item => item.line.variantCode4)
-  if (variants.every(variant => variant === '0000')) {
-    return { scope: 'NA', pattern: 'neutral_component', requiresHumanReview: false }
-  }
-
-  if (evidence.every(item => item.snapshot.skuColorCode && item.line.variantCode4 === item.snapshot.skuColorCode)) {
-    return { scope: 'full_product', pattern: 'primary_sku_color', requiresHumanReview: false }
-  }
-
-  const semanticScope = scopeFromSemantics(evidence[0].line)
-  const variantsBySkuColor = new Map<string, Set<string>>()
-  for (const item of evidence) {
-    const skuColor = item.snapshot.skuColorCode
-    if (!skuColor) return { scope: 'full_product', pattern: 'variation_without_pattern', requiresHumanReview: true }
-
-    const variantsForColor = variantsBySkuColor.get(skuColor) ?? new Set<string>()
-    variantsForColor.add(item.line.variantCode4)
-    variantsBySkuColor.set(skuColor, variantsForColor)
-  }
-
-  if (!semanticScope || [...variantsBySkuColor.values()].some(variantsForColor => variantsForColor.size > 1)) {
-    return { scope: 'full_product', pattern: 'variation_without_pattern', requiresHumanReview: true }
-  }
-
-  const internalVariants = evidence
-    .filter(item => item.snapshot.skuColorCode && item.line.variantCode4 !== item.snapshot.skuColorCode && item.line.variantCode4 !== '0000')
-    .map(item => item.line.variantCode4)
-
-  if (internalVariants.length === 0 || evidence.some(item => item.line.variantCode4 === '0000')) {
-    return { scope: 'full_product', pattern: 'variation_without_pattern', requiresHumanReview: true }
-  }
-
-  return {
-    scope: semanticScope,
-    pattern: new Set(internalVariants).size === 1 ? 'constant_internal_color' : 'productive_scope_pattern',
-    requiresHumanReview: false,
-  }
+  return 'NA'
 }
 
 function isColorApplicable(configuration: ColorConfiguration, context: ReferenceImportContext): boolean {
@@ -146,20 +124,250 @@ function isColorApplicable(configuration: ColorConfiguration, context: Reference
     || (context.manufacturingProcess !== null && configuration.allowedManufacturingProcesses.includes(context.manufacturingProcess))
   const typeApplies = configuration.allowedProductTypes.length === 0
     || (context.productType !== null && configuration.allowedProductTypes.includes(context.productType))
-
   return processApplies && typeApplies
 }
 
 function createFinding(input: Omit<ReferenceImportFindingDraft, 'status'> & {
   status?: ReferenceImportFindingDraft['status']
 }): ReferenceImportFindingDraft {
+  return { ...input, status: input.status ?? 'open' }
+}
+
+function lineDetails(evidence: LineEvidence[]): JsonRecord {
   return {
-    ...input,
-    status: input.status ?? 'open',
+    by_sku: evidence.map(item => ({
+      sku_complete: item.snapshot.skuComplete,
+      sku_color_code: item.snapshot.skuColorCode,
+      item_code: item.line.itemCode,
+      item_name: item.line.itemName,
+      material_color: item.line.variantCode4,
+      qty: item.line.qty,
+      warehouse: item.line.warehouse,
+      issue_method: item.line.issueMethod,
+      visible_order: item.line.sourceOrder,
+      sap_child_num: item.line.sapChildNum,
+      technical_metadata: item.line.technicalMetadata,
+    })),
   }
 }
 
-function proposedLine(input: {
+function candidateColorForScope(
+  configuration: ColorConfiguration | undefined,
+  scope: ReferenceProductApplicationScope,
+  skuColorCode: string | null
+): string | null {
+  if (!configuration || !skuColorCode) return skuColorCode
+  const mappedScope = configuration.colorMode === 'full' || configuration.colorMode === 'equivalent'
+    ? scope === 'edge_band_body' ? 'edge_band_full_product' : scope
+    : scope
+  return configuration.applicationColors[mappedScope]
+    ?? configuration.applicationColors.full_product
+    ?? skuColorCode
+}
+
+function lineUsesConfiguredColor(
+  evidence: LineEvidence[],
+  scope: ReferenceProductApplicationScope,
+  configurations: Map<string, ColorConfiguration>
+): boolean {
+  return evidence.every(item => {
+    const skuColorCode = item.snapshot.skuColorCode
+    if (!skuColorCode || item.line.variantCode4 === '0000') return true
+    return item.line.variantCode4 === candidateColorForScope(configurations.get(skuColorCode), scope, skuColorCode)
+  })
+}
+
+function metadataCompatible(
+  left: ComponentTechnicalMetadata | null,
+  right: ComponentTechnicalMetadata | null
+): boolean {
+  if (!left || !right) return false
+  if (left.material_kind !== right.material_kind || left.material_kind === 'other') return false
+  if (left.thickness_mm === null || right.thickness_mm === null) return false
+  return Math.abs(left.thickness_mm - right.thickness_mm) <= BOARD_THICKNESS_TOLERANCE_MM
+}
+
+function medianOrder(evidence: LineEvidence[]): number {
+  const orders = evidence.map(item => item.line.sourceOrder).sort((left, right) => left - right)
+  return orders[Math.floor(orders.length / 2)] ?? 0
+}
+
+function areMutuallyExclusive(left: LineEvidence[], right: LineEvidence[]): boolean {
+  const leftSkus = new Set(left.map(item => item.snapshot.skuComplete))
+  return !right.some(item => leftSkus.has(item.snapshot.skuComplete))
+}
+
+function canFormMaterialGroup(
+  left: LineEvidence[],
+  right: LineEvidence[],
+  snapshotCount: number
+): boolean {
+  const leftMetadata = metadataFor(left[0]?.line)
+  const rightMetadata = metadataFor(right[0]?.line)
+  if (!metadataCompatible(leftMetadata, rightMetadata) || !areMutuallyExclusive(left, right)) return false
+  const coverage = new Set([...left, ...right].map(item => item.snapshot.skuComplete))
+  if (coverage.size !== snapshotCount) return false
+  return Math.abs(medianOrder(left) - medianOrder(right)) <= 1
+}
+
+function profileAlternatives(groups: Array<{ lineIdentity: string; evidence: LineEvidence[] }>): BomMaterialAlternative[] {
+  const alternatives = groups.flatMap(({ evidence }) => {
+    const first = evidence[0]?.line
+    const profile = first?.technicalMetadata?.material_profile
+    return first && profile ? [{ baseItemCode: first.baseItemCode, profile }] : []
+  })
+  const defaultProfile = alternatives.some(item => item.profile === 'ST') ? 'ST' : alternatives[0]?.profile ?? null
+  return alternatives
+    .sort((left, right) => left.baseItemCode.localeCompare(right.baseItemCode))
+    .map((alternative, index) => ({
+      alternative_id: `alt_${String(index + 1).padStart(2, '0')}`,
+      base_item_code: alternative.baseItemCode,
+      material_profile: alternative.profile,
+      is_default: alternative.profile === defaultProfile,
+    }))
+}
+
+function findLogicalEvidence(
+  evidenceByIdentity: Map<string, LineEvidence[]>,
+  snapshotCount: number,
+  colorConfigurations: Map<string, ColorConfiguration>
+): LogicalEvidence[] {
+  const pending = [...evidenceByIdentity.entries()]
+    .map(([lineIdentity, evidence]) => ({ lineIdentity, evidence }))
+    .sort((left, right) => medianOrder(left.evidence) - medianOrder(right.evidence) || left.lineIdentity.localeCompare(right.lineIdentity))
+  const result: LogicalEvidence[] = []
+
+  while (pending.length > 0) {
+    const current = pending.shift()
+    if (!current) continue
+    const compatibleIndex = pending.findIndex(candidate => canFormMaterialGroup(current.evidence, candidate.evidence, snapshotCount))
+    const groups = compatibleIndex >= 0
+      ? [current, pending.splice(compatibleIndex, 1)[0]]
+      : [current]
+    const firstLine = groups[0]?.evidence[0]?.line
+    if (!firstLine) continue
+    const joinedEvidence = groups.flatMap(group => group.evidence)
+    const isMaterialGroup = groups.length > 1
+    result.push({
+      key: isMaterialGroup
+        ? `material-group:${groups.map(group => group.lineIdentity).sort().join('|')}`
+        : `line:${current.lineIdentity}`,
+      lines: groups,
+      isMaterialGroup,
+      alternatives: isMaterialGroup ? profileAlternatives(groups) : [],
+      sortOrder: mostCommonNumber(joinedEvidence.map(item => item.line.sourceOrder)),
+      scope: scopeFromSemantics(firstLine, joinedEvidence, colorConfigurations),
+    })
+  }
+
+  return result.sort((left, right) => left.sortOrder - right.sortOrder || left.key.localeCompare(right.key))
+}
+
+function buildConsumptions(
+  logical: LogicalEvidence,
+  colorConfigurations: Map<string, ColorConfiguration>
+): {
+  consumptions: BomConsumption[]
+  contradictions: QuantityObservation[][]
+} {
+  const observations: QuantityObservation[] = []
+  for (const groupedLine of logical.lines) {
+    for (const item of groupedLine.evidence) {
+      const profile = item.line.technicalMetadata?.material_profile
+      if (!profile) continue
+      const configuration = item.snapshot.skuColorCode ? colorConfigurations.get(item.snapshot.skuColorCode) : undefined
+      const colorMode = asColorMode(configuration)
+      const semanticScope = logical.scope === 'NA' ? null : logical.scope
+      const scope = colorMode === 'full'
+        ? 'full_product'
+        : semanticScope && semanticScope !== 'full_product'
+          ? semanticScope
+          : null
+      if (!scope) continue
+      observations.push({
+        colorMode,
+        scope,
+        profile,
+        formatKey: item.line.technicalMetadata?.format_key ?? null,
+        qty: item.line.qty,
+        skuComplete: item.snapshot.skuComplete,
+      })
+    }
+  }
+
+  const observationByKey = new Map<string, QuantityObservation[]>()
+  for (const observation of observations) {
+    const key = [observation.colorMode, observation.scope, observation.profile, observation.formatKey ?? 'none'].join('|')
+    const values = observationByKey.get(key) ?? []
+    values.push(observation)
+    observationByKey.set(key, values)
+  }
+
+  const contradictions: QuantityObservation[][] = []
+  const consumptions: BomConsumption[] = []
+  for (const alternative of logical.alternatives) {
+    for (const colorMode of ['full', 'dual', 'balance'] as const) {
+      for (const scope of colorScopeForMode(colorMode)) {
+        const matching = [...observationByKey.entries()]
+          .filter(([key]) => key.startsWith(`${colorMode}|${scope}|${alternative.material_profile}|`))
+        if (matching.length === 0) {
+          consumptions.push({
+            color_mode: colorMode,
+            product_application_scope: scope,
+            material_profile: alternative.material_profile,
+            format_key: null,
+            qty: null,
+            status: 'needs_definition',
+          })
+          continue
+        }
+        for (const [, values] of matching) {
+          if (!allSameNumber(values.map(value => value.qty))) contradictions.push(values)
+          consumptions.push({
+            color_mode: values[0].colorMode,
+            product_application_scope: values[0].scope,
+            material_profile: values[0].profile,
+            format_key: values[0].formatKey,
+            qty: mostCommonNumber(values.map(value => value.qty)),
+            status: 'observed',
+          })
+        }
+      }
+    }
+  }
+
+  return { consumptions, contradictions }
+}
+
+function issueMethodAssessment(evidence: LineEvidence[]): {
+  proposed: string | null
+  isTie: boolean
+  hasVariation: boolean
+  majoritySkus: string[]
+  minoritySkus: string[]
+} {
+  const counts = new Map<string, string[]>()
+  for (const item of evidence) {
+    const method = item.line.issueMethod?.trim() ?? ''
+    if (!method) continue
+    const skus = counts.get(method) ?? []
+    skus.push(item.snapshot.skuComplete)
+    counts.set(method, skus)
+  }
+  const sorted = [...counts.entries()].sort((left, right) => right[1].length - left[1].length || left[0].localeCompare(right[0]))
+  const winner = sorted[0]
+  const isTie = Boolean(winner && sorted[1] && winner[1].length === sorted[1][1].length)
+  const proposed = winner && !isTie ? winner[0] : null
+  return {
+    proposed,
+    isTie,
+    hasVariation: sorted.length > 1,
+    majoritySkus: proposed ? winner?.[1] ?? [] : [],
+    minoritySkus: proposed ? sorted.slice(1).flatMap(([, skus]) => skus) : [],
+  }
+}
+
+function fixedProposedLine(input: {
   line: NormalizedSapBomLine
   scope: ReferenceProductApplicationScope
   sortOrder: number
@@ -170,27 +378,60 @@ function proposedLine(input: {
   return {
     line_id: `ln_${String(input.sortOrder).padStart(6, '0')}`,
     sort_order: input.sortOrder,
+    line_kind: 'fixed',
     base_item_code: input.line.baseItemCode,
     product_application_scope: input.scope,
     qty: input.qty,
     input_warehouse_code: input.warehouse,
     issue_method_override: input.issueMethod,
+    alternatives: [],
+    consumptions: [],
   }
 }
 
-function asLineDetails(evidence: LineEvidence[]): JsonRecord {
+function materialProposedLine(input: {
+  logical: LogicalEvidence
+  warehouse: string | null
+  issueMethod: string | null
+  consumptions: BomConsumption[]
+}): ReferenceBomLine {
   return {
-    by_sku: evidence.map(item => ({
-      sku_complete: item.snapshot.skuComplete,
-      sku_color_code: item.snapshot.skuColorCode,
-      item_code: item.line.itemCode,
-      qty: item.line.qty,
-      warehouse: item.line.warehouse,
-      issue_method: item.line.issueMethod,
-      visible_order: item.line.sourceOrder,
-      sap_child_num: item.line.sapChildNum,
-    })),
+    line_id: `ln_${String(input.logical.sortOrder).padStart(6, '0')}`,
+    sort_order: input.logical.sortOrder,
+    line_kind: 'material_group',
+    base_item_code: null,
+    product_application_scope: input.logical.scope,
+    qty: null,
+    input_warehouse_code: input.warehouse,
+    issue_method_override: input.issueMethod,
+    alternatives: input.logical.alternatives,
+    consumptions: input.consumptions,
   }
+}
+
+function profileProposalFinding(input: {
+  logical: LogicalEvidence
+  sourceColorCode: string
+  profile: MaterialProfile
+  evidence: LineEvidence[]
+}): ReferenceImportFindingDraft {
+  return createFinding({
+    findingKey: `material-profile:${input.logical.key}:${input.sourceColorCode}:${input.logical.scope}`,
+    findingType: 'material_profile_proposal',
+    severity: 'warning',
+    lineIdentity: input.logical.key,
+    baseItemCode: input.logical.alternatives[0]?.base_item_code ?? null,
+    occurrence: null,
+    proposedScope: input.logical.scope,
+    proposedColorCode: input.sourceColorCode,
+    detailsJson: {
+      source_color_code: input.sourceColorCode,
+      material_profile: input.profile,
+      product_application_scope: input.logical.scope,
+      alternatives: input.logical.alternatives,
+      ...lineDetails(input.evidence),
+    },
+  })
 }
 
 export function analyzeReferenceBom(input: {
@@ -198,12 +439,10 @@ export function analyzeReferenceBom(input: {
   snapshots: DirectBomSnapshot[]
   colorConfigurations: Map<string, ColorConfiguration>
 }): ReferenceImportAnalysis {
-  const findings: ReferenceImportFindingDraft[] = []
   const capturedSnapshots = input.snapshots.filter(snapshot => snapshot.status === 'captured')
   const failedSnapshots = input.snapshots.filter(snapshot => snapshot.status === 'failed')
-
   if (failedSnapshots.length > 0) {
-    const sourceFindings = failedSnapshots.map(snapshot => createFinding({
+    const findings = failedSnapshots.map(snapshot => createFinding({
       findingKey: `source:sap-bom:${snapshot.skuComplete}`,
       findingType: 'sap_bom_unavailable',
       severity: 'blocker',
@@ -212,36 +451,29 @@ export function analyzeReferenceBom(input: {
       occurrence: null,
       proposedScope: null,
       proposedColorCode: null,
-      detailsJson: {
-        sku_complete: snapshot.skuComplete,
-        error: snapshot.errorMessage,
-      },
+      detailsJson: { sku_complete: snapshot.skuComplete, error: snapshot.errorMessage },
     }))
-
     return {
       proposedBomStructure: {
-        schema_version: 1,
+        schema_version: 2,
         structure_type: capturedSnapshots.some(snapshot => snapshot.treeType === 'iSalesTree') ? 'sales_kit' : 'production',
         input_warehouse_code: null,
         output_warehouse_code: null,
         lines: [],
       },
-      findings: sourceFindings,
+      findings,
       summaryJson: {
         captured_sku_count: capturedSnapshots.length,
         failed_sku_count: failedSnapshots.length,
         source_analysis_complete: false,
         proposed_line_count: 0,
-        blocker_count: sourceFindings.length,
+        blocker_count: findings.length,
         warning_count: 0,
-        color_pattern_counts: {},
-        target_color_codes: [],
       },
     }
   }
 
   const evidenceByIdentity = new Map<string, LineEvidence[]>()
-
   for (const snapshot of capturedSnapshots) {
     for (const line of snapshot.normalizedLines) {
       const evidence = evidenceByIdentity.get(line.lineIdentity) ?? []
@@ -250,327 +482,200 @@ export function analyzeReferenceBom(input: {
     }
   }
 
-  const proposals: Array<{
-    line: NormalizedSapBomLine
-    consensusOrder: number
-    scope: ReferenceProductApplicationScope
-    qty: number
-    warehouse: string | null
-    issueMethod: string | null
-  }> = []
-  const ruleProposals = new Map<string, RuleProposal>()
-  const targetCodes = new Set<string>()
+  const logicalLines = findLogicalEvidence(evidenceByIdentity, capturedSnapshots.length, input.colorConfigurations)
+  const findings: ReferenceImportFindingDraft[] = []
+  const proposals: ReferenceBomLine[] = []
 
-  for (const [lineIdentity, evidence] of [...evidenceByIdentity.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-    const first = [...evidence].sort((left, right) => left.snapshot.skuComplete.localeCompare(right.snapshot.skuComplete))[0]
-    const line = first.line
-    const capturedSkuCodes = new Set(evidence.map(item => item.snapshot.skuComplete))
+  for (const logical of logicalLines) {
+    const evidence = logical.lines.flatMap(group => group.evidence)
+    const primary = evidence[0]?.line
+    if (!primary) continue
+    const presentSkuCodes = new Set(evidence.map(item => item.snapshot.skuComplete))
     const absentSkuCodes = capturedSnapshots
       .map(snapshot => snapshot.skuComplete)
-      .filter(skuComplete => !capturedSkuCodes.has(skuComplete))
+      .filter(skuComplete => !presentSkuCodes.has(skuComplete))
+    const warehouse = mostCommonString(evidence.map(item => item.line.warehouse))
+    const issueMethod = issueMethodAssessment(evidence)
 
-    if (absentSkuCodes.length > 0) {
+    if (logical.isMaterialGroup) {
+      const { consumptions, contradictions } = buildConsumptions(logical, input.colorConfigurations)
+      proposals.push(materialProposedLine({ logical, warehouse, issueMethod: issueMethod.proposed, consumptions }))
       findings.push(createFinding({
-        findingKey: `structure:presence:${lineIdentity}`,
-        findingType: 'line_presence_conflict',
+        findingKey: `material-group:${logical.key}`,
+        findingType: 'material_group_confirmation',
         severity: 'blocker',
-        lineIdentity,
-        baseItemCode: line.baseItemCode,
-        occurrence: line.occurrence,
-        proposedScope: null,
+        lineIdentity: logical.key,
+        baseItemCode: logical.alternatives[0]?.base_item_code ?? null,
+        occurrence: null,
+        proposedScope: logical.scope,
         proposedColorCode: null,
         detailsJson: {
-          expected_sku_count: capturedSnapshots.length,
-          present_skus: [...capturedSkuCodes].sort(),
-          absent_skus: absentSkuCodes,
-          ...asLineDetails(evidence),
+          message: 'Estas alternativas representan una sola posicion logica y deben confirmarse antes de publicar.',
+          alternatives: logical.alternatives,
+          ...lineDetails(evidence),
         },
       }))
-    }
+      for (const contradiction of contradictions) {
+        findings.push(createFinding({
+          findingKey: `material-consumption:${logical.key}:${contradiction[0]?.colorMode}:${contradiction[0]?.scope}:${contradiction[0]?.profile}:${contradiction[0]?.formatKey ?? 'none'}`,
+          findingType: 'material_consumption_conflict',
+          severity: 'blocker',
+          lineIdentity: logical.key,
+          baseItemCode: logical.alternatives[0]?.base_item_code ?? null,
+          occurrence: null,
+          proposedScope: contradiction[0]?.scope ?? null,
+          proposedColorCode: null,
+          detailsJson: {
+            message: 'La misma combinacion de modo, uso, perfil y formato tiene consumos distintos.',
+            observations: contradiction.map(item => ({
+              sku_complete: item.skuComplete,
+              qty: item.qty,
+              format_key: item.formatKey,
+              material_profile: item.profile,
+            })),
+          },
+        }))
+      }
 
-    const quantities = evidence.map(item => item.line.qty)
-    if (!allSameNumber(quantities)) {
-      findings.push(createFinding({
-        findingKey: `structure:quantity:${lineIdentity}`,
-        findingType: 'line_quantity_conflict',
-        severity: 'blocker',
-        lineIdentity,
-        baseItemCode: line.baseItemCode,
-        occurrence: line.occurrence,
-        proposedScope: null,
-        proposedColorCode: null,
-        detailsJson: asLineDetails(evidence),
-      }))
-    }
-
-    const warehouses = evidence.map(item => item.line.warehouse)
-    if (!allSameText(warehouses)) {
-      findings.push(createFinding({
-        findingKey: `structure:warehouse:${lineIdentity}`,
-        findingType: 'line_warehouse_conflict',
-        severity: 'blocker',
-        lineIdentity,
-        baseItemCode: line.baseItemCode,
-        occurrence: line.occurrence,
-        proposedScope: null,
-        proposedColorCode: null,
-        detailsJson: asLineDetails(evidence),
-      }))
-    }
-
-    const issueMethods = evidence.map(item => item.line.issueMethod)
-    if (!allSameText(issueMethods)) {
-      findings.push(createFinding({
-        findingKey: `diagnostic:issue-method:${lineIdentity}`,
-        findingType: 'line_issue_method_variation',
-        severity: 'warning',
-        lineIdentity,
-        baseItemCode: line.baseItemCode,
-        occurrence: line.occurrence,
-        proposedScope: null,
-        proposedColorCode: null,
-        detailsJson: asLineDetails(evidence),
-      }))
-    }
-
-    const visibleOrders = evidence.map(item => item.line.sourceOrder)
-    if (new Set(visibleOrders).size > 1) {
-      findings.push(createFinding({
-        findingKey: `diagnostic:order:${lineIdentity}`,
-        findingType: 'line_visible_order_variation',
-        severity: 'info',
-        lineIdentity,
-        baseItemCode: line.baseItemCode,
-        occurrence: line.occurrence,
-        proposedScope: null,
-        proposedColorCode: null,
-        detailsJson: asLineDetails(evidence),
-      }))
-    }
-
-    const assessment = assessScope(evidence)
-    findings.push(createFinding({
-      findingKey: `color:pattern:${lineIdentity}`,
-      findingType: 'color_pattern_classification',
-      severity: assessment.requiresHumanReview ? 'blocker' : 'info',
-      lineIdentity,
-      baseItemCode: line.baseItemCode,
-      occurrence: line.occurrence,
-      proposedScope: assessment.scope,
-      proposedColorCode: null,
-      detailsJson: {
-        classification: assessment.pattern,
-        sku_variant_map: skuVariantMap(evidence),
-      },
-    }))
-
-    if (assessment.requiresHumanReview) {
-      findings.push(createFinding({
-        findingKey: `color:unclassified:${lineIdentity}`,
-        findingType: 'color_variation_without_pattern',
-        severity: 'blocker',
-        lineIdentity,
-        baseItemCode: line.baseItemCode,
-        occurrence: line.occurrence,
-        proposedScope: null,
-        proposedColorCode: null,
-        detailsJson: {
-          sku_variant_map: skuVariantMap(evidence),
-          reason: 'No se pudo inferir un scope productivo global para la variacion SAP.',
-        },
-      }))
-    } else if (assessment.scope !== 'NA' && assessment.scope !== 'full_product') {
       for (const item of evidence) {
-        const sourceColorCode = item.snapshot.skuColorCode
-        const targetColorCode = item.line.variantCode4
-        if (!sourceColorCode || targetColorCode === '0000' || targetColorCode === sourceColorCode) continue
-
-        const key = `${sourceColorCode}:${assessment.scope}:${targetColorCode}`
-        const proposal = ruleProposals.get(key) ?? {
-          sourceColorCode,
-          targetColorCode,
-          scope: assessment.scope,
-          lineIdentities: new Set<string>(),
-          baseItemCodes: new Set<string>(),
+        const colorCode = item.snapshot.skuColorCode
+        const profile = item.line.technicalMetadata?.material_profile
+        if (!colorCode || !profile) continue
+        const configuration = input.colorConfigurations.get(colorCode)
+        if (!configuration || !isColorApplicable(configuration, input.context)) continue
+        const configuredProfile = configuration.applicationMaterialProfiles[logical.scope]
+          ?? configuration.applicationMaterialProfiles.full_product
+        if (configuredProfile !== profile) {
+          findings.push(profileProposalFinding({
+            logical,
+            sourceColorCode: colorCode,
+            profile,
+            evidence: [item],
+          }))
         }
-        proposal.lineIdentities.add(lineIdentity)
-        proposal.baseItemCodes.add(line.baseItemCode)
-        ruleProposals.set(key, proposal)
-        targetCodes.add(targetColorCode)
+      }
+    } else {
+      const quantities = evidence.map(item => item.line.qty)
+      const lineScope = logical.scope
+      proposals.push(fixedProposedLine({
+        line: primary,
+        scope: lineScope,
+        sortOrder: logical.sortOrder,
+        qty: mostCommonNumber(quantities),
+        warehouse,
+        issueMethod: issueMethod.proposed,
+      }))
+      const hasStructuralVariation = absentSkuCodes.length > 0
+        || !allSameNumber(quantities)
+        || !allSameText(evidence.map(item => item.line.warehouse))
+      const configuredColor = lineUsesConfiguredColor(evidence, lineScope, input.colorConfigurations)
+      const hasColorVariation = evidence.some(item => {
+        const skuColorCode = item.snapshot.skuColorCode
+        return skuColorCode && item.line.variantCode4 !== '0000' && item.line.variantCode4 !== skuColorCode
+      })
+      if (hasStructuralVariation || (hasColorVariation && !configuredColor)) {
+        findings.push(createFinding({
+          findingKey: `business-review:${logical.key}`,
+          findingType: 'bom_line_review',
+          severity: 'blocker',
+          lineIdentity: logical.key,
+          baseItemCode: primary.baseItemCode,
+          occurrence: primary.occurrence,
+          proposedScope: lineScope,
+          proposedColorCode: null,
+          detailsJson: {
+            message: 'Esta pieza tiene una diferencia de color, presencia, cantidad o bodega que necesita una regla explicita o una correccion en SAP.',
+            absent_skus: absentSkuCodes,
+            configured_color_mapping_recognized: configuredColor,
+            ...lineDetails(evidence),
+          },
+        }))
+      }
+
+      if (!configuredColor && hasColorVariation) {
+        const targetBySkuColor = new Map<string, Set<string>>()
+        for (const item of evidence) {
+          const colorCode = item.snapshot.skuColorCode
+          if (!colorCode || item.line.variantCode4 === colorCode || item.line.variantCode4 === '0000') continue
+          const targets = targetBySkuColor.get(colorCode) ?? new Set<string>()
+          targets.add(item.line.variantCode4)
+          targetBySkuColor.set(colorCode, targets)
+        }
+        for (const [sourceColorCode, targets] of targetBySkuColor) {
+          if (targets.size !== 1) continue
+          const targetColorCode = [...targets][0]
+          findings.push(createFinding({
+            findingKey: `color-rule:${logical.key}:${sourceColorCode}:${lineScope}:${targetColorCode}`,
+            findingType: 'color_rule_proposal',
+            severity: 'warning',
+            lineIdentity: logical.key,
+            baseItemCode: primary.baseItemCode,
+            occurrence: primary.occurrence,
+            proposedScope: lineScope,
+            proposedColorCode: targetColorCode,
+            detailsJson: {
+              source_color_code: sourceColorCode,
+              target_color_code: targetColorCode,
+              ...lineDetails(evidence.filter(item => item.snapshot.skuColorCode === sourceColorCode)),
+            },
+          }))
+        }
       }
     }
 
-    proposals.push({
-      line,
-      consensusOrder: mostCommonNumber(visibleOrders),
-      scope: assessment.scope,
-      qty: mostCommonNumber(quantities),
-      warehouse: mostCommonString(warehouses),
-      issueMethod: allSameText(issueMethods) ? mostCommonString(issueMethods) : null,
-    })
-  }
-
-  const targetsBySourceAndScope = new Map<string, Set<string>>()
-  for (const proposal of ruleProposals.values()) {
-    const key = `${proposal.sourceColorCode}:${proposal.scope}`
-    const targets = targetsBySourceAndScope.get(key) ?? new Set<string>()
-    targets.add(proposal.targetColorCode)
-    targetsBySourceAndScope.set(key, targets)
-  }
-
-  for (const [key, targets] of targetsBySourceAndScope) {
-    if (targets.size <= 1) continue
-    const [sourceColorCode, scope] = key.split(':')
-    findings.push(createFinding({
-      findingKey: `color:scope-conflict:${key}`,
-      findingType: 'color_scope_target_conflict',
-      severity: 'blocker',
-      lineIdentity: null,
-      baseItemCode: null,
-      occurrence: null,
-      proposedScope: scope as ReferenceProductApplicationScope,
-      proposedColorCode: null,
-      detailsJson: {
-        source_color_code: sourceColorCode,
-        target_color_codes: [...targets].sort(),
-        reason: 'Un mismo color base y scope no puede resolver a dos colores globales distintos.',
-      },
-    }))
-  }
-
-  for (const proposal of [...ruleProposals.values()].sort((left, right) => {
-    const leftKey = `${left.sourceColorCode}:${left.scope}:${left.targetColorCode}`
-    const rightKey = `${right.sourceColorCode}:${right.scope}:${right.targetColorCode}`
-    return leftKey.localeCompare(rightKey)
-  })) {
-    const configuration = input.colorConfigurations.get(proposal.sourceColorCode)
-    const scopeKey = `${proposal.sourceColorCode}:${proposal.scope}`
-    const hasConflictingTarget = (targetsBySourceAndScope.get(scopeKey)?.size ?? 0) > 1
-    const details: JsonRecord = {
-      source_color_code: proposal.sourceColorCode,
-      target_color_code: proposal.targetColorCode,
-      scope: proposal.scope,
-      line_identities: [...proposal.lineIdentities].sort(),
-      base_item_codes: [...proposal.baseItemCodes].sort(),
-    }
-
-    if (!configuration) {
+    if (issueMethod.hasVariation) {
       findings.push(createFinding({
-        findingKey: `color:source-missing:${proposal.sourceColorCode}:${proposal.scope}`,
-        findingType: 'color_configuration_missing',
-        severity: 'blocker',
-        lineIdentity: null,
-        baseItemCode: null,
-        occurrence: null,
-        proposedScope: proposal.scope,
-        proposedColorCode: proposal.targetColorCode,
-        detailsJson: details,
-      }))
-      continue
-    }
-
-    if (!input.colorConfigurations.has(proposal.targetColorCode)) {
-      findings.push(createFinding({
-        findingKey: `color:target-missing:${proposal.targetColorCode}`,
-        findingType: 'target_color_configuration_missing',
+        findingKey: `issue-method:${logical.key}`,
+        findingType: 'issue_method_review',
         severity: 'warning',
-        lineIdentity: null,
-        baseItemCode: null,
-        occurrence: null,
-        proposedScope: proposal.scope,
-        proposedColorCode: proposal.targetColorCode,
-        detailsJson: details,
-      }))
-    }
-
-    if (!isColorApplicable(configuration, input.context)) {
-      findings.push(createFinding({
-        findingKey: `color:applicability:${proposal.sourceColorCode}:${proposal.scope}`,
-        findingType: 'color_context_applicability_warning',
-        severity: 'warning',
-        lineIdentity: null,
-        baseItemCode: null,
-        occurrence: null,
-        proposedScope: proposal.scope,
-        proposedColorCode: proposal.targetColorCode,
+        lineIdentity: logical.key,
+        baseItemCode: logical.isMaterialGroup ? logical.alternatives[0]?.base_item_code ?? null : primary.baseItemCode,
+        occurrence: primary.occurrence,
+        proposedScope: logical.scope,
+        proposedColorCode: null,
         detailsJson: {
-          ...details,
-          manufacturing_process: input.context.manufacturingProcess,
-          product_type: input.context.productType,
-          allowed_manufacturing_processes: configuration.allowedManufacturingProcesses,
-          allowed_product_types: configuration.allowedProductTypes,
+          message: issueMethod.isTie
+            ? 'No hay una mayoria para proponer el metodo de salida.'
+            : `La mayoria usa ${issueMethod.proposed}; los SKU minoritarios pueden homologarse en SAP tras confirmar.`,
+          proposed_issue_method: issueMethod.proposed,
+          majority_skus: issueMethod.majoritySkus,
+          minority_skus: issueMethod.minoritySkus,
+          is_tie: issueMethod.isTie,
+          ...lineDetails(evidence),
         },
       }))
     }
+  }
 
-    const currentValue = configuration.applicationColors[proposal.scope] ?? null
-    if (currentValue === proposal.targetColorCode) {
-      findings.push(createFinding({
-        findingKey: `color:existing:${proposal.sourceColorCode}:${proposal.scope}:${proposal.targetColorCode}`,
-        findingType: 'color_mapping_already_matches',
-        severity: 'info',
-        status: 'resolved',
-        lineIdentity: null,
-        baseItemCode: null,
-        occurrence: null,
-        proposedScope: proposal.scope,
-        proposedColorCode: proposal.targetColorCode,
-        detailsJson: details,
-      }))
-      continue
-    }
-
-    findings.push(createFinding({
-      findingKey: `color:proposal:${proposal.sourceColorCode}:${proposal.scope}:${proposal.targetColorCode}`,
-      findingType: hasConflictingTarget ? 'color_scope_target_conflict_member' : 'color_rule_proposal',
-      severity: 'blocker',
-      lineIdentity: null,
-      baseItemCode: null,
-      occurrence: null,
-      proposedScope: proposal.scope,
-      proposedColorCode: proposal.targetColorCode,
-      detailsJson: {
-        ...details,
-        current_scope_value: currentValue,
-      },
+  const uniqueFindings = [...new Map(findings.map(finding => [finding.findingKey, finding])).values()]
+  const orderedProposals = proposals
+    .sort((left, right) => left.sort_order - right.sort_order || left.line_id.localeCompare(right.line_id))
+    .map((line, index) => ({
+      ...line,
+      line_id: `ln_${String(index + 1).padStart(6, '0')}`,
+      sort_order: index + 1,
     }))
-  }
-
-  const sortedProposals = proposals
-    .sort((left, right) => left.consensusOrder - right.consensusOrder || left.line.lineIdentity.localeCompare(right.line.lineIdentity))
-    .map((proposal, index) => proposedLine({
-      ...proposal,
-      sortOrder: index + 1,
-    }))
-
-  const structureType = capturedSnapshots.some(snapshot => snapshot.treeType === 'iSalesTree') ? 'sales_kit' : 'production'
-  const proposedBomStructure: ReferenceBomStructure = {
-    schema_version: 1,
-    structure_type: structureType,
-    input_warehouse_code: mostCommonString(sortedProposals.map(line => line.input_warehouse_code)),
-    output_warehouse_code: structureType === 'sales_kit' ? 'PT-02' : 'PT-01',
-    lines: sortedProposals,
-  }
-
-  const patternCounts = new Map<ColorPattern, number>()
-  for (const finding of findings.filter(finding => finding.findingType === 'color_pattern_classification')) {
-    const classification = finding.detailsJson.classification
-    if (typeof classification !== 'string') continue
-    patternCounts.set(classification as ColorPattern, (patternCounts.get(classification as ColorPattern) ?? 0) + 1)
-  }
+  const blockerCount = uniqueFindings.filter(finding => finding.severity === 'blocker' && finding.status === 'open').length
+  const warningCount = uniqueFindings.filter(finding => finding.severity === 'warning' && finding.status === 'open').length
 
   return {
-    proposedBomStructure,
-    findings,
+    proposedBomStructure: {
+      schema_version: 2,
+      structure_type: capturedSnapshots.some(snapshot => snapshot.treeType === 'iSalesTree') ? 'sales_kit' : 'production',
+      input_warehouse_code: null,
+      output_warehouse_code: null,
+      lines: orderedProposals,
+    },
+    findings: uniqueFindings,
     summaryJson: {
       captured_sku_count: capturedSnapshots.length,
       failed_sku_count: 0,
       source_analysis_complete: true,
-      proposed_line_count: sortedProposals.length,
-      blocker_count: findings.filter(finding => finding.severity === 'blocker' && finding.status === 'open').length,
-      warning_count: findings.filter(finding => finding.severity === 'warning' && finding.status === 'open').length,
-      color_pattern_counts: Object.fromEntries(patternCounts.entries()),
-      target_color_codes: [...targetCodes].sort(),
+      proposed_line_count: orderedProposals.length,
+      technical_line_count: evidenceByIdentity.size,
+      material_group_count: logicalLines.filter(line => line.isMaterialGroup).length,
+      blocker_count: blockerCount,
+      warning_count: warningCount,
     },
   }
 }

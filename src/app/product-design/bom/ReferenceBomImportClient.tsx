@@ -1,12 +1,14 @@
 'use client'
 
 import { useState, useTransition } from 'react'
+import Link from 'next/link'
 import {
   AlertTriangle,
   Ban,
   CheckCircle2,
   ClipboardCheck,
   Database,
+  ExternalLink,
   FileSearch,
   LoaderCircle,
   Search,
@@ -15,10 +17,14 @@ import {
 
 import {
   analyzeReferenceBomImportAction,
+  applyReferenceBomIssueMethodAction,
+  confirmReferenceBomMaterialGroupAction,
+  confirmReferenceBomMaterialProfileAction,
   confirmReferenceBomColorRuleAction,
   deactivateSapInactiveSkuInSupabaseAction,
   listReferenceBomImportCandidatesAction,
   publishReferenceBomImportAction,
+  saveReferenceBomManualColorOverrideAction,
 } from './referenceImportActions'
 import type {
   ReferenceImportCandidate,
@@ -28,6 +34,21 @@ import type {
 
 type Props = {
   initialCandidates: ReferenceImportCandidate[]
+}
+
+type OverrideDraft = {
+  level: 'reference' | 'version' | 'sku'
+  skuComplete: string
+  sourceColorCode: string
+  targetColorCode: string
+  materialProfile: string
+  reason: string
+}
+
+type IssueMethodDraft = {
+  targetIssueMethod: 'im_Manual' | 'im_Backflush'
+  confirmationText: string
+  result: string | null
 }
 
 function asString(value: unknown): string | null {
@@ -80,6 +101,11 @@ function findingTitle(finding: ReferenceImportFinding): string {
   const labels: Record<string, string> = {
     color_pattern_classification: 'Color de material sin regla definida',
     color_rule_proposal: 'Regla global de color propuesta',
+    material_group_confirmation: 'Confirmar alternativas de material',
+    material_profile_proposal: 'Perfil de material propuesto',
+    material_consumption_conflict: 'Consumo contradictorio',
+    bom_line_review: 'Revision de esta pieza',
+    issue_method_review: 'Metodo de salida por homologar',
     color_mapping_already_matches: 'Regla global ya coincide',
     color_variation_without_pattern: 'La pieza cambia según el color',
     color_scope_target_conflict: 'Conflicto de alcance de color',
@@ -136,6 +162,10 @@ function scopeLabel(scope: string | null): string {
     full_product: 'Color principal del producto',
     drawer_bottom: 'Fondo de cajón',
     edge_band_body: 'Canto de cuerpo',
+    edge_band_full_product: 'Canto producto completo',
+    structure: 'Estructura',
+    front: 'Frente',
+    inner_structure: 'Estructura interna',
     edge_band_front: 'Canto de frente',
     edge_band_inner: 'Canto interior',
     edge_band_drawer_bottom: 'Canto de fondo de cajón',
@@ -144,6 +174,8 @@ function scopeLabel(scope: string | null): string {
 }
 
 function findingDescription(finding: ReferenceImportFinding): string | null {
+  const message = asString(finding.detailsJson.message)
+  if (message) return message
   const sourceColorCode = asString(finding.detailsJson.source_color_code)
   const targetColorCode = asString(finding.detailsJson.target_color_code)
   if (finding.findingType === 'color_rule_proposal' && sourceColorCode && targetColorCode && finding.proposedScope) {
@@ -178,6 +210,15 @@ function findingDescription(finding: ReferenceImportFinding): string | null {
 }
 
 function colorAssignmentEvidence(finding: ReferenceImportFinding): Array<{ productColor: string; materialColor: string }> {
+  const bySku = Array.isArray(finding.detailsJson.by_sku) ? finding.detailsJson.by_sku : []
+  if (bySku.length > 0) {
+    return bySku.flatMap((item) => {
+      const row = asRecord(item)
+      const productColor = asString(row.sku_color_code)
+      const materialColor = asString(row.material_color) ?? asString(row.variant_code_4)
+      return productColor && materialColor ? [{ productColor, materialColor }] : []
+    })
+  }
   const skuVariantMap = asRecord(finding.detailsJson.sku_variant_map)
   return Object.entries(skuVariantMap).flatMap(([skuComplete, variant]) => {
     const materialColor = asString(variant)
@@ -187,7 +228,28 @@ function colorAssignmentEvidence(finding: ReferenceImportFinding): Array<{ produ
 }
 
 function affectedBaseItemCodes(finding: ReferenceImportFinding): string[] {
-  return asStringArray(finding.detailsJson.base_item_codes)
+  const fromAlternatives = Array.isArray(finding.detailsJson.alternatives)
+    ? finding.detailsJson.alternatives.flatMap((alternative) => {
+        const code = asString(asRecord(alternative).base_item_code)
+        return code ? [code] : []
+      })
+    : []
+  return [...new Set([...asStringArray(finding.detailsJson.base_item_codes), ...fromAlternatives])]
+}
+
+function expectedMaterialGroupConfirmation(finding: ReferenceImportFinding): string | null {
+  if (finding.findingType !== 'material_group_confirmation') return null
+  const codes = affectedBaseItemCodes(finding)
+  return codes.length > 1 ? `CONFIRMAR GRUPO ${codes.sort().join(' + ')}` : null
+}
+
+function expectedMaterialProfileConfirmation(finding: ReferenceImportFinding): string | null {
+  if (finding.findingType !== 'material_profile_proposal' || !finding.proposedScope) return null
+  const sourceColorCode = asString(finding.detailsJson.source_color_code)
+  const materialProfile = asString(finding.detailsJson.material_profile)
+  return sourceColorCode && materialProfile
+    ? `CONFIRMAR PERFIL ${sourceColorCode} ${finding.proposedScope} ${materialProfile}`
+    : null
 }
 
 export function ReferenceBomImportClient({ initialCandidates }: Props) {
@@ -197,6 +259,8 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const [workspace, setWorkspace] = useState<ReferenceImportWorkspace | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [confirmationTexts, setConfirmationTexts] = useState<Record<string, string>>({})
+  const [overrideDrafts, setOverrideDrafts] = useState<Record<string, OverrideDraft>>({})
+  const [issueMethodDrafts, setIssueMethodDrafts] = useState<Record<string, IssueMethodDraft>>({})
   const [skuDeactivationConfirmations, setSkuDeactivationConfirmations] = useState<Record<string, string>>({})
   const [skuActionMessages, setSkuActionMessages] = useState<Record<string, string>>({})
   const [isPending, startTransition] = useTransition()
@@ -270,6 +334,126 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
         confirmationText: confirmationTexts[finding.id] ?? '',
       })
       setMessage(result.message)
+      if (result.workspace) setWorkspace(result.workspace)
+    })
+  }
+
+  function confirmMaterialGroup(finding: ReferenceImportFinding): void {
+    if (!workspace) return
+    runTask(async () => {
+      const result = await confirmReferenceBomMaterialGroupAction({
+        runId: workspace.run.id,
+        findingId: finding.id,
+        confirmationText: confirmationTexts[finding.id] ?? '',
+      })
+      setMessage(result.message)
+      if (result.workspace) setWorkspace(result.workspace)
+    })
+  }
+
+  function confirmMaterialProfile(finding: ReferenceImportFinding): void {
+    if (!workspace) return
+    runTask(async () => {
+      const result = await confirmReferenceBomMaterialProfileAction({
+        runId: workspace.run.id,
+        findingId: finding.id,
+        confirmationText: confirmationTexts[finding.id] ?? '',
+      })
+      setMessage(result.message)
+      if (result.workspace) setWorkspace(result.workspace)
+    })
+  }
+
+  function updateOverrideDraft(finding: ReferenceImportFinding, patch: Partial<OverrideDraft>): void {
+    setOverrideDrafts(current => {
+      const currentDraft = current[finding.id] ?? {
+        level: 'reference',
+        skuComplete: '',
+        sourceColorCode: '',
+        targetColorCode: '',
+        materialProfile: '',
+        reason: '',
+      }
+      return {
+        ...current,
+        [finding.id]: {
+          ...currentDraft,
+        ...patch,
+        },
+      }
+    })
+  }
+
+  function saveManualOverride(finding: ReferenceImportFinding): void {
+    const scope = finding.proposedScope
+    if (!workspace || !scope) return
+    const draft = overrideDrafts[finding.id] ?? {
+      level: 'reference' as const,
+      skuComplete: '',
+      sourceColorCode: '',
+      targetColorCode: '',
+      materialProfile: '',
+      reason: '',
+    }
+    runTask(async () => {
+      const result = await saveReferenceBomManualColorOverrideAction({
+        runId: workspace.run.id,
+        findingId: finding.id,
+        level: draft.level,
+        skuComplete: draft.skuComplete || null,
+        sourceColorCode: draft.sourceColorCode,
+        scope,
+        targetColorCode: draft.targetColorCode || null,
+        materialProfile: draft.materialProfile || null,
+        baseItemCode: finding.baseItemCode,
+        reason: draft.reason,
+      })
+      setMessage(result.message)
+      if (result.workspace) setWorkspace(result.workspace)
+    })
+  }
+
+  function updateIssueMethodDraft(findingId: string, patch: Partial<IssueMethodDraft>): void {
+    setIssueMethodDrafts(current => {
+      const currentDraft = current[findingId] ?? {
+        targetIssueMethod: 'im_Manual',
+        confirmationText: '',
+        result: null,
+      }
+      return {
+        ...current,
+        [findingId]: {
+          ...currentDraft,
+        ...patch,
+        },
+      }
+    })
+  }
+
+  function applyIssueMethod(finding: ReferenceImportFinding, dryRun: boolean): void {
+    if (!workspace) return
+    const defaultTarget = asString(finding.detailsJson.proposed_issue_method) === 'im_Backflush'
+      ? 'im_Backflush'
+      : 'im_Manual'
+    const draft = issueMethodDrafts[finding.id] ?? {
+      targetIssueMethod: defaultTarget,
+      confirmationText: '',
+      result: null,
+    }
+    runTask(async () => {
+      const result = await applyReferenceBomIssueMethodAction({
+        runId: workspace.run.id,
+        findingId: finding.id,
+        targetIssueMethod: draft.targetIssueMethod,
+        dryRun,
+        confirmationText: draft.confirmationText,
+      })
+      setMessage(result.message)
+      const detail = result.issueMethodResult?.results.map(item => `${item.skuComplete}: ${item.message}`).join(' ') ?? result.message
+      updateIssueMethodDraft(finding.id, {
+        result: detail,
+        confirmationText: dryRun ? result.issueMethodResult?.confirmationRequired ?? draft.confirmationText : draft.confirmationText,
+      })
       if (result.workspace) setWorkspace(result.workspace)
     })
   }
@@ -589,29 +773,95 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                     <thead className="sticky top-0 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                       <tr>
                         <th className="px-5 py-3">Orden</th>
-                        <th className="px-5 py-3">Código base</th>
+                        <th className="px-5 py-3">Material o alternativas</th>
                         <th className="px-5 py-3">Uso en producto</th>
-                        <th className="px-5 py-3 text-right">Cantidad</th>
+                        <th className="px-5 py-3">Consumos</th>
+                        <th className="px-5 py-3">Método de salida propuesto</th>
                         <th className="px-5 py-3">Bodega</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {workspace.run.proposedBomStructure.lines.map(line => (
-                        <tr key={line.line_id} className="border-t border-slate-100">
-                          <td className="px-5 py-3 tabular-nums text-slate-600">{line.sort_order}</td>
-                          <td className="px-5 py-3 font-mono text-xs text-slate-800">
-                            <span className="block">{line.base_item_code}</span>
-                            <span className="mt-1 block font-sans text-sm text-slate-600">{workspace.proposalItemNames[line.base_item_code] ?? 'Nombre base no disponible'}</span>
-                          </td>
-                          <td className="px-5 py-3 text-slate-700">{scopeLabel(line.product_application_scope)}</td>
-                          <td className="px-5 py-3 text-right tabular-nums text-slate-700">{line.qty}</td>
-                          <td className="px-5 py-3 text-slate-700">{line.input_warehouse_code ?? '-'}</td>
-                        </tr>
-                      ))}
+                      {workspace.run.proposedBomStructure.lines.map(line => {
+                        const observedConsumptions = line.consumptions.filter(consumption => consumption.status !== 'needs_definition').length
+                        const pendingConsumptions = line.consumptions.filter(consumption => consumption.status === 'needs_definition').length
+                        return (
+                          <tr key={line.line_id} className="border-t border-slate-100 align-top">
+                            <td className="px-5 py-3 tabular-nums text-slate-600">{line.sort_order}</td>
+                            <td className="px-5 py-3 text-xs text-slate-800">
+                              {line.line_kind === 'material_group' ? (
+                                <div className="space-y-2">
+                                  {line.alternatives.map((alternative, index) => (
+                                    <div key={alternative.alternative_id} className="border-l-2 border-sky-200 pl-2">
+                                      <span className="mr-2 font-semibold text-slate-500">{line.sort_order}.{index + 1}</span>
+                                      <span className="font-mono">{alternative.base_item_code}</span>
+                                      <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 font-semibold text-slate-600">{alternative.material_profile}</span>
+                                      <span className="mt-1 block font-sans text-sm text-slate-600">
+                                        {workspace.proposalItemNames[alternative.base_item_code] ?? 'Nombre base no disponible'}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <>
+                                  <span className="block font-mono">{line.base_item_code}</span>
+                                  <span className="mt-1 block font-sans text-sm text-slate-600">
+                                    {line.base_item_code ? workspace.proposalItemNames[line.base_item_code] ?? 'Nombre base no disponible' : 'Sin material'}
+                                  </span>
+                                </>
+                              )}
+                            </td>
+                            <td className="px-5 py-3 text-slate-700">{scopeLabel(line.product_application_scope)}</td>
+                            <td className="px-5 py-3 text-sm text-slate-700">
+                              {line.line_kind === 'fixed' ? (
+                                <span className="tabular-nums">{line.qty}</span>
+                              ) : (
+                                <>
+                                  <p>{observedConsumptions} observados</p>
+                                  <p className={pendingConsumptions > 0 ? 'mt-1 text-amber-700' : 'mt-1 text-emerald-700'}>
+                                    {pendingConsumptions > 0 ? `${pendingConsumptions} por definir` : 'Todos definidos'}
+                                  </p>
+                                </>
+                              )}
+                            </td>
+                            <td className="px-5 py-3 text-slate-700">{line.issue_method_override ?? 'Sin mayoría'}</td>
+                            <td className="px-5 py-3 text-slate-700">{line.input_warehouse_code ?? '-'}</td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
               </section>
+
+              {workspace.activeOverrides.length > 0 ? (
+                <section className="border border-slate-200 bg-white">
+                  <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+                    <div>
+                      <h2 className="font-semibold text-slate-950">Overrides activos</h2>
+                      <p className="mt-1 text-sm text-slate-600">Estas excepciones se aplican al resolver la LdM del SKU.</p>
+                    </div>
+                    <span className="text-sm text-slate-500">{workspace.activeOverrides.length} activos</span>
+                  </div>
+                  <div className="divide-y divide-slate-200">
+                    {workspace.activeOverrides.map((override, index) => (
+                      <article key={`${override.level}:${override.skuComplete ?? 'all'}:${override.colorCode}:${override.productApplicationScope}:${index}`} className="px-5 py-3 text-sm">
+                        <div className="flex flex-wrap items-center gap-2 text-slate-800">
+                          <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">
+                            {override.level === 'reference' ? 'Referencia' : override.level === 'global_version' ? 'Regla global de versión' : override.level === 'version' ? 'Versión' : 'SKU'}
+                          </span>
+                          {override.skuComplete ? <span className="font-mono text-xs">{override.skuComplete}</span> : null}
+                          <span>Color {override.colorCode}</span>
+                          <span>{scopeLabel(override.productApplicationScope)}</span>
+                          {override.baseItemCode ? <span className="font-mono text-xs">{override.baseItemCode}</span> : null}
+                          {override.targetColorCode ? <span className="font-semibold text-sky-800">usa {override.targetColorCode}</span> : null}
+                          {override.materialProfile ? <span className="font-semibold text-sky-800">perfil {override.materialProfile}</span> : null}
+                        </div>
+                        <p className="mt-1 text-slate-600">{override.reason}</p>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
 
               <section className="border border-slate-200 bg-white">
                 <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
@@ -623,10 +873,34 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                 </div>
                 <div className="divide-y divide-slate-200">
                   {reviewFindings.map(finding => {
-                    const confirmation = expectedColorConfirmation(finding)
+                    const colorConfirmation = expectedColorConfirmation(finding)
+                    const groupConfirmation = expectedMaterialGroupConfirmation(finding)
+                    const profileConfirmation = expectedMaterialProfileConfirmation(finding)
+                    const confirmation = colorConfirmation ?? groupConfirmation ?? profileConfirmation
                     const assignments = colorAssignmentEvidence(finding)
                     const affectedCodes = affectedBaseItemCodes(finding)
                     const baseItemName = finding.baseItemCode ? workspace.proposalItemNames[finding.baseItemCode] : null
+                    const overrideDraft = overrideDrafts[finding.id] ?? {
+                      level: 'reference' as const,
+                      skuComplete: '',
+                      sourceColorCode: '',
+                      targetColorCode: '',
+                      materialProfile: '',
+                      reason: '',
+                    }
+                    const suggestedIssueMethod = asString(finding.detailsJson.proposed_issue_method) === 'im_Backflush'
+                      ? 'im_Backflush'
+                      : 'im_Manual'
+                    const issueMethodDraft = issueMethodDrafts[finding.id] ?? {
+                      targetIssueMethod: suggestedIssueMethod,
+                      confirmationText: '',
+                      result: null,
+                    }
+                    const issueMethodEvidence = Array.isArray(finding.detailsJson.by_sku) ? finding.detailsJson.by_sku : []
+                    const issueMethodChangeCount = issueMethodEvidence.filter((item) =>
+                      asString(asRecord(item).issue_method) !== issueMethodDraft.targetIssueMethod
+                    ).length
+                    const expectedIssueConfirmation = `APLICAR METODO ${issueMethodDraft.targetIssueMethod} EN SAP PARA ${issueMethodChangeCount} LINEAS`
                     return (
                       <article key={finding.id} className="px-5 py-4">
                         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -662,7 +936,11 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                           <div className="mt-3 border border-sky-200 bg-sky-50 p-3">
                             <p className="text-sm font-semibold text-sky-950">Qué hará esta confirmación</p>
                             <p className="mt-1 text-sm text-sky-900">
-                              Guardará en la configuración del color {asString(finding.detailsJson.source_color_code)} que {scopeLabel(finding.proposedScope)} usa el color {finding.proposedColorCode}. No modifica SAP.
+                              {colorConfirmation
+                                ? `Guardará en la configuración del color ${asString(finding.detailsJson.source_color_code)} que ${scopeLabel(finding.proposedScope)} usa el color ${finding.proposedColorCode}. No modifica SAP.`
+                                : groupConfirmation
+                                  ? 'Confirmará que estas alternativas son una sola posición lógica de la BOM. Los consumos pendientes seguirán visibles y no se inventarán.'
+                                  : `Guardará el perfil ${asString(finding.detailsJson.material_profile)} para el color ${asString(finding.detailsJson.source_color_code)} en ${scopeLabel(finding.proposedScope)}. No modifica SAP.`}
                             </p>
                             <p className="mt-2 text-sm text-sky-900">Para confirmar, escribe exactamente: <span className="font-mono text-xs">{confirmation}</span></p>
                             <div className="mt-3 flex flex-wrap gap-2">
@@ -674,13 +952,167 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                             />
                             <button
                               type="button"
-                              onClick={() => confirmColorRule(finding)}
+                              onClick={() => {
+                                if (colorConfirmation) confirmColorRule(finding)
+                                else if (groupConfirmation) confirmMaterialGroup(finding)
+                                else confirmMaterialProfile(finding)
+                              }}
                               disabled={isPending || confirmationTexts[finding.id]?.trim() !== confirmation}
                               className="h-9 rounded-md bg-slate-950 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                              Confirmar regla
+                              {groupConfirmation ? 'Confirmar grupo' : profileConfirmation ? 'Confirmar perfil' : 'Confirmar regla'}
                             </button>
                             </div>
+                          </div>
+                        ) : null}
+                        {finding.findingType === 'bom_line_review' && finding.proposedScope ? (
+                          <div className="mt-3 border border-slate-200 bg-slate-50 p-3">
+                            <p className="text-sm font-semibold text-slate-950">Resolver esta diferencia</p>
+                            <p className="mt-1 text-sm text-slate-600">
+                              Puedes corregir SAP y volver a leer la referencia, definir la regla global desde el color, o dejar un override limitado a esta referencia, versión o SKU.
+                            </p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setMessage('La situación sigue pendiente hasta que corrijas SAP y vuelvas a analizar la referencia.')}
+                                className="h-9 border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800"
+                              >
+                                Corregir en SAP
+                              </button>
+                              <Link
+                                href="/configuration/colors"
+                                className="inline-flex h-9 items-center gap-2 border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800"
+                              >
+                                <ExternalLink className="h-4 w-4" />
+                                Definir criterios en app
+                              </Link>
+                            </div>
+                            <div className="mt-3 grid gap-2 border-t border-slate-200 pt-3 sm:grid-cols-2 lg:grid-cols-3">
+                              <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                                Alcance
+                                <select
+                                  value={overrideDraft.level}
+                                  onChange={event => updateOverrideDraft(finding, { level: event.target.value as OverrideDraft['level'] })}
+                                  className="h-9 border border-slate-300 bg-white px-2 text-sm text-slate-900"
+                                >
+                                  <option value="reference">Referencia</option>
+                                  <option value="version">Versión 000</option>
+                                  <option value="sku">SKU puntual</option>
+                                </select>
+                              </label>
+                              <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                                Color del producto
+                                <input
+                                  value={overrideDraft.sourceColorCode}
+                                  onChange={event => updateOverrideDraft(finding, { sourceColorCode: event.target.value.toUpperCase().slice(0, 4) })}
+                                  placeholder="0439"
+                                  maxLength={4}
+                                  className="h-9 border border-slate-300 bg-white px-2 font-mono text-sm text-slate-900"
+                                />
+                              </label>
+                              <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                                Color de material
+                                <input
+                                  value={overrideDraft.targetColorCode}
+                                  onChange={event => updateOverrideDraft(finding, { targetColorCode: event.target.value.toUpperCase().slice(0, 4) })}
+                                  placeholder="0435"
+                                  maxLength={4}
+                                  className="h-9 border border-slate-300 bg-white px-2 font-mono text-sm text-slate-900"
+                                />
+                              </label>
+                              <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                                Perfil
+                                <select
+                                  value={overrideDraft.materialProfile}
+                                  onChange={event => updateOverrideDraft(finding, { materialProfile: event.target.value })}
+                                  className="h-9 border border-slate-300 bg-white px-2 text-sm text-slate-900"
+                                >
+                                  <option value="">Sin cambiar</option>
+                                  <option value="ST">ST</option>
+                                  <option value="RH">RH</option>
+                                  <option value="CARB2">CARB2</option>
+                                </select>
+                              </label>
+                              {overrideDraft.level === 'sku' ? (
+                                <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                                  SKU puntual
+                                  <select
+                                    value={overrideDraft.skuComplete}
+                                    onChange={event => updateOverrideDraft(finding, { skuComplete: event.target.value })}
+                                    className="h-9 border border-slate-300 bg-white px-2 text-sm text-slate-900"
+                                  >
+                                    <option value="">Selecciona un SKU</option>
+                                    {workspace.snapshots.map(snapshot => <option key={snapshot.skuComplete} value={snapshot.skuComplete}>{snapshot.skuComplete}</option>)}
+                                  </select>
+                                </label>
+                              ) : null}
+                              <label className="grid gap-1 text-xs font-semibold text-slate-600 sm:col-span-2">
+                                Motivo
+                                <input
+                                  value={overrideDraft.reason}
+                                  onChange={event => updateOverrideDraft(finding, { reason: event.target.value })}
+                                  placeholder="Ejemplo: SAP conserva este codigo por continuidad comercial"
+                                  className="h-9 border border-slate-300 bg-white px-2 text-sm text-slate-900"
+                                />
+                              </label>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => saveManualOverride(finding)}
+                              disabled={isPending || !overrideDraft.sourceColorCode || (!overrideDraft.targetColorCode && !overrideDraft.materialProfile) || overrideDraft.reason.trim().length < 3 || (overrideDraft.level === 'sku' && !overrideDraft.skuComplete)}
+                              className="mt-3 h-9 bg-slate-950 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Guardar override en Supabase
+                            </button>
+                          </div>
+                        ) : null}
+                        {finding.findingType === 'issue_method_review' ? (
+                          <div className="mt-3 border border-violet-200 bg-violet-50 p-3">
+                            <p className="text-sm font-semibold text-violet-950">Homologar método de salida</p>
+                            <p className="mt-1 text-sm text-violet-900">
+                              La app leerá cada ProductTree antes de cambiarla, aplicará solo `IssueMethod` sobre la combinación exacta `ChildNum + ItemCode` y volverá a comprobar que cantidades, bodegas, orden y número de líneas no cambiaron.
+                            </p>
+                            <div className="mt-3 flex flex-wrap items-end gap-2">
+                              <label className="grid gap-1 text-xs font-semibold text-violet-900">
+                                Método propuesto
+                                <select
+                                  value={issueMethodDraft.targetIssueMethod}
+                                  onChange={event => updateIssueMethodDraft(finding.id, { targetIssueMethod: event.target.value as IssueMethodDraft['targetIssueMethod'], confirmationText: '', result: null })}
+                                  className="h-9 border border-violet-300 bg-white px-2 text-sm text-slate-900"
+                                >
+                                  <option value="im_Manual">Manual</option>
+                                  <option value="im_Backflush">Notificación</option>
+                                </select>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => applyIssueMethod(finding, true)}
+                                disabled={isPending}
+                                className="h-9 border border-violet-300 bg-white px-3 text-sm font-semibold text-violet-950 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                Probar sin escribir SAP
+                              </button>
+                            </div>
+                            <p className="mt-3 text-xs text-violet-900">
+                              Para aplicar después del dry-run, escribe: <span className="font-mono font-semibold">{expectedIssueConfirmation}</span>
+                            </p>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <input
+                                value={issueMethodDraft.confirmationText}
+                                onChange={event => updateIssueMethodDraft(finding.id, { confirmationText: event.target.value })}
+                                placeholder={expectedIssueConfirmation}
+                                className="h-9 min-w-[280px] flex-1 border border-violet-300 bg-white px-3 font-mono text-xs text-slate-900"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => applyIssueMethod(finding, false)}
+                                disabled={isPending || issueMethodDraft.confirmationText.trim() !== expectedIssueConfirmation}
+                                className="h-9 bg-violet-800 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                Aplicar en SAP
+                              </button>
+                            </div>
+                            {issueMethodDraft.result ? <p className="mt-2 text-sm font-medium text-violet-950">{issueMethodDraft.result}</p> : null}
                           </div>
                         ) : null}
                         {!confirmation && finding.severity === 'blocker' && finding.status === 'open' ? (

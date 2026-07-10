@@ -550,6 +550,14 @@ export type BomLine = {
   Comment: string | null
 }
 
+export type SapProductTreeLineFingerprint = {
+  childNum: number
+  itemCode: string
+  quantity: number
+  warehouse: string | null
+  issueMethod: string
+}
+
 export type BomNode = {
   itemCode: string
   itemName: string
@@ -595,6 +603,74 @@ export async function getSapItemBom(itemCode: string): Promise<{
     }
     throw error
   }
+}
+
+export function productTreeLineFingerprint(line: BomLine): SapProductTreeLineFingerprint {
+  return {
+    childNum: line.ChildNum,
+    itemCode: line.ItemCode,
+    quantity: line.Quantity,
+    warehouse: line.Warehouse,
+    issueMethod: line.IssueMethod,
+  }
+}
+
+export function productTreeStructureMatches(
+  before: BomLine[],
+  after: BomLine[],
+  target: { childNum: number; itemCode: string; issueMethod: string }
+): boolean {
+  if (before.length !== after.length) return false
+  const afterByIdentity = new Map(after.map(line => [`${line.ChildNum}:${line.ItemCode}`, line]))
+  return before.every((line) => {
+    const afterLine = afterByIdentity.get(`${line.ChildNum}:${line.ItemCode}`)
+    if (!afterLine) return false
+    if (afterLine.Quantity !== line.Quantity || afterLine.Warehouse !== line.Warehouse) return false
+    return line.ChildNum === target.childNum && line.ItemCode === target.itemCode
+      ? afterLine.IssueMethod === target.issueMethod
+      : afterLine.IssueMethod === line.IssueMethod
+  })
+}
+
+export async function updateSapProductTreeIssueMethod(input: {
+  treeCode: string
+  childNum: number
+  itemCode: string
+  issueMethod: string
+}): Promise<unknown> {
+  await assertSapWritesEnabled()
+  const treeCode = normalizeRequiredCode(input.treeCode, 'treeCode')
+  const itemCode = normalizeRequiredCode(input.itemCode, 'itemCode')
+  if (!Number.isInteger(input.childNum) || input.childNum < 0) {
+    throw new SapServiceLayerError('childNum must be a non-negative integer', {
+      statusCode: 400,
+      sapCode: 'SAP_VALIDATION_ERROR',
+    })
+  }
+  const currentTree = await getSapItemBom(treeCode)
+  if (!currentTree) {
+    throw new SapServiceLayerError(`ProductTree not found for ${treeCode}`, {
+      statusCode: 404,
+      sapCode: 'SAP_PRODUCT_TREE_NOT_FOUND',
+    })
+  }
+  const targetMatches = currentTree.lines.filter(line => line.ChildNum === input.childNum && line.ItemCode === itemCode)
+  if (targetMatches.length !== 1) {
+    throw new SapServiceLayerError(`The requested ProductTree line was not found uniquely for ${treeCode}`, {
+      statusCode: 409,
+      sapCode: 'SAP_PRODUCT_TREE_LINE_MISMATCH',
+    })
+  }
+  return sapServiceLayerRequest(`/ProductTrees(${encodeODataString(treeCode)})`, {
+    method: 'PATCH',
+    body: {
+      ProductTreeLines: [{
+        ChildNum: input.childNum,
+        ItemCode: itemCode,
+        IssueMethod: input.issueMethod,
+      }],
+    },
+  })
 }
 
 export async function getSapItemBomTree(
