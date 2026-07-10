@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import {
   AlertTriangle,
+  Ban,
   CheckCircle2,
   ClipboardCheck,
   Database,
@@ -15,6 +16,7 @@ import {
 import {
   analyzeReferenceBomImportAction,
   confirmReferenceBomColorRuleAction,
+  deactivateSapInactiveSkuInSupabaseAction,
   listReferenceBomImportCandidatesAction,
   publishReferenceBomImportAction,
 } from './referenceImportActions'
@@ -104,6 +106,10 @@ function expectedColorConfirmation(finding: ReferenceImportFinding): string | nu
   return `CONFIRMAR REGLA ${sourceColorCode} ${finding.proposedScope} ${finding.proposedColorCode}`
 }
 
+function expectedSkuDeactivationConfirmation(skuComplete: string): string {
+  return `INACTIVAR EN SUPABASE ${skuComplete}`
+}
+
 function salesReferenceCode(familyCode: string | null, referenceCode: string | null): string {
   const normalizedFamilyCode = familyCode?.trim().toUpperCase() ?? ''
   const salesFamilyCode = normalizedFamilyCode && !normalizedFamilyCode.startsWith('V')
@@ -191,6 +197,8 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const [workspace, setWorkspace] = useState<ReferenceImportWorkspace | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [confirmationTexts, setConfirmationTexts] = useState<Record<string, string>>({})
+  const [skuDeactivationConfirmations, setSkuDeactivationConfirmations] = useState<Record<string, string>>({})
+  const [skuActionMessages, setSkuActionMessages] = useState<Record<string, string>>({})
   const [isPending, startTransition] = useTransition()
 
   const unresolvedBlockers = workspace?.findings.filter(finding => finding.severity === 'blocker' && finding.status === 'open') ?? []
@@ -199,8 +207,20 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const sapActiveSkuCount = asNumber(workspace?.run.summaryJson.sap_active_sku_count)
   const supabaseOnlyColors = asStringArray(workspace?.run.summaryJson.supabase_only_sku_colors)
   const sapOnlyColors = asStringArray(workspace?.run.summaryJson.sap_only_sku_colors)
-  const hasIncompleteSapRead = failedSnapshots.length > 0
-  const hasSapCatalogMismatch = supabaseOnlyColors.length > 0 || sapOnlyColors.length > 0
+  const sapInactiveSkuCodes = asStringArray(workspace?.run.summaryJson.sap_inactive_sku_codes)
+  const sapInactiveColors = asStringArray(workspace?.run.summaryJson.sap_inactive_sku_colors)
+  const sapMissingSkuCodes = asStringArray(workspace?.run.summaryJson.sap_missing_sku_codes)
+  const sapMissingColors = asStringArray(workspace?.run.summaryJson.sap_missing_sku_colors)
+  const hasDetailedCatalogStatus = Array.isArray(workspace?.run.summaryJson.sap_inactive_sku_codes)
+    || Array.isArray(workspace?.run.summaryJson.sap_missing_sku_codes)
+  const genericSupabaseOnlyColors = hasDetailedCatalogStatus ? [] : supabaseOnlyColors
+  const catalogBlockedColors = new Set([...sapInactiveColors, ...sapMissingColors, ...genericSupabaseOnlyColors])
+  const bomReadFailureSnapshots = failedSnapshots.filter(snapshot => !snapshot.skuColorCode || !catalogBlockedColors.has(snapshot.skuColorCode))
+  const hasIncompleteSapRead = bomReadFailureSnapshots.length > 0
+  const hasSapCatalogMismatch = sapInactiveSkuCodes.length > 0
+    || sapMissingSkuCodes.length > 0
+    || genericSupabaseOnlyColors.length > 0
+    || sapOnlyColors.length > 0
   const hasIncompleteSource = hasIncompleteSapRead || hasSapCatalogMismatch
   const reviewFindings = workspace?.findings.filter(finding => finding.status === 'open' && finding.severity !== 'info') ?? []
 
@@ -251,6 +271,35 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
       })
       setMessage(result.message)
       if (result.workspace) setWorkspace(result.workspace)
+    })
+  }
+
+  function deactivateInactiveSku(skuComplete: string): void {
+    if (!workspace) return
+    runTask(async () => {
+      setSkuActionMessages(current => ({ ...current, [skuComplete]: 'Comprobando el estado en SAP...' }))
+      try {
+        const result = await deactivateSapInactiveSkuInSupabaseAction({
+          runId: workspace.run.id,
+          skuComplete,
+          confirmationText: skuDeactivationConfirmations[skuComplete] ?? '',
+        })
+        setMessage(result.message)
+        setSkuActionMessages(current => ({ ...current, [skuComplete]: result.message }))
+        if (!result.success) return
+
+        const nextCandidates = await listReferenceBomImportCandidatesAction(search)
+        setCandidates(nextCandidates)
+        setSelectedCandidate(current => nextCandidates.find(candidate => candidate.referenceId === current?.referenceId) ?? current)
+        setWorkspace(null)
+        setSkuDeactivationConfirmations(current => Object.fromEntries(
+          Object.entries(current).filter(([code]) => code !== skuComplete)
+        ))
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'No se pudo inactivar el SKU en Supabase.'
+        setMessage(errorMessage)
+        setSkuActionMessages(current => ({ ...current, [skuComplete]: errorMessage }))
+      }
     })
   }
 
@@ -359,7 +408,11 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                 className="inline-flex h-10 items-center gap-2 rounded-md bg-sky-700 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
-                {hasIncompleteSapRead ? 'Reintentar lectura SAP' : 'Analizar LdM en SAP'}
+                {hasSapCatalogMismatch && !hasIncompleteSapRead
+                  ? 'Volver a comprobar SAP'
+                  : hasIncompleteSapRead
+                    ? 'Reintentar LdM pendientes'
+                    : 'Analizar LdM en SAP'}
               </button>
             </div>
           </section>
@@ -400,7 +453,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                   <div className="px-5 py-4">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">LdM sin leer</p>
                     <p className="mt-1 text-2xl font-bold text-rose-700">{failedSnapshots.length}</p>
-                    <p className="text-xs text-slate-500">SAP no respondió a tiempo</p>
+                    <p className="text-xs text-slate-500">requieren una acción</p>
                   </div>
                 </div>
               </section>
@@ -410,10 +463,68 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                   <div className="flex items-start gap-3">
                     <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-rose-800" />
                     <div>
-                      <h2 className="font-semibold text-rose-950">Los colores de SAP y de la app no coinciden</h2>
-                      {supabaseOnlyColors.length > 0 ? <p className="mt-1 text-sm text-rose-900">Solo en la app: {supabaseOnlyColors.join(', ')}.</p> : null}
-                      {sapOnlyColors.length > 0 ? <p className="mt-1 text-sm text-rose-900">Solo en SAP: {sapOnlyColors.join(', ')}.</p> : null}
-                      <p className="mt-2 text-sm text-rose-900">No se puede publicar una BOM hasta alinear los colores activos en ambas fuentes.</p>
+                      {sapInactiveSkuCodes.length > 0 ? (
+                        <>
+                          <h2 className="font-semibold text-rose-950">
+                            {sapInactiveSkuCodes.length} {sapInactiveSkuCodes.length === 1 ? 'código inactivo' : 'códigos inactivos'} en SAP
+                          </h2>
+                          <p className="mt-1 text-sm text-rose-900">
+                            Puedes inactivarlos aquí para alinear Supabase. Antes de guardar, la app volverá a confirmar el estado de cada código en SAP.
+                          </p>
+                          <div className="mt-3 space-y-3">
+                            {sapInactiveSkuCodes.map(skuComplete => {
+                              const expectedConfirmation = expectedSkuDeactivationConfirmation(skuComplete)
+                              const enteredConfirmation = skuDeactivationConfirmations[skuComplete] ?? ''
+                              return (
+                                <div key={skuComplete} className="border border-rose-200 bg-white p-3">
+                                  <p className="font-mono text-sm font-semibold text-slate-950">{skuComplete}</p>
+                                  <p className="mt-1 text-xs text-slate-600">
+                                    Para inactivarlo únicamente en Supabase, escribe <span className="font-mono font-semibold text-slate-800">{expectedConfirmation}</span>
+                                  </p>
+                                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                                    <input
+                                      type="text"
+                                      value={enteredConfirmation}
+                                      onChange={event => setSkuDeactivationConfirmations(current => ({
+                                        ...current,
+                                        [skuComplete]: event.target.value,
+                                      }))}
+                                      placeholder={expectedConfirmation}
+                                      className="h-9 min-w-0 flex-1 border border-slate-300 bg-white px-3 text-sm text-slate-950 outline-none focus:border-rose-700"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => deactivateInactiveSku(skuComplete)}
+                                      disabled={isPending || enteredConfirmation.trim() !== expectedConfirmation}
+                                      className="inline-flex h-9 items-center gap-2 rounded-md bg-rose-800 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                      <Ban className="h-4 w-4" />
+                                      Inactivar en Supabase
+                                    </button>
+                                  </div>
+                                  <p className="mt-2 text-xs font-medium text-rose-800">Esta acción no modifica SAP.</p>
+                                  {skuActionMessages[skuComplete] ? (
+                                    <p className="mt-2 text-sm font-semibold text-rose-950" aria-live="polite">
+                                      {skuActionMessages[skuComplete]}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </>
+                      ) : null}
+                      {sapMissingSkuCodes.length > 0 ? (
+                        <div className={sapInactiveSkuCodes.length > 0 ? 'mt-4 border-t border-rose-200 pt-4' : ''}>
+                          <h2 className="font-semibold text-rose-950">
+                            {sapMissingSkuCodes.length} {sapMissingSkuCodes.length === 1 ? 'código no encontrado' : 'códigos no encontrados'} en SAP
+                          </h2>
+                          <p className="mt-1 text-sm text-rose-900">{sapMissingSkuCodes.join(', ')}.</p>
+                          <p className="mt-2 text-sm font-medium text-rose-950">Confirma el código en SAP o inactívalo en Supabase si ya no corresponde a esta referencia.</p>
+                        </div>
+                      ) : null}
+                      {genericSupabaseOnlyColors.length > 0 ? <p className="mt-1 text-sm text-rose-900">Activos solo en la app: {genericSupabaseOnlyColors.join(', ')}. Vuelve a ejecutar el análisis para obtener el estado SAP detallado.</p> : null}
+                      {sapOnlyColors.length > 0 ? <p className="mt-3 text-sm text-rose-900">Activos solo en SAP: {sapOnlyColors.join(', ')}. Regístralos en la app o confirma que deban inactivarse en SAP.</p> : null}
                     </div>
                   </div>
                 </section>
@@ -428,7 +539,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                       <p className="mt-1 text-sm text-amber-900">
                         No se comparó la referencia, no se propuso una BOM y no se revisaron subestructuras. Primero SAP debe responder para todos los colores activos.
                       </p>
-                      <p className="mt-2 text-sm text-amber-900">Colores pendientes: {failedSnapshots.map(snapshot => snapshot.skuColorCode ?? 'sin color').join(', ')}.</p>
+                      <p className="mt-2 text-sm text-amber-900">Colores pendientes: {bomReadFailureSnapshots.map(snapshot => snapshot.skuColorCode ?? 'sin color').join(', ')}.</p>
                     </div>
                   </div>
                 </section>
@@ -457,7 +568,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                           <td className="px-5 py-3 text-right tabular-nums text-slate-700">{snapshot.lineCount}</td>
                           <td className="px-5 py-3">
                             <span className={`rounded-md px-2 py-1 text-xs font-semibold ${statusClass(snapshot.status)}`}>{statusLabel(snapshot.status)}</span>
-                            {snapshot.status === 'failed' ? <p className="mt-1 text-xs text-rose-700">SAP no respondió dentro del tiempo de espera.</p> : null}
+                            {snapshot.status === 'failed' && snapshot.errorMessage ? <p className="mt-1 text-xs text-rose-700">{snapshot.errorMessage}</p> : null}
                           </td>
                         </tr>
                       ))}

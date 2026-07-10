@@ -101,8 +101,10 @@ type ComponentUpsertResult = {
 
 type SapReferenceSkuReconciliation = {
   sapActiveSkuCodes: string[]
+  sapInactiveSkuCodes: string[]
   confirmedSkuCodes: Set<string>
   onlyInSupabaseSkuCodes: string[]
+  notFoundInSapSkuCodes: string[]
   onlyInSapSkuCodes: string[]
 }
 
@@ -252,14 +254,24 @@ async function reconcileReferenceSkusWithSap(
     const itemCode = readString(item.ItemCode)?.toUpperCase()
     return itemCode && isSapItemActive(item) ? [itemCode] : []
   }))].sort()
+  const allSapInactiveSkuCodes = [...new Set(sapItems.flatMap((item) => {
+    const itemCode = readString(item.ItemCode)?.toUpperCase()
+    return itemCode && !isSapItemActive(item) ? [itemCode] : []
+  }))].sort()
   const appSkuCodes = skus.map(sku => sku.skuComplete.toUpperCase())
   const sapActiveSkuSet = new Set(sapActiveSkuCodes)
+  const sapInactiveSkuSet = new Set(allSapInactiveSkuCodes)
+  const sapInactiveSkuCodes = appSkuCodes.filter(skuComplete => sapInactiveSkuSet.has(skuComplete)).sort()
+  const sapMatchedSkuSet = new Set([...sapActiveSkuCodes, ...allSapInactiveSkuCodes])
   const appSkuSet = new Set(appSkuCodes)
+  const notFoundInSapSkuCodes = appSkuCodes.filter(skuComplete => !sapMatchedSkuSet.has(skuComplete)).sort()
 
   return {
     sapActiveSkuCodes,
+    sapInactiveSkuCodes,
     confirmedSkuCodes: new Set(appSkuCodes.filter(skuComplete => sapActiveSkuSet.has(skuComplete))),
     onlyInSupabaseSkuCodes: appSkuCodes.filter(skuComplete => !sapActiveSkuSet.has(skuComplete)).sort(),
+    notFoundInSapSkuCodes,
     onlyInSapSkuCodes: sapActiveSkuCodes.filter(skuComplete => !appSkuSet.has(skuComplete)).sort(),
   }
 }
@@ -1015,11 +1027,19 @@ export async function analyzeReferenceBomImport(input: {
 
   try {
     const reconciliation = await reconcileReferenceSkusWithSap(source.context, source.skus)
+    const inactiveSapSkuSet = new Set(reconciliation.sapInactiveSkuCodes)
     const snapshots = await mapWithConcurrency(source.skus, DIRECT_BOM_CONCURRENCY, async sku => {
-      if (reconciliation.confirmedSkuCodes.has(sku.skuComplete.toUpperCase())) return readDirectSnapshot(sku)
+      const normalizedSku = sku.skuComplete.toUpperCase()
+      if (reconciliation.confirmedSkuCodes.has(normalizedSku)) return readDirectSnapshot(sku)
+      if (inactiveSapSkuSet.has(normalizedSku)) {
+        return failedDirectSnapshot(
+          sku,
+          'El código está inactivo en SAP. Confirma su estado en SAP o inactívalo en Supabase para continuar.'
+        )
+      }
       return failedDirectSnapshot(
         sku,
-        'El color está activo en Supabase, pero SAP no lo encontró como artículo activo de esta referencia.'
+        'El código está activo en Supabase, pero no fue encontrado en el catálogo SAP de esta referencia.'
       )
     })
     await persistSnapshots(runId, snapshots)
@@ -1062,8 +1082,13 @@ export async function analyzeReferenceBomImport(input: {
       ...directAnalysis.summaryJson,
       source_sku_count: source.skus.length,
       sap_active_sku_count: reconciliation.sapActiveSkuCodes.length,
+      sap_inactive_sku_count: reconciliation.sapInactiveSkuCodes.length,
       sap_confirmed_sku_count: reconciliation.confirmedSkuCodes.size,
       supabase_only_sku_colors: reconciliation.onlyInSupabaseSkuCodes.map(skuColorCode).filter((color): color is string => color !== null),
+      sap_inactive_sku_codes: reconciliation.sapInactiveSkuCodes,
+      sap_inactive_sku_colors: reconciliation.sapInactiveSkuCodes.map(skuColorCode).filter((color): color is string => color !== null),
+      sap_missing_sku_codes: reconciliation.notFoundInSapSkuCodes,
+      sap_missing_sku_colors: reconciliation.notFoundInSapSkuCodes.map(skuColorCode).filter((color): color is string => color !== null),
       sap_only_sku_colors: reconciliation.onlyInSapSkuCodes.map(skuColorCode).filter((color): color is string => color !== null),
       component_item_count: componentResult.count,
       component_tree_count: 0,
