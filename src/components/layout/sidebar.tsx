@@ -203,8 +203,8 @@ export function Sidebar({
 
     if (!mounted) {
         return (
-            <div className="flex h-screen w-full bg-slate-50 font-sans opacity-0">
-                <div className="hidden md:block w-[260px] shrink-0 bg-slate-950" />
+            <div className="flex h-screen w-full bg-background font-sans opacity-0">
+                <div className="hidden w-[260px] shrink-0 bg-sidebar md:block" />
                 <div className="flex-1" />
             </div>
         )
@@ -228,17 +228,17 @@ export function Sidebar({
 
     return (
         <>
-            <div className="flex h-screen w-full bg-slate-50 font-sans overflow-hidden">
+            <div className="flex h-screen w-full overflow-hidden bg-background font-sans">
                 <div
                     className={cn(
-                        'hidden border-r border-slate-800 bg-slate-950 md:flex flex-col shadow-xl z-40 relative transition-all duration-300 ease-in-out shrink-0',
+                        'relative z-40 hidden shrink-0 flex-col border-r border-sidebar-border bg-sidebar shadow-[8px_0_32px_-24px_rgba(22,44,57,0.55)] transition-all duration-300 ease-in-out md:flex',
                         isCollapsed ? 'w-[80px]' : 'w-[240px] lg:w-[260px]'
                     )}
                 >
                     <div className="flex h-full max-h-screen flex-col">
-                        <div className="flex h-16 items-center px-6 border-b border-slate-800/60 justify-between">
-                            <Link href={access.role === 'production' ? '/print' : '/'} className={cn('flex items-center gap-3 font-bold text-white tracking-tight transition-opacity hover:opacity-80', isCollapsed && 'justify-center px-0')}>
-                                <div className="bg-indigo-500/20 p-2 rounded-lg text-indigo-400 ring-1 ring-indigo-500/30 shrink-0">
+                        <div className="flex h-16 items-center justify-between border-b border-white/10 px-6">
+                            <Link href={access.role === 'production' ? '/print' : '/'} className={cn('flex items-center gap-3 font-bold tracking-tight text-sidebar-foreground transition-opacity hover:opacity-85', isCollapsed && 'justify-center px-0')}>
+                                <div className="shrink-0 rounded-lg bg-white/10 p-2 text-firplak-ivory ring-1 ring-white/15">
                                     <Package className="h-5 w-5" />
                                 </div>
                                 {!isCollapsed && <span className="text-lg truncate">SamiGen</span>}
@@ -247,7 +247,7 @@ export function Sidebar({
                             {!isCollapsed && (
                                 <button
                                     onClick={toggleSidebar}
-                                    className="p-1.5 rounded-md hover:bg-slate-800 text-slate-500 hover:text-white transition-colors"
+                                    className="rounded-md p-1.5 text-white/55 transition-colors hover:bg-white/10 hover:text-white"
                                     title="Colapsar menu"
                                 >
                                     <ChevronLeft className="h-4 w-4" />
@@ -256,7 +256,7 @@ export function Sidebar({
                             {isCollapsed && (
                                 <button
                                     onClick={toggleSidebar}
-                                    className="absolute -right-3 top-20 bg-slate-800 text-white p-1 rounded-full border border-slate-700 shadow-lg hover:bg-indigo-600 transition-colors z-30"
+                                    className="absolute -right-3 top-20 z-30 rounded-full border border-white/15 bg-sidebar-accent p-1 text-white shadow-lg transition-colors hover:bg-firplak-green"
                                     title="Expandir menu"
                                 >
                                     <ChevronRight className="h-3 w-3" />
@@ -269,9 +269,9 @@ export function Sidebar({
                                 <>
                                     <div className={cn('px-4 mb-2', isCollapsed && 'px-0 text-center')}>
                                         {!isCollapsed ? (
-                                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Menu principal</p>
+                                            <p className="text-xs font-semibold uppercase tracking-wider text-white/55">Menu principal</p>
                                         ) : (
-                                            <div className="h-px bg-slate-800/60 mx-4 my-2" />
+                                            <div className="mx-4 my-2 h-px bg-white/10" />
                                         )}
                                     </div>
                                     <nav className="grid items-start px-3 text-sm font-medium gap-1">
@@ -284,17 +284,17 @@ export function Sidebar({
                                                     href={itemHref}
                                                     title={isCollapsed ? item.name : undefined}
                                                     className={cn(
-                                                        'group flex items-center rounded-lg px-3 py-2.5 transition-all duration-200 relative',
+                                                        'group relative flex items-center rounded-lg px-3 py-2.5 transition-all duration-200',
                                                         isActive
-                                                            ? 'bg-indigo-500/10 text-indigo-400 font-semibold'
-                                                            : 'text-slate-400 hover:text-white hover:bg-slate-800/40',
+                                                            ? 'bg-white/10 font-semibold text-white ring-1 ring-white/10'
+                                                            : 'text-white/65 hover:bg-white/10 hover:text-white',
                                                         isCollapsed ? 'justify-center px-2' : 'gap-3'
                                                     )}
                                                 >
                                                     {isActive && (
-                                                        <div className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-indigo-500 rounded-r-full" />
+                                                        <div className="absolute bottom-1.5 left-0 top-1.5 w-1 rounded-r-full bg-firplak-green" />
                                                     )}
-                                                    <item.icon className={cn('h-4 w-4 transition-colors shrink-0', isActive ? 'text-indigo-400' : 'text-slate-400 group-hover:text-white')} />
+                                                    <item.icon className={cn('h-4 w-4 shrink-0 transition-colors', isActive ? 'text-firplak-ivory' : 'text-white/60 group-hover:text-white')} />
                                                     {!isCollapsed && <span className="truncate">{item.name}</span>}
                                                 </Link>
                                             )
@@ -304,7 +304,7 @@ export function Sidebar({
                             )}
                         </div>
 
-                        <div className="mt-auto p-4 border-t border-slate-800/60 bg-slate-950/50">
+                        <div className="mt-auto border-t border-white/10 bg-black/5 p-4">
                             {canManageNaming && (
                                         isCollapsed ? (
                                             <button
@@ -312,7 +312,7 @@ export function Sidebar({
                                                 onClick={handleProcessNamingWork}
                                                 disabled={namingIsProcessing || !namingHasWork}
                                                 title={namingHasWork ? 'Aplicar nomenclatura pendiente' : 'Nomenclatura al dia'}
-                                                className="flex flex-col items-center gap-0.5 rounded-md px-2 py-1.5 text-slate-400 transition-colors hover:bg-slate-800/50 disabled:cursor-default disabled:hover:bg-transparent"
+                                                className="flex flex-col items-center gap-0.5 rounded-md px-2 py-1.5 text-white/60 transition-colors hover:bg-white/10 disabled:cursor-default disabled:hover:bg-transparent"
                                             >
                                                 {namingIsProcessing ? (
                                                     <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
@@ -322,9 +322,9 @@ export function Sidebar({
                                                 <span className={cn('text-[10px] font-bold uppercase', namingBadgeClass)}>NM</span>
                                             </button>
                                         ) : (
-                                            <div className="w-full rounded-lg border border-slate-800/70 bg-slate-900/60 p-2.5">
+                                            <div className="w-full rounded-lg border border-white/10 bg-black/10 p-2.5">
                                                 <div className="flex items-center justify-between gap-2">
-                                                    <span className="text-[11px] text-slate-400">Nomenclatura</span>
+                                                    <span className="text-[11px] text-white/65">Nomenclatura</span>
                                                     <div className="flex items-center gap-1.5">
                                                         <div className={cn('h-1.5 w-1.5 rounded-full', namingDotClass)} />
                                                         <span className={cn('text-[10px] font-bold uppercase', namingBadgeClass)}>
@@ -332,7 +332,7 @@ export function Sidebar({
                                                         </span>
                                                     </div>
                                                 </div>
-                                                <div className="mt-1 text-[10px] text-slate-500">
+                                                <div className="mt-1 text-[10px] text-white/45">
                                                     {namingHasWork
                                                         ? `${namingProcessed} / ${namingTotal} procesados${namingAutoProcessing ? ' - automatico' : ''}`
                                                         : 'Sin trabajos pendientes'}
@@ -357,8 +357,8 @@ export function Sidebar({
                                     )}
 
                             <div className={cn('flex flex-col gap-1', isCollapsed ? 'items-center' : 'gap-1.5')}>
-                                <div className={cn('flex items-center bg-slate-900/50 rounded-lg border border-slate-800/40 cursor-default transition-all', isCollapsed ? 'p-1.5 justify-center' : 'gap-3 p-3')}>
-                                    <div className="w-8 h-8 rounded-full bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-bold text-xs ring-1 ring-indigo-500/20 shrink-0">
+                                <div className={cn('flex cursor-default items-center rounded-lg border border-white/10 bg-black/10 transition-all', isCollapsed ? 'p-1.5 justify-center' : 'gap-3 p-3')}>
+                                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-xs font-bold text-firplak-ivory ring-1 ring-white/15">
                                         {userInitials}
                                     </div>
                                     {!isCollapsed && (
@@ -372,7 +372,7 @@ export function Sidebar({
                                 <button
                                     onClick={handleSignOut}
                                     className={cn(
-                                        'flex items-center rounded-lg px-3 py-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-all duration-200 group',
+                                        'group flex items-center rounded-lg px-3 py-2 text-white/65 transition-all duration-200 hover:bg-red-500/10 hover:text-red-300',
                                         isCollapsed ? 'justify-center' : 'gap-3'
                                     )}
                                     title={isCollapsed ? 'Cerrar sesion' : undefined}
@@ -386,18 +386,18 @@ export function Sidebar({
                 </div>
 
                 <div className="flex flex-col flex-1 min-w-0 overflow-hidden h-screen relative z-0">
-                    <header className="flex md:hidden h-16 items-center gap-4 border-b border-slate-200 bg-white px-4 shadow-sm z-10">
+                    <header className="z-10 flex h-16 items-center gap-4 border-b border-slate-200 bg-white/95 px-4 shadow-sm md:hidden">
                         <Sheet>
                             <SheetTrigger>
-                                <div className="shrink-0 md:hidden flex items-center justify-center border border-slate-200 bg-white rounded-md p-2 w-10 h-10 hover:bg-slate-50 hover:text-slate-900 cursor-pointer transition-colors">
+                                <div className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-slate-200 bg-white p-2 transition-colors hover:border-indigo-300 hover:bg-indigo-50 hover:text-primary md:hidden">
                                     <Menu className="h-5 w-5 text-slate-600" />
                                     <span className="sr-only">Menu</span>
                                 </div>
                             </SheetTrigger>
-                            <SheetContent side="left" className="flex flex-col p-0 w-72 bg-slate-950 border-slate-800">
-                                <div className="flex h-16 items-center px-6 border-b border-slate-800/60">
-                                    <Link href={access.role === 'production' ? '/print' : '/'} className="flex items-center gap-3 font-bold text-white">
-                                        <div className="bg-indigo-500/20 p-2 rounded-lg text-indigo-400 ring-1 ring-indigo-500/30">
+                            <SheetContent side="left" className="flex w-72 flex-col border-sidebar-border bg-sidebar p-0">
+                                <div className="flex h-16 items-center border-b border-white/10 px-6">
+                                    <Link href={access.role === 'production' ? '/print' : '/'} className="flex items-center gap-3 font-bold text-sidebar-foreground">
+                                        <div className="rounded-lg bg-white/10 p-2 text-firplak-ivory ring-1 ring-white/15">
                                             <Package className="h-5 w-5" />
                                         </div>
                                         <span className="text-lg">SamiGen</span>
@@ -414,14 +414,14 @@ export function Sidebar({
                                                 className={cn(
                                                     'flex items-center gap-3 rounded-lg px-3 py-3 transition-all relative',
                                                     isActive
-                                                        ? 'bg-indigo-500/10 text-indigo-400 font-semibold'
-                                                        : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+                                                        ? 'bg-white/10 font-semibold text-white ring-1 ring-white/10'
+                                                        : 'text-white/65 hover:bg-white/10 hover:text-white'
                                                 )}
                                             >
                                                 {isActive && (
-                                                    <div className="absolute left-0 top-2 bottom-2 w-1 bg-indigo-500 rounded-r-full" />
+                                                    <div className="absolute bottom-2 left-0 top-2 w-1 rounded-r-full bg-firplak-green" />
                                                 )}
-                                                <item.icon className={cn('h-5 w-5', isActive ? 'text-indigo-400' : 'text-slate-400')} />
+                                                <item.icon className={cn('h-5 w-5', isActive ? 'text-firplak-ivory' : 'text-white/60')} />
                                                 {item.name}
                                             </Link>
                                         )
@@ -433,7 +433,7 @@ export function Sidebar({
                     </header>
 
                     <main className={cn(
-                        'flex-1 overflow-auto bg-slate-50 p-4 md:p-6 lg:p-8',
+                        'flex-1 overflow-auto bg-background p-4 md:p-6 lg:p-8',
                         pathname?.includes('/builder') && 'overflow-hidden flex flex-col h-full p-4'
                     )}>
                         <div className={cn(

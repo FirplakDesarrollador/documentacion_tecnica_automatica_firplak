@@ -74,7 +74,7 @@ function DropdownMenuContent({ children, align = "start", className }: DropdownM
     <div
       className={cn(
         "absolute z-50 mt-1 min-w-[10rem] max-h-72 overflow-y-auto",
-        "bg-white border border-slate-200 rounded-xl shadow-lg py-1",
+        "rounded-xl border border-slate-200 bg-white py-1.5 shadow-premium",
         alignClass,
         className
       )}
@@ -151,7 +151,7 @@ function DropdownMenuRadioItem({ value, children, className }: DropdownMenuRadio
         handleSelectAction()
       }}
       className={cn(
-        "w-full text-left flex items-start gap-2 px-3 py-2 text-sm hover:bg-slate-50 transition-colors",
+        "flex w-full items-start gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-indigo-50",
         isSelected && "bg-indigo-50",
         className
       )}
@@ -180,7 +180,7 @@ function DropdownMenuItem({ children, className, onClick }: DropdownMenuItemProp
       type="button"
       onClick={() => { onClick?.(); setOpen(false) }}
       className={cn(
-        "w-full text-left flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50 transition-colors",
+        "flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-indigo-50",
         className
       )}
     >

@@ -74,58 +74,58 @@ export default function LoginPage() {
     }
 
     return (
-        <div className="min-h-screen w-full flex items-center justify-center bg-slate-950 relative overflow-hidden font-sans">
+        <div className="relative flex min-h-screen w-full items-center justify-center overflow-hidden bg-background font-sans">
             {/* Background Decorations */}
             <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
-                <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-indigo-500/10 rounded-full blur-[120px]" />
-                <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-500/10 rounded-full blur-[120px]" />
+                <div className="absolute left-[-10%] top-[-10%] h-[40%] w-[40%] rounded-full bg-firplak-green/20 blur-[120px]" />
+                <div className="absolute bottom-[-10%] right-[-10%] h-[40%] w-[40%] rounded-full bg-firplak-ivory blur-[120px]" />
             </div>
 
             <div className="w-full max-w-md px-6 py-12 relative z-10">
                 <div className="flex flex-col items-center mb-10">
-                    <div className="bg-indigo-500/20 p-4 rounded-2xl text-indigo-400 ring-1 ring-indigo-500/30 mb-6 shadow-xl shadow-indigo-500/10">
+                    <div className="mb-6 rounded-2xl bg-primary p-4 text-white shadow-premium ring-1 ring-primary/15">
                         <Package className="h-10 w-10" />
                     </div>
-                    <h1 className="text-3xl font-bold text-white tracking-tight text-center mb-2">
+                    <h1 className="mb-2 text-center text-3xl font-bold tracking-tight text-primary">
                         Ingreso al aplicativo
                     </h1>
-                    <p className="text-slate-400 text-center text-sm max-w-[280px]">
+                    <p className="max-w-[280px] text-center text-sm text-slate-600">
                         Ingresa con tu usuario autorizado de Supabase para acceder al sistema
                     </p>
                 </div>
 
-                <div className="bg-slate-900/40 backdrop-blur-xl border border-slate-800/60 p-8 rounded-3xl shadow-2xl">
+                <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-premium">
                     <form onSubmit={handleLogin} className="space-y-5">
                         <div className="space-y-2">
-                            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider ml-1">
+                            <label className="ml-1 text-xs font-semibold uppercase tracking-wider text-slate-600">
                                 Correo Electrónico
                             </label>
                             <div className="relative group">
-                                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500 group-focus-within:text-indigo-400 transition-colors" />
+                                <Mail className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500 transition-colors group-focus-within:text-indigo-600" />
                                 <input
                                     type="email"
                                     required
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
                                     placeholder="ejemplo@firplak.com"
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500/50 transition-all"
+                                    className="w-full rounded-lg border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-slate-900 shadow-sm transition-all placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-3 focus:ring-indigo-500/20"
                                 />
                             </div>
                         </div>
 
                         <div className="space-y-2">
-                            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider ml-1">
+                            <label className="ml-1 text-xs font-semibold uppercase tracking-wider text-slate-600">
                                 Contraseña
                             </label>
                             <div className="relative group">
-                                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500 group-focus-within:text-indigo-400 transition-colors" />
+                                <Lock className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500 transition-colors group-focus-within:text-indigo-600" />
                                 <input
                                     type="password"
                                     required
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
                                     placeholder="••••••••"
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500/50 transition-all"
+                                    className="w-full rounded-lg border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-slate-900 shadow-sm transition-all placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-3 focus:ring-indigo-500/20"
                                 />
                             </div>
                         </div>
@@ -149,9 +149,9 @@ export default function LoginPage() {
                             disabled={loading}
                             className={cn(
                                 "w-full flex items-center justify-center gap-2 py-3.5 rounded-xl font-bold tracking-tight transition-all duration-300 shadow-lg",
-                                loading 
-                                    ? "bg-slate-800 text-slate-500 cursor-not-allowed" 
-                                    : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/20 hover:shadow-indigo-600/40 active:scale-[0.98]"
+                                loading
+                                    ? "cursor-not-allowed bg-slate-200 text-slate-500"
+                                    : "bg-indigo-600 text-white shadow-indigo-600/20 hover:bg-indigo-700 hover:shadow-indigo-600/30 active:scale-[0.98]"
                             )}
                         >
                             {loading ? (
@@ -167,7 +167,7 @@ export default function LoginPage() {
                             type="button"
                             onClick={handlePasswordRecovery}
                             disabled={loading || recoveryLoading}
-                            className="w-full text-center text-xs font-semibold text-slate-400 transition-colors hover:text-indigo-300 disabled:cursor-not-allowed disabled:text-slate-600"
+                            className="w-full text-center text-xs font-semibold text-slate-500 transition-colors hover:text-indigo-600 disabled:cursor-not-allowed disabled:text-slate-400"
                         >
                             {recoveryLoading ? 'Enviando enlace...' : 'Olvide mi contrasena'}
                         </button>
@@ -175,7 +175,7 @@ export default function LoginPage() {
                 </div>
 
                 <div className="mt-8 text-center">
-                    <p className="text-[10px] text-slate-600 uppercase tracking-[0.2em] font-bold">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
                         Exclusivo para personal de Firplak
                     </p>
                 </div>
