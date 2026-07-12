@@ -34,6 +34,8 @@ Compact, repo-specific rules for future OpenCode sessions.
 - Project URL: `https://nbifmxggfusipomspoly.supabase.co`.
 - Default all Supabase MCP migrations, SQL checks, RPC work, and schema inspections to this project unless the user explicitly says otherwise.
 - Do not apply migrations, RPC changes, or data mutations to any other Supabase project from this workspace without explicit user confirmation in the same task.
+- **Gobernanza estricta de nuevas tablas:** crear una tabla nueva en Supabase debe ser la última opción y solo se considera válido cuando sea supremamente necesario para cumplir la funcionalidad solicitada. Antes se deben evaluar y documentar alternativas más simples: reutilizar tablas existentes, columnas/JSONB ya disponibles, vistas, RPCs, relaciones existentes o lógica de aplicación. No crear tablas, funciones, triggers, vistas o índices por conveniencia, especulación o falta de inspección del esquema.
+- Si una tabla nueva resulta realmente necesaria, el agente debe detenerse antes de aplicar el DDL y solicitar autorización explícita al usuario. La solicitud debe incluir: problema funcional que resuelve, por qué no sirven las estructuras existentes, alcance mínimo, impacto en datos y rendimiento, riesgos, plan de migración/reversión y cómo se verificará. La solicitud debe presentar la tabla completa y justificar cada campo (nombre, tipo, propósito, nulabilidad, valor por defecto, restricciones, relación, índice/RLS si aplica y ciclo de vida). Sin esa autorización explícita no se crea la tabla ni se ejecuta una migración que la incluya.
 
 ## Execution model used by this repo
 - 3-layer workflow is intentional: directives in `directives/`, orchestration by agent, deterministic executors in `execution/`.

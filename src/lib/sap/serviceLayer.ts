@@ -208,12 +208,21 @@ function buildSelectQuery(select?: string[]): string {
   return `?$select=${encodeURIComponent(fields.join(','))}`
 }
 
-function buildCollectionQuery(input: { select?: string[]; filter?: string; top?: number }): string {
+function buildCollectionQuery(input: {
+  select?: string[]
+  expand?: string[]
+  filter?: string
+  top?: number
+  skip?: number
+}): string {
   const params: string[] = []
   const fields = input.select?.map(field => field.trim()).filter(Boolean) ?? []
   if (fields.length > 0) params.push(`$select=${encodeURIComponent(fields.join(','))}`)
+  const expansions = input.expand?.map(field => field.trim()).filter(Boolean) ?? []
+  if (expansions.length > 0) params.push(`$expand=${encodeURIComponent(expansions.join(','))}`)
   if (input.filter) params.push(`$filter=${encodeURIComponent(input.filter)}`)
   if (typeof input.top === 'number') params.push(`$top=${input.top}`)
+  if (typeof input.skip === 'number') params.push(`$skip=${input.skip}`)
 
   return params.length > 0 ? `?${params.join('&')}` : ''
 }
@@ -459,15 +468,25 @@ export async function getSapItemsByCodes(
     filter,
     top: normalizedCodes.length,
   })
-  const response = await sapServiceLayerRequest<unknown>(`/Items${query}`, {
-    timeoutMs: options?.timeoutMs,
-  })
-  const rows = isRecord(response) && Array.isArray(response.value) ? response.value : []
   const items = new Map<string, SapEntityPayload>()
+  let requestPath: string | null = `/Items${query}`
+  const visitedPaths = new Set<string>()
 
-  for (const row of rows) {
-    if (!isRecord(row) || typeof row.ItemCode !== 'string') continue
-    items.set(row.ItemCode.trim().toUpperCase(), row)
+  while (requestPath && !visitedPaths.has(requestPath) && items.size < normalizedCodes.length) {
+    visitedPaths.add(requestPath)
+    const response: unknown = await sapServiceLayerRequest<unknown>(requestPath, {
+      timeoutMs: options?.timeoutMs,
+    })
+    const rows = isRecord(response) && Array.isArray(response.value) ? response.value : []
+
+    for (const row of rows) {
+      if (!isRecord(row) || typeof row.ItemCode !== 'string') continue
+      items.set(row.ItemCode.trim().toUpperCase(), row)
+    }
+
+    requestPath = isRecord(response)
+      ? readStringField(response, 'odata.nextLink') ?? readStringField(response, '@odata.nextLink')
+      : null
   }
 
   return items
@@ -485,6 +504,38 @@ export async function getSapItemsByPrefix(
     top: options?.top ?? 200,
   })
   const response = await sapServiceLayerRequest<unknown>(`/Items${query}`, {
+    timeoutMs: options?.timeoutMs,
+  })
+
+  return isRecord(response) && Array.isArray(response.value)
+    ? response.value.filter(isRecord)
+    : []
+}
+
+export async function getSapProductTreesByPrefixes(
+  prefixes: string[],
+  options?: {
+    select?: string[]
+    expand?: string[]
+    top?: number
+    skip?: number
+    timeoutMs?: number
+  }
+): Promise<SapEntityPayload[]> {
+  const normalizedPrefixes = [...new Set(prefixes.map(prefix => prefix.trim()).filter(Boolean))]
+  if (normalizedPrefixes.length === 0) return []
+
+  const filter = normalizedPrefixes
+    .map(prefix => `startswith(TreeCode, ${encodeODataString(prefix)})`)
+    .join(' or ')
+  const query = buildCollectionQuery({
+    select: options?.select,
+    expand: options?.expand,
+    filter,
+    top: options?.top,
+    skip: options?.skip,
+  })
+  const response = await sapServiceLayerRequest<unknown>(`/ProductTrees${query}`, {
     timeoutMs: options?.timeoutMs,
   })
 

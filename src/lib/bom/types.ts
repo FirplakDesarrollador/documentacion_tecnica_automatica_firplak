@@ -65,6 +65,7 @@ export type BomStructureLine = {
   base_item_code: string | null
   product_application_scope: ProductApplicationScope
   qty: number | null
+  uom?: string | null
   input_warehouse_code: string | null
   issue_method_override: string | null
   alternatives: BomMaterialAlternative[]

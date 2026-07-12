@@ -108,6 +108,7 @@ function normalizeLine(value: unknown, index: number): BomStructureLine | null {
     base_item_code: lineKind === 'fixed' ? baseItemCode : null,
     product_application_scope: normalizeScope(record.product_application_scope),
     qty: lineKind === 'fixed' ? numberValue(record.qty) : null,
+    uom: stringValue(record.uom),
     input_warehouse_code: stringValue(record.input_warehouse_code),
     issue_method_override: stringValue(record.issue_method_override),
     alternatives,
@@ -241,7 +242,10 @@ export function applyBomOverrides(structure: BomStructure, ...layers: BomOverrid
 }
 
 function effectiveScope(colorway: Colorway | null, scope: ProductApplicationScope): ProductApplicationScope {
-  if ((colorway?.color_mode === 'full' || colorway?.color_mode === 'equivalent') && scope === 'edge_band_body') {
+  if (
+    (colorway?.color_mode === 'full' || colorway?.color_mode === 'equivalent')
+    && scope.startsWith('edge_band_')
+  ) {
     return 'edge_band_full_product'
   }
   return scope

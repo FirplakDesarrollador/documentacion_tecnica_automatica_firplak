@@ -10,7 +10,7 @@ import type {
   Colorway,
   ComponentItem,
 } from './types'
-import type { DirectBomSnapshot, NormalizedSapBomLine } from './referenceImportTypes'
+import type { ColorConfiguration, DirectBomSnapshot, NormalizedSapBomLine } from './referenceImportTypes'
 
 const emptyOverrides: BomOverrides = { schema_version: 2, operations: [], color_overrides: [] }
 
@@ -190,6 +190,146 @@ test('groups mutually exclusive ST and CARB2 boards into one logical position', 
   const materialGroup = analysis.proposedBomStructure.lines.find(item => item.line_kind === 'material_group')
   assert.ok(materialGroup)
   assert.deepEqual(materialGroup.alternatives.map(item => item.material_profile).sort(), ['CARB2', 'ST'])
+  assert.equal(materialGroup.uom, 'UND')
+})
+
+test('does not propose an already configured edge color when other colors still need review', () => {
+  const analysis = analyzeReferenceBom({
+    context: {
+      referenceId: 'reference', familyCode: 'BAN05', referenceCode: '0001', productName: 'Prueba',
+      manufacturingProcess: 'MUEBLES NACIONAL', productType: 'MUEBLE',
+    },
+    snapshots: [
+      snapshot('VBAN05-0001-000-0439', '0439', [line({
+        baseItemCode: 'CMPD06-0003-000', variantCode4: '0462', sourceOrder: 1, itemName: 'CANTO PVC 19X0,45MM',
+      })]),
+      snapshot('VBAN05-0001-000-0493', '0493', [line({
+        baseItemCode: 'CMPD06-0003-000', variantCode4: '1371', sourceOrder: 1, itemName: 'CANTO PVC 19X0,45MM',
+      })]),
+    ],
+    colorConfigurations: new Map<string, ColorConfiguration>([
+      ['0439', {
+        code4dig: '0439', colorMode: 'equivalent', applicationColors: { edge_band_full_product: '0462' }, applicationMaterialProfiles: {},
+        allowedProductTypes: ['MUEBLE'], allowedManufacturingProcesses: ['MUEBLES NACIONAL'],
+      }],
+      ['0493', {
+        code4dig: '0493', colorMode: 'full', applicationColors: {}, applicationMaterialProfiles: {},
+        allowedProductTypes: ['MUEBLE'], allowedManufacturingProcesses: ['MUEBLES NACIONAL'],
+      }],
+    ]),
+  })
+  const colorRuleSources = analysis.findings
+    .filter(finding => finding.findingType === 'color_rule_proposal')
+    .map(finding => String(finding.detailsJson.source_color_code))
+  assert.deepEqual(colorRuleSources, ['0493'])
+  const review = analysis.findings.find(finding => finding.findingType === 'bom_line_review')
+  assert.ok(review)
+  const reviewColors = Array.isArray(review.detailsJson.by_sku)
+    ? review.detailsJson.by_sku.map(item => String((item as { sku_color_code?: unknown }).sku_color_code))
+    : []
+  assert.deepEqual(reviewColors, ['0493'])
+})
+
+test('separates body and front edge rules before a color is configured as dual', () => {
+  const analysis = analyzeReferenceBom({
+    context: {
+      referenceId: 'reference', familyCode: 'BAN05', referenceCode: '0122', productName: 'Prueba dual',
+      manufacturingProcess: 'MUEBLES NACIONAL', productType: 'MUEBLE',
+    },
+    snapshots: [
+      snapshot('VBAN05-0122-000-0493', '0493', [
+        line({ baseItemCode: 'CMPD06-0003-000', variantCode4: '1371', sourceOrder: 1, itemName: 'CANTO PVC 19X0,45MM NARDO' }),
+        line({ baseItemCode: 'CMPD06-0005-000', variantCode4: '0467', sourceOrder: 2, itemName: 'CANTO PVC 19X2MM CINZA COBALTO' }),
+      ]),
+    ],
+    colorConfigurations: new Map<string, ColorConfiguration>([
+      ['0493', {
+        code4dig: '0493', colorMode: 'full', applicationColors: { full_product: '0493' }, applicationMaterialProfiles: {},
+        allowedProductTypes: ['MUEBLE'], allowedManufacturingProcesses: ['MUEBLES NACIONAL'],
+      }],
+    ]),
+  })
+  const proposals = analysis.findings
+    .filter(finding => finding.findingType === 'color_rule_proposal')
+    .map(finding => `${finding.proposedScope}:${finding.proposedColorCode}`)
+    .sort()
+  assert.deepEqual(proposals, ['edge_band_body:1371', 'edge_band_front:0467'])
+})
+
+test('uses the confirmed dual edge mapping to classify direct board colors', () => {
+  const analysis = analyzeReferenceBom({
+    context: {
+      referenceId: 'reference', familyCode: 'BAN05', referenceCode: '0122', productName: 'Prueba dual',
+      manufacturingProcess: 'MUEBLES NACIONAL', productType: 'MUEBLE',
+    },
+    snapshots: [
+      snapshot('VBAN05-0122-000-0493', '0493', [
+        line({
+          baseItemCode: 'CMPD06-0008-000', variantCode4: '1371', sourceOrder: 1, itemName: 'TABLERO CARB 15MM NARDO',
+          technicalMetadata: metadata({ material_kind: 'board', material_profile: 'CARB2', material_profile_source: 'CARB', thickness_mm: 15, format_key: '1830x2440x15', metadata_source: 'sap_and_name' }),
+        }),
+        line({
+          baseItemCode: 'CMPD06-0004-000', variantCode4: '0467', sourceOrder: 2, itemName: 'TABLERO RH 15MM CINZA COBALTO SOFT',
+          technicalMetadata: metadata({ material_kind: 'board', material_profile: 'RH', material_profile_source: 'RH', thickness_mm: 15, format_key: '2150x2440x15', metadata_source: 'sap_and_name' }),
+        }),
+      ]),
+    ],
+    colorConfigurations: new Map<string, ColorConfiguration>([
+      ['0493', {
+        code4dig: '0493', colorMode: 'dual',
+        applicationColors: { structure: '1371', front: '0467', edge_band_body: '1371', edge_band_front: '0467' },
+        applicationMaterialProfiles: { structure: 'CARB2', front: 'RH' },
+        allowedProductTypes: ['MUEBLE'], allowedManufacturingProcesses: ['MUEBLES NACIONAL'],
+      }],
+    ]),
+  })
+  const boardScopes = analysis.proposedBomStructure.lines
+    .filter(line => line.base_item_code === 'CMPD06-0008-000' || line.base_item_code === 'CMPD06-0004-000')
+    .map(line => `${line.base_item_code}:${line.product_application_scope}`)
+    .sort()
+  assert.deepEqual(boardScopes, ['CMPD06-0004-000:front', 'CMPD06-0008-000:structure'])
+})
+
+test('resolves dual structure and front colors for boards and edge bands', () => {
+  const structure: BomStructure = {
+    schema_version: 2,
+    structure_type: 'production',
+    input_warehouse_code: '01',
+    output_warehouse_code: null,
+    lines: [
+      { line_id: 'ln_000001', sort_order: 1, line_kind: 'fixed', base_item_code: 'CMPD06-0008-000', product_application_scope: 'structure', qty: 0.74, input_warehouse_code: null, issue_method_override: null, alternatives: [], consumptions: [] },
+      { line_id: 'ln_000002', sort_order: 2, line_kind: 'fixed', base_item_code: 'CMPD06-0004-000', product_application_scope: 'front', qty: 0.74, input_warehouse_code: null, issue_method_override: null, alternatives: [], consumptions: [] },
+      { line_id: 'ln_000003', sort_order: 3, line_kind: 'fixed', base_item_code: 'CMPD06-0003-000', product_application_scope: 'edge_band_body', qty: 7.22, input_warehouse_code: null, issue_method_override: null, alternatives: [], consumptions: [] },
+      { line_id: 'ln_000004', sort_order: 4, line_kind: 'fixed', base_item_code: 'CMPD06-0005-000', product_application_scope: 'edge_band_front', qty: 2.9, input_warehouse_code: null, issue_method_override: null, alternatives: [], consumptions: [] },
+    ],
+  }
+  const components = new Map([
+    ['CMPD06-0008-000-1371', component('CMPD06-0008-000-1371', 'TABLERO CARB 15MM NARDO')],
+    ['CMPD06-0004-000-0467', component('CMPD06-0004-000-0467', 'TABLERO RH 15MM CINZA COBALTO SOFT')],
+    ['CMPD06-0003-000-1371', component('CMPD06-0003-000-1371', 'CANTO PVC 19X0,45MM NARDO')],
+    ['CMPD06-0005-000-0467', component('CMPD06-0005-000-0467', 'CANTO PVC 19X2MM CINZA COBALTO')],
+  ])
+  const resolved = resolveBomForSku({
+    skuComplete: 'VBAN05-0122-000-0493',
+    skuColorCode: '0493',
+    structure,
+    globalOverrides: emptyOverrides,
+    versionOverrides: emptyOverrides,
+    colorway: {
+      code_4dig: '0493', name_color_sap: 'CINZA', color_mode: 'dual',
+      application_colors_json: {
+        structure: '1371', front: '0467', edge_band_body: '1371', edge_band_front: '0467',
+      },
+      application_material_profiles_json: {}, allowed_product_types: [], is_active: true,
+    },
+    componentItems: components,
+  })
+  assert.deepEqual(resolved.map(line => line.resolved_item_code), [
+    'CMPD06-0008-000-1371',
+    'CMPD06-0004-000-0467',
+    'CMPD06-0003-000-1371',
+    'CMPD06-0005-000-0467',
+  ])
 })
 
 test('resolves full board by configured material profile and color mapping', () => {
@@ -217,6 +357,17 @@ test('resolves full board by configured material profile and color mapping', () 
         { color_mode: 'dual', product_application_scope: 'structure', material_profile: 'ST', format_key: null, qty: null, status: 'needs_definition' },
         { color_mode: 'dual', product_application_scope: 'front', material_profile: 'ST', format_key: null, qty: null, status: 'needs_definition' },
       ],
+    }, {
+      line_id: 'ln_000005',
+      sort_order: 5,
+      line_kind: 'fixed',
+      base_item_code: 'CEMP03-0001-000',
+      product_application_scope: 'edge_band_full_product',
+      qty: 4.2,
+      input_warehouse_code: null,
+      issue_method_override: null,
+      alternatives: [],
+      consumptions: [],
     }],
   }
   const stItem = component('CMPD06-0001-000-0435', 'TABLERO ST 15MM', metadata({
@@ -225,7 +376,8 @@ test('resolves full board by configured material profile and color mapping', () 
   const carbItem = component('CMPD06-0008-000-0442', 'TABLERO CARB 15MM', metadata({
     material_kind: 'board', material_profile: 'CARB2', material_profile_source: 'CARB', thickness_mm: 15, format_key: '1530x2440x15', metadata_source: 'sap_and_name',
   }))
-  const components = new Map([[stItem.item_code, stItem], [carbItem.item_code, carbItem]])
+  const edgeItem = component('CEMP03-0001-000-0462', 'CANTO COMPLETO 0462')
+  const components = new Map([[stItem.item_code, stItem], [carbItem.item_code, carbItem], [edgeItem.item_code, edgeItem]])
   const stColor: Colorway = {
     code_4dig: '0439',
     name_color_sap: 'TAMBO',
@@ -248,6 +400,7 @@ test('resolves full board by configured material profile and color mapping', () 
   assert.equal(stResolved[0]?.resolved_item_code, 'CMPD06-0001-000-0435')
   assert.equal(stResolved[0]?.qty, 0.89)
   assert.equal(stResolved[0]?.resolution_status, 'resolved')
+  assert.equal(stResolved[1]?.resolved_item_code, 'CEMP03-0001-000-0462')
 
   const carbResolved = resolveBomForSku({
     skuComplete: 'VBAN05-0001-000-0442', skuColorCode: '0442', structure,

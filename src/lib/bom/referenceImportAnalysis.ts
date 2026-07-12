@@ -45,6 +45,10 @@ const BOARD_THICKNESS_TOLERANCE_MM = 0.5
 
 const SCOPE_BY_BASE_ITEM_CODE: Record<string, ReferenceProductApplicationScope> = {
   'CMPD06-0030-000': 'drawer_bottom',
+  // SAP distinguishes these two physical edge bands even when the description
+  // does not say whether it belongs to a body or a front.
+  'CMPD06-0003-000': 'edge_band_body',
+  'CMPD06-0005-000': 'edge_band_front',
 }
 
 function normalizedText(value: string | null | undefined): string {
@@ -88,6 +92,31 @@ function colorScopeForMode(mode: BomColorMode): ReferenceProductApplicationScope
   return ['full_product']
 }
 
+function isEdgeBandScope(scope: ReferenceProductApplicationScope): boolean {
+  return scope.startsWith('edge_band_')
+}
+
+function configuredScopeForColor(configuration: ColorConfiguration, scope: ReferenceProductApplicationScope): ReferenceProductApplicationScope {
+  return (configuration.colorMode === 'full' || configuration.colorMode === 'equivalent') && isEdgeBandScope(scope)
+    ? 'edge_band_full_product'
+    : scope
+}
+
+function dualBoardScopeFromEvidence(
+  evidence: LineEvidence[],
+  colorConfigurations: Map<string, ColorConfiguration>
+): ReferenceProductApplicationScope | null {
+  const observedScopes = new Set<ReferenceProductApplicationScope>()
+  for (const item of evidence) {
+    const colorCode = item.snapshot.skuColorCode
+    const configuration = colorCode ? colorConfigurations.get(colorCode) : undefined
+    if (configuration?.colorMode !== 'dual') continue
+    if (item.line.variantCode4 === configuration.applicationColors.structure) observedScopes.add('structure')
+    if (item.line.variantCode4 === configuration.applicationColors.front) observedScopes.add('front')
+  }
+  return observedScopes.size === 1 ? [...observedScopes][0] ?? null : null
+}
+
 function metadataFor(line: NormalizedSapBomLine): ComponentTechnicalMetadata | null {
   return line.technicalMetadata
 }
@@ -100,7 +129,9 @@ function scopeFromSemantics(
   const fromCode = SCOPE_BY_BASE_ITEM_CODE[line.baseItemCode]
   if (fromCode) return fromCode
 
-  if (line.technicalMetadata?.material_kind === 'board') return 'full_product'
+  if (line.technicalMetadata?.material_kind === 'board') {
+    return dualBoardScopeFromEvidence(evidence, colorConfigurations) ?? 'full_product'
+  }
 
   const name = normalizedText(line.itemName)
   if (name.includes('FONDO') && (name.includes('CAJON') || name.includes('DRAWER'))) return 'drawer_bottom'
@@ -157,24 +188,32 @@ function candidateColorForScope(
   skuColorCode: string | null
 ): string | null {
   if (!configuration || !skuColorCode) return skuColorCode
-  const mappedScope = configuration.colorMode === 'full' || configuration.colorMode === 'equivalent'
-    ? scope === 'edge_band_body' ? 'edge_band_full_product' : scope
-    : scope
+  const mappedScope = configuredScopeForColor(configuration, scope)
   return configuration.applicationColors[mappedScope]
     ?? configuration.applicationColors.full_product
     ?? skuColorCode
 }
 
+function evidenceUsesConfiguredColor(
+  evidence: LineEvidence,
+  scope: ReferenceProductApplicationScope,
+  configurations: Map<string, ColorConfiguration>,
+  context: ReferenceImportContext
+): boolean {
+  const skuColorCode = evidence.snapshot.skuColorCode
+  if (!skuColorCode || evidence.line.variantCode4 === '0000') return true
+  const configuration = configurations.get(skuColorCode)
+  if (!configuration || !isColorApplicable(configuration, context)) return evidence.line.variantCode4 === skuColorCode
+  return evidence.line.variantCode4 === candidateColorForScope(configuration, scope, skuColorCode)
+}
+
 function lineUsesConfiguredColor(
   evidence: LineEvidence[],
   scope: ReferenceProductApplicationScope,
-  configurations: Map<string, ColorConfiguration>
+  configurations: Map<string, ColorConfiguration>,
+  context: ReferenceImportContext
 ): boolean {
-  return evidence.every(item => {
-    const skuColorCode = item.snapshot.skuColorCode
-    if (!skuColorCode || item.line.variantCode4 === '0000') return true
-    return item.line.variantCode4 === candidateColorForScope(configurations.get(skuColorCode), scope, skuColorCode)
-  })
+  return evidence.every(item => evidenceUsesConfiguredColor(item, scope, configurations, context))
 }
 
 function metadataCompatible(
@@ -372,6 +411,7 @@ function fixedProposedLine(input: {
   scope: ReferenceProductApplicationScope
   sortOrder: number
   qty: number
+  uom: string | null
   warehouse: string | null
   issueMethod: string | null
 }): ReferenceBomLine {
@@ -382,6 +422,7 @@ function fixedProposedLine(input: {
     base_item_code: input.line.baseItemCode,
     product_application_scope: input.scope,
     qty: input.qty,
+    uom: input.uom,
     input_warehouse_code: input.warehouse,
     issue_method_override: input.issueMethod,
     alternatives: [],
@@ -392,6 +433,7 @@ function fixedProposedLine(input: {
 function materialProposedLine(input: {
   logical: LogicalEvidence
   warehouse: string | null
+  uom: string | null
   issueMethod: string | null
   consumptions: BomConsumption[]
 }): ReferenceBomLine {
@@ -402,6 +444,7 @@ function materialProposedLine(input: {
     base_item_code: null,
     product_application_scope: input.logical.scope,
     qty: null,
+    uom: input.uom,
     input_warehouse_code: input.warehouse,
     issue_method_override: input.issueMethod,
     alternatives: input.logical.alternatives,
@@ -495,15 +538,16 @@ export function analyzeReferenceBom(input: {
       .map(snapshot => snapshot.skuComplete)
       .filter(skuComplete => !presentSkuCodes.has(skuComplete))
     const warehouse = mostCommonString(evidence.map(item => item.line.warehouse))
+    const uom = mostCommonString(evidence.map(item => item.line.inventoryUom))
     const issueMethod = issueMethodAssessment(evidence)
 
     if (logical.isMaterialGroup) {
       const { consumptions, contradictions } = buildConsumptions(logical, input.colorConfigurations)
-      proposals.push(materialProposedLine({ logical, warehouse, issueMethod: issueMethod.proposed, consumptions }))
+      proposals.push(materialProposedLine({ logical, warehouse, uom, issueMethod: issueMethod.proposed, consumptions }))
       findings.push(createFinding({
         findingKey: `material-group:${logical.key}`,
         findingType: 'material_group_confirmation',
-        severity: 'blocker',
+        severity: 'info',
         lineIdentity: logical.key,
         baseItemCode: logical.alternatives[0]?.base_item_code ?? null,
         occurrence: null,
@@ -562,14 +606,28 @@ export function analyzeReferenceBom(input: {
         scope: lineScope,
         sortOrder: logical.sortOrder,
         qty: mostCommonNumber(quantities),
+        uom,
         warehouse,
         issueMethod: issueMethod.proposed,
       }))
-      const hasStructuralVariation = absentSkuCodes.length > 0
+      const absentSkusHaveConfiguredColor = absentSkuCodes.every((skuComplete) => {
+        const colorCode = skuComplete.split('-')[3]
+        const configuration = colorCode ? input.colorConfigurations.get(colorCode) : undefined
+        if (!configuration) return false
+        const mappedScope = configuredScopeForColor(configuration, lineScope)
+        return Boolean(configuration.applicationColors[mappedScope] ?? configuration.applicationColors.full_product)
+      })
+      const hasStructuralVariation = (absentSkuCodes.length > 0 && !absentSkusHaveConfiguredColor)
         || !allSameNumber(quantities)
         || !allSameText(evidence.map(item => item.line.warehouse))
-      const configuredColor = lineUsesConfiguredColor(evidence, lineScope, input.colorConfigurations)
-      const hasColorVariation = evidence.some(item => {
+      const configuredColor = lineUsesConfiguredColor(evidence, lineScope, input.colorConfigurations, input.context)
+      const unresolvedColorEvidence = evidence.filter(item => !evidenceUsesConfiguredColor(
+        item,
+        lineScope,
+        input.colorConfigurations,
+        input.context
+      ))
+      const hasColorVariation = unresolvedColorEvidence.some(item => {
         const skuColorCode = item.snapshot.skuColorCode
         return skuColorCode && item.line.variantCode4 !== '0000' && item.line.variantCode4 !== skuColorCode
       })
@@ -587,7 +645,7 @@ export function analyzeReferenceBom(input: {
             message: 'Esta pieza tiene una diferencia de color, presencia, cantidad o bodega que necesita una regla explicita o una correccion en SAP.',
             absent_skus: absentSkuCodes,
             configured_color_mapping_recognized: configuredColor,
-            ...lineDetails(evidence),
+            ...lineDetails(hasStructuralVariation ? evidence : unresolvedColorEvidence),
           },
         }))
       }
@@ -603,6 +661,8 @@ export function analyzeReferenceBom(input: {
         }
         for (const [sourceColorCode, targets] of targetBySkuColor) {
           if (targets.size !== 1) continue
+          const sourceEvidence = evidence.filter(item => item.snapshot.skuColorCode === sourceColorCode)
+          if (lineUsesConfiguredColor(sourceEvidence, lineScope, input.colorConfigurations, input.context)) continue
           const targetColorCode = [...targets][0]
           findings.push(createFinding({
             findingKey: `color-rule:${logical.key}:${sourceColorCode}:${lineScope}:${targetColorCode}`,
