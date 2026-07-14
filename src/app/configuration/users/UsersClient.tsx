@@ -15,6 +15,7 @@ import {
   Save,
   Search,
   ShieldCheck,
+  Trash2,
   UserCog,
 } from 'lucide-react'
 
@@ -34,6 +35,7 @@ import {
 
 import {
   createRoleAction,
+  deleteUserAction,
   getRolesAction,
   getUsersAction,
   inviteUserAction,
@@ -165,6 +167,7 @@ export default function UsersClient({
   const [inviteRole, setInviteRole] = useState<UserRole>(() => getDefaultInviteRole(initialRoles))
   const [roleFormOpen, setRoleFormOpen] = useState(false)
   const [roleForm, setRoleForm] = useState<RoleFormState>(() => toRoleForm(null))
+  const [userPendingDeletion, setUserPendingDeletion] = useState<AdminUserRow | null>(null)
   const [isInviting, setIsInviting] = useState(false)
   const [isSavingRole, setIsSavingRole] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -226,8 +229,8 @@ export default function UsersClient({
       setInviteEmail('')
       setInviteOpen(false)
       toast.success(result.status === 'invited'
-        ? 'Invitacion enviada correctamente.'
-        : 'El usuario ya existia; se actualizo su rol.')
+        ? 'Invitación enviada correctamente.'
+        : 'El usuario ya existía; se actualizó su rol.')
     } catch (error) {
       toast.error(getErrorMessage(error))
     } finally {
@@ -256,6 +259,24 @@ export default function UsersClient({
     try {
       await sendUserRecoveryAction({ userId: user.id })
       toast.success('Correo de acceso enviado.')
+    } catch (error) {
+      toast.error(getErrorMessage(error))
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
+  const handleDeleteUser = async () => {
+    if (!userPendingDeletion) return
+
+    const user = userPendingDeletion
+    setBusyKey(`delete:${user.id}`)
+    try {
+      await deleteUserAction({ userId: user.id })
+      setUsers((current) => current.filter((item) => item.id !== user.id))
+      setUserPendingDeletion(null)
+      await refreshUsersAndRoles()
+      toast.success('Usuario eliminado. Ya puedes invitarlo de nuevo.')
     } catch (error) {
       toast.error(getErrorMessage(error))
     } finally {
@@ -340,9 +361,9 @@ export default function UsersClient({
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
-            <h2 className="text-lg font-bold text-slate-900">Roles y accesos por modulo</h2>
+            <h2 className="text-lg font-bold text-slate-900">Roles y accesos por módulo</h2>
             <p className="text-sm text-slate-500">
-              Elige exactamente que modulos puede abrir cada rol. Admin conserva acceso total.
+              Elige exactamente qué módulos puede abrir cada rol. Admin conserva acceso total.
             </p>
           </div>
         </div>
@@ -363,7 +384,7 @@ export default function UsersClient({
                     {role.key === ADMIN_ROLE ? <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">Fijo</Badge> : null}
                   </div>
                   <div className="mt-1 font-mono text-xs text-slate-400">{role.key}</div>
-                  <p className="mt-2 text-sm text-slate-600">{role.description || 'Sin descripcion.'}</p>
+                  <p className="mt-2 text-sm text-slate-600">{role.description || 'Sin descripción.'}</p>
                   <p className="mt-2 text-xs font-medium text-slate-500">Usuarios asignados: {role.userCount}</p>
                 </div>
                 <Button
@@ -440,6 +461,7 @@ export default function UsersClient({
               filteredUsers.map((user) => {
                 const roleBusy = busyKey === `role:${user.id}`
                 const recoveryBusy = busyKey === `recovery:${user.id}`
+                const deleteBusy = busyKey === `delete:${user.id}`
                 const roleDisabled = user.isCurrentUser || roleBusy
                 const currentRole = roleByKey.get(user.role)
                 const roleOptions = activeRoles.some((role) => role.key === user.role)
@@ -495,15 +517,27 @@ export default function UsersClient({
                       <div className="text-xs text-slate-400">Actualizado: {formatDate(user.updatedAt)}</div>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="outline"
-                        className="border-slate-200"
-                        onClick={() => handleRecovery(user)}
-                        disabled={recoveryBusy || !user.email}
-                      >
-                        {recoveryBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <KeyRound className="mr-2 h-4 w-4" />}
-                        Enviar acceso
-                      </Button>
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <Button
+                          variant="outline"
+                          className="border-slate-200"
+                          onClick={() => handleRecovery(user)}
+                          disabled={recoveryBusy || !user.email}
+                        >
+                          {recoveryBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <KeyRound className="mr-2 h-4 w-4" />}
+                          Enviar acceso
+                        </Button>
+                        <Button
+                          variant="outline"
+                          className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
+                          onClick={() => setUserPendingDeletion(user)}
+                          disabled={deleteBusy || user.isCurrentUser}
+                          title={user.isCurrentUser ? 'No puedes eliminar tu propio usuario.' : undefined}
+                        >
+                          {deleteBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                          Eliminar
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 )
@@ -513,6 +547,52 @@ export default function UsersClient({
         </Table>
       </div>
 
+      <Dialog
+        open={userPendingDeletion !== null}
+        onOpenChange={(open) => {
+          if (!open && !busyKey?.startsWith('delete:')) {
+            setUserPendingDeletion(null)
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle className="text-slate-900">Eliminar usuario</DialogTitle>
+            <DialogDescription>
+              Esta acción elimina definitivamente el acceso de Supabase y el perfil RBAC.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="rounded-lg border border-red-100 bg-red-50 p-3 text-sm text-red-800">
+            <span className="font-semibold">Usuario:</span> {userPendingDeletion?.email || 'Sin correo'}
+          </div>
+          <p className="text-sm text-slate-600">
+            Sus sesiones e invitaciones dejarán de funcionar. Podrás crear una invitación nueva después de eliminarlo.
+          </p>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="border-slate-200"
+              onClick={() => setUserPendingDeletion(null)}
+              disabled={busyKey?.startsWith('delete:')}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              className="bg-red-600 text-white hover:bg-red-700"
+              onClick={handleDeleteUser}
+              disabled={busyKey?.startsWith('delete:')}
+            >
+              {busyKey?.startsWith('delete:') ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+              Eliminar usuario
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
         <DialogContent className="sm:max-w-[520px]">
           <DialogHeader>
@@ -521,7 +601,7 @@ export default function UsersClient({
               Invitar usuario
             </DialogTitle>
             <DialogDescription>
-              Supabase enviara el correo de invitacion. La app guardara el rol inicial en public.user_profiles.
+              Supabase enviará el correo de invitación. La app guardará el rol inicial en public.user_profiles.
             </DialogDescription>
           </DialogHeader>
 
@@ -555,7 +635,7 @@ export default function UsersClient({
             <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-xs leading-relaxed text-indigo-800">
               <div className="flex items-start gap-2">
                 <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>No se muestra ni se copia ningun token de invitacion. El correo sale directamente desde Supabase Auth.</span>
+                <span>No se muestra ni se copia ningún token de invitación. El correo sale directamente desde Supabase Auth.</span>
               </div>
             </div>
 
@@ -565,7 +645,7 @@ export default function UsersClient({
               </Button>
               <Button type="submit" disabled={isInviting || activeRoles.length === 0} className="bg-slate-900 text-white hover:bg-slate-800">
                 {isInviting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
-                Enviar invitacion
+                Enviar invitación
               </Button>
             </DialogFooter>
           </form>
@@ -580,15 +660,15 @@ export default function UsersClient({
               {roleForm.isNew ? 'Nuevo rol' : 'Editar rol'}
             </DialogTitle>
             <DialogDescription>
-              Los permisos se configuran por modulo. Admin conserva acceso total y no se edita desde esta pantalla.
+              Los permisos se configuran por módulo. Admin conserva acceso total y no se edita desde esta pantalla.
             </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={handleSaveRole} className="flex min-h-0 flex-1 flex-col">
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
               <div className="grid gap-3 md:grid-cols-2">
-                <div className="grid gap-1.5">
-                  <Label className="text-xs font-bold uppercase text-slate-700">Key</Label>
+                <div className="grid content-start gap-1.5">
+                  <Label className="text-xs font-bold uppercase text-slate-700">Clave</Label>
                   <Input
                     value={roleForm.key}
                     onChange={(event) => setRoleForm((current) => ({ ...current, key: event.target.value.toLowerCase() }))}
@@ -598,9 +678,9 @@ export default function UsersClient({
                     required
                     className="h-9"
                   />
-                  <p className="text-xs text-slate-400">Minusculas, numeros, guion y guion bajo.</p>
+                  <p className="text-xs text-slate-400">Minúsculas, números, guión y guión bajo.</p>
                 </div>
-                <div className="grid gap-1.5">
+                <div className="grid content-start gap-1.5">
                   <Label className="text-xs font-bold uppercase text-slate-700">Nombre visible</Label>
                   <Input
                     value={roleForm.label}
@@ -613,7 +693,7 @@ export default function UsersClient({
               </div>
 
               <div className="grid gap-1.5">
-                <Label className="text-xs font-bold uppercase text-slate-700">Descripcion</Label>
+                <Label className="text-xs font-bold uppercase text-slate-700">Descripción</Label>
                 <Input
                   value={roleForm.description}
                   onChange={(event) => setRoleForm((current) => ({ ...current, description: event.target.value }))}
@@ -633,7 +713,7 @@ export default function UsersClient({
               </label>
 
               <div className="grid gap-2">
-                <Label className="text-xs font-bold uppercase text-slate-700">Modulos permitidos</Label>
+                <Label className="text-xs font-bold uppercase text-slate-700">Módulos permitidos</Label>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   {APP_MODULES.map((module) => {
                     const checked = roleForm.allowedModules.includes(module.key)
@@ -665,7 +745,7 @@ export default function UsersClient({
               </div>
             </div>
 
-            <DialogFooter className="border-t border-slate-100 px-5 py-3">
+            <DialogFooter className="mx-0 mb-0 shrink-0 border-t border-slate-100 px-5 py-3">
               <Button type="button" variant="outline" className="border-slate-200" onClick={() => setRoleFormOpen(false)}>
                 Cancelar
               </Button>

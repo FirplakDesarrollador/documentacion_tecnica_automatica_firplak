@@ -47,7 +47,7 @@ export default function LoginPage() {
     const handlePasswordRecovery = async () => {
         const safeEmail = email.trim()
         if (!safeEmail) {
-            setError('Ingresa tu correo para enviarte el enlace de recuperacion.')
+            setError('Ingresa tu correo para enviarte el enlace de recuperación.')
             setNotice(null)
             return
         }
@@ -61,13 +61,13 @@ export default function LoginPage() {
             const { error: recoveryError } = await supabase.auth.resetPasswordForEmail(safeEmail, { redirectTo })
 
             if (recoveryError) {
-                setError('No se pudo procesar la solicitud de recuperacion. Intentalo de nuevo o contacta a un administrador.')
+                setError('No se pudo procesar la solicitud de recuperación. Inténtalo de nuevo o contacta a un administrador.')
                 return
             }
 
-            setNotice('Si el correo esta autorizado, recibiras un enlace para actualizar tu contrasena.')
+            setNotice('Si el correo está autorizado, recibirás un enlace para actualizar tu contraseña.')
         } catch {
-            setError('Ocurrio un error inesperado. Intentalo de nuevo.')
+            setError('Ocurrió un error inesperado. Inténtalo de nuevo.')
         } finally {
             setRecoveryLoading(false)
         }
@@ -169,7 +169,7 @@ export default function LoginPage() {
                             disabled={loading || recoveryLoading}
                             className="w-full text-center text-xs font-semibold text-slate-500 transition-colors hover:text-indigo-600 disabled:cursor-not-allowed disabled:text-slate-400"
                         >
-                            {recoveryLoading ? 'Enviando enlace...' : 'Olvide mi contrasena'}
+                            {recoveryLoading ? 'Enviando enlace...' : 'Olvidé mi contraseña'}
                         </button>
                     </form>
                 </div>

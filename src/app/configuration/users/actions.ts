@@ -43,7 +43,7 @@ type AppRoleDbRow = {
 function normalizeEmail(value: unknown) {
   const email = String(value ?? '').trim().toLowerCase()
   if (!email || !email.includes('@')) {
-    throw new Error('Correo electronico invalido')
+    throw new Error('Correo electrónico inválido')
   }
   return email
 }
@@ -55,7 +55,7 @@ function readErrorMessage(error: { message?: string } | null | undefined) {
 function normalizeRoleLabel(value: unknown) {
   const label = String(value ?? '').trim()
   if (!label) {
-    throw new Error('Nombre visible del rol requerido')
+    throw new Error('El nombre visible del rol es obligatorio')
   }
   return label
 }
@@ -186,7 +186,7 @@ async function assertActiveRole(admin: SupabaseAdminClient, roleValue: unknown) 
   const row = await fetchRoleByKey(admin, role)
 
   if (!row || row.active === false) {
-    throw new Error('Rol inexistente o inactivo')
+    throw new Error('El rol no existe o está inactivo')
   }
 
   return role
@@ -234,7 +234,20 @@ async function fetchAuthUserById(admin: SupabaseAdminClient, userId: string) {
   return data.user
 }
 
-async function getAuthRedirectTo() {
+async function countUserQuotations(admin: SupabaseAdminClient, userId: string) {
+  const { count, error } = await admin
+    .from('cot_cotizaciones')
+    .select('id', { count: 'exact', head: true })
+    .eq('creado_por', userId)
+
+  if (error) {
+    throw new Error(`No se pudo validar las cotizaciones del usuario: ${readErrorMessage(error)}`)
+  }
+
+  return count ?? 0
+}
+
+async function getAuthRedirectTo(destination: 'callback' | 'accept-invite') {
   const headerStore = await headers()
   const origin = headerStore.get('origin')
   const host = headerStore.get('x-forwarded-host') ?? headerStore.get('host')
@@ -243,6 +256,10 @@ async function getAuthRedirectTo() {
 
   if (!baseUrl) {
     throw new Error('No se pudo resolver el origen de la aplicacion para el enlace de autenticacion.')
+  }
+
+  if (destination === 'accept-invite') {
+    return `${baseUrl}/auth/accept-invite`
   }
 
   return `${baseUrl}/auth/callback?next=${encodeURIComponent('/auth/update-password')}`
@@ -305,14 +322,14 @@ export async function inviteUserAction(input: { email: string; role: UserRole })
   let status: InviteUserResult['status'] = 'existing'
 
   if (!authUser) {
-    const redirectTo = await getAuthRedirectTo()
+    const redirectTo = await getAuthRedirectTo('accept-invite')
     const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
       redirectTo,
       data: { app_role: role },
     })
 
     if (error) {
-      throw new Error(`No se pudo enviar la invitacion: ${readErrorMessage(error)}`)
+      throw new Error(`No se pudo enviar la invitación: ${readErrorMessage(error)}`)
     }
 
     if (!data.user) {
@@ -374,14 +391,48 @@ export async function sendUserRecoveryAction(input: { userId: string }) {
   const admin = createSupabaseAdminClient()
   const authUser = await fetchAuthUserById(admin, userId)
   const email = normalizeEmail(authUser.email)
-  const redirectTo = await getAuthRedirectTo()
+  const redirectTo = await getAuthRedirectTo('callback')
   const { error } = await admin.auth.resetPasswordForEmail(email, { redirectTo })
 
   if (error) {
-    throw new Error(`No se pudo enviar el correo de recuperacion: ${readErrorMessage(error)}`)
+    throw new Error(`No se pudo enviar el correo de recuperación: ${readErrorMessage(error)}`)
   }
 
   return { success: true }
+}
+
+export async function deleteUserAction(input: { userId: string }) {
+  const access = await assertRole('admin')
+  const userId = String(input.userId ?? '').trim()
+
+  if (!userId) {
+    throw new Error('userId requerido')
+  }
+
+  if (userId === access.user?.id) {
+    throw new Error('No puedes eliminar tu propio usuario.')
+  }
+
+  const admin = createSupabaseAdminClient()
+  const authUser = await fetchAuthUserById(admin, userId)
+  const quotationCount = await countUserQuotations(admin, userId)
+
+  if (quotationCount > 0) {
+    const quotationDescription = quotationCount === 1
+      ? 'una cotización creada'
+      : `${quotationCount} cotizaciones creadas`
+    throw new Error(
+      `No se puede eliminar ${authUser.email ?? 'este usuario'} porque tiene ${quotationDescription}.`
+    )
+  }
+
+  const { error } = await admin.auth.admin.deleteUser(userId)
+  if (error) {
+    throw new Error(`No se pudo eliminar el usuario: ${readErrorMessage(error)}`)
+  }
+
+  revalidateUsers()
+  return { id: userId }
 }
 
 export async function createRoleAction(input: SaveRoleInput): Promise<AdminRoleRow> {

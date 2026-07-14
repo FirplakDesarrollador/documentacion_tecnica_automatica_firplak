@@ -22,12 +22,12 @@ export default function UpdatePasswordPage() {
     setSuccess(null)
 
     if (password.length < 8) {
-      setError('La contrasena debe tener al menos 8 caracteres.')
+      setError('La contraseña debe tener al menos 8 caracteres.')
       return
     }
 
     if (password !== confirmPassword) {
-      setError('Las contrasenas no coinciden.')
+      setError('Las contraseñas no coinciden.')
       return
     }
 
@@ -36,15 +36,15 @@ export default function UpdatePasswordPage() {
       const { error: updateError } = await supabase.auth.updateUser({ password })
 
       if (updateError) {
-        setError('No se pudo actualizar la contrasena. El enlace pudo expirar; solicita uno nuevo.')
+        setError('No se pudo actualizar la contraseña. El enlace pudo expirar; solicita uno nuevo.')
         return
       }
 
-      setSuccess('Contrasena actualizada correctamente.')
+      setSuccess('Contraseña actualizada correctamente.')
       router.push('/')
       router.refresh()
     } catch {
-      setError('Ocurrio un error inesperado. Intentalo de nuevo.')
+      setError('Ocurrió un error inesperado. Inténtalo de nuevo.')
     } finally {
       setLoading(false)
     }
@@ -63,10 +63,10 @@ export default function UpdatePasswordPage() {
             <Package className="h-10 w-10" />
           </div>
           <h1 className="mb-2 text-center text-3xl font-bold tracking-tight text-primary">
-            Actualizar contrasena
+            Actualizar contraseña
           </h1>
           <p className="max-w-[300px] text-center text-sm text-slate-600">
-            Define una nueva contrasena para completar tu invitacion o recuperacion de acceso.
+            Define una nueva contraseña para completar tu invitación o recuperación de acceso.
           </p>
         </div>
 
@@ -74,7 +74,7 @@ export default function UpdatePasswordPage() {
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-2">
               <label className="ml-1 text-xs font-semibold uppercase tracking-wider text-slate-600">
-                Nueva contrasena
+                Nueva contraseña
               </label>
               <div className="group relative">
                 <KeyRound className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500 transition-colors group-focus-within:text-indigo-600" />
@@ -92,7 +92,7 @@ export default function UpdatePasswordPage() {
 
             <div className="space-y-2">
               <label className="ml-1 text-xs font-semibold uppercase tracking-wider text-slate-600">
-                Confirmar contrasena
+                Confirmar contraseña
               </label>
               <div className="group relative">
                 <KeyRound className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500 transition-colors group-focus-within:text-indigo-600" />
@@ -102,7 +102,7 @@ export default function UpdatePasswordPage() {
                   minLength={8}
                   value={confirmPassword}
                   onChange={(event) => setConfirmPassword(event.target.value)}
-                  placeholder="Repite la contrasena"
+                  placeholder="Repite la contraseña"
                   className="w-full rounded-lg border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-slate-900 shadow-sm transition-all placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-3 focus:ring-indigo-500/20"
                 />
               </div>
@@ -138,7 +138,7 @@ export default function UpdatePasswordPage() {
                   <span>Actualizando...</span>
                 </>
               ) : (
-                'Actualizar contrasena'
+                'Actualizar contraseña'
               )}
             </button>
           </form>

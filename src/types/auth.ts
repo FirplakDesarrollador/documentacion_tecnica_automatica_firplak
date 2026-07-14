@@ -17,9 +17,9 @@ export const PENDING_ROLE = 'pending'
 export const SYSTEM_USER_ROLE_LABELS: Record<SystemUserRole, string> = {
   pending: 'Pendiente',
   admin: 'Admin',
-  production: 'Produccion',
-  designer: 'Diseno',
-  engineering: 'Ingenieria',
+  production: 'Producción',
+  designer: 'Diseño',
+  engineering: 'Ingeniería',
 }
 
 export const USER_ROLE_LABELS: Record<string, string> = SYSTEM_USER_ROLE_LABELS
@@ -89,25 +89,25 @@ export const APP_MODULES: AppModuleDefinition[] = [
   },
   {
     key: 'module:print',
-    label: 'Impresion',
+    label: 'Impresión',
     href: '/print',
     assignable: true,
   },
   {
     key: 'module:product-design',
-    label: 'Diseno de producto',
+    label: 'Diseño de producto',
     href: '/product-design',
     assignable: true,
   },
   {
     key: 'module:productive-modules',
-    label: 'Modulos productivos',
+    label: 'Módulos productivos',
     href: '/productive-modules',
     assignable: true,
   },
   {
     key: 'module:configuration',
-    label: 'Configuracion',
+    label: 'Configuración',
     href: '/configuration',
     assignable: true,
   },
@@ -198,7 +198,7 @@ export function parseUserRole(value: unknown): UserRole | null {
 export function assertUserRole(value: unknown): UserRole {
   const role = parseUserRole(value)
   if (!role) {
-    throw new Error('Rol de usuario invalido')
+    throw new Error('Rol de usuario inválido')
   }
   return role
 }
