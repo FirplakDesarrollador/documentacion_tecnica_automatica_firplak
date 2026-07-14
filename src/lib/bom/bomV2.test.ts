@@ -39,6 +39,7 @@ function line(input: {
   baseItemCode: string
   variantCode4?: string
   sourceOrder: number
+  occurrence?: number
   itemName?: string
   qty?: number
   technicalMetadata?: ReturnType<typeof metadata>
@@ -50,8 +51,8 @@ function line(input: {
     baseItemCode: input.baseItemCode,
     variantCode4,
     isSalesSku: false,
-    occurrence: 1,
-    lineIdentity: `${input.baseItemCode}#1`,
+    occurrence: input.occurrence ?? 1,
+    lineIdentity: `${input.baseItemCode}#${input.occurrence ?? 1}`,
     sourceOrder: input.sourceOrder,
     sapChildNum: input.sourceOrder - 1,
     qty: input.qty ?? 1,
@@ -230,7 +231,7 @@ test('does not propose an already configured edge color when other colors still 
   assert.deepEqual(reviewColors, ['0493'])
 })
 
-test('separates body and front edge rules before a color is configured as dual', () => {
+test('keeps same-color edge bands in one unicolor proposal before SAP verifies the catalog', () => {
   const analysis = analyzeReferenceBom({
     context: {
       referenceId: 'reference', familyCode: 'BAN05', referenceCode: '0122', productName: 'Prueba dual',
@@ -239,7 +240,7 @@ test('separates body and front edge rules before a color is configured as dual',
     snapshots: [
       snapshot('VBAN05-0122-000-0493', '0493', [
         line({ baseItemCode: 'CMPD06-0003-000', variantCode4: '1371', sourceOrder: 1, itemName: 'CANTO PVC 19X0,45MM NARDO' }),
-        line({ baseItemCode: 'CMPD06-0005-000', variantCode4: '0467', sourceOrder: 2, itemName: 'CANTO PVC 19X2MM CINZA COBALTO' }),
+        line({ baseItemCode: 'CMPD06-0005-000', variantCode4: '1371', sourceOrder: 2, itemName: 'CANTO PVC 19X2MM NARDO' }),
       ]),
     ],
     colorConfigurations: new Map<string, ColorConfiguration>([
@@ -253,7 +254,34 @@ test('separates body and front edge rules before a color is configured as dual',
     .filter(finding => finding.findingType === 'color_rule_proposal')
     .map(finding => `${finding.proposedScope}:${finding.proposedColorCode}`)
     .sort()
-  assert.deepEqual(proposals, ['edge_band_body:1371', 'edge_band_front:0467'])
+  assert.deepEqual([...new Set(proposals)], ['edge_band_full_product:1371'])
+})
+
+test('classifies configured dual edge colors by their configured colors, not by a base item code', () => {
+  const analysis = analyzeReferenceBom({
+    context: {
+      referenceId: 'reference', familyCode: 'BAN05', referenceCode: '0122', productName: 'Prueba dual',
+      manufacturingProcess: 'MUEBLES NACIONAL', productType: 'MUEBLE',
+    },
+    snapshots: [
+      snapshot('VBAN05-0122-000-0493', '0493', [
+        line({ baseItemCode: 'CMPD06-0003-000', variantCode4: '1371', sourceOrder: 1, occurrence: 1, itemName: 'CANTO PVC 19X0,45MM NARDO' }),
+        line({ baseItemCode: 'CMPD06-0003-000', variantCode4: '0467', sourceOrder: 2, occurrence: 2, itemName: 'CANTO PVC 19X0,45MM CINZA COBALTO' }),
+      ]),
+    ],
+    colorConfigurations: new Map<string, ColorConfiguration>([
+      ['0493', {
+        code4dig: '0493', colorMode: 'dual',
+        applicationColors: { structure: '1371', front: '0467', edge_band_body: '1371', edge_band_front: '0467' }, applicationMaterialProfiles: {},
+        allowedProductTypes: ['MUEBLE'], allowedManufacturingProcesses: ['MUEBLES NACIONAL'],
+      }],
+    ]),
+  })
+  const edgeScopes = analysis.proposedBomStructure.lines
+    .filter(item => item.base_item_code === 'CMPD06-0003-000')
+    .map(item => item.product_application_scope)
+    .sort()
+  assert.deepEqual(edgeScopes, ['edge_band_body', 'edge_band_front'])
 })
 
 test('uses the confirmed dual edge mapping to classify direct board colors', () => {

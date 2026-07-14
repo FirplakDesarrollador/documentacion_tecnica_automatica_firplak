@@ -69,6 +69,7 @@ type ColorRuleMatrixRow = {
   findingIds: string[]
   baseItemCodes: string[]
   conflictingTargetColorCodes: string[]
+  dualEvidence: string | null
 }
 
 type SelectedDualColorPair = {
@@ -81,6 +82,7 @@ type ColorRuleMatrixCoverage = {
   sourceColorCode: string
   scope: string
   targetColorCode: string
+  baseItemCodes: string[]
   catalogSkuCount: number
   excludedInactiveSapSkuCount: number
   excludedKitSkuCount: number
@@ -97,6 +99,31 @@ type ColorRuleMatrixCoverage = {
     observedColorCode: string | null
     reason: 'missing_component' | 'unexpected_color'
   }>
+  dualCandidates: Array<{
+    structureColorCode: string
+    frontColorCode: string
+    evidenceSkuComplete: string
+    structureQty: number
+    frontQty: number
+    evidenceSkuCount: number
+    cases: Array<{
+      skuComplete: string
+      skuItemName: string | null
+      structureQty: number
+      frontQty: number
+      edgeLines: Array<{
+        itemCode: string
+        itemName: string | null
+        colorCode: string
+        qty: number | null
+      }>
+    }>
+  }>
+}
+
+type MatrixDualCandidate = ColorRuleMatrixCoverage['dualCandidates'][number] & {
+  sourceColorCode: string
+  baseItemCodes: string[]
 }
 
 type AnalysisProgress = {
@@ -130,6 +157,11 @@ function formatElapsedSeconds(seconds: number): string {
   if (seconds < 60) return `${seconds} s`
   const minutes = Math.floor(seconds / 60)
   return `${minutes} min ${seconds % 60} s`
+}
+
+function formatMatrixQuantity(value: number | null): string {
+  if (value === null) return '-'
+  return new Intl.NumberFormat('es-CO', { maximumFractionDigits: 3 }).format(value)
 }
 
 function normalizedMatrixColorCode(value: string | null | undefined): string {
@@ -475,8 +507,40 @@ function colorRuleMatrixRows(findings: ReferenceImportFinding[]): ColorRuleMatri
       findingIds: selectedFindings.map(finding => finding.id),
       baseItemCodes: [...new Set(selectedFindings.flatMap(finding => finding.baseItemCode ? [finding.baseItemCode] : []))].sort(),
       conflictingTargetColorCodes: targets.length > 1 ? targets : [],
+      dualEvidence: null,
     }
   }).sort((left, right) => left.sourceColorCode.localeCompare(right.sourceColorCode) || left.scope.localeCompare(right.scope))
+}
+
+function colorMatrixRowsWithDetectedDuals(
+  rows: ColorRuleMatrixRow[],
+  detectedDuals: Record<string, MatrixDualCandidate>
+): ColorRuleMatrixRow[] {
+  const detectedColors = new Set(Object.keys(detectedDuals))
+  const resolvedRows = rows.filter(row => !detectedColors.has(row.sourceColorCode) || row.scope !== 'edge_band_full_product')
+  for (const dual of Object.values(detectedDuals)) {
+    const evidence = `${dual.evidenceSkuComplete}: estructura ${dual.structureColorCode} (${dual.structureQty}) y frentes ${dual.frontColorCode} (${dual.frontQty}).`
+    resolvedRows.push({
+      key: `${dual.sourceColorCode}:edge_band_body:detected`,
+      sourceColorCode: dual.sourceColorCode,
+      scope: 'edge_band_body',
+      suggestedTargetColorCode: dual.structureColorCode,
+      findingIds: [],
+      baseItemCodes: dual.baseItemCodes,
+      conflictingTargetColorCodes: [],
+      dualEvidence: evidence,
+    }, {
+      key: `${dual.sourceColorCode}:edge_band_front:detected`,
+      sourceColorCode: dual.sourceColorCode,
+      scope: 'edge_band_front',
+      suggestedTargetColorCode: dual.frontColorCode,
+      findingIds: [],
+      baseItemCodes: dual.baseItemCodes,
+      conflictingTargetColorCodes: [],
+      dualEvidence: evidence,
+    })
+  }
+  return resolvedRows.sort((left, right) => left.sourceColorCode.localeCompare(right.sourceColorCode) || left.scope.localeCompare(right.scope))
 }
 
 function selectedDualColorPairs(rows: ColorRuleMatrixRow[]): SelectedDualColorPair[] {
@@ -533,6 +597,8 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const [colorEditor, setColorEditor] = useState<ColorEditorState | null>(null)
   const [selectedMatrixRules, setSelectedMatrixRules] = useState<Record<string, boolean>>({})
   const [matrixTargetColorEdits, setMatrixTargetColorEdits] = useState<Record<string, string>>({})
+  const [detectedMatrixDuals, setDetectedMatrixDuals] = useState<Record<string, MatrixDualCandidate>>({})
+  const [matrixDualAlternatives, setMatrixDualAlternatives] = useState<Record<string, MatrixDualCandidate[]>>({})
   const [matrixRulesReviewed, setMatrixRulesReviewed] = useState(false)
   const [matrixRulesProceedingKey, setMatrixRulesProceedingKey] = useState<string | null>(null)
   const [isApplyingMatrixRules, setIsApplyingMatrixRules] = useState(false)
@@ -580,7 +646,10 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     || genericSupabaseOnlyColors.length > 0
     || sapOnlyColors.length > 0
   const hasIncompleteSource = hasIncompleteSapRead || hasSapCatalogMismatch
-  const colorMatrixRows = colorRuleMatrixRows(workspace?.findings ?? [])
+  const colorMatrixRows = colorMatrixRowsWithDetectedDuals(
+    colorRuleMatrixRows(workspace?.findings ?? []),
+    detectedMatrixDuals
+  )
   const selectedMatrixRuleCount = colorMatrixRows.filter(row => selectedMatrixRules[row.key]).length
   const selectedColorMatrixRows = colorMatrixRows.flatMap(row => {
     if (!selectedMatrixRules[row.key]) return []
@@ -662,6 +731,8 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   async function analyzeReferenceWithProgress(referenceId: string): Promise<void> {
     const startedAt = Date.now()
     clearTransientMatrixAbsenceApprovals()
+    setDetectedMatrixDuals({})
+    setMatrixDualAlternatives({})
     setAnalysisStartedAt(startedAt)
     setAnalysisProgress({ stage: 'starting', message: 'Iniciando el análisis SAP.', current: null, total: null })
     try {
@@ -779,6 +850,8 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     setWorkspace(null)
     setMessage(null)
     setMatrixTargetColorEdits({})
+    setDetectedMatrixDuals({})
+    setMatrixDualAlternatives({})
   }
 
   function analyzeSelectedReference(): void {
@@ -964,6 +1037,30 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
         }] : [])
       try {
         const result = await verifyColorMatrixWithProgress(selections, startedAt)
+        const dualAlternatives = result.results.flatMap(coverage => coverage.scope === 'edge_band_full_product'
+          ? [[coverage.sourceColorCode, coverage.dualCandidates.map(candidate => ({
+            ...candidate,
+            sourceColorCode: coverage.sourceColorCode,
+            baseItemCodes: coverage.baseItemCodes,
+          }))] as const]
+          : [])
+        const nextDualAlternatives = Object.fromEntries(dualAlternatives)
+        const unambiguousDuals = Object.values(nextDualAlternatives).flatMap(candidates => candidates.length === 1 ? candidates : [])
+        if (unambiguousDuals.length > 0) {
+          setDetectedMatrixDuals(current => ({
+            ...current,
+            ...Object.fromEntries(unambiguousDuals.map(candidate => [candidate.sourceColorCode, candidate])),
+          }))
+          setMatrixDualAlternatives(nextDualAlternatives)
+          setSelectedMatrixRules({})
+          setMatrixTargetColorEdits({})
+          setMatrixRulesReviewed(false)
+          setMatrixRulesProceedingKey(null)
+          setMatrixCoverage(null)
+          setMessage(`SAP identificó una configuración Dual para ${unambiguousDuals.map(candidate => candidate.sourceColorCode).join(', ')}. Revisa las reglas de estructura y frentes, selecciónalas y vuelve a verificar antes de aplicarlas. Tiempo total: ${formatElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000))}.`)
+          return
+        }
+        setMatrixDualAlternatives(nextDualAlternatives)
         setMessage(`${result.message} Tiempo total: ${formatElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000))}.`)
         setMatrixCoverage({ selectionKey: matrixSelectionKey, success: result.success, results: result.results })
       } catch (error) {
@@ -1009,6 +1106,20 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     setMatrixCoverage(null)
     setMatrixRulesReviewed(false)
     setMatrixRulesProceedingKey(null)
+  }
+
+  function chooseMatrixColorCandidate(rowKey: string, colorCode: string): void {
+    updateMatrixTargetColor(rowKey, colorCode)
+  }
+
+  function chooseDetectedMatrixDual(candidate: MatrixDualCandidate): void {
+    setDetectedMatrixDuals(current => ({ ...current, [candidate.sourceColorCode]: candidate }))
+    setSelectedMatrixRules({})
+    setMatrixTargetColorEdits({})
+    setMatrixCoverage(null)
+    setMatrixRulesReviewed(false)
+    setMatrixRulesProceedingKey(null)
+    setMessage(`Elegiste para ${candidate.sourceColorCode}: estructura ${candidate.structureColorCode} y frentes ${candidate.frontColorCode}. Revisa las dos reglas, selecciónalas y verifica SAP antes de aplicarlas.`)
   }
 
   function toggleMatrixAbsence(key: string, selected: boolean): void {
@@ -1240,18 +1351,44 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                 <section className="border border-sky-200 bg-white">
                   <div className="flex flex-wrap items-start justify-between gap-3 border-b border-sky-100 bg-sky-50 px-5 py-4">
                     <div>
-                      <h2 className="font-semibold text-slate-950">Matriz de colores internos y cantos (V06)</h2>
-                      <p className="mt-1 text-sm text-slate-600">La propuesta inicial viene de la referencia analizada; puedes editarla antes de verificar el catálogo activo de SAP.</p>
+                      <h2 className="font-semibold text-slate-950">Matriz de colores internos y cantos (V08)</h2>
+                      <p className="mt-1 text-sm text-slate-600">La propuesta inicial viene de la referencia analizada; puedes editarla antes de verificar el catálogo activo de SAP. Si SAP evidencia dos colores de canto en un SKU, compara su consumo total para proponer estructura y frentes.</p>
                       <p className="mt-1 text-sm text-slate-600">Una fila aplica una regla global a todas las piezas indicadas. Para una excepción puntual, usa el override de la pieza debajo.</p>
                     </div>
                     <button type="button" onClick={verifyColorMatrixInSap} disabled={isPending || Boolean(matrixVerificationProgress) || selectedMatrixRuleCount === 0 || hasInvalidSelectedMatrixTarget} className="inline-flex h-9 items-center gap-2 border border-sky-300 bg-white px-3 text-sm font-semibold text-sky-900 disabled:opacity-50">{matrixVerificationProgress ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}{matrixVerificationProgress ? 'Verificando en SAP…' : 'Verificar seleccionadas en SAP'}</button>
                   </div>
-                  {matrixVerificationProgress ? <div aria-live="polite" className="border-b border-sky-100 bg-sky-50 px-5 py-3 text-sm text-sky-950">
+                   {matrixVerificationProgress ? <div aria-live="polite" className="border-b border-sky-100 bg-sky-50 px-5 py-3 text-sm text-sky-950">
                     <p className="font-semibold">Verificación de matriz en curso</p>
                     <p className="mt-1">Tiempo transcurrido: {formatElapsedSeconds(matrixVerificationElapsedSeconds)}</p>
                     <p className="mt-1">{matrixVerificationProgress.message}{matrixVerificationProgress.current !== null && matrixVerificationProgress.total !== null ? ` (${matrixVerificationProgress.current} de ${matrixVerificationProgress.total})` : ''}</p>
                     {matrixVerificationProgress.total !== null && matrixVerificationProgress.total > 0 ? <progress className="mt-2 h-2 w-full accent-sky-700" value={matrixVerificationProgress.current ?? 0} max={matrixVerificationProgress.total} /> : <div className="mt-2 h-2 w-full animate-pulse bg-sky-200" />}
                   </div> : null}
+                  {Object.entries(matrixDualAlternatives).filter(([sourceColorCode, candidates]) => candidates.length > 1 && !detectedMatrixDuals[sourceColorCode]).map(([sourceColorCode, candidates]) => (
+                    <div key={sourceColorCode} className="border-b border-violet-200 bg-violet-50 px-5 py-3 text-sm text-violet-950">
+                      <p className="font-semibold">Conflicto Dual para {sourceColorCode}</p>
+                      <p className="mt-1 text-xs">SAP encontró más de una distribución posible. Revisa los casos observados y elige una propuesta para abrir sus dos reglas editables; todavía no se guarda nada.</p>
+                      <div className="mt-3 grid gap-3 xl:grid-cols-2">
+                        {candidates.map((candidate, candidateIndex) => <article key={`${candidate.structureColorCode}:${candidate.frontColorCode}`} className="border border-violet-200 bg-white p-3 text-slate-800">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div>
+                              <p className="font-semibold text-violet-950">Caso {candidateIndex + 1}: estructura {candidate.structureColorCode} · frentes {candidate.frontColorCode}</p>
+                              <p className="mt-1 text-xs text-slate-600">{candidate.evidenceSkuCount} SKU{candidate.evidenceSkuCount === 1 ? '' : 's'} activo{candidate.evidenceSkuCount === 1 ? '' : 's'} con este patrón.</p>
+                            </div>
+                            <button type="button" onClick={() => chooseDetectedMatrixDual(candidate)} className="border border-violet-300 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-950">Elegir esta propuesta</button>
+                          </div>
+                          <div className="mt-3 space-y-2">
+                            {candidate.cases.map(candidateCase => <div key={candidateCase.skuComplete} className="border-t border-violet-100 pt-2 text-xs">
+                              <p><span className="font-mono font-semibold">{candidateCase.skuComplete}</span>{candidateCase.skuItemName ? ` — ${candidateCase.skuItemName}` : ''}</p>
+                              <p className="mt-1 text-slate-600">Estructura {candidate.structureColorCode}: {formatMatrixQuantity(candidateCase.structureQty)} · Frentes {candidate.frontColorCode}: {formatMatrixQuantity(candidateCase.frontQty)}</p>
+                              <ul className="mt-1 space-y-1 text-slate-600">
+                                {candidateCase.edgeLines.map(edgeLine => <li key={edgeLine.itemCode}><span className="font-mono">{edgeLine.itemCode}</span>{edgeLine.itemName ? ` — ${edgeLine.itemName}` : ''} · color {edgeLine.colorCode} · {formatMatrixQuantity(edgeLine.qty)}</li>)}
+                              </ul>
+                            </div>)}
+                          </div>
+                        </article>)}
+                      </div>
+                    </div>
+                  ))}
                   <div className="overflow-x-auto">
                     <table className="min-w-full text-left text-sm">
                       <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
@@ -1279,8 +1416,12 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                                 placeholder="0000"
                                 className="h-8 w-20 border border-sky-300 bg-white px-2 font-mono font-semibold text-sky-900"
                               />
-                              <p className="mt-1 text-xs text-slate-500">Propuesta de la referencia: {row.suggestedTargetColorCode ?? 'sin color único'}</p>
-                              {isConflict ? <p className="mt-1 text-xs text-rose-700">La referencia analizada tiene más de un color. Define uno para verificarlo contra todo SAP.</p> : null}
+                               <p className="mt-1 text-xs text-slate-500">Propuesta de la referencia: {row.suggestedTargetColorCode ?? 'sin color único'}</p>
+                               {row.dualEvidence ? <p className="mt-1 text-xs text-violet-800">Evidencia SAP: {row.dualEvidence}</p> : null}
+                               {isConflict ? <>
+                                 <p className="mt-1 text-xs text-rose-700">La referencia analizada tiene más de un color. Elige uno para verificarlo contra todo SAP.</p>
+                                 <div className="mt-2 flex flex-wrap gap-1">{row.conflictingTargetColorCodes.map(colorCode => <button key={colorCode} type="button" onClick={() => chooseMatrixColorCandidate(row.key, colorCode)} className="border border-rose-300 bg-white px-2 py-1 font-mono text-xs font-semibold text-rose-900">Usar {colorCode}</button>)}</div>
+                               </> : null}
                             </td>
                             <td className="px-5 py-3 text-xs text-slate-700">{row.baseItemCodes.map(code => `${code}${workspace.proposalItemNames[code] ? ` — ${workspace.proposalItemNames[code]}` : ''}`).join('\n')}</td>
                           </tr>

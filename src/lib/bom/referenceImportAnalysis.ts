@@ -45,10 +45,6 @@ const BOARD_THICKNESS_TOLERANCE_MM = 0.5
 
 const SCOPE_BY_BASE_ITEM_CODE: Record<string, ReferenceProductApplicationScope> = {
   'CMPD06-0030-000': 'drawer_bottom',
-  // SAP distinguishes these two physical edge bands even when the description
-  // does not say whether it belongs to a body or a front.
-  'CMPD06-0003-000': 'edge_band_body',
-  'CMPD06-0005-000': 'edge_band_front',
 }
 
 function normalizedText(value: string | null | undefined): string {
@@ -117,6 +113,21 @@ function dualBoardScopeFromEvidence(
   return observedScopes.size === 1 ? [...observedScopes][0] ?? null : null
 }
 
+function dualEdgeScopeFromEvidence(
+  evidence: LineEvidence[],
+  colorConfigurations: Map<string, ColorConfiguration>
+): ReferenceProductApplicationScope | null {
+  const observedScopes = new Set<ReferenceProductApplicationScope>()
+  for (const item of evidence) {
+    const colorCode = item.snapshot.skuColorCode
+    const configuration = colorCode ? colorConfigurations.get(colorCode) : undefined
+    if (configuration?.colorMode !== 'dual') continue
+    if (item.line.variantCode4 === configuration.applicationColors.structure) observedScopes.add('edge_band_body')
+    if (item.line.variantCode4 === configuration.applicationColors.front) observedScopes.add('edge_band_front')
+  }
+  return observedScopes.size === 1 ? [...observedScopes][0] ?? null : null
+}
+
 function metadataFor(line: NormalizedSapBomLine): ComponentTechnicalMetadata | null {
   return line.technicalMetadata
 }
@@ -136,13 +147,8 @@ function scopeFromSemantics(
   const name = normalizedText(line.itemName)
   if (name.includes('FONDO') && (name.includes('CAJON') || name.includes('DRAWER'))) return 'drawer_bottom'
   if (name.includes('CANTO')) {
-    if (name.includes('FRENTE') || name.includes('PUERTA') || name.includes('FRONTAL')) return 'edge_band_front'
     if (name.includes('INTERIOR') || name.includes('INTERNA') || name.includes('CAJON')) return 'edge_band_inner'
-    const includesStructuredColor = evidence.some(item => {
-      const colorCode = item.snapshot.skuColorCode
-      return colorCode ? asColorMode(colorConfigurations.get(colorCode)) !== 'full' : false
-    })
-    return includesStructuredColor ? 'edge_band_body' : 'edge_band_full_product'
+    return dualEdgeScopeFromEvidence(evidence, colorConfigurations) ?? 'edge_band_full_product'
   }
   if (name.includes('ESTRUCTURA') || name.includes('COSTADO') || name.includes('LATERAL')) return 'structure'
   if (name.includes('INTERIOR') || name.includes('INTERNA')) return 'inner_structure'

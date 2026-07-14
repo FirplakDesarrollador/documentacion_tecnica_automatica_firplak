@@ -1884,6 +1884,27 @@ export type ColorRuleCoverageMismatch = {
   reason: 'missing_component' | 'unexpected_color'
 }
 
+export type EdgeDualCandidate = {
+  structureColorCode: string
+  frontColorCode: string
+  evidenceSkuComplete: string
+  structureQty: number
+  frontQty: number
+  evidenceSkuCount: number
+  cases: Array<{
+    skuComplete: string
+    skuItemName: string | null
+    structureQty: number
+    frontQty: number
+    edgeLines: Array<{
+      itemCode: string
+      itemName: string | null
+      colorCode: string
+      qty: number | null
+    }>
+  }>
+}
+
 export type ColorRuleCoverageResult = {
   sourceColorCode: string
   scope: ReferenceProductApplicationScope
@@ -1897,6 +1918,7 @@ export type ColorRuleCoverageResult = {
   matchingSkuCount: number
   sapReadErrors: Array<{ skuComplete: string; message: string }>
   mismatches: ColorRuleCoverageMismatch[]
+  dualCandidates: EdgeDualCandidate[]
 }
 
 type CatalogColorSku = Omit<ReferenceImportSku, 'colorCode'> & {
@@ -1911,7 +1933,81 @@ type CatalogSapSkuStatus = {
 
 type CatalogSapBom = {
   treeType: string | null
-  lines: Array<{ itemCode: string; itemName: string | null }>
+  lines: Array<{ itemCode: string; itemName: string | null; qty: number | null }>
+}
+
+type EdgeColorTotal = {
+  colorCode: string
+  qty: number
+}
+
+function edgeBandLines(bom: CatalogSapBom, baseItemCodes: string[]): Array<{
+  itemCode: string
+  itemName: string | null
+  colorCode: string
+  qty: number | null
+}> {
+  const allowedBaseCodes = new Set(baseItemCodes)
+  return bom.lines.flatMap(line => {
+    const parsed = parseSapItemCode(line.itemCode)
+    const isEdgeBand = line.itemName?.toUpperCase().includes('CANTO') === true
+    return ((!allowedBaseCodes.has(parsed.baseItemCode) && !isEdgeBand) || parsed.variantCode4 === '0000')
+      ? []
+      : [{ itemCode: parsed.itemCode, itemName: line.itemName, colorCode: parsed.variantCode4, qty: line.qty }]
+  })
+}
+
+function edgeColorTotals(bom: CatalogSapBom, baseItemCodes: string[]): EdgeColorTotal[] {
+  const totals = new Map<string, number>()
+  for (const line of edgeBandLines(bom, baseItemCodes)) {
+    totals.set(line.colorCode, (totals.get(line.colorCode) ?? 0) + (line.qty ?? 0))
+  }
+  return [...totals.entries()]
+    .map(([colorCode, qty]) => ({ colorCode, qty }))
+    .sort((left, right) => right.qty - left.qty || left.colorCode.localeCompare(right.colorCode))
+}
+
+function detectedEdgeDualCandidates(input: {
+  ruleSkus: CatalogColorSku[]
+  sapBoms: Map<string, { bom: CatalogSapBom | null; error: string | null }>
+  sapSkuStatuses: Map<string, CatalogSapSkuStatus>
+  baseItemCodes: string[]
+}): EdgeDualCandidate[] {
+  const candidates = new Map<string, EdgeDualCandidate>()
+  for (const sku of input.ruleSkus) {
+    const bom = input.sapBoms.get(sku.skuComplete)?.bom
+    if (!bom || isSalesKitTree(bom.treeType)) continue
+    const totals = edgeColorTotals(bom, input.baseItemCodes)
+    if (totals.length !== 2 || totals[0]?.qty === totals[1]?.qty) continue
+    const structure = totals[0]
+    const front = totals[1]
+    if (!structure || !front) continue
+    const key = `${structure.colorCode}:${front.colorCode}`
+    const candidateCase = {
+      skuComplete: sku.skuComplete,
+      skuItemName: input.sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal,
+      structureQty: structure.qty,
+      frontQty: front.qty,
+      edgeLines: edgeBandLines(bom, input.baseItemCodes),
+    }
+    const current = candidates.get(key)
+    candidates.set(key, current
+      ? { ...current, evidenceSkuCount: current.evidenceSkuCount + 1, cases: [...current.cases, candidateCase] }
+      : {
+        structureColorCode: structure.colorCode,
+        frontColorCode: front.colorCode,
+        evidenceSkuComplete: sku.skuComplete,
+        structureQty: structure.qty,
+        frontQty: front.qty,
+        evidenceSkuCount: 1,
+        cases: [candidateCase],
+      })
+  }
+  return [...candidates.values()]
+    .map(candidate => ({ ...candidate, cases: candidate.cases.sort((left, right) => left.skuComplete.localeCompare(right.skuComplete)) }))
+    .sort((left, right) => right.evidenceSkuCount - left.evidenceSkuCount
+      || left.structureColorCode.localeCompare(right.structureColorCode)
+      || left.frontColorCode.localeCompare(right.frontColorCode))
 }
 
 const COLOR_COVERAGE_PREFIX_BATCH_SIZE = 8
@@ -1947,7 +2043,7 @@ function catalogSapBomFromTree(tree: SapEntityPayload): CatalogSapBom | null {
     lines: rawLines.flatMap((value) => {
       const line = isRecord(value) ? value : {}
       const itemCode = readString(line.ItemCode)
-      return itemCode ? [{ itemCode, itemName: readString(line.ItemName) }] : []
+      return itemCode ? [{ itemCode, itemName: readString(line.ItemName), qty: readNumber(line.Quantity) }] : []
     }),
   }
 }
@@ -1991,7 +2087,7 @@ async function readReferenceDirectSnapshots(
 function catalogSapBomFromDirectBom(bom: SapBom): CatalogSapBom {
   return {
     treeType: bom.treeType,
-    lines: bom.lines.map(line => ({ itemCode: line.ItemCode, itemName: line.ItemName?.trim() || null })),
+    lines: bom.lines.map(line => ({ itemCode: line.ItemCode, itemName: line.ItemName?.trim() || null, qty: readNumber(line.Quantity) })),
   }
 }
 
@@ -2288,6 +2384,36 @@ export async function verifyReferenceImportColorRulesMatrix(input: {
       }
       checkedSkuCount += 1
       let skuMatchesRule = true
+      if (rule.scope === 'edge_band_body' || rule.scope === 'edge_band_front') {
+        const edgeColors = edgeColorTotals(result.bom, rule.baseItemCodes)
+        const observed = rule.scope === 'edge_band_body' ? edgeColors[0] : edgeColors[1]
+        if (edgeColors.length !== 2 || !observed || edgeColors[0]?.qty === edgeColors[1]?.qty) {
+          mismatches.push({
+            skuComplete: sku.skuComplete,
+            skuItemName: sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal,
+            baseItemCode: rule.baseItemCodes.join(' + '),
+            itemCode: null,
+            itemName: null,
+            observedColorCode: null,
+            reason: 'unexpected_color',
+          })
+          continue
+        }
+        if (observed.colorCode !== rule.targetColorCode) {
+          mismatches.push({
+            skuComplete: sku.skuComplete,
+            skuItemName: sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal,
+            baseItemCode: rule.baseItemCodes.join(' + '),
+            itemCode: null,
+            itemName: null,
+            observedColorCode: observed.colorCode,
+            reason: 'unexpected_color',
+          })
+          continue
+        }
+        matchingSkuCount += 1
+        continue
+      }
       for (const baseItemCode of rule.baseItemCodes) {
         const matchingLines = result.bom.lines.filter(line => parseSapItemCode(line.itemCode).baseItemCode === baseItemCode)
         if (matchingLines.length === 0) {
@@ -2337,6 +2463,7 @@ export async function verifyReferenceImportColorRulesMatrix(input: {
       matchingSkuCount,
       sapReadErrors,
       mismatches,
+      dualCandidates: [],
     }
   })
 }
@@ -2425,6 +2552,36 @@ export async function verifyReferenceImportColorRulesMatrixDirect(input: {
       }
       checkedSkuCount += 1
       let skuMatchesRule = true
+      if (rule.scope === 'edge_band_body' || rule.scope === 'edge_band_front') {
+        const edgeColors = edgeColorTotals(result.bom, rule.baseItemCodes)
+        const observed = rule.scope === 'edge_band_body' ? edgeColors[0] : edgeColors[1]
+        if (edgeColors.length !== 2 || !observed || edgeColors[0]?.qty === edgeColors[1]?.qty) {
+          mismatches.push({
+            skuComplete: sku.skuComplete,
+            skuItemName: sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal,
+            baseItemCode: rule.baseItemCodes.join(' + '),
+            itemCode: null,
+            itemName: null,
+            observedColorCode: null,
+            reason: 'unexpected_color',
+          })
+          continue
+        }
+        if (observed.colorCode !== rule.targetColorCode) {
+          mismatches.push({
+            skuComplete: sku.skuComplete,
+            skuItemName: sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal,
+            baseItemCode: rule.baseItemCodes.join(' + '),
+            itemCode: null,
+            itemName: null,
+            observedColorCode: observed.colorCode,
+            reason: 'unexpected_color',
+          })
+          continue
+        }
+        matchingSkuCount += 1
+        continue
+      }
       for (const baseItemCode of rule.baseItemCodes) {
         const matchingLines = result.bom.lines.filter(line => parseSapItemCode(line.itemCode).baseItemCode === baseItemCode)
         if (matchingLines.length === 0) {
@@ -2454,6 +2611,9 @@ export async function verifyReferenceImportColorRulesMatrixDirect(input: {
       matchingSkuCount,
       sapReadErrors,
       mismatches,
+      dualCandidates: rule.scope === 'edge_band_full_product'
+        ? detectedEdgeDualCandidates({ ruleSkus, sapBoms, sapSkuStatuses, baseItemCodes: rule.baseItemCodes })
+        : [],
     }
   })
   await reportColorMatrixVerificationProgress(input.onProgress, {
