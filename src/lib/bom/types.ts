@@ -20,6 +20,19 @@ export type MaterialProfile = (typeof MATERIAL_PROFILES)[number] | string
 export type BomColorMode = 'full' | 'dual' | 'balance'
 export type BomConsumptionStatus = 'observed' | 'confirmed' | 'needs_definition'
 
+/**
+ * A color can be unicolor by default while a small, explicitly identified
+ * group of complete SKU uses a dual or balance composition. The SKU list is
+ * intentionally part of the configuration so the exception never becomes a
+ * rule for every product sharing the product color.
+ */
+export type HybridColorCase = {
+  case_id: string
+  color_mode: Extract<BomColorMode, 'dual' | 'balance'>
+  sku_completes: string[]
+  application_colors: Record<string, string>
+}
+
 export type ComponentTechnicalMetadata = {
   material_kind: 'board' | 'edge_band' | 'other'
   material_profile: MaterialProfile | null
@@ -142,6 +155,7 @@ export type Colorway = {
   name_color_sap: string
   color_mode: 'full' | 'dual' | 'balance' | 'equivalent'
   application_colors_json: Record<string, string>
+  hybrid_color_cases?: HybridColorCase[]
   application_material_profiles_json: Record<string, string>
   allowed_product_types: string[]
   is_active: boolean

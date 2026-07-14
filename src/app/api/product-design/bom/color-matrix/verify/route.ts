@@ -37,8 +37,11 @@ function parseSelections(value: unknown): DirectColorRuleMatrixSelection[] {
     const baseItemCodes = Array.isArray(record.baseItemCodes)
       ? [...new Set(record.baseItemCodes.flatMap(code => readString(code)?.toUpperCase() ?? []))]
       : []
+    const materialKinds = Array.isArray(record.materialKinds)
+      ? [...new Set(record.materialKinds.filter(kind => kind === 'board' || kind === 'edge_band' || kind === 'other'))]
+      : []
     return sourceColorCode && targetColorCode && isReferenceProductApplicationScope(scope) && baseItemCodes.length > 0
-      ? [{ sourceColorCode, targetColorCode, scope, baseItemCodes }]
+      ? [{ sourceColorCode, targetColorCode, scope, baseItemCodes, materialKinds }]
       : []
   })
 }

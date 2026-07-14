@@ -24,6 +24,8 @@ import {
   listTransientReferenceBomImportCandidatesAction,
   publishTransientReferenceBomAction,
   saveTransientColorOverrideAction,
+  saveTransientMatrixDualCandidateSkuOverridesAction,
+  saveTransientMatrixSkuColorOverrideAction,
   saveTransientReferenceBomColorAction,
   validateTransientAbsencesAction,
   verifyTransientColorMatrixAction,
@@ -68,14 +70,9 @@ type ColorRuleMatrixRow = {
   suggestedTargetColorCode: string | null
   findingIds: string[]
   baseItemCodes: string[]
+  materialKinds: Array<'board' | 'edge_band' | 'other'>
   conflictingTargetColorCodes: string[]
   dualEvidence: string | null
-}
-
-type SelectedDualColorPair = {
-  sourceColorCode: string
-  structureColorCode: string
-  frontColorCode: string
 }
 
 type ColorRuleMatrixCoverage = {
@@ -98,6 +95,7 @@ type ColorRuleMatrixCoverage = {
     itemName: string | null
     observedColorCode: string | null
     reason: 'missing_component' | 'unexpected_color'
+    semanticScope?: ReferenceProductApplicationScope | null
   }>
   dualCandidates: Array<{
     structureColorCode: string
@@ -124,6 +122,23 @@ type ColorRuleMatrixCoverage = {
 type MatrixDualCandidate = ColorRuleMatrixCoverage['dualCandidates'][number] & {
   sourceColorCode: string
   baseItemCodes: string[]
+}
+
+type MatrixSkuOverrideDraft = {
+  targetColorCode: string
+  reason: string
+}
+
+type ReferenceSemanticScopeAssignment = {
+  lineId: string
+  lineKind: 'fixed' | 'material_group'
+  baseItemCode: string | null
+  scope: ReferenceProductApplicationScope
+}
+
+type AppliedMatrixColorConfig = {
+  unicolorColorCode: string
+  hybridCases: MatrixDualCandidate[]
 }
 
 type AnalysisProgress = {
@@ -455,6 +470,18 @@ function hasBoardEvidence(finding: ReferenceImportFinding): boolean {
   return evidence.some(item => asString(asRecord(asRecord(item).technical_metadata).material_kind) === 'board')
 }
 
+function matrixMaterialKinds(findings: ReferenceImportFinding[]): Array<'board' | 'edge_band' | 'other'> {
+  const kinds = new Set<'board' | 'edge_band' | 'other'>()
+  for (const finding of findings) {
+    const evidence = Array.isArray(finding.detailsJson.by_sku) ? finding.detailsJson.by_sku : []
+    for (const item of evidence) {
+      const materialKind = asString(asRecord(asRecord(item).technical_metadata).material_kind)
+      if (materialKind === 'board' || materialKind === 'edge_band' || materialKind === 'other') kinds.add(materialKind)
+    }
+  }
+  return [...kinds].sort()
+}
+
 function colorConfigurationScope(finding: ReferenceImportFinding): ColorApplicationScope | null {
   return finding.proposedScope && finding.proposedScope !== 'NA'
     ? finding.proposedScope as ColorApplicationScope
@@ -498,65 +525,140 @@ function colorRuleMatrixRows(findings: ReferenceImportFinding[]): ColorRuleMatri
   }
   return [...grouped.entries()].map(([key, group]) => {
     const targets = [...group.targets.keys()].sort()
-    const selectedFindings = targets.length === 1 ? group.targets.get(targets[0]) ?? [] : []
+    const allFindings = [...group.targets.values()].flat()
     return {
       key,
       sourceColorCode: group.sourceColorCode,
       scope: group.scope,
       suggestedTargetColorCode: targets.length === 1 ? targets[0] : null,
-      findingIds: selectedFindings.map(finding => finding.id),
-      baseItemCodes: [...new Set(selectedFindings.flatMap(finding => finding.baseItemCode ? [finding.baseItemCode] : []))].sort(),
+      findingIds: allFindings.map(finding => finding.id),
+      baseItemCodes: [...new Set(allFindings.flatMap(finding => finding.baseItemCode ? [finding.baseItemCode] : []))].sort(),
+      materialKinds: matrixMaterialKinds(allFindings),
       conflictingTargetColorCodes: targets.length > 1 ? targets : [],
       dualEvidence: null,
     }
   }).sort((left, right) => left.sourceColorCode.localeCompare(right.sourceColorCode) || left.scope.localeCompare(right.scope))
 }
 
-function colorMatrixRowsWithDetectedDuals(
-  rows: ColorRuleMatrixRow[],
-  detectedDuals: Record<string, MatrixDualCandidate>
-): ColorRuleMatrixRow[] {
-  const detectedColors = new Set(Object.keys(detectedDuals))
-  const resolvedRows = rows.filter(row => !detectedColors.has(row.sourceColorCode) || row.scope !== 'edge_band_full_product')
-  for (const dual of Object.values(detectedDuals)) {
-    const evidence = `${dual.evidenceSkuComplete}: estructura ${dual.structureColorCode} (${dual.structureQty}) y frentes ${dual.frontColorCode} (${dual.frontQty}).`
-    resolvedRows.push({
-      key: `${dual.sourceColorCode}:edge_band_body:detected`,
-      sourceColorCode: dual.sourceColorCode,
-      scope: 'edge_band_body',
-      suggestedTargetColorCode: dual.structureColorCode,
-      findingIds: [],
-      baseItemCodes: dual.baseItemCodes,
-      conflictingTargetColorCodes: [],
-      dualEvidence: evidence,
-    }, {
-      key: `${dual.sourceColorCode}:edge_band_front:detected`,
-      sourceColorCode: dual.sourceColorCode,
-      scope: 'edge_band_front',
-      suggestedTargetColorCode: dual.frontColorCode,
-      findingIds: [],
-      baseItemCodes: dual.baseItemCodes,
-      conflictingTargetColorCodes: [],
-      dualEvidence: evidence,
-    })
-  }
-  return resolvedRows.sort((left, right) => left.sourceColorCode.localeCompare(right.sourceColorCode) || left.scope.localeCompare(right.scope))
+function matrixDualCandidateKey(candidate: MatrixDualCandidate): string {
+  return [candidate.sourceColorCode, candidate.structureColorCode, candidate.frontColorCode]
+    .map(normalizedMatrixColorCode)
+    .join(':')
 }
 
-function selectedDualColorPairs(rows: ColorRuleMatrixRow[]): SelectedDualColorPair[] {
-  const edgeColorsBySource = new Map<string, { structureColorCode?: string; frontColorCode?: string }>()
-  for (const row of rows) {
-    if (!row.suggestedTargetColorCode) continue
-    const edgeColors = edgeColorsBySource.get(row.sourceColorCode) ?? {}
-    if (row.scope === 'edge_band_body') edgeColors.structureColorCode = row.suggestedTargetColorCode
-    if (row.scope === 'edge_band_front') edgeColors.frontColorCode = row.suggestedTargetColorCode
-    edgeColorsBySource.set(row.sourceColorCode, edgeColors)
+function matrixDualCandidateOverrideKey(candidate: MatrixDualCandidate): string {
+  return [
+    matrixDualCandidateKey(candidate),
+    ...candidate.cases.map(candidateCase => candidateCase.skuComplete.trim().toUpperCase()).sort(),
+  ].join('|')
+}
+
+function isMatrixDualCandidateSelected(
+  selectedCandidates: Record<string, MatrixDualCandidate>,
+  candidate: MatrixDualCandidate
+): boolean {
+  const selected = selectedCandidates[candidate.sourceColorCode]
+  return Boolean(selected && matrixDualCandidateKey(selected) === matrixDualCandidateKey(candidate))
+}
+
+function matrixMismatchKey(input: {
+  sourceColorCode: string
+  scope: string
+  mismatch: ColorRuleMatrixCoverage['mismatches'][number]
+}): string {
+  return [
+    input.sourceColorCode,
+    input.scope,
+    input.mismatch.skuComplete,
+    input.mismatch.itemCode ?? input.mismatch.baseItemCode,
+    input.mismatch.observedColorCode ?? 'none',
+  ].join(':')
+}
+
+function referenceScopeOptions(input: {
+  currentScope: ReferenceProductApplicationScope
+  itemName: string | null | undefined
+  itemNames?: Array<string | null | undefined>
+}): ReferenceProductApplicationScope[] {
+  const normalizedNames = [input.itemName, ...(input.itemNames ?? [])]
+    .map(itemName => itemName?.toUpperCase() ?? '')
+    .join(' ')
+  const isEdgeBand = input.currentScope.startsWith('edge_band_') || normalizedNames.includes('CANTO')
+  if (isEdgeBand) {
+    return ['edge_band_full_product', 'edge_band_body', 'edge_band_front', 'edge_band_inner', 'edge_band_drawer_bottom']
   }
-  return [...edgeColorsBySource.entries()].flatMap(([sourceColorCode, edgeColors]) =>
-    edgeColors.structureColorCode && edgeColors.frontColorCode && edgeColors.structureColorCode !== edgeColors.frontColorCode
-      ? [{ sourceColorCode, structureColorCode: edgeColors.structureColorCode, frontColorCode: edgeColors.frontColorCode }]
-      : []
+  const isBoard = normalizedNames.includes('TABLERO')
+    || (!isEdgeBand && ['structure', 'front', 'inner_structure', 'drawer_bottom'].includes(input.currentScope))
+  return isBoard ? ['full_product', 'structure', 'front', 'inner_structure', 'drawer_bottom'] : []
+}
+
+function candidateIncludesSku(candidate: MatrixDualCandidate, skuComplete: string): boolean {
+  const normalizedSkuComplete = skuComplete.trim().toUpperCase()
+  return candidate.cases.some(candidateCase => candidateCase.skuComplete.trim().toUpperCase() === normalizedSkuComplete)
+}
+
+function selectedHybridCaseExplainsMismatch(input: {
+  result: ColorRuleMatrixCoverage
+  mismatch: ColorRuleMatrixCoverage['mismatches'][number]
+  selectedHybridCases: Record<string, MatrixDualCandidate>
+}): boolean {
+  const observedColorCode = input.mismatch.observedColorCode
+  if (input.mismatch.reason !== 'unexpected_color' || !observedColorCode) return false
+  return Object.values(input.selectedHybridCases).some(candidate =>
+    candidate.sourceColorCode === input.result.sourceColorCode
+    && candidateIncludesSku(candidate, input.mismatch.skuComplete)
+    && [candidate.structureColorCode, candidate.frontColorCode].includes(observedColorCode)
   )
+}
+
+function matrixFindingEvidence(finding: ReferenceImportFinding): Array<{
+  skuComplete: string
+  productColor: string
+  materialColor: string
+}> {
+  const bySku = Array.isArray(finding.detailsJson.by_sku) ? finding.detailsJson.by_sku : []
+  return bySku.flatMap(item => {
+    const row = asRecord(item)
+    const skuComplete = asString(row.sku_complete)
+    const productColor = asString(row.sku_color_code)
+    const materialColor = asString(row.material_color) ?? asString(row.variant_code_4)
+    return skuComplete && productColor && materialColor && materialColor !== '0000'
+      ? [{ skuComplete, productColor, materialColor }]
+      : []
+  })
+}
+
+function isMatrixColorConfigured(input: {
+  config: AppliedMatrixColorConfig
+  skuComplete: string
+  materialColor: string
+}): boolean {
+  if (input.materialColor === input.config.unicolorColorCode) return true
+  return input.config.hybridCases.some(candidate =>
+    candidateIncludesSku(candidate, input.skuComplete)
+    && [candidate.structureColorCode, candidate.frontColorCode].includes(input.materialColor)
+  )
+}
+
+function findingIsLocallyResolvedByMatrix(
+  finding: ReferenceImportFinding,
+  appliedConfigs: Record<string, AppliedMatrixColorConfig>
+): boolean {
+  if (finding.findingType === 'color_rule_proposal') {
+    const sourceColorCode = asString(finding.detailsJson.source_color_code)
+    const targetColorCode = finding.proposedColorCode ?? asString(finding.detailsJson.target_color_code)
+    const config = sourceColorCode ? appliedConfigs[sourceColorCode] : undefined
+    return Boolean(config && targetColorCode && (
+      targetColorCode === config.unicolorColorCode
+      || config.hybridCases.some(candidate => [candidate.structureColorCode, candidate.frontColorCode].includes(targetColorCode))
+    ))
+  }
+  if (finding.findingType !== 'bom_line_review' || asStringArray(finding.detailsJson.absent_skus).length > 0) return false
+  const evidence = matrixFindingEvidence(finding)
+  return evidence.length > 0 && evidence.every(item => {
+    const config = appliedConfigs[item.productColor]
+    return config ? isMatrixColorConfigured({ config, skuComplete: item.skuComplete, materialColor: item.materialColor }) : false
+  })
 }
 
 function affectedBaseItemCodes(finding: ReferenceImportFinding): string[] {
@@ -597,8 +699,19 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const [colorEditor, setColorEditor] = useState<ColorEditorState | null>(null)
   const [selectedMatrixRules, setSelectedMatrixRules] = useState<Record<string, boolean>>({})
   const [matrixTargetColorEdits, setMatrixTargetColorEdits] = useState<Record<string, string>>({})
-  const [detectedMatrixDuals, setDetectedMatrixDuals] = useState<Record<string, MatrixDualCandidate>>({})
+  const [selectedMatrixHybridCases, setSelectedMatrixHybridCases] = useState<Record<string, MatrixDualCandidate>>({})
   const [matrixDualAlternatives, setMatrixDualAlternatives] = useState<Record<string, MatrixDualCandidate[]>>({})
+  const [locallyAppliedMatrixConfigs, setLocallyAppliedMatrixConfigs] = useState<Record<string, AppliedMatrixColorConfig>>({})
+  const [matrixSkuOverrideEditors, setMatrixSkuOverrideEditors] = useState<Record<string, boolean>>({})
+  const [matrixSkuOverrideDrafts, setMatrixSkuOverrideDrafts] = useState<Record<string, MatrixSkuOverrideDraft>>({})
+  const [locallyAppliedMatrixSkuOverrides, setLocallyAppliedMatrixSkuOverrides] = useState<Record<string, boolean>>({})
+  const [matrixCandidateOverrideReviewed, setMatrixCandidateOverrideReviewed] = useState<Record<string, boolean>>({})
+  const [matrixCandidateOverrideProceedingKey, setMatrixCandidateOverrideProceedingKey] = useState<string | null>(null)
+  const [locallyAppliedMatrixCandidateOverrides, setLocallyAppliedMatrixCandidateOverrides] = useState<Record<string, boolean>>({})
+  const [isApplyingMatrixCandidateOverrides, setIsApplyingMatrixCandidateOverrides] = useState(false)
+  const [matrixCandidateOverrideApplyingKey, setMatrixCandidateOverrideApplyingKey] = useState<string | null>(null)
+  const [matrixCandidateOverrideStartedAt, setMatrixCandidateOverrideStartedAt] = useState<number | null>(null)
+  const [referenceScopeAssignments, setReferenceScopeAssignments] = useState<Record<string, ReferenceSemanticScopeAssignment>>({})
   const [matrixRulesReviewed, setMatrixRulesReviewed] = useState(false)
   const [matrixRulesProceedingKey, setMatrixRulesProceedingKey] = useState<string | null>(null)
   const [isApplyingMatrixRules, setIsApplyingMatrixRules] = useState(false)
@@ -624,8 +737,12 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const matrixVerificationElapsedSeconds = useElapsedSeconds(matrixVerificationStartedAt)
   const matrixRulesElapsedSeconds = useElapsedSeconds(matrixRulesStartedAt)
   const matrixAbsenceElapsedSeconds = useElapsedSeconds(matrixAbsenceStartedAt)
+  const matrixCandidateOverrideElapsedSeconds = useElapsedSeconds(matrixCandidateOverrideStartedAt)
 
-  const unresolvedBlockers = workspace?.findings.filter(finding => finding.severity === 'blocker' && finding.status === 'open') ?? []
+  const visibleFindings = (workspace?.findings ?? []).filter(finding =>
+    !findingIsLocallyResolvedByMatrix(finding, locallyAppliedMatrixConfigs)
+  )
+  const unresolvedBlockers = visibleFindings.filter(finding => finding.severity === 'blocker' && finding.status === 'open')
   const capturedSnapshots = workspace?.snapshots.filter(snapshot => snapshot.status === 'captured') ?? []
   const failedSnapshots = workspace?.snapshots.filter(snapshot => snapshot.status === 'failed') ?? []
   const sapActiveSkuCount = asNumber(workspace?.run.summaryJson.sap_active_sku_count)
@@ -641,15 +758,14 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const catalogBlockedColors = new Set([...sapInactiveColors, ...sapMissingColors, ...genericSupabaseOnlyColors])
   const bomReadFailureSnapshots = failedSnapshots.filter(snapshot => !snapshot.skuColorCode || !catalogBlockedColors.has(snapshot.skuColorCode))
   const hasIncompleteSapRead = bomReadFailureSnapshots.length > 0
+  const canRetryOnlyPendingBomReads = hasIncompleteSapRead
+    && capturedSnapshots.every(snapshot => Boolean(snapshot.transientData))
   const hasSapCatalogMismatch = sapInactiveSkuCodes.length > 0
     || sapMissingSkuCodes.length > 0
     || genericSupabaseOnlyColors.length > 0
     || sapOnlyColors.length > 0
   const hasIncompleteSource = hasIncompleteSapRead || hasSapCatalogMismatch
-  const colorMatrixRows = colorMatrixRowsWithDetectedDuals(
-    colorRuleMatrixRows(workspace?.findings ?? []),
-    detectedMatrixDuals
-  )
+  const colorMatrixRows = colorRuleMatrixRows(visibleFindings)
   const selectedMatrixRuleCount = colorMatrixRows.filter(row => selectedMatrixRules[row.key]).length
   const selectedColorMatrixRows = colorMatrixRows.flatMap(row => {
     if (!selectedMatrixRules[row.key]) return []
@@ -657,17 +773,32 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     return isMatrixColorCode(targetColorCode) ? [{ ...row, suggestedTargetColorCode: targetColorCode }] : []
   })
   const hasInvalidSelectedMatrixTarget = selectedMatrixRuleCount !== selectedColorMatrixRows.length
-  const selectedMatrixDualColorPairs = selectedDualColorPairs(selectedColorMatrixRows)
-  const matrixSelectionKey = selectedColorMatrixRows.map(row => `${row.key}:${row.suggestedTargetColorCode}`).sort().join('|')
-  const matrixRulesRequireSecondPress = matrixRulesProceedingKey === matrixSelectionKey
-  const matrixCoverageIsCurrent = matrixCoverage?.selectionKey === matrixSelectionKey
+  const matrixVerificationKey = selectedColorMatrixRows.map(row => `${row.key}:${row.suggestedTargetColorCode}`).sort().join('|')
+  const selectedMatrixHybridCaseList = Object.values(selectedMatrixHybridCases)
+    .filter(candidate => selectedColorMatrixRows.some(row => row.sourceColorCode === candidate.sourceColorCode))
+  const selectedMatrixHybridCaseKey = selectedMatrixHybridCaseList
+    .map(matrixDualCandidateKey)
+    .sort()
+    .join('|')
+  const matrixApplicationKey = `${matrixVerificationKey}|${selectedMatrixHybridCaseKey}`
+  const matrixRulesRequireSecondPress = matrixRulesProceedingKey === matrixApplicationKey
+  const matrixCoverageIsCurrent = matrixCoverage?.selectionKey === matrixVerificationKey
+  const matrixSkuOverrideExplainsMismatch = (
+    result: ColorRuleMatrixCoverage,
+    mismatch: ColorRuleMatrixCoverage['mismatches'][number]
+  ): boolean => locallyAppliedMatrixSkuOverrides[matrixMismatchKey({
+    sourceColorCode: result.sourceColorCode,
+    scope: result.scope,
+    mismatch,
+  })] === true
   const matrixCoverageIsClean = matrixCoverageIsCurrent
     && matrixCoverage.results.length === selectedColorMatrixRows.length
     && matrixCoverage.results.every(result => result.sapReadErrors.length === 0 && result.mismatches.every(mismatch =>
       mismatch.reason === 'missing_component'
         && validatedMatrixAbsences[`${result.sourceColorCode}:${result.scope}:${mismatch.skuComplete}:${mismatch.baseItemCode}`] === true
-        ? true
-        : mismatch.reason !== 'missing_component' ? false : false
+          ? true
+        : selectedHybridCaseExplainsMismatch({ result, mismatch, selectedHybridCases: selectedMatrixHybridCases })
+          || matrixSkuOverrideExplainsMismatch(result, mismatch)
     ))
   const matrixAbsenceCandidates = matrixCoverageIsCurrent && matrixCoverage
     ? matrixCoverage.results.flatMap(result => result.mismatches
@@ -696,12 +827,14 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     ? [...new Map(matrixCoverage.results.flatMap(result => result.mismatches
       .filter(mismatch => mismatch.reason !== 'missing_component'
         || validatedMatrixAbsences[`${result.sourceColorCode}:${result.scope}:${mismatch.skuComplete}:${mismatch.baseItemCode}`] !== true)
+      .filter(mismatch => !selectedHybridCaseExplainsMismatch({ result, mismatch, selectedHybridCases: selectedMatrixHybridCases }))
+      .filter(mismatch => !matrixSkuOverrideExplainsMismatch(result, mismatch))
       .map(mismatch => [mismatch.skuComplete, { skuComplete: mismatch.skuComplete, itemName: mismatch.skuItemName }] as const))).values()]
     : []
   const selectedMatrixSapSkuCodes = matrixSapSkuCandidates.filter(item => selectedMatrixSapSkus[item.skuComplete]).map(item => item.skuComplete)
   const expectedMatrixSapDeactivationConfirmation = `INACTIVAR ${selectedMatrixSapSkuCodes.length} SKU EN SAP`
-  const reviewFindings = workspace?.findings.filter(finding => finding.status === 'open' && finding.severity !== 'info' && finding.findingType !== 'issue_method_review' && finding.findingType !== 'color_rule_proposal') ?? []
-  const issueMethodFindings = workspace?.findings.filter(finding => finding.status === 'open' && finding.findingType === 'issue_method_review') ?? []
+  const reviewFindings = visibleFindings.filter(finding => finding.status === 'open' && finding.severity !== 'info' && finding.findingType !== 'issue_method_review' && finding.findingType !== 'color_rule_proposal')
+  const issueMethodFindings = visibleFindings.filter(finding => finding.status === 'open' && finding.findingType === 'issue_method_review')
   const reviewTopicCount = new Set(reviewFindings.map(finding => {
     if (finding.findingType === 'material_profile_proposal') return `material-profile:${finding.lineIdentity}`
     if (finding.findingType === 'color_rule_proposal') return `color-rule:${finding.lineIdentity}`
@@ -728,18 +861,42 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     setMatrixAbsenceProceedingKey(null)
   }
 
-  async function analyzeReferenceWithProgress(referenceId: string): Promise<void> {
+  function clearTransientMatrixCandidateOverrideState(): void {
+    setMatrixCandidateOverrideReviewed({})
+    setMatrixCandidateOverrideProceedingKey(null)
+    setLocallyAppliedMatrixCandidateOverrides({})
+    setMatrixCandidateOverrideApplyingKey(null)
+    setMatrixCandidateOverrideStartedAt(null)
+  }
+
+  async function analyzeReferenceWithProgress(
+    referenceId: string,
+    retry?: { skuCompletes: string[]; cachedSnapshots: ReferenceImportWorkspace['snapshots'] }
+  ): Promise<void> {
     const startedAt = Date.now()
     clearTransientMatrixAbsenceApprovals()
-    setDetectedMatrixDuals({})
+    setSelectedMatrixHybridCases({})
     setMatrixDualAlternatives({})
+    setLocallyAppliedMatrixConfigs({})
+    setMatrixSkuOverrideEditors({})
+    setMatrixSkuOverrideDrafts({})
+    setLocallyAppliedMatrixSkuOverrides({})
+    clearTransientMatrixCandidateOverrideState()
+    setReferenceScopeAssignments({})
     setAnalysisStartedAt(startedAt)
-    setAnalysisProgress({ stage: 'starting', message: 'Iniciando el análisis SAP.', current: null, total: null })
+    setAnalysisProgress({
+      stage: 'starting',
+      message: retry
+        ? `Preparando el reintento de ${retry.skuCompletes.length} LdM pendiente(s).`
+        : 'Iniciando el análisis SAP.',
+      current: null,
+      total: null,
+    })
     try {
       const response = await fetch('/api/product-design/bom/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ referenceId }),
+        body: JSON.stringify({ referenceId, ...(retry ? { retry } : {}) }),
       })
       if (!response.ok || !response.body) throw new Error('No se pudo iniciar el análisis SAP.')
 
@@ -784,6 +941,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     scope: ReferenceProductApplicationScope
     targetColorCode: string
     baseItemCodes: string[]
+    materialKinds: Array<'board' | 'edge_band' | 'other'>
   }>, startedAt: number): Promise<{ success: boolean; message: string; results: ColorRuleMatrixCoverage[] }> {
     setMatrixVerificationStartedAt(startedAt)
     setMatrixVerificationProgress({ stage: 'starting', message: 'Iniciando la verificación de la matriz en SAP.', current: null, total: null })
@@ -850,15 +1008,27 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     setWorkspace(null)
     setMessage(null)
     setMatrixTargetColorEdits({})
-    setDetectedMatrixDuals({})
+    setSelectedMatrixHybridCases({})
     setMatrixDualAlternatives({})
+    setLocallyAppliedMatrixConfigs({})
+    setMatrixSkuOverrideEditors({})
+    setMatrixSkuOverrideDrafts({})
+    setLocallyAppliedMatrixSkuOverrides({})
+    clearTransientMatrixCandidateOverrideState()
+    setReferenceScopeAssignments({})
   }
 
-  function analyzeSelectedReference(): void {
+  function analyzeSelectedReference(options?: { retryPendingBomReads?: boolean }): void {
     if (!selectedCandidate) return
+    const retry = options?.retryPendingBomReads && canRetryOnlyPendingBomReads && workspace
+      ? {
+          skuCompletes: bomReadFailureSnapshots.map(snapshot => snapshot.skuComplete),
+          cachedSnapshots: workspace.snapshots.filter(snapshot => snapshot.status === 'captured'),
+        }
+      : undefined
     runTask(async () => {
       try {
-        await analyzeReferenceWithProgress(selectedCandidate.referenceId)
+        await analyzeReferenceWithProgress(selectedCandidate.referenceId, retry)
       } catch (error) {
         setMessage(error instanceof Error ? error.message : 'No se pudo analizar la referencia desde SAP.')
       }
@@ -983,7 +1153,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     }
     if (!matrixRulesReviewed || selectedColorMatrixRows.length === 0) return
     if (!matrixRulesRequireSecondPress) {
-      setMatrixRulesProceedingKey(matrixSelectionKey)
+      setMatrixRulesProceedingKey(matrixApplicationKey)
       setMatrixBatchMessage('Revisa las reglas una vez más. Si son correctas, presiona “Proceder con aplicar reglas”.')
       return
     }
@@ -998,7 +1168,22 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
             scope: row.scope as ReferenceProductApplicationScope,
             targetColorCode: row.suggestedTargetColorCode,
             baseItemCodes: row.baseItemCodes,
+            materialKinds: row.materialKinds,
           }] : []),
+          hybridCases: selectedMatrixHybridCaseList.flatMap(candidate => {
+            const unicolorColorCode = selectedColorMatrixRows.find(row =>
+              row.sourceColorCode === candidate.sourceColorCode
+              && (row.scope === 'edge_band_full_product' || row.scope === 'full_product')
+            )?.suggestedTargetColorCode
+            return unicolorColorCode ? [{
+              sourceColorCode: candidate.sourceColorCode,
+              fullProductColorCode: unicolorColorCode,
+              colorMode: 'dual' as const,
+              structureColorCode: candidate.structureColorCode,
+              frontColorCode: candidate.frontColorCode,
+              skuCompletes: candidate.cases.map(candidateCase => candidateCase.skuComplete),
+            }] : []
+          }),
           acceptedAbsences: validatedMatrixAbsenceItems,
         })
         setMessage(`${result.message} Tiempo de aplicación: ${formatElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000))}.`)
@@ -1008,11 +1193,15 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
         setMatrixRulesReviewed(false)
         setMatrixRulesProceedingKey(null)
         setMatrixCoverage(null)
-        try {
-          await analyzeReferenceWithProgress(workspace.run.referenceId)
-        } catch (error) {
-          setMessage(error instanceof Error ? `La regla se guardó, pero no se pudo actualizar la vista: ${error.message}` : 'La regla se guardó, pero no se pudo actualizar la vista.')
-        }
+        setSelectedMatrixHybridCases({})
+        setMatrixDualAlternatives({})
+        setLocallyAppliedMatrixConfigs(current => ({
+          ...current,
+          ...Object.fromEntries(selectedColorMatrixRows.flatMap(row => row.suggestedTargetColorCode ? [[row.sourceColorCode, {
+            unicolorColorCode: row.suggestedTargetColorCode,
+            hybridCases: selectedMatrixHybridCaseList.filter(candidate => candidate.sourceColorCode === row.sourceColorCode),
+          }] as const] : [])),
+        }))
       } finally {
         setIsApplyingMatrixRules(false)
         setMatrixRulesStartedAt(null)
@@ -1027,6 +1216,10 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
       return
     }
     clearTransientMatrixAbsenceApprovals()
+    setMatrixSkuOverrideEditors({})
+    setMatrixSkuOverrideDrafts({})
+    setLocallyAppliedMatrixSkuOverrides({})
+    clearTransientMatrixCandidateOverrideState()
     runTask(async () => {
       const startedAt = Date.now()
       const selections = selectedColorMatrixRows.flatMap(row => row.suggestedTargetColorCode ? [{
@@ -1034,6 +1227,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
           scope: row.scope as ReferenceProductApplicationScope,
           targetColorCode: row.suggestedTargetColorCode,
           baseItemCodes: row.baseItemCodes,
+          materialKinds: row.materialKinds,
         }] : [])
       try {
         const result = await verifyColorMatrixWithProgress(selections, startedAt)
@@ -1045,24 +1239,11 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
           }))] as const]
           : [])
         const nextDualAlternatives = Object.fromEntries(dualAlternatives)
-        const unambiguousDuals = Object.values(nextDualAlternatives).flatMap(candidates => candidates.length === 1 ? candidates : [])
-        if (unambiguousDuals.length > 0) {
-          setDetectedMatrixDuals(current => ({
-            ...current,
-            ...Object.fromEntries(unambiguousDuals.map(candidate => [candidate.sourceColorCode, candidate])),
-          }))
-          setMatrixDualAlternatives(nextDualAlternatives)
-          setSelectedMatrixRules({})
-          setMatrixTargetColorEdits({})
-          setMatrixRulesReviewed(false)
-          setMatrixRulesProceedingKey(null)
-          setMatrixCoverage(null)
-          setMessage(`SAP identificó una configuración Dual para ${unambiguousDuals.map(candidate => candidate.sourceColorCode).join(', ')}. Revisa las reglas de estructura y frentes, selecciónalas y vuelve a verificar antes de aplicarlas. Tiempo total: ${formatElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000))}.`)
-          return
-        }
+        setSelectedMatrixHybridCases({})
         setMatrixDualAlternatives(nextDualAlternatives)
-        setMessage(`${result.message} Tiempo total: ${formatElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000))}.`)
-        setMatrixCoverage({ selectionKey: matrixSelectionKey, success: result.success, results: result.results })
+        const candidateGroupCount = Object.values(nextDualAlternatives).reduce((total, candidates) => total + candidates.length, 0)
+        setMessage(`${result.message}${candidateGroupCount > 0 ? ` SAP identificó ${candidateGroupCount} caso(s) Dual: selecciona únicamente los que deseas guardar como excepción por SKU; no se requerirá otra consulta.` : ''} Tiempo total: ${formatElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000))}.`)
+        setMatrixCoverage({ selectionKey: matrixVerificationKey, success: result.success, results: result.results })
       } catch (error) {
         setMessage(error instanceof Error ? error.message : 'No se pudo verificar la matriz.')
       }
@@ -1103,9 +1284,14 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
 
   function updateMatrixTargetColor(rowKey: string, value: string): void {
     setMatrixTargetColorEdits(current => ({ ...current, [rowKey]: value.toUpperCase() }))
+    setSelectedMatrixHybridCases({})
     setMatrixCoverage(null)
     setMatrixRulesReviewed(false)
     setMatrixRulesProceedingKey(null)
+    setMatrixSkuOverrideEditors({})
+    setMatrixSkuOverrideDrafts({})
+    setLocallyAppliedMatrixSkuOverrides({})
+    clearTransientMatrixCandidateOverrideState()
   }
 
   function chooseMatrixColorCandidate(rowKey: string, colorCode: string): void {
@@ -1113,13 +1299,153 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   }
 
   function chooseDetectedMatrixDual(candidate: MatrixDualCandidate): void {
-    setDetectedMatrixDuals(current => ({ ...current, [candidate.sourceColorCode]: candidate }))
-    setSelectedMatrixRules({})
-    setMatrixTargetColorEdits({})
-    setMatrixCoverage(null)
+    if (locallyAppliedMatrixCandidateOverrides[matrixDualCandidateOverrideKey(candidate)]) {
+      setMatrixBatchMessage('Este caso ya está resuelto con overrides por SKU; no puede guardarse además como Dual global.')
+      return
+    }
+    const candidateKey = matrixDualCandidateKey(candidate)
+    setSelectedMatrixHybridCases(current => {
+      const selected = current[candidate.sourceColorCode]
+      if (selected && matrixDualCandidateKey(selected) === candidateKey) {
+        const remaining = { ...current }
+        delete remaining[candidate.sourceColorCode]
+        return remaining
+      }
+      return { ...current, [candidate.sourceColorCode]: candidate }
+    })
     setMatrixRulesReviewed(false)
     setMatrixRulesProceedingKey(null)
-    setMessage(`Elegiste para ${candidate.sourceColorCode}: estructura ${candidate.structureColorCode} y frentes ${candidate.frontColorCode}. Revisa las dos reglas, selecciónalas y verifica SAP antes de aplicarlas.`)
+    setMessage(`Caso Dual elegido para ${candidate.sourceColorCode}: estructura ${candidate.structureColorCode} y frentes ${candidate.frontColorCode}. Reemplaza cualquier otro caso elegido de este color; la regla unicolor seguirá siendo global.`)
+  }
+
+  function applyMatrixDualCandidateSkuOverrides(candidate: MatrixDualCandidate): void {
+    const candidateKey = matrixDualCandidateOverrideKey(candidate)
+    if (matrixCandidateOverrideApplyingKey) return
+    if (isMatrixDualCandidateSelected(selectedMatrixHybridCases, candidate)) {
+      setMatrixBatchMessage('Este caso ya esta elegido como Dual global. Para guardarlo como override por SKU, primero desmarcalo como caso Dual.')
+      return
+    }
+    if (!matrixCandidateOverrideReviewed[candidateKey]) return
+    if (matrixCandidateOverrideProceedingKey !== candidateKey) {
+      setMatrixCandidateOverrideProceedingKey(candidateKey)
+      setMatrixBatchMessage(`Revisa una vez mas los ${candidate.cases.length} SKU del caso. Si la excepcion es correcta, presiona "Proceder con aplicar overrides".`)
+      return
+    }
+    const startedAt = Date.now()
+    setMatrixCandidateOverrideApplyingKey(candidateKey)
+    setMatrixCandidateOverrideStartedAt(startedAt)
+    runTask(async () => {
+      setIsApplyingMatrixCandidateOverrides(true)
+      try {
+        const result = await saveTransientMatrixDualCandidateSkuOverridesAction({
+          skuCompletes: candidate.cases.map(candidateCase => candidateCase.skuComplete),
+          sourceColorCode: candidate.sourceColorCode,
+          structureColorCode: candidate.structureColorCode,
+          frontColorCode: candidate.frontColorCode,
+        })
+        setMatrixBatchMessage(`${result.message} Tiempo total: ${formatElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000))}.`)
+        if (!result.success) return
+        const candidateSkuCompletes = new Set(candidate.cases.map(candidateCase => candidateCase.skuComplete.trim().toUpperCase()))
+        const expectedColors = new Set([candidate.structureColorCode, candidate.frontColorCode])
+        const locallyResolvedMismatchKeys = (matrixCoverage?.results ?? []).flatMap(result =>
+          result.sourceColorCode === candidate.sourceColorCode
+            ? result.mismatches.flatMap(mismatch =>
+              mismatch.reason === 'unexpected_color'
+              && candidateSkuCompletes.has(mismatch.skuComplete.trim().toUpperCase())
+              && Boolean(mismatch.observedColorCode && expectedColors.has(mismatch.observedColorCode))
+                ? [matrixMismatchKey({ sourceColorCode: result.sourceColorCode, scope: result.scope, mismatch })]
+                : []
+            )
+            : []
+        )
+        setLocallyAppliedMatrixSkuOverrides(current => ({
+          ...current,
+          ...Object.fromEntries(locallyResolvedMismatchKeys.map(key => [key, true])),
+        }))
+        setLocallyAppliedMatrixCandidateOverrides(current => ({ ...current, [candidateKey]: true }))
+        setMatrixCandidateOverrideReviewed(current => ({ ...current, [candidateKey]: false }))
+        setMatrixCandidateOverrideProceedingKey(null)
+        setMatrixRulesReviewed(false)
+        setMatrixRulesProceedingKey(null)
+      } catch (error) {
+        setMatrixBatchMessage(error instanceof Error ? error.message : 'No se pudieron guardar los overrides del caso.')
+      } finally {
+        setIsApplyingMatrixCandidateOverrides(false)
+        setMatrixCandidateOverrideApplyingKey(null)
+        setMatrixCandidateOverrideStartedAt(null)
+      }
+    })
+  }
+
+  function toggleMatrixSkuOverrideEditor(key: string): void {
+    setMatrixSkuOverrideEditors(current => ({ ...current, [key]: !current[key] }))
+  }
+
+  function updateMatrixSkuOverrideDraft(key: string, patch: Partial<MatrixSkuOverrideDraft>): void {
+    setMatrixSkuOverrideDrafts(current => ({
+      ...current,
+      [key]: {
+        targetColorCode: current[key]?.targetColorCode ?? '',
+        reason: current[key]?.reason ?? '',
+        ...patch,
+      },
+    }))
+  }
+
+  function saveMatrixSkuOverride(
+    result: ColorRuleMatrixCoverage,
+    mismatch: ColorRuleMatrixCoverage['mismatches'][number]
+  ): void {
+    const semanticScope = mismatch.semanticScope
+    const fallbackTargetColorCode = mismatch.observedColorCode ?? ''
+    if (!semanticScope || !fallbackTargetColorCode) return
+    const key = matrixMismatchKey({ sourceColorCode: result.sourceColorCode, scope: result.scope, mismatch })
+    const draft = matrixSkuOverrideDrafts[key] ?? {
+      targetColorCode: fallbackTargetColorCode,
+      reason: '',
+    }
+    runTask(async () => {
+      try {
+        const override = await saveTransientMatrixSkuColorOverrideAction({
+          skuComplete: mismatch.skuComplete,
+          sourceColorCode: result.sourceColorCode,
+          scope: semanticScope,
+          targetColorCode: draft.targetColorCode,
+          reason: draft.reason,
+        })
+        setMatrixBatchMessage(override.message)
+        if (!override.success) return
+        setLocallyAppliedMatrixSkuOverrides(current => ({ ...current, [key]: true }))
+        setMatrixSkuOverrideEditors(current => ({ ...current, [key]: false }))
+      } catch (error) {
+        setMatrixBatchMessage(error instanceof Error ? error.message : 'No se pudo guardar el override del SKU.')
+      }
+    })
+  }
+
+  function updateReferenceBomLineScope(
+    lineId: string,
+    lineKind: 'fixed' | 'material_group',
+    baseItemCode: string | null,
+    scope: ReferenceProductApplicationScope
+  ): void {
+    const assignment = { lineId, lineKind, baseItemCode, scope }
+    setReferenceScopeAssignments(current => ({ ...current, [lineId]: assignment }))
+    setWorkspace(current => current ? {
+      ...current,
+      run: {
+        ...current.run,
+        proposedBomStructure: {
+          ...current.run.proposedBomStructure,
+          lines: current.run.proposedBomStructure.lines.map(line =>
+            line.line_id === lineId && line.line_kind === lineKind && line.base_item_code === baseItemCode
+              ? { ...line, product_application_scope: scope }
+              : line
+          ),
+        },
+      },
+    } : current)
+    setMessage(`Rol lógico actualizado para esta referencia: ${scopeLabel(scope)}. Se guardará al publicar la BOM base.`)
   }
 
   function toggleMatrixAbsence(key: string, selected: boolean): void {
@@ -1154,12 +1480,13 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
       const coverage = await verifyTransientColorMatrixAction({
         selections: selectedColorMatrixRows.flatMap(row => row.suggestedTargetColorCode ? [{
           sourceColorCode: row.sourceColorCode,
-          scope: row.scope as ReferenceProductApplicationScope,
-          targetColorCode: row.suggestedTargetColorCode,
-          baseItemCodes: row.baseItemCodes,
+            scope: row.scope as ReferenceProductApplicationScope,
+            targetColorCode: row.suggestedTargetColorCode,
+            baseItemCodes: row.baseItemCodes,
+            materialKinds: row.materialKinds,
         }] : []),
       })
-      setMatrixCoverage({ selectionKey: matrixSelectionKey, success: coverage.success, results: coverage.results })
+      setMatrixCoverage({ selectionKey: matrixVerificationKey, success: coverage.success, results: coverage.results })
       setMessage(coverage.message)
       setSelectedMatrixSapSkus({})
       setMatrixSapDeactivationConfirmation('')
@@ -1227,9 +1554,15 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   function publishRun(): void {
     if (!workspace) return
     runTask(async () => {
-      const result = await publishTransientReferenceBomAction(workspace.run.referenceId)
+      const result = await publishTransientReferenceBomAction({
+        referenceId: workspace.run.referenceId,
+        semanticScopeAssignments: Object.values(referenceScopeAssignments),
+      })
       setMessage(result.message)
-      if (result.workspace) setWorkspace(result.workspace)
+      if (result.workspace) {
+        setWorkspace(result.workspace)
+        setReferenceScopeAssignments({})
+      }
     })
   }
 
@@ -1324,15 +1657,15 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
               </div>
               <button
                 type="button"
-                onClick={analyzeSelectedReference}
+                onClick={() => analyzeSelectedReference({ retryPendingBomReads: true })}
                 disabled={!selectedCandidate || Boolean(analysisProgress)}
                 className="inline-flex h-10 items-center gap-2 rounded-md bg-sky-700 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {analysisProgress ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
-                {analysisProgress ? 'Analizando SAP…' : hasSapCatalogMismatch && !hasIncompleteSapRead
-                  ? 'Volver a comprobar SAP'
-                  : hasIncompleteSapRead
-                    ? 'Reintentar LdM pendientes'
+                {analysisProgress ? 'Analizando SAP…' : hasIncompleteSapRead
+                  ? canRetryOnlyPendingBomReads ? 'Reintentar LdM pendientes' : 'Analizar LdM en SAP'
+                  : hasSapCatalogMismatch
+                    ? 'Volver a comprobar SAP'
                     : 'Analizar LdM en SAP'}
               </button>
             </div>
@@ -1351,9 +1684,9 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                 <section className="border border-sky-200 bg-white">
                   <div className="flex flex-wrap items-start justify-between gap-3 border-b border-sky-100 bg-sky-50 px-5 py-4">
                     <div>
-                      <h2 className="font-semibold text-slate-950">Matriz de colores internos y cantos (V08)</h2>
-                      <p className="mt-1 text-sm text-slate-600">La propuesta inicial viene de la referencia analizada; puedes editarla antes de verificar el catálogo activo de SAP. Si SAP evidencia dos colores de canto en un SKU, compara su consumo total para proponer estructura y frentes.</p>
-                      <p className="mt-1 text-sm text-slate-600">Una fila aplica una regla global a todas las piezas indicadas. Para una excepción puntual, usa el override de la pieza debajo.</p>
+                      <h2 className="font-semibold text-slate-950">Matriz de colores internos y cantos (V12)</h2>
+                      <p className="mt-1 text-sm text-slate-600">La propuesta inicial conserva un color interno unicolor global. Si SAP evidencia dos colores de canto en un SKU, compara su consumo total para proponer estructura y frentes.</p>
+                      <p className="mt-1 text-sm text-slate-600">Cada caso puede guardarse como un único Dual global o como overrides semánticos para esos SKU. Los overrides no dependen de un formato físico y se activan al publicar la BOM de cada referencia.</p>
                     </div>
                     <button type="button" onClick={verifyColorMatrixInSap} disabled={isPending || Boolean(matrixVerificationProgress) || selectedMatrixRuleCount === 0 || hasInvalidSelectedMatrixTarget} className="inline-flex h-9 items-center gap-2 border border-sky-300 bg-white px-3 text-sm font-semibold text-sky-900 disabled:opacity-50">{matrixVerificationProgress ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}{matrixVerificationProgress ? 'Verificando en SAP…' : 'Verificar seleccionadas en SAP'}</button>
                   </div>
@@ -1363,18 +1696,26 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                     <p className="mt-1">{matrixVerificationProgress.message}{matrixVerificationProgress.current !== null && matrixVerificationProgress.total !== null ? ` (${matrixVerificationProgress.current} de ${matrixVerificationProgress.total})` : ''}</p>
                     {matrixVerificationProgress.total !== null && matrixVerificationProgress.total > 0 ? <progress className="mt-2 h-2 w-full accent-sky-700" value={matrixVerificationProgress.current ?? 0} max={matrixVerificationProgress.total} /> : <div className="mt-2 h-2 w-full animate-pulse bg-sky-200" />}
                   </div> : null}
-                  {Object.entries(matrixDualAlternatives).filter(([sourceColorCode, candidates]) => candidates.length > 1 && !detectedMatrixDuals[sourceColorCode]).map(([sourceColorCode, candidates]) => (
+                  {Object.entries(matrixDualAlternatives).filter(([, candidates]) => candidates.length > 0).map(([sourceColorCode, candidates]) => (
                     <div key={sourceColorCode} className="border-b border-violet-200 bg-violet-50 px-5 py-3 text-sm text-violet-950">
                       <p className="font-semibold">Conflicto Dual para {sourceColorCode}</p>
-                      <p className="mt-1 text-xs">SAP encontró más de una distribución posible. Revisa los casos observados y elige una propuesta para abrir sus dos reglas editables; todavía no se guarda nada.</p>
+                      <p className="mt-1 text-xs">La fila unicolor de la tabla se conserva para el catálogo completo. Elige como máximo un caso Dual global; cada caso alterno puede corregirse en SAP, inactivarse o guardarse como override por SKU.</p>
+                      <p className="mt-1 text-xs font-semibold">Unicolor global que se conservará: {matrixCoverage?.results.find(result => result.sourceColorCode === sourceColorCode)?.targetColorCode ?? 'el valor de la tabla'}.</p>
                       <div className="mt-3 grid gap-3 xl:grid-cols-2">
-                        {candidates.map((candidate, candidateIndex) => <article key={`${candidate.structureColorCode}:${candidate.frontColorCode}`} className="border border-violet-200 bg-white p-3 text-slate-800">
+                        {candidates.map((candidate, candidateIndex) => {
+                          const candidateOverrideKey = matrixDualCandidateOverrideKey(candidate)
+                          const candidateIsSelectedAsDual = isMatrixDualCandidateSelected(selectedMatrixHybridCases, candidate)
+                          const candidateOverrideSaved = locallyAppliedMatrixCandidateOverrides[candidateOverrideKey] === true
+                          const candidateOverrideReviewed = matrixCandidateOverrideReviewed[candidateOverrideKey] === true
+                          const candidateOverrideRequiresSecondPress = matrixCandidateOverrideProceedingKey === candidateOverrideKey
+                          const candidateOverrideIsApplying = matrixCandidateOverrideApplyingKey === candidateOverrideKey
+                          return <article key={candidateOverrideKey} className="border border-violet-200 bg-white p-3 text-slate-800">
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div>
                               <p className="font-semibold text-violet-950">Caso {candidateIndex + 1}: estructura {candidate.structureColorCode} · frentes {candidate.frontColorCode}</p>
                               <p className="mt-1 text-xs text-slate-600">{candidate.evidenceSkuCount} SKU{candidate.evidenceSkuCount === 1 ? '' : 's'} activo{candidate.evidenceSkuCount === 1 ? '' : 's'} con este patrón.</p>
                             </div>
-                            <button type="button" onClick={() => chooseDetectedMatrixDual(candidate)} className="border border-violet-300 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-950">Elegir esta propuesta</button>
+                            <button type="button" onClick={() => chooseDetectedMatrixDual(candidate)} disabled={candidateOverrideSaved || candidateOverrideIsApplying || isPending || isApplyingMatrixCandidateOverrides} className={`border px-3 py-2 text-xs font-semibold disabled:opacity-50 ${candidateIsSelectedAsDual ? 'border-violet-800 bg-violet-800 text-white' : 'border-violet-300 bg-violet-50 text-violet-950'}`}>{candidateOverrideSaved ? 'Resuelto por override SKU' : candidateIsSelectedAsDual ? 'Único caso Dual elegido' : 'Usar como único Dual'}</button>
                           </div>
                           <div className="mt-3 space-y-2">
                             {candidate.cases.map(candidateCase => <div key={candidateCase.skuComplete} className="border-t border-violet-100 pt-2 text-xs">
@@ -1385,7 +1726,32 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                               </ul>
                             </div>)}
                           </div>
-                        </article>)}
+                          {candidateOverrideSaved ? <div className="mt-3 border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-950">
+                            <p className="font-semibold">Override por SKU guardado</p>
+                            <p className="mt-1">Estructura {candidate.structureColorCode} y frentes {candidate.frontColorCode} quedan definidos para estos {candidate.cases.length} SKU. Esta excepción se reutilizará en el siguiente análisis y al publicar la BOM.</p>
+                          </div> : <div className="mt-3 border border-sky-200 bg-sky-50 p-2 text-xs text-sky-950">
+                            <p className="font-semibold">Overrides por SKU para este caso</p>
+                            <p className="mt-1">Guarda estructura {candidate.structureColorCode} y frentes {candidate.frontColorCode} para estos {candidate.cases.length} SKU. No modifica SAP ni asigna un formato físico; se aplicará cuando su BOM publicada tenga esos roles.</p>
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <label className="inline-flex items-center gap-2 border border-sky-300 bg-white px-2 py-1.5 font-semibold"><input type="checkbox" checked={candidateOverrideReviewed} onChange={event => {
+                                setMatrixCandidateOverrideReviewed(current => ({ ...current, [candidateOverrideKey]: event.target.checked }))
+                                setMatrixCandidateOverrideProceedingKey(null)
+                              }} disabled={candidateIsSelectedAsDual || candidateOverrideIsApplying || isPending || isApplyingMatrixCandidateOverrides} />Revisé los {candidate.cases.length} SKU</label>
+                              <button type="button" onClick={() => applyMatrixDualCandidateSkuOverrides(candidate)} disabled={candidateIsSelectedAsDual || candidateOverrideIsApplying || !candidateOverrideReviewed || isPending || isApplyingMatrixCandidateOverrides} className="border border-sky-700 bg-sky-800 px-2 py-1.5 font-semibold text-white disabled:opacity-50">{candidateOverrideIsApplying ? 'Aplicando overrides…' : candidateOverrideRequiresSecondPress ? 'Proceder con aplicar overrides' : `Preparar overrides a ${candidate.cases.length} SKU`}</button>
+                            </div>
+                            {candidateOverrideIsApplying ? <div aria-live="polite" className="mt-2 border border-sky-300 bg-white px-2 py-2 text-sky-950">
+                              <p className="inline-flex items-center gap-2 font-semibold"><LoaderCircle className="h-4 w-4 animate-spin" />Guardando en Supabase una operación para {candidate.cases.length} SKU.</p>
+                              <p className="mt-1">Tiempo transcurrido: {formatElapsedSeconds(matrixCandidateOverrideElapsedSeconds)}.</p>
+                              <div className="mt-2 h-1.5 w-full animate-pulse bg-sky-200" />
+                            </div> : null}
+                          </div>}
+                          <p className="mt-3 text-xs text-slate-600">{candidateOverrideSaved
+                            ? 'Este caso ya se guardó como excepción semántica por SKU; un siguiente análisis reutilizará esa decisión.'
+                            : isMatrixDualCandidateSelected(selectedMatrixHybridCases, candidate)
+                            ? 'Solo este caso se guardará como Dual para este color.'
+                            : 'Si no eliges este caso, sus SKU se resuelven abajo: corrección humana en SAP, inactivación u override por SKU.'}</p>
+                          </article>
+                        })}
                       </div>
                     </div>
                   ))}
@@ -1400,7 +1766,12 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                           const targetColorCode = matrixTargetColorEdits[row.key] ?? row.suggestedTargetColorCode ?? ''
                           return <tr key={row.key} className="border-t border-slate-100 align-top">
                             <td className="px-5 py-3"><input type="checkbox" checked={selectedMatrixRules[row.key] === true} onChange={event => {
+                              setSelectedMatrixHybridCases({})
                               setMatrixCoverage(null)
+                              setMatrixSkuOverrideEditors({})
+                              setMatrixSkuOverrideDrafts({})
+                              setLocallyAppliedMatrixSkuOverrides({})
+                              clearTransientMatrixCandidateOverrideState()
                               setSelectedMatrixRules(current => ({ ...current, [row.key]: event.target.checked }))
                               setMatrixRulesReviewed(false)
                               setMatrixRulesProceedingKey(null)
@@ -1430,9 +1801,9 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                     </table>
                   </div>
                   <div className="border-t border-sky-100 px-5 py-4">
-                    <p className="text-sm text-slate-700">Seleccionadas: {selectedMatrixRuleCount}. Edita el color interno si hace falta y luego verifica el catálogo activo en SAP; solo se habilita confirmar cuando todo coincide al 100%.</p>
+                    <p className="text-sm text-slate-700">Seleccionadas: {selectedMatrixRuleCount}. Edita el color interno si hace falta y verifica el catálogo activo en SAP una vez. Los casos Dual elegidos reutilizan esa misma evidencia; solo se habilita confirmar cuando todo queda cubierto.</p>
                     {hasInvalidSelectedMatrixTarget ? <p className="mt-2 text-xs font-semibold text-rose-700">Cada regla seleccionada necesita un color interno de cuatro caracteres.</p> : null}
-                    {selectedMatrixDualColorPairs.map(pair => <p key={pair.sourceColorCode} className="mt-3 border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-950">Al aplicar, {pair.sourceColorCode} quedará como Dual: estructura {pair.structureColorCode} y frentes {pair.frontColorCode}, tanto para tableros como para cantos.</p>)}
+                    {selectedMatrixHybridCaseList.map(candidate => <p key={matrixDualCandidateKey(candidate)} className="mt-3 border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-950">Al aplicar, {candidate.sourceColorCode} conservará como unicolor {selectedColorMatrixRows.find(row => row.sourceColorCode === candidate.sourceColorCode && (row.scope === 'edge_band_full_product' || row.scope === 'full_product'))?.suggestedTargetColorCode ?? 'pendiente'}; solo {candidate.evidenceSkuCount} SKU usarán estructura {candidate.structureColorCode} y frentes {candidate.frontColorCode}.</p>)}
                     <div className="mt-3 flex flex-wrap gap-2">
                       <label className="inline-flex h-9 items-center gap-2 border border-sky-300 bg-white px-3 text-xs font-semibold text-sky-950"><input type="checkbox" checked={matrixRulesReviewed} onChange={event => { setMatrixRulesReviewed(event.target.checked); setMatrixRulesProceedingKey(null) }} disabled={isPending || isApplyingMatrixRules || selectedMatrixRuleCount === 0 || hasInvalidSelectedMatrixTarget} />Revisé las {selectedMatrixRuleCount} regla(s)</label>
                       <button type="button" onClick={confirmColorMatrix} disabled={isPending || isApplyingMatrixRules || hasInvalidSelectedMatrixTarget || !matrixCoverageIsClean || !matrixRulesReviewed} className="h-9 bg-sky-700 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{isApplyingMatrixRules ? 'Aplicando reglas…' : matrixRulesRequireSecondPress ? 'Proceder con aplicar reglas' : 'Preparar aplicación de reglas'}</button>
@@ -1445,15 +1816,53 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                             && validatedMatrixAbsences[`${result.sourceColorCode}:${result.scope}:${mismatch.skuComplete}:${mismatch.baseItemCode}`] === true).length
                           const unresolvedMismatches = result.mismatches.filter(mismatch => mismatch.reason !== 'missing_component'
                             || validatedMatrixAbsences[`${result.sourceColorCode}:${result.scope}:${mismatch.skuComplete}:${mismatch.baseItemCode}`] !== true)
-                          const verified = unresolvedMismatches.length === 0 && result.sapReadErrors.length === 0
+                            .filter(mismatch => !selectedHybridCaseExplainsMismatch({ result, mismatch, selectedHybridCases: selectedMatrixHybridCases }))
+                            .filter(mismatch => !matrixSkuOverrideExplainsMismatch(result, mismatch))
+                           const selectedHybridSkuCount = new Set(selectedMatrixHybridCaseList
+                             .filter(candidate => candidate.sourceColorCode === result.sourceColorCode)
+                             .flatMap(candidate => candidate.cases.map(candidateCase => candidateCase.skuComplete))).size
+                           const verified = unresolvedMismatches.length === 0 && result.sapReadErrors.length === 0
                           return <div key={`${result.sourceColorCode}:${result.scope}`} className={verified ? 'border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950' : 'border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950'}>
                               <p className="font-semibold">Color {result.sourceColorCode} · {scopeLabel(result.scope)} → {result.targetColorCode}: {verified ? `100% confirmado en ${result.checkedSkuCount} SKU(s) activos en SAP` : `${unresolvedMismatches.length + result.sapReadErrors.length} caso(s) por revisar`}</p>
-                              <p className="mt-1 text-xs">Catálogo: {result.catalogSkuCount} SKU(s) de venta con este color · ignorados: {result.excludedInactiveSapSkuCount} inactivo(s) en SAP y {result.excludedKitSkuCount} kit(s) de venta.{acceptedMissingComponentCount > 0 ? ` ${acceptedMissingComponentCount} ausencia(s) intencional(es) aceptada(s).` : ''}</p>
-                              {unresolvedMismatches.map(mismatch => <div key={`${mismatch.skuComplete}:${mismatch.baseItemCode}:${mismatch.itemCode ?? 'missing'}`} className="mt-2 border-t border-amber-200 pt-2">
+                              <p className="mt-1 text-xs">Catálogo: {result.catalogSkuCount} SKU(s) de venta con este color · ignorados: {result.excludedInactiveSapSkuCount} inactivo(s) en SAP y {result.excludedKitSkuCount} kit(s) de venta.{selectedHybridSkuCount > 0 ? ` ${selectedHybridSkuCount} SKU(s) Dual se validan con el caso seleccionado.` : ''}{acceptedMissingComponentCount > 0 ? ` ${acceptedMissingComponentCount} ausencia(s) intencional(es) aceptada(s).` : ''}</p>
+                              {unresolvedMismatches.map(mismatch => {
+                                const mismatchKey = matrixMismatchKey({ sourceColorCode: result.sourceColorCode, scope: result.scope, mismatch })
+                                const semanticScope = mismatch.semanticScope ?? null
+                                const overrideDraft = matrixSkuOverrideDrafts[mismatchKey] ?? {
+                                  targetColorCode: mismatch.observedColorCode ?? '',
+                                  reason: '',
+                                }
+                                const canCreateSkuOverride = mismatch.reason === 'unexpected_color'
+                                  && semanticScope !== null
+                                  && Boolean(mismatch.observedColorCode)
+                                return <div key={`${mismatch.skuComplete}:${mismatch.baseItemCode}:${mismatch.itemCode ?? 'missing'}`} className="mt-2 border-t border-amber-200 pt-2">
                               <p><span className="font-mono">{mismatch.skuComplete}</span>{mismatch.skuItemName ? ` — ${mismatch.skuItemName}` : ''} · {mismatch.baseItemCode}{mismatch.itemName ? ` — ${mismatch.itemName}` : ''}: {mismatch.reason === 'missing_component' ? 'la pieza no aparece en SAP' : `SAP usa ${mismatch.observedColorCode ?? 'sin color'} (${mismatch.itemCode ?? 'sin código'})`}</p>
                               {mismatch.reason === 'missing_component' ? <label className="mt-2 inline-flex items-center gap-2 text-xs font-semibold text-emerald-900"><input type="checkbox" checked={selectedMatrixAbsences[`${result.sourceColorCode}:${result.scope}:${mismatch.skuComplete}:${mismatch.baseItemCode}`] === true} onChange={event => toggleMatrixAbsence(`${result.sourceColorCode}:${result.scope}:${mismatch.skuComplete}:${mismatch.baseItemCode}`, event.target.checked)} />Ausencia válida</label> : null}
                               <label className="mt-2 inline-flex items-center gap-2 text-xs font-semibold text-rose-900"><input type="checkbox" checked={selectedMatrixSapSkus[mismatch.skuComplete] === true} onChange={event => setSelectedMatrixSapSkus(current => ({ ...current, [mismatch.skuComplete]: event.target.checked }))} />Inactivar este SKU en SAP</label>
-                            </div>)}
+                              {canCreateSkuOverride ? <div className="mt-2 border border-sky-200 bg-sky-50 p-2 text-xs text-sky-950">
+                                <p>También puedes conservar este SKU como excepción: el rol lógico publicado es <span className="font-semibold">{scopeLabel(semanticScope)}</span>. El formato físico no se cambia.</p>
+                                <button type="button" onClick={() => toggleMatrixSkuOverrideEditor(mismatchKey)} className="mt-2 border border-sky-300 bg-white px-2 py-1 font-semibold text-sky-950">
+                                  {matrixSkuOverrideEditors[mismatchKey] ? 'Ocultar override SKU' : 'Crear override SKU'}
+                                </button>
+                                {matrixSkuOverrideEditors[mismatchKey] ? <div className="mt-2 grid gap-2 sm:grid-cols-[120px_1fr_auto]">
+                                  <input
+                                    value={overrideDraft.targetColorCode}
+                                    onChange={event => updateMatrixSkuOverrideDraft(mismatchKey, { targetColorCode: event.target.value.toUpperCase().slice(0, 4) })}
+                                    maxLength={4}
+                                    aria-label={`Color interno para ${mismatch.skuComplete}`}
+                                    className="h-8 border border-sky-300 bg-white px-2 font-mono text-sm text-slate-900"
+                                  />
+                                  <input
+                                    value={overrideDraft.reason}
+                                    onChange={event => updateMatrixSkuOverrideDraft(mismatchKey, { reason: event.target.value })}
+                                    placeholder="Motivo del caso puntual"
+                                    className="h-8 border border-sky-300 bg-white px-2 text-sm text-slate-900"
+                                  />
+                                  <button type="button" onClick={() => saveMatrixSkuOverride(result, mismatch)} disabled={isPending || overrideDraft.targetColorCode.length !== 4 || overrideDraft.reason.trim().length < 3} className="h-8 bg-sky-800 px-2 font-semibold text-white disabled:opacity-50">Guardar override</button>
+                                </div> : null}
+                              </div> : mismatch.reason === 'unexpected_color' ? <p className="mt-2 text-xs text-slate-600">Para crear un override por SKU, primero publica la BOM base de esta referencia con el rol lógico de esta línea.</p> : null}
+                             </div>
+                              })}
                             {result.sapReadErrors.map(error => <p key={error.skuComplete} className="mt-1">{error.skuComplete}: no se pudo leer SAP ({error.message})</p>)}
                           </div>
                         })}
@@ -1604,6 +2013,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                         No se comparó la referencia, no se propuso una BOM y no se revisaron subestructuras. Primero SAP debe responder para todos los colores activos.
                       </p>
                       <p className="mt-2 text-sm text-amber-900">Colores pendientes: {bomReadFailureSnapshots.map(snapshot => snapshot.skuColorCode ?? 'sin color').join(', ')}.</p>
+                      {canRetryOnlyPendingBomReads ? <p className="mt-1 text-sm text-amber-900">El reintento reutilizará {capturedSnapshots.length} LdM ya leídas y consultará solo {bomReadFailureSnapshots.length} pendiente(s).</p> : null}
                     </div>
                   </div>
                 </section>
@@ -1645,7 +2055,10 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                 <>
               <section className="border border-slate-200 bg-white">
                 <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-                  <h2 className="font-semibold text-slate-950">BOM base propuesta</h2>
+                  <div>
+                    <h2 className="font-semibold text-slate-950">BOM base propuesta</h2>
+                    <p className="mt-1 text-xs text-slate-500">El rol lógico pertenece a esta referencia; el formato físico se conserva.</p>
+                  </div>
                   <span className="text-sm text-slate-500">Pendiente de publicacion</span>
                 </div>
                 <div className="max-h-[400px] overflow-auto">
@@ -1654,7 +2067,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                       <tr>
                         <th className="px-5 py-3">Orden</th>
                         <th className="px-5 py-3">Material o alternativas</th>
-                        <th className="px-5 py-3">Uso en producto</th>
+                        <th className="px-5 py-3">Uso lógico en producto</th>
                         <th className="px-5 py-3">Consumos</th>
                         <th className="px-5 py-3">Unidad</th>
                         <th className="px-5 py-3">Método de salida propuesto</th>
@@ -1665,6 +2078,15 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                       {workspace.run.proposedBomStructure.lines.map(line => {
                         const observedConsumptions = line.consumptions.filter(consumption => consumption.status !== 'needs_definition').length
                         const pendingConsumptions = line.consumptions.filter(consumption => consumption.status === 'needs_definition').length
+                        const baseItemName = line.base_item_code ? workspace.proposalItemNames[line.base_item_code] : null
+                        const materialGroupItemNames = line.line_kind === 'material_group'
+                          ? line.alternatives.map(alternative => workspace.proposalItemNames[alternative.base_item_code])
+                          : []
+                        const availableScopes = referenceScopeOptions({
+                          currentScope: line.product_application_scope,
+                          itemName: baseItemName,
+                          itemNames: materialGroupItemNames,
+                        })
                         return (
                           <tr key={line.line_id} className="border-t border-slate-100 align-top">
                             <td className="px-5 py-3 tabular-nums text-slate-600">{line.sort_order}</td>
@@ -1691,7 +2113,23 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                                 </>
                               )}
                             </td>
-                            <td className="px-5 py-3 text-slate-700">{scopeLabel(line.product_application_scope)}</td>
+                            <td className="px-5 py-3 text-slate-700">
+                              {availableScopes.length > 0 ? <>
+                                <select
+                                  value={line.product_application_scope}
+                                  onChange={event => updateReferenceBomLineScope(
+                                    line.line_id,
+                                    line.line_kind,
+                                    line.base_item_code,
+                                    event.target.value as ReferenceProductApplicationScope
+                                  )}
+                                  className="h-8 max-w-[190px] border border-slate-300 bg-white px-2 text-sm text-slate-900"
+                                >
+                                  {availableScopes.map(scope => <option key={scope} value={scope}>{scopeLabel(scope)}</option>)}
+                                </select>
+                                <p className="mt-1 text-xs text-slate-500">Rol propio de esta referencia; se guarda al publicar.</p>
+                              </> : scopeLabel(line.product_application_scope)}
+                            </td>
                             <td className="px-5 py-3 text-sm text-slate-700">
                               {line.line_kind === 'fixed' ? (
                                 <span className="tabular-nums">{line.qty}</span>
@@ -1853,7 +2291,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                             <div className="mt-3 flex flex-wrap gap-2">
                               <button
                                 type="button"
-                                onClick={analyzeSelectedReference}
+                                onClick={() => analyzeSelectedReference()}
                                 className="h-9 border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800"
                               >
                                 Volver a consultar SAP

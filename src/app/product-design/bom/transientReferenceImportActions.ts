@@ -11,8 +11,10 @@ import {
   verifyReferenceImportColorRulesMatrixDirect,
   type ColorRuleCoverageResult,
 } from '@/lib/bom/referenceImport'
-import type { ReferenceImportWorkspace } from '@/lib/bom/referenceImportTypes'
-import type { ReferenceProductApplicationScope } from '@/lib/bom/referenceImportScopes'
+import type { ReferenceBomStructure, ReferenceImportWorkspace } from '@/lib/bom/referenceImportTypes'
+import { isReferenceProductApplicationScope, type ReferenceProductApplicationScope } from '@/lib/bom/referenceImportScopes'
+import type { HybridColorCase } from '@/lib/bom/types'
+import { normalizeBomStructure } from '@/lib/bom/resolve'
 import { getSapItem, getSapItemBom, productTreeStructureMatches, updateSapItem, updateSapProductTreeIssueMethod, type SapEntityPayload } from '@/lib/sap/serviceLayer'
 import { parseSapItemCode, readSapFrozen, readSapValid } from '@/lib/bom/sapMapping'
 import { getColorsAction, upsertColorAction, type ColorEntry } from '@/app/rules/colors/actions'
@@ -27,10 +29,20 @@ type ActionResult = {
 type MatrixSelection = DirectColorRuleMatrixSelection
 type IssueMethodItem = { skuComplete: string; childNum: number; itemCode: string }
 type MatrixAbsence = { skuComplete: string; baseItemCode: string }
-type DualColorMatrixPair = {
+type MatrixHybridColorCase = {
   sourceColorCode: string
+  fullProductColorCode: string
+  colorMode: 'dual' | 'balance'
   structureColorCode: string
   frontColorCode: string
+  skuCompletes: string[]
+}
+
+type ReferenceSemanticScopeAssignment = {
+  lineId: string
+  lineKind: 'fixed' | 'material_group'
+  baseItemCode: string | null
+  scope: ReferenceProductApplicationScope
 }
 
 const MATRIX_ABSENCE_VALIDATION_CONCURRENCY = 3
@@ -43,22 +55,85 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
-function dualColorPairsFromMatrixSelections(selections: MatrixSelection[]): DualColorMatrixPair[] {
-  const edgeColorsBySource = new Map<string, { structureColorCode?: string; frontColorCode?: string }>()
-  for (const selection of selections) {
-    const sourceColorCode = selection.sourceColorCode.trim().toUpperCase()
-    const targetColorCode = selection.targetColorCode.trim().toUpperCase()
-    if (!sourceColorCode || !targetColorCode) continue
-    const edgeColors = edgeColorsBySource.get(sourceColorCode) ?? {}
-    if (selection.scope === 'edge_band_body') edgeColors.structureColorCode = targetColorCode
-    if (selection.scope === 'edge_band_front') edgeColors.frontColorCode = targetColorCode
-    edgeColorsBySource.set(sourceColorCode, edgeColors)
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function jsonRecord(value: unknown): Record<string, unknown> {
+  if (isRecord(value)) return { ...value }
+  if (typeof value !== 'string') return {}
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return isRecord(parsed) ? { ...parsed } : {}
+  } catch {
+    return {}
   }
-  return [...edgeColorsBySource.entries()].flatMap(([sourceColorCode, edgeColors]) =>
-    edgeColors.structureColorCode && edgeColors.frontColorCode && edgeColors.structureColorCode !== edgeColors.frontColorCode
-      ? [{ sourceColorCode, structureColorCode: edgeColors.structureColorCode, frontColorCode: edgeColors.frontColorCode }]
+}
+
+function normalizedColorCode(value: string): string {
+  return value.trim().toUpperCase()
+}
+
+function isColorCode(value: string): boolean {
+  return /^[A-Z0-9]{4}$/.test(value)
+}
+
+function normalizeSkuCompletes(value: string[]): string[] {
+  return [...new Set(value
+    .map(skuComplete => skuComplete.trim().toUpperCase())
+    .filter(Boolean))]
+    .sort()
+}
+
+function storedHybridColorCases(value: unknown): HybridColorCase[] {
+  const rawCases = jsonRecord(value).hybrid_color_cases
+  if (!Array.isArray(rawCases)) return []
+  return rawCases.flatMap((rawCase, index) => {
+    const candidate = jsonRecord(rawCase)
+    const colorMode = candidate.color_mode
+    if (colorMode !== 'dual' && colorMode !== 'balance') return []
+    const skuCompletes = Array.isArray(candidate.sku_completes)
+      ? normalizeSkuCompletes(candidate.sku_completes.filter((skuComplete): skuComplete is string => typeof skuComplete === 'string'))
       : []
-  )
+    if (skuCompletes.length === 0) return []
+    const applicationColors = Object.fromEntries(
+      Object.entries(jsonRecord(candidate.application_colors)).flatMap(([scope, rawColorCode]) => {
+        if (typeof rawColorCode !== 'string') return []
+        const colorCode = normalizedColorCode(rawColorCode)
+        return isColorCode(colorCode) ? [[scope, colorCode] as const] : []
+      })
+    )
+    if (Object.keys(applicationColors).length === 0) return []
+    return [{
+      case_id: typeof candidate.case_id === 'string' && candidate.case_id.trim()
+        ? candidate.case_id.trim()
+        : `legacy_case_${String(index + 1).padStart(3, '0')}`,
+      color_mode: colorMode,
+      sku_completes: skuCompletes,
+      application_colors: applicationColors,
+    }]
+  })
+}
+
+function normalizedMatrixHybridCase(input: MatrixHybridColorCase): MatrixHybridColorCase {
+  const sourceColorCode = normalizedColorCode(input.sourceColorCode)
+  const fullProductColorCode = normalizedColorCode(input.fullProductColorCode)
+  const structureColorCode = normalizedColorCode(input.structureColorCode)
+  const frontColorCode = normalizedColorCode(input.frontColorCode)
+  const skuCompletes = normalizeSkuCompletes(input.skuCompletes)
+  if (!isColorCode(sourceColorCode) || !isColorCode(fullProductColorCode) || !isColorCode(structureColorCode) || !isColorCode(frontColorCode)) {
+    throw new Error('Cada caso Dual necesita colores de producto, unicolor, estructura y frentes de cuatro caracteres.')
+  }
+  if (structureColorCode === frontColorCode) throw new Error(`El caso ${sourceColorCode} debe tener colores distintos para estructura y frentes.`)
+  if (skuCompletes.length === 0) throw new Error(`El caso ${sourceColorCode} no contiene SKU completos evidenciados por SAP.`)
+  return {
+    sourceColorCode,
+    fullProductColorCode,
+    colorMode: input.colorMode,
+    structureColorCode,
+    frontColorCode,
+    skuCompletes,
+  }
 }
 
 async function validateMatrixAbsencesInSap(input: MatrixAbsence[]): Promise<MatrixAbsence[]> {
@@ -211,6 +286,181 @@ export async function saveTransientColorOverrideAction(input: {
   }
 }
 
+export async function saveTransientMatrixSkuColorOverrideAction(input: {
+  skuComplete: string
+  sourceColorCode: string
+  scope: ReferenceProductApplicationScope
+  targetColorCode: string
+  reason: string
+}): Promise<{ success: boolean; message: string }> {
+  const access = await assertPermission('module:product-design')
+  try {
+    const skuComplete = input.skuComplete.trim().toUpperCase()
+    const sourceColorCode = normalizedColorCode(input.sourceColorCode)
+    const targetColorCode = normalizedColorCode(input.targetColorCode)
+    const reason = input.reason.trim()
+    if (!skuComplete || !isColorCode(sourceColorCode) || !isColorCode(targetColorCode)) {
+      throw new Error('El SKU y ambos colores deben estar completos.')
+    }
+    if (!isReferenceProductApplicationScope(input.scope) || input.scope === 'NA') {
+      throw new Error('El override necesita un rol lógico válido de la BOM base.')
+    }
+    if (reason.length < 3) throw new Error('Explica brevemente por qué se necesita este override.')
+
+    const skuRows: Record<string, unknown>[] = await dbQuery(
+      `SELECT sku.id, sku.color_code, reference.reference_code, reference.product_bom_structure
+       FROM public.product_skus sku
+       JOIN public.product_versions version ON version.id = sku.version_id
+       JOIN public.product_references reference ON reference.id = version.reference_id
+       WHERE sku.sku_complete = $1
+         AND version.version_code = '000'
+       LIMIT 1`,
+      [skuComplete]
+    )
+    const sku = skuRows[0]
+    const skuId = readString(sku?.id)
+    if (!skuId) throw new Error(`No existe el SKU ${skuComplete} de versión 000 en la app.`)
+    if (normalizedColorCode(readString(sku?.color_code) ?? '') !== sourceColorCode) {
+      throw new Error(`${skuComplete} no pertenece al color ${sourceColorCode}.`)
+    }
+    const structure = normalizeBomStructure(sku?.product_bom_structure)
+    if (!structure.lines.some(line => line.product_application_scope === input.scope)) {
+      const referenceCode = readString(sku?.reference_code) ?? 'esta referencia'
+      throw new Error(`Antes de crear este override, publica la BOM base de ${referenceCode} con una línea marcada como ${input.scope}.`)
+    }
+
+    const override = JSON.stringify({
+      color_code: sourceColorCode,
+      product_application_scope: input.scope,
+      base_item_code: null,
+      target_color_code: targetColorCode,
+      material_profile: null,
+      reason,
+      source: 'reference_import',
+      actor_id: access.user?.id ?? null,
+    })
+    const rows: Record<string, unknown>[] = await dbQuery(
+      `UPDATE public.product_skus sku
+       SET bom_overrides = jsonb_set(
+         jsonb_set(COALESCE(sku.bom_overrides, '{}'::jsonb), '{schema_version}', '2'::jsonb, true),
+         '{color_overrides}',
+         COALESCE(sku.bom_overrides -> 'color_overrides', '[]'::jsonb) || jsonb_build_array(jsonb_build_object('override_id', gen_random_uuid()) || $1::jsonb),
+         true
+       )
+       WHERE sku.id = $2
+       RETURNING sku.sku_complete`,
+      [override, skuId]
+    )
+    if (!readString(rows[0]?.sku_complete)) throw new Error('No se pudo guardar el override del SKU.')
+    revalidatePath('/product-design/bom')
+    return {
+      success: true,
+      message: `Override del SKU guardado: ${skuComplete} usará ${targetColorCode} en ${input.scope}. No se modificó SAP ni el formato físico.`,
+    }
+  } catch (error) {
+    return { success: false, message: error instanceof Error ? error.message : 'No se pudo guardar el override del SKU.' }
+  }
+}
+
+export async function saveTransientMatrixDualCandidateSkuOverridesAction(input: {
+  skuCompletes: string[]
+  sourceColorCode: string
+  structureColorCode: string
+  frontColorCode: string
+}): Promise<{ success: boolean; message: string }> {
+  const access = await assertPermission('module:product-design')
+  try {
+    const skuCompletes = normalizeSkuCompletes(input.skuCompletes)
+    const sourceColorCode = normalizedColorCode(input.sourceColorCode)
+    const structureColorCode = normalizedColorCode(input.structureColorCode)
+    const frontColorCode = normalizedColorCode(input.frontColorCode)
+    if (skuCompletes.length === 0) throw new Error('El caso no contiene SKU para guardar.')
+    if (![sourceColorCode, structureColorCode, frontColorCode].every(isColorCode)) {
+      throw new Error('El color del producto, estructura y frentes deben tener cuatro caracteres.')
+    }
+    if (structureColorCode === frontColorCode) {
+      throw new Error('Un caso Dual necesita un color de estructura distinto al de frentes.')
+    }
+
+    const skuRows: Record<string, unknown>[] = await dbQuery(
+      `SELECT sku.sku_complete, sku.color_code
+       FROM public.product_skus sku
+       JOIN public.product_versions version ON version.id = sku.version_id
+       WHERE sku.sku_complete IN (${skuCompletes.map((_, index) => `$${index + 1}`).join(', ')})
+         AND version.version_code = '000'`,
+      skuCompletes
+    )
+    const foundBySku = new Map(skuRows.flatMap(row => {
+      const skuComplete = readString(row.sku_complete)?.toUpperCase()
+      return skuComplete ? [[skuComplete, normalizedColorCode(readString(row.color_code) ?? '')] as const] : []
+    }))
+    const missingSkuCompletes = skuCompletes.filter(skuComplete => !foundBySku.has(skuComplete))
+    if (missingSkuCompletes.length > 0) {
+      throw new Error(`No existen como SKU versión 000: ${missingSkuCompletes.join(', ')}.`)
+    }
+    const unexpectedColorSkus = skuCompletes.filter(skuComplete => foundBySku.get(skuComplete) !== sourceColorCode)
+    if (unexpectedColorSkus.length > 0) {
+      throw new Error(`No pertenecen al color ${sourceColorCode}: ${unexpectedColorSkus.join(', ')}.`)
+    }
+
+    const overrides = JSON.stringify([
+      {
+        color_code: sourceColorCode,
+        product_application_scope: 'edge_band_body',
+        base_item_code: null,
+        target_color_code: structureColorCode,
+        material_profile: null,
+        reason: `Matriz de cantos: estructura ${structureColorCode} y frentes ${frontColorCode}. Se aplicará al publicar la BOM base.`,
+        source: 'reference_import',
+        actor_id: access.user?.id ?? null,
+      },
+      {
+        color_code: sourceColorCode,
+        product_application_scope: 'edge_band_front',
+        base_item_code: null,
+        target_color_code: frontColorCode,
+        material_profile: null,
+        reason: `Matriz de cantos: estructura ${structureColorCode} y frentes ${frontColorCode}. Se aplicará al publicar la BOM base.`,
+        source: 'reference_import',
+        actor_id: access.user?.id ?? null,
+      },
+    ])
+    const rows: Record<string, unknown>[] = await dbQuery(
+      `UPDATE public.product_skus sku
+       SET bom_overrides = jsonb_set(
+         jsonb_set(COALESCE(sku.bom_overrides, '{}'::jsonb), '{schema_version}', '2'::jsonb, true),
+         '{color_overrides}',
+         COALESCE(sku.bom_overrides -> 'color_overrides', '[]'::jsonb)
+           || (
+             SELECT COALESCE(jsonb_agg(jsonb_build_object('override_id', gen_random_uuid()) || override), '[]'::jsonb)
+             FROM jsonb_array_elements($1::jsonb) override
+           ),
+         true
+       )
+       FROM public.product_versions version
+       WHERE sku.version_id = version.id
+         AND version.version_code = '000'
+         AND sku.sku_complete IN (${skuCompletes.map((_, index) => `$${index + 2}`).join(', ')})
+       RETURNING sku.sku_complete`,
+      [overrides, ...skuCompletes]
+    )
+    const savedSkuCompletes = new Set(rows.flatMap(row => {
+      const skuComplete = readString(row.sku_complete)?.toUpperCase()
+      return skuComplete ? [skuComplete] : []
+    }))
+    if (savedSkuCompletes.size !== skuCompletes.length) {
+      throw new Error('No se pudieron guardar todos los overrides del caso. No se modificó SAP.')
+    }
+    revalidatePath('/product-design/bom')
+    return {
+      success: true,
+      message: `Overrides semánticos guardados para ${skuCompletes.length} SKU(s): estructura ${structureColorCode} y frentes ${frontColorCode}. No se modificó SAP; se aplicarán cuando la BOM base publique esos roles.`,
+    }
+  } catch (error) {
+    return { success: false, message: error instanceof Error ? error.message : 'No se pudieron guardar los overrides del caso.' }
+  }
+}
+
 export async function verifyTransientColorMatrixAction(input: {
   selections: MatrixSelection[]
 }): Promise<{ success: boolean; message: string; results: ColorRuleCoverageResult[] }> {
@@ -226,54 +476,103 @@ export async function verifyTransientColorMatrixAction(input: {
 
 export async function confirmTransientColorMatrixAction(input: {
   selections: MatrixSelection[]
+  hybridCases: MatrixHybridColorCase[]
   acceptedAbsences: Array<{ skuComplete: string; baseItemCode: string }>
 }): Promise<ActionResult> {
   await assertPermission('module:product-design')
   try {
     if (input.selections.length === 0) throw new Error('Selecciona al menos una regla para aplicar.')
     if (input.acceptedAbsences.length > 0) await validateMatrixAbsencesInSap(input.acceptedAbsences)
-    const dualPairs = dualColorPairsFromMatrixSelections(input.selections)
-    for (const pair of dualPairs) {
-      const rows: Record<string, unknown>[] = await dbQuery(
-        `SELECT code_4dig, COALESCE(color_mode, 'full') AS color_mode
-         FROM public.colors
-         WHERE code_4dig = $1`,
-        [pair.sourceColorCode]
-      )
-      if (!readString(rows[0]?.code_4dig)) throw new Error(`No existe el color ${pair.sourceColorCode}.`)
-      if (readString(rows[0]?.color_mode)?.toLowerCase() === 'balance') {
-        throw new Error(`El color ${pair.sourceColorCode} ya es Balance; no se puede convertir a Dual desde esta matriz.`)
-      }
-    }
+    const selectionsBySource = new Map<string, Map<string, string>>()
     for (const selection of input.selections) {
-      const rows: Record<string, unknown>[] = await dbQuery(
-        `UPDATE public.colors SET application_colors_json = jsonb_set(COALESCE(application_colors_json, '{}'::jsonb), ARRAY[$1]::text[], to_jsonb($2::text), true) WHERE code_4dig = $3 RETURNING code_4dig`,
-        [selection.scope, selection.targetColorCode.trim().toUpperCase(), selection.sourceColorCode.trim().toUpperCase()]
-      )
-      if (!readString(rows[0]?.code_4dig)) throw new Error(`No existe el color ${selection.sourceColorCode}.`)
+      const sourceColorCode = normalizedColorCode(selection.sourceColorCode)
+      const targetColorCode = normalizedColorCode(selection.targetColorCode)
+      if (!sourceColorCode || !targetColorCode || !isColorCode(targetColorCode)) {
+        throw new Error('Cada regla seleccionada necesita un color interno de cuatro caracteres.')
+      }
+      const scopes = selectionsBySource.get(sourceColorCode) ?? new Map<string, string>()
+      scopes.set(selection.scope, targetColorCode)
+      selectionsBySource.set(sourceColorCode, scopes)
     }
-    for (const pair of dualPairs) {
+    const hybridCases = input.hybridCases.map(normalizedMatrixHybridCase)
+    const hybridCasesBySource = new Map<string, MatrixHybridColorCase[]>()
+    for (const hybridCase of hybridCases) {
+      const scopes = selectionsBySource.get(hybridCase.sourceColorCode)
+      const unicolorTarget = scopes?.get('edge_band_full_product') ?? scopes?.get('full_product')
+      if (!unicolorTarget) throw new Error(`Selecciona primero la regla unicolor de ${hybridCase.sourceColorCode}.`)
+      if (unicolorTarget !== hybridCase.fullProductColorCode) {
+        throw new Error(`El caso Dual de ${hybridCase.sourceColorCode} debe conservar el mismo color unicolor seleccionado (${unicolorTarget}).`)
+      }
+      const sourceCases = hybridCasesBySource.get(hybridCase.sourceColorCode) ?? []
+      if (sourceCases.length > 0) {
+        throw new Error(`Solo puedes guardar un caso Dual para el color ${hybridCase.sourceColorCode}. Los demÃ¡s casos deben corregirse en SAP, inactivarse o resolverse con un override por SKU.`)
+      }
+      sourceCases.push(hybridCase)
+      hybridCasesBySource.set(hybridCase.sourceColorCode, sourceCases)
+    }
+
+    const sourceColorCodes = [...selectionsBySource.keys()].sort()
+    const colorRows: Record<string, unknown>[] = await dbQuery(
+      `SELECT code_4dig, COALESCE(color_mode, 'full') AS color_mode, application_colors_json
+       FROM public.colors
+       WHERE code_4dig IN (${sourceColorCodes.map((_, index) => `$${index + 1}`).join(', ')})`,
+      sourceColorCodes
+    )
+    const colorRowsByCode = new Map(colorRows.flatMap(row => {
+      const code4dig = readString(row.code_4dig)?.toUpperCase()
+      return code4dig ? [[code4dig, row] as const] : []
+    }))
+
+    for (const sourceColorCode of sourceColorCodes) {
+      const currentRow = colorRowsByCode.get(sourceColorCode)
+      if (!currentRow) throw new Error(`No existe el color ${sourceColorCode}.`)
+      const nextApplicationColors = jsonRecord(currentRow.application_colors_json)
+      const scopes = selectionsBySource.get(sourceColorCode) ?? new Map<string, string>()
+      for (const [scope, targetColorCode] of scopes) nextApplicationColors[scope] = targetColorCode
+
+      const sourceHybridCases = hybridCasesBySource.get(sourceColorCode) ?? []
+      if (sourceHybridCases.length > 0) {
+        const unicolorColorCode = sourceHybridCases[0]?.fullProductColorCode
+        if (!unicolorColorCode) throw new Error(`Falta el color unicolor de ${sourceColorCode}.`)
+        nextApplicationColors.full_product = unicolorColorCode
+        nextApplicationColors.edge_band_full_product = unicolorColorCode
+
+        const preservedCases = storedHybridColorCases(nextApplicationColors)
+          .filter(existingCase => existingCase.color_mode !== 'dual')
+        const configuredCases: HybridColorCase[] = sourceHybridCases.map((hybridCase, index) => ({
+          case_id: `matrix_${hybridCase.colorMode}_${hybridCase.structureColorCode}_${hybridCase.frontColorCode}_${hybridCase.skuCompletes[0] ?? String(index + 1)}`,
+          color_mode: hybridCase.colorMode,
+          sku_completes: hybridCase.skuCompletes,
+          application_colors: {
+            structure: hybridCase.structureColorCode,
+            front: hybridCase.frontColorCode,
+            edge_band_body: hybridCase.structureColorCode,
+            edge_band_front: hybridCase.frontColorCode,
+          },
+        }))
+        nextApplicationColors.hybrid_color_cases = [...preservedCases, ...configuredCases]
+      }
+
       const rows: Record<string, unknown>[] = await dbQuery(
         `UPDATE public.colors
-         SET color_mode = 'dual',
-             application_colors_json = jsonb_set(
-               jsonb_set(
-                 jsonb_set(
-                   jsonb_set(COALESCE(application_colors_json, '{}'::jsonb), '{edge_band_body}', to_jsonb($1::text), true),
-                   '{edge_band_front}', to_jsonb($2::text), true
-                 ),
-                 '{structure}', to_jsonb($3::text), true
-               ),
-               '{front}', to_jsonb($4::text), true
-             )
-         WHERE code_4dig = $5
+         SET color_mode = $1,
+             application_colors_json = $2::jsonb
+         WHERE code_4dig = $3
          RETURNING code_4dig`,
-        [pair.structureColorCode, pair.frontColorCode, pair.structureColorCode, pair.frontColorCode, pair.sourceColorCode]
+        [sourceHybridCases.length > 0 ? 'full' : readString(currentRow.color_mode) ?? 'full', JSON.stringify(nextApplicationColors), sourceColorCode]
       )
-      if (!readString(rows[0]?.code_4dig)) throw new Error(`No existe el color ${pair.sourceColorCode}.`)
+      if (!readString(rows[0]?.code_4dig)) throw new Error(`No se pudo guardar el color ${sourceColorCode}.`)
     }
     revalidatePath('/configuration/colors')
-    return { success: true, message: 'Reglas globales guardadas. Actualizando el análisis SAP.', workspace: null }
+    revalidatePath('/product-design/bom')
+    const hybridSkuCount = hybridCases.reduce((total, hybridCase) => total + hybridCase.skuCompletes.length, 0)
+    return {
+      success: true,
+      message: hybridCases.length > 0
+        ? `Regla unicolor y ${hybridCases.length} caso(s) Dual guardados para ${hybridSkuCount} SKU(s) completos. No se reconsultó SAP: se reutilizó la evidencia de esta verificación.`
+        : 'Reglas unicolor guardadas. No se reconsultó SAP.',
+      workspace: null,
+    }
   } catch (error) {
     return failure(error, 'No se pudieron guardar las reglas de la matriz.')
   }
@@ -425,18 +724,66 @@ export async function deactivateTransientReferenceBomSkusInSapAction(input: {
   return { success: failedCount === 0, message: input.dryRun ? `Dry-run de ${results.length} SKU: ${failedCount} con error.` : `${results.filter(result => result.success).length} SKU verificado(s) en SAP; ${failedCount} con error.`, confirmationRequired, results }
 }
 
-export async function publishTransientReferenceBomAction(referenceId: string): Promise<ActionResult> {
+function applyReferenceSemanticScopeAssignments(
+  structure: ReferenceBomStructure,
+  assignments: ReferenceSemanticScopeAssignment[]
+): ReferenceBomStructure {
+  const assignmentsByLineId = new Map(assignments.map(assignment => [assignment.lineId, assignment]))
+  return {
+    ...structure,
+    lines: structure.lines.map(line => {
+      const assignment = assignmentsByLineId.get(line.line_id)
+      if (!assignment || line.line_kind !== assignment.lineKind || line.base_item_code !== assignment.baseItemCode) return line
+      return { ...line, product_application_scope: assignment.scope }
+    }),
+  }
+}
+
+export async function publishTransientReferenceBomAction(input: {
+  referenceId: string
+  semanticScopeAssignments?: ReferenceSemanticScopeAssignment[]
+}): Promise<ActionResult> {
   await assertPermission('module:product-design')
   try {
+    const referenceId = input.referenceId.trim()
     const workspace = await analyzeReferenceBomImportTransient({ referenceId })
     const blockers = workspace.findings.filter(finding => finding.severity === 'blocker' && finding.status === 'open')
     if (blockers.length > 0) throw new Error(`SAP aún tiene ${blockers.length} bloqueo(s) pendientes; no se publica una propuesta vieja.`)
+    const validAssignments = (input.semanticScopeAssignments ?? []).flatMap((assignment) => {
+      const lineId = assignment.lineId.trim()
+      const lineKind = assignment.lineKind
+      const baseItemCode = assignment.baseItemCode?.trim().toUpperCase() ?? null
+      const hasValidIdentity = lineKind === 'fixed'
+        ? Boolean(baseItemCode)
+        : lineKind === 'material_group' && baseItemCode === null
+      return lineId && hasValidIdentity && isReferenceProductApplicationScope(assignment.scope)
+        ? [{ lineId, lineKind, baseItemCode, scope: assignment.scope }]
+        : []
+    })
+    const proposedBomStructure = applyReferenceSemanticScopeAssignments(
+      workspace.run.proposedBomStructure,
+      validAssignments
+    )
     await dbQuery(
       `UPDATE public.product_references SET product_bom_structure = $1::jsonb WHERE id = $2`,
-      [JSON.stringify(workspace.run.proposedBomStructure), referenceId]
+      [JSON.stringify(proposedBomStructure), referenceId]
     )
     revalidatePath('/product-design')
-    return { success: true, message: 'BOM base publicada con una validación SAP fresca.', workspace }
+    return {
+      success: true,
+      message: validAssignments.length > 0
+        ? 'BOM base publicada con roles lógicos de la referencia y una validación SAP fresca.'
+        : 'BOM base publicada con una validación SAP fresca.',
+      workspace: {
+        ...workspace,
+        run: {
+          ...workspace.run,
+          status: 'published',
+          proposedBomStructure,
+          publishedBomStructure: proposedBomStructure,
+        },
+      },
+    }
   } catch (error) {
     return failure(error, 'No se pudo publicar la BOM.')
   }

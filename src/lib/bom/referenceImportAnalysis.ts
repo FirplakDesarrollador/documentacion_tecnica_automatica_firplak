@@ -43,10 +43,6 @@ type QuantityObservation = {
 const EPSILON = 0.000001
 const BOARD_THICKNESS_TOLERANCE_MM = 0.5
 
-const SCOPE_BY_BASE_ITEM_CODE: Record<string, ReferenceProductApplicationScope> = {
-  'CMPD06-0030-000': 'drawer_bottom',
-}
-
 function normalizedText(value: string | null | undefined): string {
   return value?.trim().toUpperCase() ?? ''
 }
@@ -132,13 +128,76 @@ function metadataFor(line: NormalizedSapBomLine): ComponentTechnicalMetadata | n
   return line.technicalMetadata
 }
 
+function explicitSemanticScope(
+  scope: ReferenceProductApplicationScope | null | undefined
+): ReferenceProductApplicationScope | null {
+  if (
+    scope === 'structure'
+    || scope === 'front'
+    || scope === 'inner_structure'
+    || scope === 'drawer_bottom'
+    || scope === 'edge_band_body'
+    || scope === 'edge_band_front'
+    || scope === 'edge_band_inner'
+    || scope === 'edge_band_drawer_bottom'
+  ) return scope
+  return null
+}
+
+function persistedSemanticScope(
+  context: ReferenceImportContext,
+  line: NormalizedSapBomLine
+): ReferenceProductApplicationScope | null {
+  const matchingLines = context.existingBomStructure?.lines
+    .filter(candidate => candidate.line_kind === 'fixed' && candidate.base_item_code === line.baseItemCode)
+    ?? []
+  const fixedLineScope = explicitSemanticScope(matchingLines[line.occurrence - 1]?.product_application_scope)
+  if (fixedLineScope) return fixedLineScope
+  const materialGroup = context.existingBomStructure?.lines.find(candidate =>
+    candidate.line_kind === 'material_group'
+    && candidate.alternatives.some(alternative => alternative.base_item_code === line.baseItemCode)
+  )
+  return explicitSemanticScope(materialGroup?.product_application_scope)
+}
+
+function pendingEdgeScopeFromSkuOverrides(
+  line: NormalizedSapBomLine,
+  evidence: LineEvidence[],
+  context: ReferenceImportContext
+): ReferenceProductApplicationScope | null {
+  if (!normalizedText(line.itemName).includes('CANTO')) return null
+  const observedScopes = new Set<ReferenceProductApplicationScope>()
+  for (const item of evidence) {
+    if (item.line.baseItemCode !== line.baseItemCode) continue
+    const skuColorCode = item.snapshot.skuColorCode?.trim().toUpperCase()
+    if (!skuColorCode) continue
+    const overrides = context.skuColorOverrides?.get(item.snapshot.skuComplete.trim().toUpperCase()) ?? []
+    for (const override of overrides) {
+      const scope = explicitSemanticScope(override.product_application_scope)
+      const targetColorCode = override.target_color_code?.trim().toUpperCase()
+      if (
+        (scope !== 'edge_band_body' && scope !== 'edge_band_front')
+        || override.color_code.trim().toUpperCase() !== skuColorCode
+        || (override.base_item_code && override.base_item_code !== item.line.baseItemCode)
+        || targetColorCode !== item.line.variantCode4
+      ) continue
+      observedScopes.add(scope)
+    }
+  }
+  return observedScopes.size === 1 ? [...observedScopes][0] ?? null : null
+}
+
 function scopeFromSemantics(
   line: NormalizedSapBomLine,
   evidence: LineEvidence[],
-  colorConfigurations: Map<string, ColorConfiguration>
+  colorConfigurations: Map<string, ColorConfiguration>,
+  context: ReferenceImportContext
 ): ReferenceProductApplicationScope {
-  const fromCode = SCOPE_BY_BASE_ITEM_CODE[line.baseItemCode]
-  if (fromCode) return fromCode
+  const fromPublishedReference = persistedSemanticScope(context, line)
+  if (fromPublishedReference) return fromPublishedReference
+
+  const fromPendingSkuOverride = pendingEdgeScopeFromSkuOverrides(line, evidence, context)
+  if (fromPendingSkuOverride) return fromPendingSkuOverride
 
   if (line.technicalMetadata?.material_kind === 'board') {
     return dualBoardScopeFromEvidence(evidence, colorConfigurations) ?? 'full_product'
@@ -200,6 +259,64 @@ function candidateColorForScope(
     ?? skuColorCode
 }
 
+function hybridColorCaseForSku(
+  configuration: ColorConfiguration | undefined,
+  skuComplete: string
+) {
+  const normalizedSkuComplete = skuComplete.trim().toUpperCase()
+  return configuration?.hybridColorCases?.find(hybridCase =>
+    hybridCase.sku_completes.includes(normalizedSkuComplete)
+  ) ?? null
+}
+
+function configuredColorsForEvidence(
+  evidence: LineEvidence,
+  scope: ReferenceProductApplicationScope,
+  configuration: ColorConfiguration | undefined,
+  skuColorCode: string
+): string[] {
+  const hybridCase = hybridColorCaseForSku(configuration, evidence.snapshot.skuComplete)
+  if (hybridCase) {
+    const itemName = normalizedText(evidence.line.itemName)
+    const isBoard = evidence.line.technicalMetadata?.material_kind === 'board'
+    const isEdgeBand = evidence.line.technicalMetadata?.material_kind === 'edge_band' || itemName.includes('CANTO')
+    const hybridScopes = isBoard && scope === 'full_product'
+      ? hybridCase.color_mode === 'balance'
+        ? ['structure', 'front', 'inner_structure']
+        : ['structure', 'front']
+      : isEdgeBand && scope === 'edge_band_full_product'
+        ? hybridCase.color_mode === 'balance'
+          ? ['edge_band_body', 'edge_band_front', 'edge_band_inner']
+          : ['edge_band_body', 'edge_band_front']
+        : [scope]
+    const hybridColors = hybridScopes
+      .map(hybridScope => hybridCase.application_colors[hybridScope])
+      .filter((colorCode): colorCode is string => Boolean(colorCode))
+    if (hybridColors.length > 0) return [...new Set(hybridColors)]
+  }
+  const candidate = candidateColorForScope(configuration, scope, skuColorCode)
+  return candidate ? [candidate] : []
+}
+
+function skuOverrideColorForEvidence(
+  evidence: LineEvidence,
+  scope: ReferenceProductApplicationScope,
+  context: ReferenceImportContext
+): string | null {
+  const skuColorCode = evidence.snapshot.skuColorCode?.trim().toUpperCase()
+  if (!skuColorCode) return null
+  const overrides = context.skuColorOverrides?.get(evidence.snapshot.skuComplete.trim().toUpperCase()) ?? []
+  const override = overrides
+    .filter(candidate =>
+      candidate.color_code.trim().toUpperCase() === skuColorCode
+      && candidate.product_application_scope === scope
+      && (!candidate.base_item_code || candidate.base_item_code === evidence.line.baseItemCode)
+      && Boolean(candidate.target_color_code)
+    )
+    .at(-1)
+  return override?.target_color_code?.trim().toUpperCase() ?? null
+}
+
 function evidenceUsesConfiguredColor(
   evidence: LineEvidence,
   scope: ReferenceProductApplicationScope,
@@ -208,9 +325,12 @@ function evidenceUsesConfiguredColor(
 ): boolean {
   const skuColorCode = evidence.snapshot.skuColorCode
   if (!skuColorCode || evidence.line.variantCode4 === '0000') return true
+  const overrideColor = skuOverrideColorForEvidence(evidence, scope, context)
+  if (overrideColor) return evidence.line.variantCode4 === overrideColor
   const configuration = configurations.get(skuColorCode)
   if (!configuration || !isColorApplicable(configuration, context)) return evidence.line.variantCode4 === skuColorCode
-  return evidence.line.variantCode4 === candidateColorForScope(configuration, scope, skuColorCode)
+  return configuredColorsForEvidence(evidence, scope, configuration, skuColorCode)
+    .includes(evidence.line.variantCode4)
 }
 
 function lineUsesConfiguredColor(
@@ -275,7 +395,8 @@ function profileAlternatives(groups: Array<{ lineIdentity: string; evidence: Lin
 function findLogicalEvidence(
   evidenceByIdentity: Map<string, LineEvidence[]>,
   snapshotCount: number,
-  colorConfigurations: Map<string, ColorConfiguration>
+  colorConfigurations: Map<string, ColorConfiguration>,
+  context: ReferenceImportContext
 ): LogicalEvidence[] {
   const pending = [...evidenceByIdentity.entries()]
     .map(([lineIdentity, evidence]) => ({ lineIdentity, evidence }))
@@ -301,7 +422,7 @@ function findLogicalEvidence(
       isMaterialGroup,
       alternatives: isMaterialGroup ? profileAlternatives(groups) : [],
       sortOrder: mostCommonNumber(joinedEvidence.map(item => item.line.sourceOrder)),
-      scope: scopeFromSemantics(firstLine, joinedEvidence, colorConfigurations),
+      scope: scopeFromSemantics(firstLine, joinedEvidence, colorConfigurations, context),
     })
   }
 
@@ -531,7 +652,12 @@ export function analyzeReferenceBom(input: {
     }
   }
 
-  const logicalLines = findLogicalEvidence(evidenceByIdentity, capturedSnapshots.length, input.colorConfigurations)
+  const logicalLines = findLogicalEvidence(
+    evidenceByIdentity,
+    capturedSnapshots.length,
+    input.colorConfigurations,
+    input.context
+  )
   const findings: ReferenceImportFindingDraft[] = []
   const proposals: ReferenceBomLine[] = []
 

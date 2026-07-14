@@ -257,6 +257,40 @@ test('keeps same-color edge bands in one unicolor proposal before SAP verifies t
   assert.deepEqual([...new Set(proposals)], ['edge_band_full_product:1371'])
 })
 
+test('preserves a unicolor rule while accepting a Dual case only for its identified SKU', () => {
+  const analysis = analyzeReferenceBom({
+    context: {
+      referenceId: 'reference', familyCode: 'BAN05', referenceCode: '0122', productName: 'Prueba híbrida',
+      manufacturingProcess: 'MUEBLES NACIONAL', productType: 'MUEBLE',
+    },
+    snapshots: [
+      snapshot('VBAN05-0001-000-0493', '0493', [
+        line({ baseItemCode: 'CMPD06-0003-000', variantCode4: '1371', sourceOrder: 1, itemName: 'CANTO PVC 19X0,45MM NARDO' }),
+        line({ baseItemCode: 'CMPD06-0005-000', variantCode4: '1371', sourceOrder: 2, itemName: 'CANTO PVC 19X2MM NARDO' }),
+      ]),
+      snapshot('VBAN05-0122-000-0493', '0493', [
+        line({ baseItemCode: 'CMPD06-0003-000', variantCode4: '1371', sourceOrder: 1, itemName: 'CANTO PVC 19X0,45MM NARDO' }),
+        line({ baseItemCode: 'CMPD06-0005-000', variantCode4: '0467', sourceOrder: 2, itemName: 'CANTO PVC 19X2MM CINZA COBALTO' }),
+      ]),
+    ],
+    colorConfigurations: new Map<string, ColorConfiguration>([
+      ['0493', {
+        code4dig: '0493', colorMode: 'full',
+        applicationColors: { full_product: '1371', edge_band_full_product: '1371' },
+        hybridColorCases: [{
+          case_id: 'dual_0493_0122',
+          color_mode: 'dual',
+          sku_completes: ['VBAN05-0122-000-0493'],
+          application_colors: { structure: '1371', front: '0467', edge_band_body: '1371', edge_band_front: '0467' },
+        }],
+        applicationMaterialProfiles: {}, allowedProductTypes: ['MUEBLE'], allowedManufacturingProcesses: ['MUEBLES NACIONAL'],
+      }],
+    ]),
+  })
+  assert.equal(analysis.findings.some(finding => finding.findingType === 'color_rule_proposal'), false)
+  assert.equal(analysis.findings.some(finding => finding.findingType === 'bom_line_review'), false)
+})
+
 test('classifies configured dual edge colors by their configured colors, not by a base item code', () => {
   const analysis = analyzeReferenceBom({
     context: {
@@ -357,6 +391,54 @@ test('resolves dual structure and front colors for boards and edge bands', () =>
     'CMPD06-0004-000-0467',
     'CMPD06-0003-000-1371',
     'CMPD06-0005-000-0467',
+  ])
+})
+
+test('uses a Dual case only for its complete SKU and preserves the unicolor default', () => {
+  const structure: BomStructure = {
+    schema_version: 2,
+    structure_type: 'production',
+    input_warehouse_code: '01',
+    output_warehouse_code: null,
+    lines: [
+      { line_id: 'ln_000001', sort_order: 1, line_kind: 'fixed', base_item_code: 'CMPD06-0008-000', product_application_scope: 'structure', qty: 1, input_warehouse_code: null, issue_method_override: null, alternatives: [], consumptions: [] },
+      { line_id: 'ln_000002', sort_order: 2, line_kind: 'fixed', base_item_code: 'CMPD06-0004-000', product_application_scope: 'front', qty: 1, input_warehouse_code: null, issue_method_override: null, alternatives: [], consumptions: [] },
+      { line_id: 'ln_000003', sort_order: 3, line_kind: 'fixed', base_item_code: 'CMPD06-0003-000', product_application_scope: 'edge_band_body', qty: 1, input_warehouse_code: null, issue_method_override: null, alternatives: [], consumptions: [] },
+      { line_id: 'ln_000004', sort_order: 4, line_kind: 'fixed', base_item_code: 'CMPD06-0005-000', product_application_scope: 'edge_band_front', qty: 1, input_warehouse_code: null, issue_method_override: null, alternatives: [], consumptions: [] },
+    ],
+  }
+  const components = new Map([
+    ['CMPD06-0008-000-1371', component('CMPD06-0008-000-1371', 'TABLERO CARB 15MM NARDO')],
+    ['CMPD06-0004-000-1371', component('CMPD06-0004-000-1371', 'TABLERO RH 15MM NARDO')],
+    ['CMPD06-0004-000-0467', component('CMPD06-0004-000-0467', 'TABLERO RH 15MM CINZA COBALTO')],
+    ['CMPD06-0003-000-1371', component('CMPD06-0003-000-1371', 'CANTO PVC 19X0,45MM NARDO')],
+    ['CMPD06-0005-000-1371', component('CMPD06-0005-000-1371', 'CANTO PVC 19X2MM NARDO')],
+    ['CMPD06-0005-000-0467', component('CMPD06-0005-000-0467', 'CANTO PVC 19X2MM CINZA COBALTO')],
+  ])
+  const colorway: Colorway = {
+    code_4dig: '0493', name_color_sap: 'CINZA', color_mode: 'full',
+    application_colors_json: { full_product: '1371', edge_band_full_product: '1371' },
+    hybrid_color_cases: [{
+      case_id: 'dual_0493_0122', color_mode: 'dual', sku_completes: ['VBAN05-0122-000-0493'],
+      application_colors: { structure: '1371', front: '0467', edge_band_body: '1371', edge_band_front: '0467' },
+    }],
+    application_material_profiles_json: {}, allowed_product_types: [], is_active: true,
+  }
+
+  const unicolor = resolveBomForSku({
+    skuComplete: 'VBAN05-0001-000-0493', skuColorCode: '0493', structure,
+    globalOverrides: emptyOverrides, versionOverrides: emptyOverrides, colorway, componentItems: components,
+  })
+  assert.deepEqual(unicolor.map(line => line.resolved_item_code), [
+    'CMPD06-0008-000-1371', 'CMPD06-0004-000-1371', 'CMPD06-0003-000-1371', 'CMPD06-0005-000-1371',
+  ])
+
+  const dual = resolveBomForSku({
+    skuComplete: 'VBAN05-0122-000-0493', skuColorCode: '0493', structure,
+    globalOverrides: emptyOverrides, versionOverrides: emptyOverrides, colorway, componentItems: components,
+  })
+  assert.deepEqual(dual.map(line => line.resolved_item_code), [
+    'CMPD06-0008-000-1371', 'CMPD06-0004-000-0467', 'CMPD06-0003-000-1371', 'CMPD06-0005-000-0467',
   ])
 })
 
@@ -479,4 +561,193 @@ test('SKU color overrides take precedence over reference, global and version ove
     componentItems: new Map([[skuItem.item_code, skuItem]]),
   })
   assert.equal(resolved[0]?.resolved_item_code, 'CMPD06-0001-000-0999')
+})
+
+test('preserves a reference edge format when a SKU override changes only its logical color', () => {
+  const structure: BomStructure = {
+    schema_version: 2,
+    structure_type: 'production',
+    input_warehouse_code: '01',
+    output_warehouse_code: null,
+    lines: [
+      { line_id: 'ln_000001', sort_order: 1, line_kind: 'fixed', base_item_code: 'CMPD06-0003-000', product_application_scope: 'edge_band_body', qty: 7.2, input_warehouse_code: null, issue_method_override: null, alternatives: [], consumptions: [] },
+      { line_id: 'ln_000002', sort_order: 2, line_kind: 'fixed', base_item_code: 'CMPD06-0014-000', product_application_scope: 'edge_band_front', qty: 2.4, input_warehouse_code: null, issue_method_override: null, alternatives: [], consumptions: [] },
+    ],
+  }
+  const components = new Map([
+    ['CMPD06-0003-000-1371', component('CMPD06-0003-000-1371', 'CANTO PVC 19X0,45MM NARDO')],
+    ['CMPD06-0014-000-1371', component('CMPD06-0014-000-1371', 'CANTO PVC 19X1,5MM NARDO')],
+    ['CMPD06-0014-000-0493', component('CMPD06-0014-000-0493', 'CANTO PVC 19X1,5MM AUSTRAL')],
+  ])
+  const skuOverrides: BomOverrides = {
+    schema_version: 2,
+    operations: [],
+    color_overrides: [{
+      override_id: 'greco-front-edge',
+      color_code: '0493',
+      product_application_scope: 'edge_band_front',
+      base_item_code: null,
+      target_color_code: '0493',
+      material_profile: null,
+      reason: 'El frente de esta referencia conserva el canto Austral de 1,5 mm.',
+      source: 'reference_import',
+    }],
+  }
+
+  const resolved = resolveBomForSku({
+    skuComplete: 'VBAN12-0022-000-0493',
+    skuColorCode: '0493',
+    structure,
+    globalOverrides: emptyOverrides,
+    versionOverrides: emptyOverrides,
+    skuOverrides,
+    colorway: {
+      code_4dig: '0493', name_color_sap: 'AUSTRAL', color_mode: 'full',
+      application_colors_json: { full_product: '1371', edge_band_full_product: '1371' },
+      application_material_profiles_json: {}, allowed_product_types: [], is_active: true,
+    },
+    componentItems: components,
+  })
+
+  assert.deepEqual(resolved.map(line => line.resolved_item_code), [
+    'CMPD06-0003-000-1371',
+    'CMPD06-0014-000-0493',
+  ])
+})
+
+test('uses pending semantic SKU edge overrides before the reference BOM is published', () => {
+  const analysis = analyzeReferenceBom({
+    context: {
+      referenceId: 'reference', familyCode: 'BAN12', referenceCode: '0022', productName: 'Prueba canto 1,5 mm',
+      manufacturingProcess: 'MUEBLES NACIONAL', productType: 'MUEBLE',
+      skuColorOverrides: new Map([['VBAN12-0022-000-0493', [
+        {
+          override_id: 'greco-body-edge', color_code: '0493', product_application_scope: 'edge_band_body',
+          base_item_code: null, target_color_code: '1371', material_profile: null,
+          reason: 'La estructura conserva Nardo.', source: 'reference_import',
+        },
+        {
+          override_id: 'greco-front-edge', color_code: '0493', product_application_scope: 'edge_band_front',
+          base_item_code: null, target_color_code: '0493', material_profile: null,
+          reason: 'El frente conserva Austral de 1,5 mm.', source: 'reference_import',
+        },
+      ]]]),
+    },
+    snapshots: [snapshot('VBAN12-0022-000-0493', '0493', [
+      line({ baseItemCode: 'CMPD06-0003-000', variantCode4: '1371', sourceOrder: 1, itemName: 'CANTO PVC 19X0,45MM NARDO' }),
+      line({ baseItemCode: 'CMPD06-0014-000', variantCode4: '0493', sourceOrder: 2, itemName: 'CANTO PVC 19X1,5MM AUSTRAL' }),
+    ])],
+    colorConfigurations: new Map<string, ColorConfiguration>([['0493', {
+      code4dig: '0493', colorMode: 'full',
+      applicationColors: { full_product: '1371', edge_band_full_product: '1371' },
+      applicationMaterialProfiles: {}, allowedProductTypes: ['MUEBLE'], allowedManufacturingProcesses: ['MUEBLES NACIONAL'],
+    }]]),
+  })
+
+  assert.deepEqual(analysis.proposedBomStructure.lines.map(line => line.product_application_scope), [
+    'edge_band_body',
+    'edge_band_front',
+  ])
+  assert.equal(analysis.findings.some(finding => finding.findingType === 'bom_line_review'), false)
+})
+
+test('reuses published reference roles and SKU color overrides during reanalysis', () => {
+  const analysis = analyzeReferenceBom({
+    context: {
+      referenceId: 'reference', familyCode: 'BAN12', referenceCode: '0022', productName: 'Prueba canto 1,5 mm',
+      manufacturingProcess: 'MUEBLES NACIONAL', productType: 'MUEBLE',
+      existingBomStructure: {
+        schema_version: 2,
+        structure_type: 'production',
+        input_warehouse_code: '01',
+        output_warehouse_code: null,
+        lines: [
+          { line_id: 'ln_000001', sort_order: 1, line_kind: 'fixed', base_item_code: 'CMPD06-0003-000', product_application_scope: 'edge_band_body', qty: 7.2, input_warehouse_code: null, issue_method_override: null, alternatives: [], consumptions: [] },
+          { line_id: 'ln_000002', sort_order: 2, line_kind: 'fixed', base_item_code: 'CMPD06-0014-000', product_application_scope: 'edge_band_front', qty: 2.4, input_warehouse_code: null, issue_method_override: null, alternatives: [], consumptions: [] },
+        ],
+      },
+      skuColorOverrides: new Map([['VBAN12-0022-000-0493', [{
+        override_id: 'greco-front-edge', color_code: '0493', product_application_scope: 'edge_band_front',
+        base_item_code: null, target_color_code: '0493', material_profile: null,
+        reason: 'El frente conserva el canto Austral de 1,5 mm.', source: 'reference_import',
+      }]]]),
+    },
+    snapshots: [snapshot('VBAN12-0022-000-0493', '0493', [
+      line({ baseItemCode: 'CMPD06-0003-000', variantCode4: '1371', sourceOrder: 1, itemName: 'CANTO PVC 19X0,45MM NARDO' }),
+      line({ baseItemCode: 'CMPD06-0014-000', variantCode4: '0493', sourceOrder: 2, itemName: 'CANTO PVC 19X1,5MM AUSTRAL' }),
+    ])],
+    colorConfigurations: new Map<string, ColorConfiguration>([['0493', {
+      code4dig: '0493', colorMode: 'full',
+      applicationColors: { full_product: '1371', edge_band_full_product: '1371' },
+      applicationMaterialProfiles: {}, allowedProductTypes: ['MUEBLE'], allowedManufacturingProcesses: ['MUEBLES NACIONAL'],
+    }]]),
+  })
+
+  assert.deepEqual(analysis.proposedBomStructure.lines.map(line => line.product_application_scope), [
+    'edge_band_body',
+    'edge_band_front',
+  ])
+  assert.equal(analysis.findings.some(finding => finding.findingType === 'bom_line_review'), false)
+})
+
+test('uses an explicit material-group role instead of expanding it to every Dual role', () => {
+  const structure: BomStructure = {
+    schema_version: 2,
+    structure_type: 'production',
+    input_warehouse_code: '01',
+    output_warehouse_code: null,
+    lines: [{
+      line_id: 'ln_000001', sort_order: 1, line_kind: 'material_group', base_item_code: null,
+      product_application_scope: 'front', qty: null, input_warehouse_code: null, issue_method_override: null,
+      alternatives: [{ alternative_id: 'alt_01', base_item_code: 'CMPD06-0004-000', material_profile: 'RH', is_default: true }],
+      consumptions: [{ color_mode: 'dual', product_application_scope: 'front', material_profile: 'RH', format_key: null, qty: 0.74, status: 'confirmed' }],
+    }],
+  }
+  const board = component('CMPD06-0004-000-0467', 'TABLERO RH 15MM CINZA COBALTO', metadata({
+    material_kind: 'board', material_profile: 'RH', material_profile_source: 'RH', thickness_mm: 15, format_key: '2150x2440x15', metadata_source: 'sap_and_name',
+  }))
+  const resolved = resolveBomForSku({
+    skuComplete: 'VBAN05-0122-000-0493', skuColorCode: '0493', structure,
+    globalOverrides: emptyOverrides, versionOverrides: emptyOverrides,
+    colorway: {
+      code_4dig: '0493', name_color_sap: 'AUSTRAL', color_mode: 'dual',
+      application_colors_json: { structure: '1371', front: '0467' },
+      application_material_profiles_json: { front: 'RH' }, allowed_product_types: [], is_active: true,
+    },
+    componentItems: new Map([[board.item_code, board]]),
+  })
+
+  assert.deepEqual(resolved.map(line => `${line.product_application_scope}:${line.resolved_item_code}`), [
+    'front:CMPD06-0004-000-0467',
+  ])
+  assert.equal(resolved[0]?.resolution_status, 'resolved')
+})
+
+test('reuses a published material-group role during reference reanalysis', () => {
+  const analysis = analyzeReferenceBom({
+    context: {
+      referenceId: 'reference', familyCode: 'BAN05', referenceCode: '0122', productName: 'Prueba grupo frontal',
+      manufacturingProcess: 'MUEBLES NACIONAL', productType: 'MUEBLE',
+      existingBomStructure: {
+        schema_version: 2,
+        structure_type: 'production',
+        input_warehouse_code: '01',
+        output_warehouse_code: null,
+        lines: [{
+          line_id: 'ln_000001', sort_order: 1, line_kind: 'material_group', base_item_code: null,
+          product_application_scope: 'front', qty: null, input_warehouse_code: null, issue_method_override: null,
+          alternatives: [{ alternative_id: 'alt_01', base_item_code: 'CMPD06-0004-000', material_profile: 'RH', is_default: true }],
+          consumptions: [],
+        }],
+      },
+    },
+    snapshots: [snapshot('VBAN05-0122-000-0493', '0493', [line({
+      baseItemCode: 'CMPD06-0004-000', variantCode4: '0467', sourceOrder: 1,
+      itemName: 'TABLERO RH 15MM CINZA COBALTO',
+      technicalMetadata: metadata({ material_kind: 'board', material_profile: 'RH', material_profile_source: 'RH', thickness_mm: 15, format_key: '2150x2440x15', metadata_source: 'sap_and_name' }),
+    })])],
+    colorConfigurations: new Map(),
+  })
+
+  assert.equal(analysis.proposedBomStructure.lines[0]?.product_application_scope, 'front')
 })

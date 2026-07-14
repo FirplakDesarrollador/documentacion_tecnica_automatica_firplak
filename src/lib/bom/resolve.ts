@@ -10,6 +10,7 @@ import type {
   BomStructureLine,
   Colorway,
   ComponentItem,
+  HybridColorCase,
   MaterialProfile,
   ProductApplicationScope,
   ResolvedBomLine,
@@ -241,9 +242,25 @@ export function applyBomOverrides(structure: BomStructure, ...layers: BomOverrid
   }
 }
 
-function effectiveScope(colorway: Colorway | null, scope: ProductApplicationScope): ProductApplicationScope {
+function hybridColorCaseForSku(input: {
+  colorway: Colorway | null
+  skuComplete: string
+  skuColorCode: string | null
+}): HybridColorCase | null {
+  if (!input.colorway || input.skuColorCode !== input.colorway.code_4dig) return null
+  const normalizedSkuComplete = input.skuComplete.trim().toUpperCase()
+  return input.colorway.hybrid_color_cases?.find(hybridCase =>
+    hybridCase.sku_completes.includes(normalizedSkuComplete)
+  ) ?? null
+}
+
+function effectiveScope(
+  colorway: Colorway | null,
+  scope: ProductApplicationScope,
+  colorMode: BomColorMode
+): ProductApplicationScope {
   if (
-    (colorway?.color_mode === 'full' || colorway?.color_mode === 'equivalent')
+    (colorMode === 'full' || colorway?.color_mode === 'equivalent')
     && scope.startsWith('edge_band_')
   ) {
     return 'edge_band_full_product'
@@ -269,15 +286,19 @@ function matchingColorOverride(input: {
 
 function resolveVariant(input: {
   colorway: Colorway | null
+  hybridColorCase: HybridColorCase | null
+  colorMode: BomColorMode
   scope: ProductApplicationScope
   skuColorCode: string | null
   colorOverride: BomColorOverride | null
 }): string {
-  const { colorway, scope, skuColorCode, colorOverride } = input
+  const { colorway, hybridColorCase, colorMode, scope, skuColorCode, colorOverride } = input
   if (scope === 'NA') return '0000'
   if (colorOverride?.target_color_code) return colorOverride.target_color_code
-  const configuredScope = effectiveScope(colorway, scope)
-  return colorway?.application_colors_json[configuredScope]
+  const configuredScope = effectiveScope(colorway, scope, colorMode)
+  return hybridColorCase?.application_colors[configuredScope]
+    ?? hybridColorCase?.application_colors[scope]
+    ?? colorway?.application_colors_json[configuredScope]
     ?? colorway?.application_colors_json.full_product
     ?? skuColorCode
     ?? '0000'
@@ -286,10 +307,11 @@ function resolveVariant(input: {
 function resolveMaterialProfile(
   colorway: Colorway | null,
   scope: ProductApplicationScope,
-  colorOverride: BomColorOverride | null
+  colorOverride: BomColorOverride | null,
+  colorMode: BomColorMode
 ): MaterialProfile | null {
   if (colorOverride?.material_profile) return colorOverride.material_profile
-  const configuredScope = effectiveScope(colorway, scope)
+  const configuredScope = effectiveScope(colorway, scope, colorMode)
   return colorway?.application_material_profiles_json[configuredScope]
     ?? colorway?.application_material_profiles_json.full_product
     ?? null
@@ -299,6 +321,12 @@ function requiredScopes(colorMode: BomColorMode): ProductApplicationScope[] {
   if (colorMode === 'dual') return ['structure', 'front']
   if (colorMode === 'balance') return ['structure', 'front', 'inner_structure']
   return ['full_product']
+}
+
+function materialGroupScopes(line: BomStructureLine, colorMode: BomColorMode): ProductApplicationScope[] {
+  return line.product_application_scope !== 'full_product' && line.product_application_scope !== 'NA'
+    ? [line.product_application_scope]
+    : requiredScopes(colorMode)
 }
 
 function selectedAlternative(
@@ -333,8 +361,17 @@ function selectedConsumption(input: {
     && consumption.product_application_scope === input.scope
     && consumption.material_profile === input.profile
   )
-  return matching.find(consumption => consumption.format_key === input.formatKey)
+  const exactMatch = matching.find(consumption => consumption.format_key === input.formatKey)
     ?? matching.find(consumption => consumption.format_key === null)
+  if (exactMatch) return exactMatch
+  if (input.colorMode !== 'full' || input.scope === 'full_product') return null
+  const fullProductMatching = input.line.consumptions.filter(consumption =>
+    consumption.color_mode === 'full'
+    && consumption.product_application_scope === 'full_product'
+    && consumption.material_profile === input.profile
+  )
+  return fullProductMatching.find(consumption => consumption.format_key === input.formatKey)
+    ?? fullProductMatching.find(consumption => consumption.format_key === null)
     ?? null
 }
 
@@ -356,9 +393,15 @@ export function resolveBomForSku(input: {
     input.versionOverrides,
     input.skuOverrides ?? { schema_version: 2, operations: [] }
   )
-  const colorMode = input.colorway?.color_mode === 'dual' || input.colorway?.color_mode === 'balance'
-    ? input.colorway.color_mode
-    : 'full'
+  const hybridColorCase = hybridColorCaseForSku({
+    colorway: input.colorway,
+    skuComplete: input.skuComplete,
+    skuColorCode: input.skuColorCode,
+  })
+  const colorMode = hybridColorCase?.color_mode
+    ?? (input.colorway?.color_mode === 'dual' || input.colorway?.color_mode === 'balance'
+      ? input.colorway.color_mode
+      : 'full')
 
   return effective.lines.flatMap((line) => {
     if (line.line_kind === 'fixed') {
@@ -377,6 +420,8 @@ export function resolveBomForSku(input: {
       })
       const variantCode = resolveVariant({
         colorway: input.colorway,
+        hybridColorCase,
+        colorMode,
         scope: line.product_application_scope,
         skuColorCode: input.skuColorCode,
         colorOverride,
@@ -403,7 +448,7 @@ export function resolveBomForSku(input: {
       }]
     }
 
-    return requiredScopes(colorMode).map((scope) => {
+    return materialGroupScopes(line, colorMode).map((scope) => {
       const fallbackBaseItemCode = line.alternatives[0]?.base_item_code ?? ''
       const colorOverride = matchingColorOverride({
         layers: [
@@ -416,11 +461,11 @@ export function resolveBomForSku(input: {
         scope,
         baseItemCode: fallbackBaseItemCode,
       })
-      const profile = resolveMaterialProfile(input.colorway, scope, colorOverride)
+      const profile = resolveMaterialProfile(input.colorway, scope, colorOverride, colorMode)
       const alternative = selectedAlternative(line, profile)
       const resolvedProfile = profile ?? alternative?.material_profile ?? null
       const variantCode = alternative
-        ? resolveVariant({ colorway: input.colorway, scope, skuColorCode: input.skuColorCode, colorOverride })
+        ? resolveVariant({ colorway: input.colorway, hybridColorCase, colorMode, scope, skuColorCode: input.skuColorCode, colorOverride })
         : '0000'
       const component = alternative
         ? resolveComponent(alternative.base_item_code, variantCode, input.componentItems)

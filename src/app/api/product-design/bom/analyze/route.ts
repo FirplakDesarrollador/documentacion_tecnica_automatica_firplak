@@ -11,8 +11,28 @@ type AnalysisEvent =
   | { type: 'complete'; message: string; workspace: Awaited<ReturnType<typeof analyzeReferenceBomImportTransient>> }
   | { type: 'error'; message: string }
 
+type RetryRequest = {
+  skuCompletes: string[]
+  cachedSnapshots: unknown[]
+}
+
 function streamEvent(encoder: TextEncoder, event: AnalysisEvent): Uint8Array {
   return encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
+}
+
+function parseRetryRequest(record: Record<string, unknown>): RetryRequest | null {
+  const retry = record.retry
+  if (typeof retry !== 'object' || retry === null || Array.isArray(retry)) return null
+  const retryRecord = retry as Record<string, unknown>
+  const skuCompletes = [...new Set(
+    (Array.isArray(retryRecord.skuCompletes) ? retryRecord.skuCompletes : [])
+      .flatMap(value => typeof value === 'string' && value.trim() ? [value.trim().toUpperCase()] : [])
+  )]
+  if (skuCompletes.length === 0) return null
+  return {
+    skuCompletes: skuCompletes.slice(0, 500),
+    cachedSnapshots: Array.isArray(retryRecord.cachedSnapshots) ? retryRecord.cachedSnapshots.slice(0, 500) : [],
+  }
 }
 
 export async function POST(request: NextRequest): Promise<Response> {
@@ -20,6 +40,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (guard.response) return guard.response
 
   let referenceId = ''
+  let retry: RetryRequest | null = null
   try {
     const body: unknown = await request.json()
     const record = typeof body === 'object' && body !== null && !Array.isArray(body)
@@ -28,8 +49,10 @@ export async function POST(request: NextRequest): Promise<Response> {
     referenceId = typeof record.referenceId === 'string'
       ? record.referenceId.trim()
       : ''
+    retry = parseRetryRequest(record)
   } catch {
     referenceId = ''
+    retry = null
   }
   if (!referenceId) return Response.json({ success: false, message: 'Selecciona una referencia válida.' }, { status: 400 })
 
@@ -51,12 +74,16 @@ export async function POST(request: NextRequest): Promise<Response> {
         try {
           const workspace = await analyzeReferenceBomImportTransient({
             referenceId,
+            ...(retry ? { retry } : {}),
             onProgress: progress => send({ type: 'progress', progress }),
           })
           const capturedCount = workspace.snapshots.filter(snapshot => snapshot.status === 'captured').length
+          const retryMessage = retry
+            ? `SAP reintentó ${retry.skuCompletes.length} LdM pendiente(s) y reutilizó las ya capturadas.`
+            : `SAP leyó ${capturedCount} de ${workspace.run.sourceSkuCount} LdM.`
           send({
             type: 'complete',
-            message: `SAP leyó ${capturedCount} de ${workspace.run.sourceSkuCount} LdM y la comparación está lista para revisar.`,
+            message: `${retryMessage} La comparación está lista para revisar.`,
             workspace,
           })
         } catch (error) {

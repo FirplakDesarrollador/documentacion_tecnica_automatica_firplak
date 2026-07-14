@@ -27,6 +27,7 @@ import {
   readSapValid,
 } from './sapMapping'
 import { analyzeReferenceBom } from './referenceImportAnalysis'
+import { normalizeBomOverrides } from './resolve'
 import {
   isReferenceProductApplicationScope,
   type ReferenceProductApplicationScope,
@@ -50,7 +51,7 @@ import {
   type ReferenceImportWorkspace,
   type ReferenceImportActiveOverride,
 } from './referenceImportTypes'
-import type { BomColorMode, BomConsumptionStatus } from './types'
+import type { BomColorMode, BomColorOverride, BomConsumptionStatus, ComponentTechnicalMetadata, HybridColorCase } from './types'
 
 const ANALYZED_VERSION_CODE = '000'
 const DIRECT_BOM_CONCURRENCY = 2
@@ -122,6 +123,11 @@ type SapReferenceSkuReconciliation = {
   onlyInSapSkuCodes: string[]
 }
 
+type TransientReferenceImportRetry = {
+  skuCompletes: string[]
+  cachedSnapshots: unknown[]
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -175,6 +181,42 @@ function readStringArray(value: unknown): string[] {
     }
   }
   return []
+}
+
+function readHybridColorCases(value: JsonRecord): HybridColorCase[] {
+  const rawCases = value.hybrid_color_cases
+  if (!Array.isArray(rawCases)) return []
+
+  const seenSkuSets = new Set<string>()
+  return rawCases.flatMap((rawCase, index) => {
+    const candidate = jsonRecord(rawCase)
+    const colorMode = readString(candidate.color_mode)?.toLowerCase()
+    if (colorMode !== 'dual' && colorMode !== 'balance') return []
+
+    const skuCompletes = [...new Set(readStringArray(candidate.sku_completes)
+      .map(skuComplete => skuComplete.toUpperCase()))]
+      .sort()
+    if (skuCompletes.length === 0) return []
+
+    const applicationColors = Object.fromEntries(
+      Object.entries(jsonRecord(candidate.application_colors))
+        .flatMap(([scope, colorCode]) => {
+          const normalizedColorCode = readString(colorCode)?.toUpperCase()
+          return normalizedColorCode ? [[scope, normalizedColorCode] as const] : []
+        })
+    )
+    if (Object.keys(applicationColors).length === 0) return []
+
+    const skuSetKey = skuCompletes.join('|')
+    if (seenSkuSets.has(skuSetKey)) return []
+    seenSkuSets.add(skuSetKey)
+    return [{
+      case_id: readString(candidate.case_id) ?? `case_${String(index + 1).padStart(3, '0')}`,
+      color_mode: colorMode,
+      sku_completes: skuCompletes,
+      application_colors: applicationColors,
+    }]
+  })
 }
 
 function asRunStatus(value: unknown): ReferenceImportRunSummary['status'] {
@@ -461,6 +503,114 @@ function buildDirectBomJson(bom: SapBom, normalizedLines: DirectBomSnapshot['nor
       technical_metadata: line.technicalMetadata,
     })),
   }
+}
+
+function readNullableNumber(value: unknown): number | null {
+  if (value === null) return null
+  const number = readNumber(value, Number.NaN)
+  return Number.isFinite(number) ? number : null
+}
+
+function cachedTechnicalMetadata(value: unknown): ComponentTechnicalMetadata | null {
+  const metadata = jsonRecord(value)
+  const materialKind = readString(metadata.material_kind)
+  const metadataSource = readString(metadata.metadata_source)
+  if (
+    (materialKind !== 'board' && materialKind !== 'edge_band' && materialKind !== 'other')
+    || (metadataSource !== 'sap_and_name' && metadataSource !== 'sap' && metadataSource !== 'name' && metadataSource !== 'unknown')
+  ) return null
+
+  return {
+    material_kind: materialKind,
+    material_profile: readString(metadata.material_profile),
+    material_profile_source: readString(metadata.material_profile_source),
+    thickness_mm: readNullableNumber(metadata.thickness_mm),
+    purchase_length: readNullableNumber(metadata.purchase_length),
+    purchase_length_unit: readNullableNumber(metadata.purchase_length_unit),
+    purchase_length_mm: readNullableNumber(metadata.purchase_length_mm),
+    purchase_width: readNullableNumber(metadata.purchase_width),
+    purchase_width_unit: readNullableNumber(metadata.purchase_width_unit),
+    purchase_width_mm: readNullableNumber(metadata.purchase_width_mm),
+    purchase_height: readNullableNumber(metadata.purchase_height),
+    purchase_height_unit: readNullableNumber(metadata.purchase_height_unit),
+    purchase_height_mm: readNullableNumber(metadata.purchase_height_mm),
+    format_key: readString(metadata.format_key),
+    metadata_source: metadataSource,
+  }
+}
+
+function normalizedLinesFromTransientData(directBomJson: JsonRecord): DirectBomSnapshot['normalizedLines'] | null {
+  const rawLines = directBomJson.lines
+  if (!Array.isArray(rawLines)) return null
+
+  const occurrences = new Map<string, number>()
+  const lines: DirectBomSnapshot['normalizedLines'] = []
+  for (const [index, rawLine] of rawLines.entries()) {
+    const line = jsonRecord(rawLine)
+    const itemCode = readString(line.item_code)
+    if (!itemCode) return null
+    const parsed = parseSapItemCode(itemCode)
+    const occurrence = (occurrences.get(parsed.baseItemCode) ?? 0) + 1
+    occurrences.set(parsed.baseItemCode, occurrence)
+    const sourceOrder = readNumber(line.visible_order, index + 1)
+    if (!Number.isInteger(sourceOrder) || sourceOrder < 1) return null
+
+    lines.push({
+      itemCode: parsed.itemCode,
+      itemName: readString(line.item_name) ?? parsed.itemCode,
+      baseItemCode: parsed.baseItemCode,
+      variantCode4: parsed.variantCode4,
+      isSalesSku: parsed.isSalesSku,
+      occurrence,
+      lineIdentity: `${parsed.baseItemCode}#${occurrence}`,
+      sourceOrder,
+      sapChildNum: readNullableNumber(line.child_num),
+      qty: readNumber(line.qty, 0),
+      warehouse: readString(line.warehouse),
+      issueMethod: readString(line.issue_method),
+      inventoryUom: readString(line.inventory_uom),
+      technicalMetadata: cachedTechnicalMetadata(line.technical_metadata),
+    })
+  }
+  return lines
+}
+
+function cachedDirectSnapshot(value: unknown, sku: ReferenceImportSku): DirectBomSnapshot | null {
+  const snapshot = jsonRecord(value)
+  if (snapshot.status !== 'captured' || readString(snapshot.skuComplete)?.toUpperCase() !== sku.skuComplete.toUpperCase()) return null
+
+  const transientData = jsonRecord(snapshot.transientData)
+  const directBomJson = jsonRecord(transientData.directBomJson)
+  const normalizedLines = normalizedLinesFromTransientData(directBomJson)
+  const lineCount = readNumber(snapshot.lineCount, Number.NaN)
+  if (!normalizedLines || !Number.isInteger(lineCount) || lineCount !== normalizedLines.length) return null
+
+  return {
+    skuComplete: sku.skuComplete,
+    skuColorCode: sku.colorCode,
+    sapItemName: readString(snapshot.sapItemName) ?? sku.sapDescriptionOriginal,
+    treeCode: readString(transientData.treeCode),
+    treeType: readString(snapshot.treeType),
+    lineCount,
+    status: 'captured',
+    errorMessage: null,
+    directBomJson,
+    normalizedLines,
+  }
+}
+
+function cachedDirectSnapshots(values: unknown[], skus: ReferenceImportSku[]): Map<string, DirectBomSnapshot> {
+  const sourceBySku = new Map(skus.map(sku => [sku.skuComplete.toUpperCase(), sku]))
+  const snapshots = new Map<string, DirectBomSnapshot>()
+  for (const value of values) {
+    const skuComplete = readString(jsonRecord(value).skuComplete)?.toUpperCase()
+    if (!skuComplete) continue
+    const sku = sourceBySku.get(skuComplete)
+    if (!sku || snapshots.has(skuComplete)) continue
+    const snapshot = cachedDirectSnapshot(value, sku)
+    if (snapshot) snapshots.set(skuComplete, snapshot)
+  }
+  return snapshots
 }
 
 function directSnapshotFromBom(sku: ReferenceImportSku, bom: SapBom): DirectBomSnapshot {
@@ -1091,10 +1241,11 @@ async function getReferenceImportSource(referenceId: string): Promise<{
   const referenceRows = await dbQuery(
     `SELECT
       r.id AS reference_id,
-      r.family_code,
-      r.reference_code,
-      r.product_name,
-      f.manufacturing_process,
+       r.family_code,
+       r.reference_code,
+       r.product_name,
+       r.product_bom_structure,
+       f.manufacturing_process,
       f.product_type
     FROM public.product_references r
     LEFT JOIN public.families f ON f.family_code = r.family_code
@@ -1106,12 +1257,13 @@ async function getReferenceImportSource(referenceId: string): Promise<{
   const resolvedReferenceId = readString(reference?.reference_id)
   const referenceCode = readString(reference?.reference_code)
   const productName = readString(reference?.product_name)
+  const existingBomStructure = cleanBomStructure(reference?.product_bom_structure)
   if (!resolvedReferenceId || !referenceCode || !productName) {
     throw new Error('La referencia seleccionada no existe o está incompleta.')
   }
 
   const skuRows: Record<string, unknown>[] = await dbQuery(
-    `SELECT s.sku_complete, s.color_code, s.sap_description_original
+    `SELECT s.sku_complete, s.color_code, s.sap_description_original, s.bom_overrides
      FROM public.product_versions v
      JOIN public.product_skus s ON s.version_id = v.id
      WHERE v.reference_id = $1
@@ -1121,6 +1273,13 @@ async function getReferenceImportSource(referenceId: string): Promise<{
     [resolvedReferenceId, ANALYZED_VERSION_CODE]
   )
 
+  const skuColorOverrides = new Map(skuRows.flatMap((row) => {
+    const skuComplete = readString(row.sku_complete)?.toUpperCase()
+    return skuComplete
+      ? [[skuComplete, normalizeBomOverrides(row.bom_overrides).color_overrides ?? []] as const]
+      : []
+  }))
+
   return {
     context: {
       referenceId: resolvedReferenceId,
@@ -1129,6 +1288,8 @@ async function getReferenceImportSource(referenceId: string): Promise<{
       productName,
       manufacturingProcess: readString(reference?.manufacturing_process),
       productType: readString(reference?.product_type),
+      existingBomStructure: existingBomStructure.lines.length > 0 ? existingBomStructure : null,
+      skuColorOverrides,
     },
     skus: skuRows.flatMap((row) => {
       const skuComplete = readString(row.sku_complete)
@@ -1163,8 +1324,9 @@ async function getColorConfigurations(colorCodes: string[]): Promise<Map<string,
   for (const row of rows) {
     const code4dig = readString(row.code_4dig)
     if (!code4dig) continue
+    const rawApplicationColors = jsonRecord(row.application_colors_json)
     const applicationColors = Object.fromEntries(
-      Object.entries(jsonRecord(row.application_colors_json))
+      Object.entries(rawApplicationColors)
         .flatMap(([key, value]) => typeof value === 'string' && value.trim() ? [[key, value.trim().toUpperCase()] as const] : [])
     )
     configurations.set(code4dig, {
@@ -1176,6 +1338,7 @@ async function getColorConfigurations(colorCodes: string[]): Promise<Map<string,
           : 'full'
       })(),
       applicationColors,
+      hybridColorCases: readHybridColorCases(rawApplicationColors),
       applicationMaterialProfiles: Object.fromEntries(
         Object.entries(jsonRecord(row.application_material_profiles_json))
           .flatMap(([key, value]) => typeof value === 'string' && value.trim()
@@ -1447,6 +1610,12 @@ function transientSnapshot(snapshot: DirectBomSnapshot, referenceId: string, cre
     status: snapshot.status,
     errorMessage: snapshot.errorMessage,
     capturedAt: createdAt,
+    ...(snapshot.status === 'captured' ? {
+      transientData: {
+        treeCode: snapshot.treeCode,
+        directBomJson: snapshot.directBomJson,
+      },
+    } : {}),
   }
 }
 
@@ -1522,6 +1691,7 @@ async function reportReferenceImportAnalysisProgress(
 
 export async function analyzeReferenceBomImportTransient(input: {
   referenceId: string
+  retry?: TransientReferenceImportRetry
   onProgress?: (progress: ReferenceImportAnalysisProgress) => void | Promise<void>
 }): Promise<ReferenceImportWorkspace> {
   await reportReferenceImportAnalysisProgress(input.onProgress, {
@@ -1529,6 +1699,15 @@ export async function analyzeReferenceBomImportTransient(input: {
   })
   const source = await getReferenceImportSource(input.referenceId)
   if (source.skus.length === 0) throw new Error('Esta referencia no tiene SKU activos de versión 000 para analizar.')
+  const retrySkuCodes = new Set(
+    (input.retry?.skuCompletes ?? [])
+      .map(skuComplete => skuComplete.trim().toUpperCase())
+      .filter(Boolean)
+  )
+  const isSelectiveRetry = retrySkuCodes.size > 0
+  const cachedSnapshots = isSelectiveRetry
+    ? cachedDirectSnapshots(input.retry?.cachedSnapshots ?? [], source.skus)
+    : new Map<string, DirectBomSnapshot>()
 
   await reportReferenceImportAnalysisProgress(input.onProgress, {
     stage: 'reconciliation', message: 'Comparando el catálogo de la referencia con SAP.', current: 0, total: source.skus.length,
@@ -1539,16 +1718,34 @@ export async function analyzeReferenceBomImportTransient(input: {
   })
   const inactiveSapSkuSet = new Set(reconciliation.sapInactiveSkuCodes)
   const confirmedSkus = source.skus.filter(sku => reconciliation.confirmedSkuCodes.has(sku.skuComplete.toUpperCase()))
+  const skusToRead = isSelectiveRetry
+    ? confirmedSkus.filter(sku => retrySkuCodes.has(sku.skuComplete.toUpperCase()) && !cachedSnapshots.has(sku.skuComplete.toUpperCase()))
+    : confirmedSkus
+  const reusedSnapshotCount = isSelectiveRetry
+    ? confirmedSkus.filter(sku => cachedSnapshots.has(sku.skuComplete.toUpperCase())).length
+    : 0
   await reportReferenceImportAnalysisProgress(input.onProgress, {
-    stage: 'bom_read', message: 'Leyendo las LdM activas en SAP.', current: 0, total: confirmedSkus.length,
+    stage: 'bom_read',
+    message: isSelectiveRetry
+      ? `Reintentando solo ${skusToRead.length} LdM pendiente(s); ${reusedSnapshotCount} ya leída(s) se reutilizan.`
+      : 'Leyendo las LdM activas en SAP.',
+    current: 0,
+    total: skusToRead.length,
   })
-  const directSnapshots = await readReferenceDirectSnapshots(source.context, confirmedSkus)
+  const directSnapshots = await readReferenceDirectSnapshots(source.context, skusToRead, {
+    preferIndividualReads: isSelectiveRetry,
+  })
   await reportReferenceImportAnalysisProgress(input.onProgress, {
-    stage: 'bom_read', message: 'LdM activas leídas desde SAP.', current: confirmedSkus.length, total: confirmedSkus.length,
+    stage: 'bom_read',
+    message: isSelectiveRetry
+      ? 'Reintento de LdM pendiente terminado.'
+      : 'LdM activas leídas desde SAP.',
+    current: skusToRead.length,
+    total: skusToRead.length,
   })
   const rawSnapshots = source.skus.map(sku => {
     const normalizedSku = sku.skuComplete.toUpperCase()
-    const snapshot = directSnapshots.get(normalizedSku)
+    const snapshot = directSnapshots.get(normalizedSku) ?? cachedSnapshots.get(normalizedSku)
     if (snapshot) return snapshot
     return failedDirectSnapshot(
       sku,
@@ -1557,13 +1754,29 @@ export async function analyzeReferenceBomImportTransient(input: {
         : 'El código está activo en la app, pero no fue encontrado en SAP para esta referencia.'
     )
   })
+  const snapshotsToEnrich = isSelectiveRetry
+    ? rawSnapshots.filter(snapshot => !cachedSnapshots.has(snapshot.skuComplete.toUpperCase()))
+    : rawSnapshots
+  const metadataSkuCount = snapshotsToEnrich.filter(snapshot => snapshot.status === 'captured').length
   await reportReferenceImportAnalysisProgress(input.onProgress, {
-    stage: 'component_metadata', message: 'Actualizando la metadata técnica de los componentes leídos.', current: confirmedSkus.length, total: confirmedSkus.length,
+    stage: 'component_metadata',
+    message: isSelectiveRetry
+      ? 'Actualizando la metadata técnica de las LdM reintentadas.'
+      : 'Actualizando la metadata técnica de los componentes leídos.',
+    current: 0,
+    total: metadataSkuCount,
   })
+  const { snapshots: enrichedSnapshots, componentResult } = await enrichDirectComponents(snapshotsToEnrich)
+  const enrichedSnapshotsBySku = new Map(enrichedSnapshots.map(snapshot => [snapshot.skuComplete.toUpperCase(), snapshot]))
+  const snapshots = rawSnapshots.map(snapshot => enrichedSnapshotsBySku.get(snapshot.skuComplete.toUpperCase()) ?? snapshot)
   await reportReferenceImportAnalysisProgress(input.onProgress, {
-    stage: 'component_metadata', message: 'Actualizando la metadata técnica de los componentes leídos.', current: 0, total: confirmedSkus.length,
+    stage: 'component_metadata',
+    message: isSelectiveRetry
+      ? 'Metadata de las LdM reintentadas actualizada.'
+      : 'Metadata técnica de componentes actualizada.',
+    current: metadataSkuCount,
+    total: metadataSkuCount,
   })
-  const { snapshots, componentResult } = await enrichDirectComponents(rawSnapshots)
   const colorCodes = snapshots.flatMap(snapshot => [
     snapshot.skuColorCode,
     ...snapshot.normalizedLines.map(line => line.variantCode4),
@@ -1629,7 +1842,10 @@ export async function analyzeReferenceBomImportTransient(input: {
     activeOverrides: await activeOverridesForReference(source.context.referenceId),
   }
   await reportReferenceImportAnalysisProgress(input.onProgress, {
-    stage: 'complete', message: 'Análisis SAP terminado.', current: confirmedSkus.length, total: confirmedSkus.length,
+    stage: 'complete',
+    message: isSelectiveRetry ? 'Reintento selectivo de LdM terminado.' : 'Análisis SAP terminado.',
+    current: skusToRead.length,
+    total: skusToRead.length,
   })
   return workspace
 }
@@ -1882,6 +2098,7 @@ export type ColorRuleCoverageMismatch = {
   itemName: string | null
   observedColorCode: string | null
   reason: 'missing_component' | 'unexpected_color'
+  semanticScope?: ReferenceProductApplicationScope | null
 }
 
 export type EdgeDualCandidate = {
@@ -1924,6 +2141,8 @@ export type ColorRuleCoverageResult = {
 type CatalogColorSku = Omit<ReferenceImportSku, 'colorCode'> & {
   colorCode: string
   prefix: string
+  referenceBomStructure: ReferenceBomStructure
+  skuColorOverrides: BomColorOverride[]
 }
 
 type CatalogSapSkuStatus = {
@@ -1941,25 +2160,24 @@ type EdgeColorTotal = {
   qty: number
 }
 
-function edgeBandLines(bom: CatalogSapBom, baseItemCodes: string[]): Array<{
+function edgeBandLines(bom: CatalogSapBom): Array<{
   itemCode: string
   itemName: string | null
   colorCode: string
   qty: number | null
 }> {
-  const allowedBaseCodes = new Set(baseItemCodes)
   return bom.lines.flatMap(line => {
     const parsed = parseSapItemCode(line.itemCode)
     const isEdgeBand = line.itemName?.toUpperCase().includes('CANTO') === true
-    return ((!allowedBaseCodes.has(parsed.baseItemCode) && !isEdgeBand) || parsed.variantCode4 === '0000')
+    return (!isEdgeBand || parsed.variantCode4 === '0000')
       ? []
       : [{ itemCode: parsed.itemCode, itemName: line.itemName, colorCode: parsed.variantCode4, qty: line.qty }]
   })
 }
 
-function edgeColorTotals(bom: CatalogSapBom, baseItemCodes: string[]): EdgeColorTotal[] {
+function edgeColorTotals(bom: CatalogSapBom): EdgeColorTotal[] {
   const totals = new Map<string, number>()
-  for (const line of edgeBandLines(bom, baseItemCodes)) {
+  for (const line of edgeBandLines(bom)) {
     totals.set(line.colorCode, (totals.get(line.colorCode) ?? 0) + (line.qty ?? 0))
   }
   return [...totals.entries()]
@@ -1967,28 +2185,47 @@ function edgeColorTotals(bom: CatalogSapBom, baseItemCodes: string[]): EdgeColor
     .sort((left, right) => right.qty - left.qty || left.colorCode.localeCompare(right.colorCode))
 }
 
+function hasPendingSemanticEdgeOverride(
+  sku: CatalogColorSku,
+  structure: EdgeColorTotal,
+  front: EdgeColorTotal
+): boolean {
+  const sourceColorCode = sku.colorCode.trim().toUpperCase()
+  const targetForScope = (scope: 'edge_band_body' | 'edge_band_front'): string | null => sku.skuColorOverrides
+    .filter(override =>
+      override.color_code.trim().toUpperCase() === sourceColorCode
+      && override.product_application_scope === scope
+      && !override.base_item_code
+      && Boolean(override.target_color_code)
+    )
+    .at(-1)
+    ?.target_color_code?.trim().toUpperCase() ?? null
+  return targetForScope('edge_band_body') === structure.colorCode
+    && targetForScope('edge_band_front') === front.colorCode
+}
+
 function detectedEdgeDualCandidates(input: {
   ruleSkus: CatalogColorSku[]
   sapBoms: Map<string, { bom: CatalogSapBom | null; error: string | null }>
   sapSkuStatuses: Map<string, CatalogSapSkuStatus>
-  baseItemCodes: string[]
 }): EdgeDualCandidate[] {
   const candidates = new Map<string, EdgeDualCandidate>()
   for (const sku of input.ruleSkus) {
     const bom = input.sapBoms.get(sku.skuComplete)?.bom
     if (!bom || isSalesKitTree(bom.treeType)) continue
-    const totals = edgeColorTotals(bom, input.baseItemCodes)
+    const totals = edgeColorTotals(bom)
     if (totals.length !== 2 || totals[0]?.qty === totals[1]?.qty) continue
     const structure = totals[0]
     const front = totals[1]
     if (!structure || !front) continue
+    if (hasPendingSemanticEdgeOverride(sku, structure, front)) continue
     const key = `${structure.colorCode}:${front.colorCode}`
     const candidateCase = {
       skuComplete: sku.skuComplete,
       skuItemName: input.sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal,
       structureQty: structure.qty,
       frontQty: front.qty,
-      edgeLines: edgeBandLines(bom, input.baseItemCodes),
+      edgeLines: edgeBandLines(bom),
     }
     const current = candidates.get(key)
     candidates.set(key, current
@@ -2050,12 +2287,14 @@ function catalogSapBomFromTree(tree: SapEntityPayload): CatalogSapBom | null {
 
 async function readReferenceDirectSnapshots(
   context: ReferenceImportContext,
-  skus: ReferenceImportSku[]
+  skus: ReferenceImportSku[],
+  options?: { preferIndividualReads?: boolean }
 ): Promise<Map<string, DirectBomSnapshot>> {
   const snapshots = new Map<string, DirectBomSnapshot>()
   if (skus.length === 0) return snapshots
 
-  try {
+  if (!options?.preferIndividualReads) {
+    try {
     const trees = await withTimeout(
       getSapProductTreesByPrefixes([salesSkuPrefix(context)], {
         select: ['TreeCode', 'TreeType', 'ProductDescription', 'Quantity'],
@@ -2074,8 +2313,9 @@ async function readReferenceDirectSnapshots(
       const bom = treesByCode.get(sku.skuComplete.toUpperCase())
       if (bom) snapshots.set(sku.skuComplete.toUpperCase(), directSnapshotFromBom(sku, bom))
     }
-  } catch {
-    // The individual fallback below keeps the import diagnosable if a collection query is rejected by SAP.
+    } catch {
+      // The individual fallback below keeps the import diagnosable if a collection query is rejected by SAP.
+    }
   }
 
   const missingSkus = skus.filter(sku => !snapshots.has(sku.skuComplete.toUpperCase()))
@@ -2099,7 +2339,9 @@ async function getCatalogColorSkus(colorCodes: string[]): Promise<CatalogColorSk
   const normalizedColors = [...new Set(colorCodes.map(color => color.trim().toUpperCase()).filter(Boolean))]
   if (normalizedColors.length === 0) return []
   const rows: Record<string, unknown>[] = await dbQuery(
-    `SELECT s.sku_complete, s.color_code, s.sap_description_original
+    `SELECT s.sku_complete, s.color_code, s.sap_description_original,
+            s.bom_overrides AS sku_bom_overrides,
+            r.product_bom_structure
      FROM public.product_skus s
      JOIN public.product_versions v ON v.id = s.version_id
      JOIN public.product_references r ON r.id = v.reference_id
@@ -2116,12 +2358,14 @@ async function getCatalogColorSkus(colorCodes: string[]): Promise<CatalogColorSk
     const skuComplete = readString(row.sku_complete)
     const colorCode = readString(row.color_code)?.toUpperCase()
     const prefix = skuComplete ? catalogPrefixFromSku(skuComplete) : null
-    return skuComplete && colorCode && prefix ? [{
-      skuComplete,
-      colorCode,
-      sapDescriptionOriginal: readString(row.sap_description_original),
-      prefix,
-    }] : []
+      return skuComplete && colorCode && prefix ? [{
+        skuComplete,
+        colorCode,
+        sapDescriptionOriginal: readString(row.sap_description_original),
+        prefix,
+        referenceBomStructure: cleanBomStructure(row.product_bom_structure),
+        skuColorOverrides: normalizeBomOverrides(row.sku_bom_overrides).color_overrides ?? [],
+      }] : []
   })
 }
 
@@ -2374,18 +2618,19 @@ export async function verifyReferenceImportColorRulesMatrix(input: {
     let matchingSkuCount = 0
     for (const sku of ruleSkus) {
       const result = sapBoms.get(sku.skuComplete)
-      if (!result?.bom) {
+      const bom = result?.bom ?? null
+      if (!bom) {
         sapReadErrors.push({ skuComplete: sku.skuComplete, message: result?.error ?? 'SAP no devolvió la LdM.' })
         continue
       }
-      if (isSalesKitTree(result.bom.treeType)) {
+      if (isSalesKitTree(bom.treeType)) {
         excludedKitSkuCount += 1
         continue
       }
       checkedSkuCount += 1
       let skuMatchesRule = true
       if (rule.scope === 'edge_band_body' || rule.scope === 'edge_band_front') {
-        const edgeColors = edgeColorTotals(result.bom, rule.baseItemCodes)
+        const edgeColors = edgeColorTotals(bom)
         const observed = rule.scope === 'edge_band_body' ? edgeColors[0] : edgeColors[1]
         if (edgeColors.length !== 2 || !observed || edgeColors[0]?.qty === edgeColors[1]?.qty) {
           mismatches.push({
@@ -2415,7 +2660,7 @@ export async function verifyReferenceImportColorRulesMatrix(input: {
         continue
       }
       for (const baseItemCode of rule.baseItemCodes) {
-        const matchingLines = result.bom.lines.filter(line => parseSapItemCode(line.itemCode).baseItemCode === baseItemCode)
+        const matchingLines = bom.lines.filter(line => parseSapItemCode(line.itemCode).baseItemCode === baseItemCode)
         if (matchingLines.length === 0) {
           if (rule.acceptedMissingSkuKeys.has(`${sku.skuComplete}:${baseItemCode}`)) {
             acceptedMissingComponentCount += 1
@@ -2473,6 +2718,100 @@ export type DirectColorRuleMatrixSelection = {
   scope: ReferenceProductApplicationScope
   targetColorCode: string
   baseItemCodes: string[]
+  materialKinds?: Array<'board' | 'edge_band' | 'other'>
+}
+
+function isCatalogEdgeBandLine(line: CatalogSapBom['lines'][number]): boolean {
+  return line.itemName?.toUpperCase().includes('CANTO') === true
+}
+
+function isCatalogBoardLine(line: CatalogSapBom['lines'][number]): boolean {
+  return line.itemName?.toUpperCase().includes('TABLERO') === true
+}
+
+function pendingCatalogEdgeScope(input: {
+  sku: CatalogColorSku
+  sourceColorCode: string
+  line: CatalogSapBom['lines'][number]
+}): ReferenceProductApplicationScope | null {
+  if (!isCatalogEdgeBandLine(input.line)) return null
+  const parsed = parseSapItemCode(input.line.itemCode)
+  const observedScopes = new Set<ReferenceProductApplicationScope>()
+  for (const override of input.sku.skuColorOverrides) {
+    const scope = override.product_application_scope
+    const targetColorCode = override.target_color_code?.trim().toUpperCase()
+    if (
+      (scope !== 'edge_band_body' && scope !== 'edge_band_front')
+      || override.color_code.trim().toUpperCase() !== input.sourceColorCode
+      || (override.base_item_code && override.base_item_code !== parsed.baseItemCode)
+      || targetColorCode !== parsed.variantCode4
+    ) continue
+    observedScopes.add(scope)
+  }
+  return observedScopes.size === 1 ? [...observedScopes][0] ?? null : null
+}
+
+function catalogLineSemanticScope(input: {
+  sku: CatalogColorSku
+  bom: CatalogSapBom
+  line: CatalogSapBom['lines'][number]
+  sourceColorCode?: string
+}): ReferenceProductApplicationScope | null {
+  const baseItemCode = parseSapItemCode(input.line.itemCode).baseItemCode
+  let occurrence = 0
+  for (const candidate of input.bom.lines) {
+    if (parseSapItemCode(candidate.itemCode).baseItemCode !== baseItemCode) continue
+    occurrence += 1
+    if (candidate !== input.line) continue
+    const persistedLine = input.sku.referenceBomStructure.lines
+      .filter(referenceLine => referenceLine.line_kind === 'fixed' && referenceLine.base_item_code === baseItemCode)[occurrence - 1]
+    if (persistedLine?.product_application_scope) return persistedLine.product_application_scope
+    break
+  }
+  const materialGroup = input.sku.referenceBomStructure.lines.find(referenceLine =>
+    referenceLine.line_kind === 'material_group'
+    && referenceLine.alternatives.some(alternative => alternative.base_item_code === baseItemCode)
+  )
+  if (materialGroup?.product_application_scope) return materialGroup.product_application_scope
+  return input.sourceColorCode
+    ? pendingCatalogEdgeScope({ sku: input.sku, sourceColorCode: input.sourceColorCode, line: input.line })
+    : null
+}
+
+function skuOverrideTargetForCatalogLine(input: {
+  sku: CatalogColorSku
+  sourceColorCode: string
+  baseItemCode: string
+  semanticScope: ReferenceProductApplicationScope | null
+}): string | null {
+  if (!input.semanticScope) return null
+  const override = input.sku.skuColorOverrides
+    .filter(candidate =>
+      candidate.color_code.trim().toUpperCase() === input.sourceColorCode
+      && candidate.product_application_scope === input.semanticScope
+      && (!candidate.base_item_code || candidate.base_item_code === input.baseItemCode)
+    )
+    .at(-1)
+  return override?.target_color_code?.trim().toUpperCase() ?? null
+}
+
+function catalogLinesForSemanticRule(input: {
+  rule: DirectColorRuleMatrixSelection
+  bom: CatalogSapBom
+}): CatalogSapBom['lines'] {
+  const materialKinds = new Set(input.rule.materialKinds ?? [])
+  if (input.rule.scope.startsWith('edge_band_') || materialKinds.has('edge_band')) {
+    return input.bom.lines.filter(line => isCatalogEdgeBandLine(line) && parseSapItemCode(line.itemCode).variantCode4 !== '0000')
+  }
+  if (materialKinds.has('board')) {
+    return input.bom.lines.filter(line => isCatalogBoardLine(line) && parseSapItemCode(line.itemCode).variantCode4 !== '0000')
+  }
+  const baseItemCodes = new Set(input.rule.baseItemCodes)
+  return input.bom.lines.filter(line => baseItemCodes.has(parseSapItemCode(line.itemCode).baseItemCode))
+}
+
+function ruleUsesSemanticLineComparison(rule: DirectColorRuleMatrixSelection): boolean {
+  return rule.scope.startsWith('edge_band_') || (rule.materialKinds ?? []).some(kind => kind === 'board' || kind === 'edge_band')
 }
 
 export type ColorMatrixVerificationProgress = {
@@ -2502,8 +2841,9 @@ export async function verifyReferenceImportColorRulesMatrixDirect(input: {
     const sourceColorCode = selection.sourceColorCode.trim().toUpperCase()
     const targetColorCode = selection.targetColorCode.trim().toUpperCase()
     const baseItemCodes = [...new Set(selection.baseItemCodes.map(code => code.trim().toUpperCase()).filter(Boolean))].sort()
+    const materialKinds = [...new Set((selection.materialKinds ?? []).filter(kind => kind === 'board' || kind === 'edge_band' || kind === 'other'))]
     return sourceColorCode && targetColorCode && baseItemCodes.length > 0 && isReferenceProductApplicationScope(selection.scope)
-      ? [{ ...selection, sourceColorCode, targetColorCode, baseItemCodes, acceptedMissingSkuKeys: new Set<string>() }]
+      ? [{ ...selection, sourceColorCode, targetColorCode, baseItemCodes, materialKinds, acceptedMissingSkuKeys: new Set<string>() }]
       : []
   })
   if (rules.length === 0) throw new Error('Selecciona al menos una regla completa para verificar en SAP.')
@@ -2536,54 +2876,55 @@ export async function verifyReferenceImportColorRulesMatrixDirect(input: {
     const inactiveRuleSkus = catalogRuleSkus.filter(sku => sapSkuStatuses.get(sku.skuComplete)?.status === 'inactive')
     const missingRuleSkus = catalogRuleSkus.filter(sku => sapSkuStatuses.get(sku.skuComplete)?.status === 'not_found')
     const mismatches: ColorRuleCoverageMismatch[] = []
-    const sapReadErrors = missingRuleSkus.map(sku => ({ skuComplete: sku.skuComplete, message: 'SAP no devolvió el maestro del artículo.' }))
+    const sapReadErrors = missingRuleSkus.map(sku => ({ skuComplete: sku.skuComplete, message: 'No existe en SAP: el maestro del artículo no devolvió este código.' }))
     let excludedKitSkuCount = 0
     let checkedSkuCount = 0
     let matchingSkuCount = 0
     for (const sku of ruleSkus) {
       const result = sapBoms.get(sku.skuComplete)
-      if (!result?.bom) {
+      const bom = result?.bom ?? null
+      if (!bom) {
         sapReadErrors.push({ skuComplete: sku.skuComplete, message: result?.error ?? 'SAP no devolvió la LdM.' })
         continue
       }
-      if (isSalesKitTree(result.bom.treeType)) {
+      if (isSalesKitTree(bom.treeType)) {
         excludedKitSkuCount += 1
         continue
       }
       checkedSkuCount += 1
       let skuMatchesRule = true
-      if (rule.scope === 'edge_band_body' || rule.scope === 'edge_band_front') {
-        const edgeColors = edgeColorTotals(result.bom, rule.baseItemCodes)
-        const observed = rule.scope === 'edge_band_body' ? edgeColors[0] : edgeColors[1]
-        if (edgeColors.length !== 2 || !observed || edgeColors[0]?.qty === edgeColors[1]?.qty) {
+      if (ruleUsesSemanticLineComparison(rule)) {
+        const semanticLines = catalogLinesForSemanticRule({ rule, bom })
+        const applicableLines = rule.scope === 'edge_band_body' || rule.scope === 'edge_band_front'
+          ? semanticLines.filter(line => catalogLineSemanticScope({ sku, bom, line, sourceColorCode: rule.sourceColorCode }) === rule.scope)
+          : semanticLines
+        for (const line of applicableLines) {
+          const parsed = parseSapItemCode(line.itemCode)
+          const semanticScope = catalogLineSemanticScope({ sku, bom, line, sourceColorCode: rule.sourceColorCode })
+          const targetColorCode = skuOverrideTargetForCatalogLine({
+            sku,
+            sourceColorCode: rule.sourceColorCode,
+            baseItemCode: parsed.baseItemCode,
+            semanticScope,
+          }) ?? rule.targetColorCode
+          if (parsed.variantCode4 === targetColorCode) continue
           mismatches.push({
             skuComplete: sku.skuComplete,
             skuItemName: sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal,
-            baseItemCode: rule.baseItemCodes.join(' + '),
-            itemCode: null,
-            itemName: null,
-            observedColorCode: null,
+            baseItemCode: parsed.baseItemCode,
+            itemCode: parsed.itemCode,
+            itemName: line.itemName,
+            observedColorCode: parsed.variantCode4,
             reason: 'unexpected_color',
+            semanticScope,
           })
-          continue
+          skuMatchesRule = false
         }
-        if (observed.colorCode !== rule.targetColorCode) {
-          mismatches.push({
-            skuComplete: sku.skuComplete,
-            skuItemName: sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal,
-            baseItemCode: rule.baseItemCodes.join(' + '),
-            itemCode: null,
-            itemName: null,
-            observedColorCode: observed.colorCode,
-            reason: 'unexpected_color',
-          })
-          continue
-        }
-        matchingSkuCount += 1
+        if (skuMatchesRule) matchingSkuCount += 1
         continue
       }
       for (const baseItemCode of rule.baseItemCodes) {
-        const matchingLines = result.bom.lines.filter(line => parseSapItemCode(line.itemCode).baseItemCode === baseItemCode)
+        const matchingLines = bom.lines.filter(line => parseSapItemCode(line.itemCode).baseItemCode === baseItemCode)
         if (matchingLines.length === 0) {
           mismatches.push({ skuComplete: sku.skuComplete, skuItemName: sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal, baseItemCode, itemCode: null, itemName: null, observedColorCode: null, reason: 'missing_component' })
           skuMatchesRule = false
@@ -2612,7 +2953,7 @@ export async function verifyReferenceImportColorRulesMatrixDirect(input: {
       sapReadErrors,
       mismatches,
       dualCandidates: rule.scope === 'edge_band_full_product'
-        ? detectedEdgeDualCandidates({ ruleSkus, sapBoms, sapSkuStatuses, baseItemCodes: rule.baseItemCodes })
+        ? detectedEdgeDualCandidates({ ruleSkus, sapBoms, sapSkuStatuses })
         : [],
     }
   })

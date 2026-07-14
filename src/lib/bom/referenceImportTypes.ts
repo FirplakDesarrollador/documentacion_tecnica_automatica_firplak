@@ -2,7 +2,9 @@ import type { ReferenceProductApplicationScope } from './referenceImportScopes'
 import type {
   BomConsumption,
   BomMaterialAlternative,
+  BomColorOverride,
   ComponentTechnicalMetadata,
+  HybridColorCase,
 } from './types'
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
@@ -15,6 +17,13 @@ export type ReferenceImportContext = {
   productName: string
   manufacturingProcess: string | null
   productType: string | null
+  /**
+   * Explicit roles belong to a reference BOM, never to a physical component
+   * code globally. This lets the same edge format mean front in one reference
+   * and structure in another.
+   */
+  existingBomStructure?: ReferenceBomStructure | null
+  skuColorOverrides?: Map<string, BomColorOverride[]>
 }
 
 export type ReferenceImportSku = {
@@ -85,6 +94,7 @@ export type ColorConfiguration = {
   code4dig: string
   colorMode: 'full' | 'dual' | 'balance' | 'equivalent'
   applicationColors: Record<string, string>
+  hybridColorCases?: HybridColorCase[]
   applicationMaterialProfiles: Record<string, string>
   allowedProductTypes: string[]
   allowedManufacturingProcesses: string[]
@@ -167,6 +177,14 @@ export type ReferenceImportSnapshotSummary = {
   status: 'captured' | 'failed'
   errorMessage: string | null
   capturedAt: string
+  /**
+   * Only accompanies the transient browser workspace. It lets a retry reuse
+   * a BOM already read from SAP without creating an import-history record.
+   */
+  transientData?: {
+    treeCode: string | null
+    directBomJson: JsonRecord
+  }
 }
 
 export type ReferenceImportActiveOverride = {
