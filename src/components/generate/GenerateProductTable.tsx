@@ -15,6 +15,7 @@ import { Eye } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
+import { isCatalogScope, type CatalogScope } from '@/lib/templates/catalogScope'
 
 export interface GenerateProduct {
     id: string
@@ -36,6 +37,8 @@ export interface GenerateProduct {
     is_exportable?: boolean
     inactive_reasons?: string[]
     ref_code: string | null
+    catalog_scope?: CatalogScope
+    catalog_target_id?: string
     [key: string]: unknown
 }
 
@@ -101,6 +104,40 @@ export function GenerateProductTable({
     }, [selectedIds, onSelectionChange])
 
     const searchParams = useSearchParams()
+    const catalogScope = products.find((product) => isCatalogScope(product.catalog_scope))?.catalog_scope
+    const detailLabel = catalogScope === 'family'
+        ? 'Tipo'
+        : catalogScope === 'reference'
+            ? 'Familia'
+            : catalogScope === 'version'
+                ? 'Referencia'
+                : 'Color'
+
+    const getDetail = (product: GenerateProduct) => {
+        if (catalogScope === 'family') return product.product_type || '—'
+        if (catalogScope === 'reference') return product.familia_code || '—'
+        if (catalogScope === 'version') return product.ref_code || '—'
+        return product.color_name || product.color_code || '—'
+    }
+
+    const getPreviewHref = (product: GenerateProduct) => {
+        const params = new URLSearchParams(searchParams.toString())
+        const scope = !isExternalSource && isCatalogScope(product.catalog_scope)
+            ? product.catalog_scope
+            : null
+        const targetId = scope ? product.catalog_target_id || product.id : product.id
+
+        if (scope) {
+            params.set('scope', scope)
+            params.set('target', targetId)
+        } else {
+            params.delete('scope')
+            params.delete('target')
+        }
+
+        const query = params.toString()
+        return `/generate/${encodeURIComponent(targetId)}${query ? `?${query}` : ''}`
+    }
 
     if (products.length === 0) {
         return (
@@ -135,7 +172,7 @@ export function GenerateProductTable({
                             <TableHead key={col} className="capitalize">{col.replace(/_/g, ' ')}</TableHead>
                         ))
                     ) : (
-                        <TableHead className="w-[120px]">Color</TableHead>
+                        <TableHead className="w-[120px]">{detailLabel}</TableHead>
                     )}
 
                     {!hideActions && <TableHead className="text-right w-[120px]">Acción</TableHead>}
@@ -184,7 +221,7 @@ export function GenerateProductTable({
                                 ))
                             ) : (
                                 <TableCell className="text-slate-500 text-xs font-medium uppercase">
-                                    {product.color_name || product.color_code || '—'}
+                                    {getDetail(product)}
                                 </TableCell>
                             )}
 
@@ -192,7 +229,7 @@ export function GenerateProductTable({
                             {!hideActions && (
                                 <TableCell className="text-right">
                                     <Link
-                                        href={`/generate/${product.id}?${searchParams.toString()}`}
+                                        href={getPreviewHref(product)}
                                     >
                                         <Button
                                             variant="ghost"

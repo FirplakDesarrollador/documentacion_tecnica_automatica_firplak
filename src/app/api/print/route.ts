@@ -2,6 +2,22 @@ import { NextResponse } from 'next/server'
 
 import { launchBrowser } from '@/lib/export/launchBrowser'
 import { dbQuery } from '@/lib/supabase'
+import { isCatalogScope, type CatalogTarget } from '@/lib/templates/catalogScope'
+import {
+    getActiveTemplateCatalogSource,
+    getPersistedTemplateRenderSettings,
+    resolveTemplateCatalogTarget,
+    type TemplateCatalogSource,
+} from '@/lib/templates/catalogScopeServer'
+import {
+    findRequiredBarcodeErrors,
+    hydrateCoreTemplateForServerRender,
+    type ServerTemplateElement,
+} from '@/lib/templates/serverTemplateRender'
+import {
+    parseTemplateRenderRuntimeValues,
+    type TemplateRenderRuntimeValues,
+} from '@/lib/templates/printRuntimeVariables'
 import { apiGuard } from '@/utils/auth/access'
 
 export const runtime = 'nodejs'
@@ -22,18 +38,15 @@ type TemplateElement = Record<string, unknown> & {
 type PrintPayload = {
     templateId: string
     productId: string | null
+    catalogTarget: CatalogTarget | null
     isExternalSource: boolean
     elements: TemplateElement[]
+    runtimeValues: TemplateRenderRuntimeValues | null
     format: 'pdf' | 'jpg'
     width: number
     height: number
     templateFontFamily: string | null
     copies: number
-}
-
-type PrintTemplateSource = {
-    id: string
-    data_source: string | null
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -52,19 +65,6 @@ function isExternalDataSource(dataSource: string): boolean {
     return dataSource === GENERIC_DATASETS_SOURCE || UUID_RE.test(dataSource)
 }
 
-async function getActiveTemplateSource(templateId: string): Promise<PrintTemplateSource | null> {
-    const rows = await dbQuery(
-        `SELECT id, data_source
-         FROM public.plantillas_doc_tec
-         WHERE id = $1
-           AND active = true
-         LIMIT 1`,
-        [templateId]
-    ) as PrintTemplateSource[]
-
-    return rows[0] ?? null
-}
-
 async function getLinkedDatasetIds(templateId: string): Promise<string[]> {
     const rows = await dbQuery(
         `SELECT dataset_id
@@ -78,7 +78,7 @@ async function getLinkedDatasetIds(templateId: string): Promise<string[]> {
         .filter((id): id is string => Boolean(id && UUID_RE.test(id)))
 }
 
-async function getAllowedDatasetIdsForTemplate(template: PrintTemplateSource): Promise<string[]> {
+async function getAllowedDatasetIdsForTemplate(template: Pick<TemplateCatalogSource, 'id' | 'data_source'>): Promise<string[]> {
     const dataSource = normalizeDataSource(template.data_source)
     if (dataSource === GENERIC_DATASETS_SOURCE) {
         return getLinkedDatasetIds(template.id)
@@ -89,6 +89,26 @@ async function getAllowedDatasetIdsForTemplate(template: PrintTemplateSource): P
     }
 
     return []
+}
+
+function parseCatalogTarget(value: unknown): { value: CatalogTarget | null; error: string | null } {
+    if (value === null || value === undefined) return { value: null, error: null }
+    if (!isPlainObject(value)) return { value: null, error: 'Objetivo de catalogo invalido' }
+
+    const scope = value.scope
+    const id = value.id == null ? '' : String(value.id).trim()
+    if (!isCatalogScope(scope) || !id || id.length > 200) {
+        return { value: null, error: 'Objetivo de catalogo invalido' }
+    }
+
+    return { value: { scope, id }, error: null }
+}
+
+function catalogTargetErrorStatus(error: string): number {
+    if (error.includes('no encontrada') || error.includes('no existe')) return 404
+    if (error.includes('marca')) return 403
+    if (error.includes('inactiva')) return 409
+    return 400
 }
 
 async function externalDatasetRowExists(productId: string, datasetIds: string[]): Promise<boolean> {
@@ -114,6 +134,8 @@ function parsePrintPayload(raw: unknown): { value: PrintPayload | null; error: s
 
     const templateId = raw.templateId == null ? '' : String(raw.templateId).trim()
     const productId = raw.productId == null ? null : String(raw.productId).trim()
+    const targetResult = parseCatalogTarget(raw.catalogTarget ?? raw.target)
+    const runtimeValues = parseTemplateRenderRuntimeValues(raw.runtimeValues)
     const isExternalSource = raw.isExternalSource === true
     const format = String(raw.format ?? 'pdf').trim().toLowerCase()
     const width = Number(raw.width ?? 800)
@@ -122,21 +144,29 @@ function parsePrintPayload(raw: unknown): { value: PrintPayload | null; error: s
     const templateFontFamily = raw.templateFontFamily == null ? null : String(raw.templateFontFamily).trim()
     const elements = Array.isArray(raw.elements)
         ? raw.elements.filter((item): item is TemplateElement => isPlainObject(item))
-        : null
+        : []
 
     if (!templateId || !UUID_RE.test(templateId)) {
         return { value: null, error: 'templateId invalido' }
     }
 
-    if (!elements || elements.length === 0) {
-        return { value: null, error: 'Faltan elementos de la plantilla' }
+    if (targetResult.error) {
+        return { value: null, error: targetResult.error }
+    }
+
+    if (runtimeValues === null) {
+        return { value: null, error: 'Valores de ejecucion invalidos' }
     }
 
     if (elements.length > 500) {
         return { value: null, error: 'La plantilla supera el maximo de elementos permitido' }
     }
 
-    if (productId && !UUID_RE.test(productId)) {
+    if (productId && productId.length > 200) {
+        return { value: null, error: 'productId invalido' }
+    }
+
+    if (productId && !targetResult.value && !UUID_RE.test(productId)) {
         return { value: null, error: 'productId invalido' }
     }
 
@@ -164,8 +194,10 @@ function parsePrintPayload(raw: unknown): { value: PrintPayload | null; error: s
         value: {
             templateId,
             productId,
+            catalogTarget: targetResult.value,
             isExternalSource,
             elements,
+            runtimeValues,
             format: format as 'pdf' | 'jpg',
             width,
             height,
@@ -193,29 +225,22 @@ export async function POST(req: Request) {
 
         const payload = parsed.value
 
-        const templateSource = await getActiveTemplateSource(payload.templateId)
+        const templateSource = await getActiveTemplateCatalogSource(payload.templateId)
         if (!templateSource) {
             return NextResponse.json({ error: 'Plantilla no encontrada o inactiva' }, { status: 404 })
         }
 
         const dataSource = normalizeDataSource(templateSource.data_source)
         const templateUsesExternalRows = isExternalDataSource(dataSource)
-
-        const invalidRequiredBarcodes = payload.elements.filter((element) =>
-            element.type === 'barcode' && element.required === true && Boolean(element.barcodeError)
-        )
-
-        if (invalidRequiredBarcodes.length > 0) {
-            return NextResponse.json({
-                error: 'Datos de codigo de barras invalidos',
-                details: invalidRequiredBarcodes.map((element) => ({
-                    dataField: (element.dataField as string | undefined) || null,
-                    message: (element.barcodeError as string | undefined) || 'Codigo de barras invalido',
-                })),
-            }, { status: 409 })
-        }
+        let renderElements: ServerTemplateElement[] = payload.elements
+        let renderWidth = payload.width
+        let renderHeight = payload.height
+        let renderTemplateFontFamily = payload.templateFontFamily
 
         if (templateUsesExternalRows) {
+            if (payload.elements.length === 0) {
+                return NextResponse.json({ error: 'Faltan elementos de la plantilla' }, { status: 400 })
+            }
             if (!payload.productId) {
                 return NextResponse.json({ error: 'Registro externo requerido para imprimir' }, { status: 400 })
             }
@@ -233,24 +258,63 @@ export async function POST(req: Request) {
                     error: 'El registro no pertenece a una base de datos asociada a esta plantilla',
                 }, { status: 403 })
             }
-        } else if (payload.productId) {
-            const { composeProductById } = await import('@/lib/engine/product_composer')
-            const exportProduct = await composeProductById(payload.productId)
-            if (exportProduct) {
-                if (exportProduct.is_exportable === false) {
-                    return NextResponse.json({
-                        error: 'Producto inactivo para exportacion',
-                        inactive_reasons: exportProduct.inactive_reasons,
-                    }, { status: 409 })
-                }
-            } else {
-                return NextResponse.json({ error: 'Producto no encontrado' }, { status: 404 })
+        } else {
+            const legacySkuTarget = payload.productId && UUID_RE.test(payload.productId)
+                ? { scope: 'sku' as const, id: payload.productId }
+                : null
+            const catalogTarget = payload.catalogTarget ?? legacySkuTarget
+
+            if (!catalogTarget) {
+                return NextResponse.json({ error: 'Objetivo de catalogo requerido para imprimir' }, { status: 400 })
             }
+
+            const resolvedTarget = await resolveTemplateCatalogTarget(payload.templateId, catalogTarget)
+            if (resolvedTarget.error || !resolvedTarget.context || !resolvedTarget.template) {
+                const error = resolvedTarget.error || 'No fue posible resolver el objetivo de catálogo'
+                return NextResponse.json(
+                    { error },
+                    { status: catalogTargetErrorStatus(error) }
+                )
+            }
+
+            const persistedRenderSettings = getPersistedTemplateRenderSettings(resolvedTarget.template)
+            if (!persistedRenderSettings) {
+                return NextResponse.json(
+                    { error: 'La plantilla Core no tiene dimensiones válidas para imprimir' },
+                    { status: 409 },
+                )
+            }
+            renderWidth = persistedRenderSettings.widthPx
+            renderHeight = persistedRenderSettings.heightPx
+            renderTemplateFontFamily = persistedRenderSettings.templateFontFamily
+
+            try {
+                renderElements = await hydrateCoreTemplateForServerRender({
+                    elementsJson: resolvedTarget.template.elements_json,
+                    context: resolvedTarget.context,
+                    runtimeValues: payload.runtimeValues ?? undefined,
+                    includePrintRuntime: true,
+                })
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'No fue posible preparar la plantilla para imprimir'
+                return NextResponse.json(
+                    { error: message },
+                    { status: message.includes('OF') ? 400 : 409 },
+                )
+            }
+        }
+
+        const invalidRequiredBarcodes = findRequiredBarcodeErrors(renderElements)
+        if (invalidRequiredBarcodes.length > 0) {
+            return NextResponse.json({
+                error: 'Datos de codigo de barras invalidos',
+                details: invalidRequiredBarcodes,
+            }, { status: 409 })
         }
 
         browser = await launchBrowser()
         const page = await browser.newPage()
-        await page.setViewport({ width: payload.width, height: payload.height, deviceScaleFactor: 2 })
+        await page.setViewport({ width: renderWidth, height: renderHeight, deviceScaleFactor: 2 })
 
         const requestUrl = new URL(req.url)
         const baseUrl = `${requestUrl.protocol}//${requestUrl.host}`
@@ -260,10 +324,10 @@ export async function POST(req: Request) {
         await page.evaluateOnNewDocument((injectedPayload: string) => {
             window.localStorage.setItem('__EXPORT_DATA__', injectedPayload)
         }, JSON.stringify({
-            elements: payload.elements,
-            width: payload.width,
-            height: payload.height,
-            templateFontFamily: payload.templateFontFamily,
+            elements: renderElements,
+            width: renderWidth,
+            height: renderHeight,
+            templateFontFamily: renderTemplateFontFamily,
         }))
 
         if (bypassSecret) {

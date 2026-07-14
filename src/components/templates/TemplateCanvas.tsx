@@ -5,9 +5,16 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, AlignVerticalJustifyEnd, AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Undo2, Redo2, Copy, Trash2, Shuffle, RotateCcw, LayoutGrid, Combine, FileEdit, AlertTriangle, CheckCircle2, ShieldAlert, ZoomIn, ZoomOut, Ruler, QrCode } from 'lucide-react'
+import { Save, Type, Image as ImageIcon, Box, Move, AlignLeft, AlignCenter, AlignRight, Loader2, Eye, EyeOff, Minus, AlignHorizontalSpaceAround, AlignVerticalSpaceAround, AlignHorizontalJustifyStart, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignHorizontalJustifyCenter, AlignVerticalJustifyEnd, AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Undo2, Redo2, Copy, Trash2, Shuffle, RotateCcw, LayoutGrid, Combine, FileEdit, AlertTriangle, CheckCircle2, ShieldAlert, ZoomIn, ZoomOut, Ruler, QrCode, Search, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { updateTemplate, getPreviewProduct, getRandomPreviewProduct, validateExportFilenameLength, getTemplateLinkedDatasetsAction, getPublicDocumentQrOptionsAction, resolvePublicDocumentUrlsForProductAction } from '@/app/templates/actions'
+import {
+    getRandomTemplatePreviewTarget,
+    getTemplatePreviewBase,
+    getTemplatePreviewTarget,
+    searchTemplatePreviewTargets,
+    type TemplatePreviewTargetOption,
+} from '@/app/templates/previewActions'
 import { getDatasetsAction, FieldDef } from '@/app/datasets/actions'
 import { resolveAssetsAction } from '@/app/generate/actions'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -43,6 +50,18 @@ import { applyTemplateTextTransform, resolveCssTextTransform, type TemplateTextT
 import { buildPrintRuntimePreviewValues, PRINT_RUNTIME_VARIABLE_KEYS, PRINT_RUNTIME_VARIABLE_OPTIONS } from '@/lib/templates/printRuntimeVariables'
 import { expandLabelBoxProducts } from '@/lib/engine/labelParts'
 import { collectRelatedDocumentQrSlots, resolveFixedDocumentQrUrl } from '@/lib/templates/documentQrFields'
+import {
+    CATALOG_SCOPE_OPTIONS,
+    extractTemplateScopeBindings,
+    filterNamingVariableFieldsForCatalogScope,
+    formatCatalogScopeValidationIssue,
+    getCatalogScopeLabel,
+    isCoreCatalogDataSource,
+    isNamingVariableAvailableForCatalogScope,
+    normalizeCatalogScope,
+    validateTemplateScopeBindings,
+    type CatalogScope,
+} from '@/lib/templates/catalogScope'
 
 export type TemplateElementType = 'text' | 'dynamic_text' | 'image' | 'barcode' | 'document_qr' | 'box' | 'dashed_line' | 'dynamic_image' | 'icon_group'
 type TemplateBrandScope = 'firplak' | 'private_label'
@@ -176,7 +195,7 @@ const PRINT_RUNTIME_VARIABLE_GROUP: VariableOptionGroup = {
     options: PRINT_RUNTIME_VARIABLE_OPTIONS,
 }
 
-function buildTemplateVariableGroups(fields: NamingVariableField[]): VariableOptionGroup[] {
+function buildTemplateVariableGroups(fields: NamingVariableField[], scope: CatalogScope): VariableOptionGroup[] {
     const fieldsBySource = fields.reduce((acc, field) => {
         const source = field.source || 'ref_attrs'
         if (!acc[source]) acc[source] = []
@@ -193,7 +212,30 @@ function buildTemplateVariableGroups(fields: NamingVariableField[]): VariableOpt
         }))
         .filter(group => group.options.length > 0)
 
-    return [...groups, PRINT_RUNTIME_VARIABLE_GROUP, TEMPLATE_COMPATIBILITY_VARIABLE_GROUP]
+    const compatibilityOptions = TEMPLATE_COMPATIBILITY_VARIABLE_GROUP.options.filter((option) => (
+        isNamingVariableAvailableForCatalogScope(option.key, scope)
+    ))
+
+    return [
+        ...groups,
+        PRINT_RUNTIME_VARIABLE_GROUP,
+        ...(compatibilityOptions.length > 0
+            ? [{ ...TEMPLATE_COMPATIBILITY_VARIABLE_GROUP, options: compatibilityOptions }]
+            : []),
+    ]
+}
+
+function getDefaultDataFieldForScope(type: TemplateElementType, scope: CatalogScope): string | undefined {
+    if (type === 'dynamic_text') {
+        if (scope === 'family') return 'product_type'
+        if (scope === 'reference') return 'product_name'
+        if (scope === 'version') return 'final_base_name_es'
+        return 'final_name_es'
+    }
+
+    if (type === 'dynamic_image') return scope === 'family' ? undefined : 'icon_rh'
+    if (type === 'barcode') return scope === 'sku' ? 'barcode_text' : undefined
+    return undefined
 }
 
 function renderVariableOptionGroups(groups: VariableOptionGroup[]) {
@@ -328,6 +370,7 @@ type TemplateData = {
     export_filename_format?: string
     brand_scope?: string
     private_label_client_name?: string
+    catalog_scope?: CatalogScope | null
     print_target?: string
     media_width_mm?: number | string | null
     media_length_mm?: number | string | null
@@ -900,7 +943,8 @@ function RichTextEditor({
 
     return (
         <div className="flex flex-col border border-input rounded-md overflow-hidden bg-white focus-within:ring-1 focus-within:ring-ring">
-            <div className="flex flex-wrap bg-slate-50 border-b p-1 gap-1 items-center">
+            <div className="flex flex-wrap items-center gap-1 border-b bg-slate-50 p-1">
+                <div className="flex shrink-0 items-center gap-1">
                 <Button variant="ghost" size="icon-sm" className="h-6 w-6" onMouseDown={(e) => execCommand('bold', e)} title="Negrita">
                     <b>B</b>
                 </Button>
@@ -932,9 +976,9 @@ function RichTextEditor({
                         </option>
                     ))}
                 </select>
+                </div>
 
-                <div className="h-4 w-px bg-slate-300 mx-1" />
-
+                <div className="flex shrink-0 items-center gap-1">
                 <div className="flex items-center bg-white border rounded">
                     <Button 
                         variant="ghost" 
@@ -1087,9 +1131,9 @@ function RichTextEditor({
                         +
                     </Button>
                 </div>
+                </div>
 
-                <div className="h-4 w-px bg-slate-300 mx-1" />
-
+                <div className="flex shrink-0 items-center gap-1">
                 {/* Alignment buttons */}
                 <Button variant="ghost" size="icon-sm" className="h-6 w-6" onMouseDown={(e) => execCommand('justifyLeft', e)} title="Alinear izquierda">
                     <AlignLeft className="h-3 w-3" />
@@ -1152,10 +1196,11 @@ function RichTextEditor({
                         }}
                     >+</Button>
                 </div>
+                </div>
 
 
                 <select
-                    className="h-6 text-[10px] rounded border bg-slate-100 hover:bg-slate-200 cursor-pointer px-1 outline-none ml-auto"
+                    className="h-6 min-w-32 flex-1 basis-32 cursor-pointer rounded border bg-slate-100 px-1 text-[10px] outline-none hover:bg-slate-200"
                     defaultValue=""
                     onFocus={saveSelection}
                     onMouseEnter={saveSelection}
@@ -1683,6 +1728,8 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     // Global settings states
     const [templateName, setTemplateName] = useState(template.name || '')
     const [dataSource, setDataSource] = useState(template.data_source || 'core_firplak')
+    const [catalogScope, setCatalogScope] = useState<CatalogScope>(() => normalizeCatalogScope(template.catalog_scope))
+    const isCoreCatalog = isCoreCatalogDataSource(dataSource)
     const [printTarget, setPrintTarget] = useState<PrintTarget>(normalizePrintTarget(template.print_target))
     const [mediaWidthMm, setMediaWidthMm] = useState(
         template.media_width_mm != null ? String(template.media_width_mm) : ''
@@ -1764,6 +1811,10 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     const [isPreviewMode, setIsPreviewMode] = useState(false)
     const [isLoadingRandom, setIsLoadingRandom] = useState(false)
     const [previewData, setPreviewData] = useState<PreviewData | null>(null)
+    const [previewSearchQuery, setPreviewSearchQuery] = useState('')
+    const [previewSearchResults, setPreviewSearchResults] = useState<TemplatePreviewTargetOption[]>([])
+    const [isSearchingPreview, setIsSearchingPreview] = useState(false)
+    const [isLoadingSelectedPreview, setIsLoadingSelectedPreview] = useState(false)
     const [isValidating, setIsValidating] = useState(false)
     const [validationResult, setValidationResult] = useState<{ success: boolean, error?: string, count?: number } | null>(null)
     const assetMap = React.useMemo(() => {
@@ -1794,12 +1845,12 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     }
 
     const getPreviewScopeArgs = useCallback(() => ({
-        brandScope: dataSource === 'core_firplak' ? brandScope : 'firplak' as TemplateBrandScope,
+        brandScope: isCoreCatalog ? brandScope : 'firplak' as TemplateBrandScope,
         privateLabelClientName:
-            dataSource === 'core_firplak' && brandScope === 'private_label'
+            isCoreCatalog && brandScope === 'private_label'
                 ? String(privateLabelClientName || '').trim()
                 : null,
-    }), [dataSource, brandScope, privateLabelClientName])
+    }), [brandScope, isCoreCatalog, privateLabelClientName])
 
     const effectivePreviewSource = useMemo(() => {
         if (dataSource === 'custom_datasets' && linkedDatasets.length > 0) {
@@ -1816,7 +1867,9 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         const refreshPreview = async () => {
             if (effectivePreviewSource === 'custom_datasets' || !effectivePreviewSource) return
             const { brandScope: previewBrandScope, privateLabelClientName: previewClientName } = getPreviewScopeArgs()
-            const data = await getPreviewProduct(effectivePreviewSource, previewBrandScope, previewClientName)
+            const data = isCoreCatalog
+                ? await getTemplatePreviewBase(catalogScope, previewBrandScope, previewClientName)
+                : await getPreviewProduct(effectivePreviewSource, previewBrandScope, previewClientName)
             const resolvedAssets = await resolveAssetsAction([])
             if (!cancelled) {
                 setPreviewData(await enrichWithZone(data, resolvedAssets))
@@ -1828,7 +1881,34 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         return () => {
             cancelled = true
         }
-    }, [isPreviewMode, effectivePreviewSource, getPreviewScopeArgs])
+    }, [catalogScope, effectivePreviewSource, getPreviewScopeArgs, isCoreCatalog, isPreviewMode])
+
+    useEffect(() => {
+        const query = previewSearchQuery.trim()
+        if (!isPreviewMode || !isCoreCatalog || query.length < 1) {
+            return
+        }
+
+        let cancelled = false
+        const timeoutId = window.setTimeout(() => {
+            const { brandScope: previewBrandScope, privateLabelClientName: previewClientName } = getPreviewScopeArgs()
+            searchTemplatePreviewTargets(catalogScope, query, previewBrandScope, previewClientName)
+                .then((results) => {
+                    if (!cancelled) setPreviewSearchResults(results)
+                })
+                .catch(() => {
+                    if (!cancelled) setPreviewSearchResults([])
+                })
+                .finally(() => {
+                    if (!cancelled) setIsSearchingPreview(false)
+                })
+        }, 250)
+
+        return () => {
+            cancelled = true
+            window.clearTimeout(timeoutId)
+        }
+    }, [catalogScope, getPreviewScopeArgs, isCoreCatalog, isPreviewMode, previewSearchQuery])
 
     // Fetch datasets info (solo necesario para legacy selector/compat)
     useEffect(() => {
@@ -1836,7 +1916,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     }, [])
 
     useEffect(() => {
-        if (dataSource !== 'core_firplak') return
+        if (!isCoreCatalog) return
 
         let cancelled = false
         const productType = typeof previewData?.product_type === 'string' ? previewData.product_type : ''
@@ -1845,7 +1925,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             .then(fields => {
                 if (cancelled) return
                 const merged = new Map<string, NamingVariableField>()
-                for (const field of [...fields, ...TEMPLATE_RESULT_VARIABLE_FIELDS]) {
+                for (const field of [...BASE_NAMING_VARIABLE_FIELDS, ...fields, ...TEMPLATE_RESULT_VARIABLE_FIELDS]) {
                     if (!field.field || merged.has(field.field)) continue
                     merged.set(field.field, field)
                 }
@@ -1860,7 +1940,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         return () => {
             cancelled = true
         }
-    }, [dataSource, previewData?.product_type])
+    }, [isCoreCatalog, previewData?.product_type])
 
     const refreshLinkedDatasets = useCallback(async () => {
         const tid = String(template.id || '').trim()
@@ -1946,15 +2026,18 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     const handleDataSourceChange = async (newSource: string) => {
         setDataSource(newSource)
         setIsModified(true)
+        const nextIsCoreCatalog = isCoreCatalogDataSource(newSource)
+        const nextCatalogScope: CatalogScope = nextIsCoreCatalog ? 'sku' : catalogScope
+        if (nextIsCoreCatalog) setCatalogScope('sku')
 
         // Brand scoping only applies to Firplak Core.
-        if (newSource !== 'core_firplak') {
+        if (!nextIsCoreCatalog) {
             setBrandScope('firplak')
             setPrivateLabelClientName('')
         }
         
         // Update schema locally
-        if (newSource === 'core_firplak') {
+        if (nextIsCoreCatalog) {
             setDatasetSchema([])
         } else if (newSource === 'custom_datasets') {
             // Generic datasets: schema depends on the associated datasets, so we don't assume a single schema here.
@@ -1984,22 +2067,41 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
 
         // Reload preview product for the new source
         // For custom_datasets, the effectivePreviewSource will resolve when linkedDatasets load
-        const nextBrandScope = newSource === 'core_firplak' ? brandScope : 'firplak'
+        const nextBrandScope = nextIsCoreCatalog ? brandScope : 'firplak'
         const nextPrivateLabelClientName =
-            newSource === 'core_firplak' && brandScope === 'private_label'
+            nextIsCoreCatalog && brandScope === 'private_label'
                 ? String(privateLabelClientName || '').trim()
                 : null
-        const data = await getPreviewProduct(newSource, nextBrandScope, nextPrivateLabelClientName)
+        const data = nextIsCoreCatalog
+            ? await getTemplatePreviewBase(nextCatalogScope, nextBrandScope, nextPrivateLabelClientName)
+            : await getPreviewProduct(newSource, nextBrandScope, nextPrivateLabelClientName)
         const assetsRemote = await resolveAssetsAction([])
         setPreviewData(await enrichWithZone(data, assetsRemote))
     }
 
     // Determinar si es fuente externa o core Firplak
-    const isExternalDataSource = Boolean(dataSource) && dataSource !== 'core_firplak'
+    const isExternalDataSource = Boolean(dataSource) && !isCoreCatalog
     const requiredVarsForTemplate = React.useMemo(() => extractTemplateVariables(JSON.stringify(elements)), [elements])
+    const scopedTemplateVariableFields = React.useMemo(
+        () => isCoreCatalog
+            ? filterNamingVariableFieldsForCatalogScope(templateVariableFields, catalogScope)
+            : templateVariableFields,
+        [catalogScope, isCoreCatalog, templateVariableFields],
+    )
+    const coreVariableSources = React.useMemo(() => new Map<string, NamingVariableSource>(
+        templateVariableFields.map((field) => [field.field.trim().toLowerCase(), field.source]),
+    ), [templateVariableFields])
+    const scopeValidationIssues = React.useMemo(() => {
+        if (!isCoreCatalog) return []
+        return validateTemplateScopeBindings(
+            catalogScope,
+            extractTemplateScopeBindings(elements, exportFilenameFormat),
+            coreVariableSources,
+        )
+    }, [catalogScope, coreVariableSources, elements, exportFilenameFormat, isCoreCatalog])
     const templateVariableGroups = React.useMemo(
-        () => buildTemplateVariableGroups(templateVariableFields),
-        [templateVariableFields]
+        () => buildTemplateVariableGroups(scopedTemplateVariableFields, catalogScope),
+        [catalogScope, scopedTemplateVariableFields]
     )
     const documentSlotOptions = React.useMemo(() => {
         const bySlot = new Map<string, PublicDocumentQrOption>()
@@ -2022,68 +2124,6 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             return false
         }
     }, [requiredVarsForTemplate])
-
-    // Lista de variables disponibles (estáticas para Firplak, dinámicas para datasets externos)
-    const CORE_VARIABLE_OPTS = [
-        { group: 'Identificadores', options: [
-            { key: 'code', label: 'Código SKU (Completo)' },
-            { key: 'sku_base', label: 'SKU base' },
-            { key: 'sku_complete', label: 'SKU completo' },
-            { key: 'familia_code', label: 'Código Familia' },
-            { key: 'ref_code', label: 'Código Referencia' },
-            { key: 'version_code', label: 'Código Versión' },
-            { key: 'color_code', label: 'Código Color' },
-            { key: 'barcode_text', label: 'Código de Barras' },
-        ]},
-        { group: 'Producto/Atributos', options: [
-            { key: 'product_type', label: 'Tipo de Producto' },
-            { key: 'product_name', label: 'Nombre referencia (product_name)' },
-            { key: 'designation', label: 'Uso (Designación)' },
-            { key: 'use_destination', label: 'Destino de uso' },
-            { key: 'commercial_measure', label: 'Medida Comercial' },
-            { key: 'accessory_text', label: 'Accesorios/Riel' },
-            { key: 'color_name', label: 'Color (Nombre)' },
-            { key: 'zone_home', label: 'Zona Firplak' },
-            { key: 'zone_home_en', label: 'Zone (EN)' },
-            { key: 'line', label: 'Línea' },
-            { key: 'special_label', label: 'Etiqueta especial' },
-            { key: 'carb2', label: 'Certificación CARB2' },
-            { key: 'rh', label: 'RH' },
-            { key: 'bisagras', label: 'Bisagras' },
-            { key: 'canto_puertas', label: 'Canto' },
-            { key: 'assembled_flag', label: 'Listo para armar (RTA)' },
-            { key: 'private_label_client_name', label: 'Cliente Marca Propia' },
-        ]},
-        { group: 'Generados/Técnicos', options: [
-            { key: 'final_name_es', label: 'Nombre (ES)' },
-            { key: 'final_name_en', label: 'Nombre (EN)' },
-            { key: 'final_complete_name_es', label: 'Nombre Completo (ES)' },
-            { key: 'final_complete_name_en', label: 'Nombre Completo (EN)' },
-            { key: 'sap_description', label: 'SAP Description' },
-            { key: 'technical_description_es', label: 'Descripción Técnica (ES)' },
-            { key: 'technical_description_en', label: 'Descripción Técnica (EN)' },
-        ]},
-        { group: 'Medidas', options: [
-            { key: 'width_cm', label: 'Ancho (cm)' },
-            { key: 'height_cm', label: 'Alto (cm)' },
-            { key: 'depth_cm', label: 'Fondo (cm)' },
-            { key: 'width_in', label: 'Ancho (in)' },
-            { key: 'height_in', label: 'Alto (in)' },
-            { key: 'depth_in', label: 'Fondo (in)' },
-        ]},
-        { group: 'Otros', options: [
-            { key: 'weight_kg', label: 'Peso (kg)' },
-            { key: 'weight_lb', label: 'Peso (lb)' },
-            { key: 'status', label: 'Estado SKU' },
-            { key: 'effective_status', label: 'Estado efectivo' },
-            { key: 'is_exportable', label: 'Exportable' },
-        ]},
-        { group: 'Compatibilidad', options: [
-            { key: 'color', label: 'Alias: color' },
-            { key: 'color_code', label: 'Alias: color_code' },
-            { key: 'name_color_sap', label: 'Alias: name_color_sap' },
-        ]},
-    ]
 
     const canvasRef = useRef<HTMLDivElement>(null)
     const workbenchRef = useRef<HTMLDivElement>(null)
@@ -2400,7 +2440,13 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     }, [undo, redo, selectedIds, elements, commitHistory, removeSelectedElements, duplicateSelectedElements])
 
     const handleSave = async () => {
-        if (dataSource === 'core_firplak' && brandScope === 'private_label') {
+        if (isCoreCatalog && scopeValidationIssues.length > 0) {
+            setPropertiesPanelTab('template')
+            toast.error(`Corrige las variables incompatibles con ${getCatalogScopeLabel(catalogScope)} antes de guardar.`)
+            return
+        }
+
+        if (isCoreCatalog && brandScope === 'private_label') {
             const plc = String(privateLabelClientName || '').trim()
             if (!plc) {
                 toast.error('Selecciona un cliente para "Marca Propia" antes de guardar.')
@@ -2417,6 +2463,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         const res = await updateTemplate(template.id, {
             name: templateName,
             data_source: dataSource,
+            catalog_scope: isCoreCatalog ? catalogScope : null,
             template_font_family: templateFontFamily,
             elements_json: JSON.stringify(elements),
             export_formats: exportFormats.join(','),
@@ -2425,9 +2472,9 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             media_width_mm: printTarget === PRINT_TARGET_3NSTAR ? Number(mediaWidthMm) : null,
             media_length_mm: printTarget === PRINT_TARGET_3NSTAR ? Number(mediaLengthMm) : null,
             media_gap_mm: printTarget === PRINT_TARGET_3NSTAR ? Number(mediaGapMm) : DEFAULT_MEDIA_GAP_MM,
-            brand_scope: dataSource === 'core_firplak' ? brandScope : 'firplak',
+            brand_scope: isCoreCatalog ? brandScope : 'firplak',
             private_label_client_name:
-                dataSource === 'core_firplak' && brandScope === 'private_label'
+                isCoreCatalog && brandScope === 'private_label'
                     ? String(privateLabelClientName || '').trim() || null
                     : null,
         })
@@ -2445,7 +2492,9 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         if (!isPreviewMode) {
             if (!previewData) {
                 const { brandScope: previewBrandScope, privateLabelClientName: previewClientName } = getPreviewScopeArgs()
-                const data = await getPreviewProduct(effectivePreviewSource, previewBrandScope, previewClientName)
+                const data = isCoreCatalog
+                    ? await getTemplatePreviewBase(catalogScope, previewBrandScope, previewClientName)
+                    : await getPreviewProduct(effectivePreviewSource, previewBrandScope, previewClientName)
                 // Resolve system asset URLs (icons, logos) and enrich product data with icon fields
                 const assetMap = await resolveAssetsAction([])
                 setPreviewData(await enrichWithZone(data, assetMap))
@@ -2457,10 +2506,15 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     const handleRandomPreview = async () => {
         setIsLoadingRandom(true)
         try {
-            // Pass current product code so the server excludes it (avoids same product twice)
+            // Exclude the active entity when the preview operates on the catalog Core.
+            const currentTargetId = typeof previewData?.catalog_target_id === 'string'
+                ? previewData.catalog_target_id
+                : undefined
             const currentCode = typeof previewData?.code === 'string' ? previewData.code : undefined
             const { brandScope: previewBrandScope, privateLabelClientName: previewClientName } = getPreviewScopeArgs()
-            const data = await getRandomPreviewProduct(currentCode, effectivePreviewSource, previewBrandScope, previewClientName)
+            const data = isCoreCatalog
+                ? await getRandomTemplatePreviewTarget(catalogScope, currentTargetId, previewBrandScope, previewClientName)
+                : await getRandomPreviewProduct(currentCode, effectivePreviewSource, previewBrandScope, previewClientName)
             if (data) {
                 const assetMap = await resolveAssetsAction([])
                 setPreviewData(await enrichWithZone(data, assetMap))
@@ -2477,11 +2531,36 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         setIsLoadingRandom(true)
         try {
             const { brandScope: previewBrandScope, privateLabelClientName: previewClientName } = getPreviewScopeArgs()
-            const data = await getPreviewProduct(effectivePreviewSource, previewBrandScope, previewClientName)
+            const data = isCoreCatalog
+                ? await getTemplatePreviewBase(catalogScope, previewBrandScope, previewClientName)
+                : await getPreviewProduct(effectivePreviewSource, previewBrandScope, previewClientName)
             const assetMap = await resolveAssetsAction([])
             setPreviewData(await enrichWithZone(data, assetMap))
         } finally {
             setIsLoadingRandom(false)
+        }
+    }
+
+    const handleSelectPreviewTarget = async (target: TemplatePreviewTargetOption) => {
+        setIsLoadingSelectedPreview(true)
+        try {
+            const { brandScope: previewBrandScope, privateLabelClientName: previewClientName } = getPreviewScopeArgs()
+            const data = await getTemplatePreviewTarget(
+                { scope: target.scope, id: target.id },
+                previewBrandScope,
+                previewClientName,
+            )
+            if (!data) {
+                toast.error('La entidad seleccionada ya no está disponible para esta plantilla.')
+                return
+            }
+
+            const resolvedAssets = await resolveAssetsAction([])
+            setPreviewData(await enrichWithZone(data, resolvedAssets))
+            setPreviewSearchQuery('')
+            setPreviewSearchResults([])
+        } finally {
+            setIsLoadingSelectedPreview(false)
         }
     }
 
@@ -2494,7 +2573,9 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             width: type === 'barcode' ? 120 : (type === 'document_qr' ? 76 : (type === 'dashed_line' ? CANVAS_WIDTH - 40 : 100)),
             height: type === 'barcode' ? 40 : (type === 'document_qr' ? 76 : (type === 'dashed_line' ? 2 : 30)),
             content: type === 'text' ? 'Texto Nuevo' : undefined,
-            dataField: type === 'dynamic_text' ? 'final_name_es' : undefined,
+            dataField: isCoreCatalog
+                ? getDefaultDataFieldForScope(type, catalogScope)
+                : (type === 'dynamic_text' ? 'final_name_es' : undefined),
             fontSize: 10, // Default 10 pt
             fontWeight: 'normal',
             fontStyle: 'normal',
@@ -2519,7 +2600,9 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         }
 
         if (type === 'dynamic_image') {
-            newEl.dataField = 'icon_rh'
+            newEl.dataField = isCoreCatalog
+                ? getDefaultDataFieldForScope(type, catalogScope)
+                : 'icon_rh'
             newEl.caption = 'Resistente a la humedad\nMoisture resistance'
             newEl.width = 44    // ~11 mm
             newEl.height = 52   // ~13 mm — enough for icon + two-line caption
@@ -2529,7 +2612,9 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
 
         if (type === 'barcode') {
             // Make the element render immediately with the default preview product.
-            newEl.dataField = 'barcode_text'
+            newEl.dataField = isCoreCatalog
+                ? getDefaultDataFieldForScope(type, catalogScope)
+                : 'barcode_text'
             newEl.barcodeOrientation = 'horizontal'
         }
 
@@ -2812,11 +2897,12 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     }
 
     return (
-        <div className="flex-1 flex flex-col gap-4 xl:flex-row min-h-0 overflow-hidden">
+        <div className="flex-1 flex min-h-0 flex-col gap-4 overflow-y-auto xl:flex-row xl:overflow-hidden">
             {/* Toolbar / Canvas Area */}
-            <div className="flex-1 flex flex-col gap-4 overflow-y-auto overflow-x-hidden pr-3 custom-scrollbar pb-40">
-                <div className="flex justify-between items-center bg-white p-4 rounded-xl border shadow-sm">
-                    <div className="flex gap-2 flex-wrap items-center">
+            <div className="flex min-h-[28rem] min-w-0 flex-1 flex-col gap-3 overflow-hidden xl:min-h-0">
+                <div className="shrink-0 rounded-xl border bg-white p-3 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2" aria-label="Agregar elementos al lienzo">
                         <Button variant="outline" size="sm" onClick={() => addElement('text')}>
                             <Type className="h-4 w-4 mr-2" /> Texto
                         </Button>
@@ -2826,10 +2912,24 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                         <Button variant="outline" size="sm" onClick={() => addElement('image')}>
                             <ImageIcon className="h-4 w-4 mr-2" /> Imagen/Logo
                         </Button>
-                        <Button variant="outline" size="sm" onClick={() => addElement('dynamic_image')} title="Icono condicional que aparece o desaparece según el producto">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => addElement('dynamic_image')}
+                            disabled={isCoreCatalog && catalogScope === 'family'}
+                            title={isCoreCatalog && catalogScope === 'family'
+                                ? 'Los iconos condicionales requieren atributos de referencia.'
+                                : 'Icono condicional que aparece o desaparece según el producto'}
+                        >
                             <ImageIcon className="h-4 w-4 mr-2 text-indigo-500" /> Icono Variable
                         </Button>
-                        <Button variant="outline" size="sm" onClick={() => addElement('barcode')}>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => addElement('barcode')}
+                            disabled={isCoreCatalog && catalogScope !== 'sku'}
+                            title={isCoreCatalog && catalogScope !== 'sku' ? 'El código de barras solo está disponible para plantillas de SKU completo.' : undefined}
+                        >
                             ||| Barcode
                         </Button>
                         <Button variant="outline" size="sm" onClick={() => addElement('document_qr')} title="QR para documentos publicos relacionados o fijos">
@@ -2838,19 +2938,20 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                         <Button variant="outline" size="sm" onClick={() => addElement('dashed_line')}>
                             <Minus className="h-4 w-4 mr-2" /> Línea
                         </Button>
+                        </div>
 
-                        <div className="h-6 w-px bg-gray-200 mx-1" />
-
+                        <div className="flex shrink-0 items-center gap-1 border-l border-slate-200 pl-2">
                         <Button variant="ghost" size="icon" disabled={historyIndex <= 0} onClick={undo} title="Deshacer (Ctrl+Z)">
                             <Undo2 className="h-4 w-4" />
                         </Button>
                         <Button variant="ghost" size="icon" disabled={historyIndex >= history.length - 1} onClick={redo} title="Rehacer (Ctrl+Y)">
                             <Redo2 className="h-4 w-4" />
                         </Button>
+                        </div>
 
                         {/* Alignment Tools (Visible when multiple elements are selected) */}
                         {selectedIds.length > 1 && (
-                            <div className="flex flex-wrap items-center ml-2 border-l pl-2 gap-1 bg-slate-50 rounded-md p-1">
+                            <div className="flex max-w-full flex-wrap items-center gap-1 rounded-md border border-slate-200 bg-slate-50 p-1">
                                 <Button title="Alinear a la Izquierda" variant="ghost" size="icon-sm" onClick={() => alignElements('left')}><AlignHorizontalJustifyStart className="h-4 w-4 text-blue-600" /></Button>
                                 <Button title="Alinear al Centro Horizontal" variant="ghost" size="icon-sm" onClick={() => alignElements('center')}><AlignHorizontalJustifyCenter className="h-4 w-4 text-blue-600" /></Button>
                                 <Button title="Alinear a la Derecha" variant="ghost" size="icon-sm" onClick={() => alignElements('right')}><AlignRight className="h-4 w-4 text-blue-600" /></Button>
@@ -2874,14 +2975,14 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
 
                         {/* Alignment Workspace (Visible when 1 element is selected) */}
                         {selectedIds.length === 1 && (
-                            <div className="flex ml-2 border-l pl-2 gap-1">
+                            <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 p-1">
                                 <Button title="Centrar Horizontalmente en Lienzo" variant="ghost" size="icon-sm" onClick={() => alignWorkspace('center_h')}><AlignHorizontalSpaceAround className="h-4 w-4" /></Button>
                                 <Button title="Centrar Verticalmente en Lienzo" variant="ghost" size="icon-sm" onClick={() => alignWorkspace('center_v')}><AlignVerticalSpaceAround className="h-4 w-4" /></Button>
                             </div>
                         )}
 
                         {selectedIds.length > 0 && (
-                            <div className="flex ml-2 border-l pl-2 gap-1">
+                            <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 p-1">
                                 {selectedIds.length > 1 && elements.filter(e => selectedIds.includes(e.id)).every(e => e.type === 'image' || e.type === 'dynamic_image') && (
                                     <Button title="Agrupar Iconos (Group)" variant="ghost" size="icon-sm" onClick={groupElements}><LayoutGrid className="h-4 w-4 text-orange-600" /></Button>
                                 )}
@@ -2894,7 +2995,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                         )}
 
                     </div>
-                    <div className="flex gap-2 items-center">
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
                         <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
                             <Button
                                 variant="ghost"
@@ -2942,23 +3043,25 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                 Guia
                             </Button>
                         </div>
-                        <Button variant={isPreviewMode ? 'default' : 'secondary'} className={isPreviewMode ? 'bg-indigo-600 hover:bg-indigo-700' : ''} onClick={handleTogglePreview}>
-                            {isPreviewMode ? <EyeOff className="mr-2 h-4 w-4" /> : <Eye className="mr-2 h-4 w-4" />}
-                            {isPreviewMode ? 'Salir de Preview' : 'Live Preview'}
-                        </Button>
-                        <Button onClick={handleSave} disabled={isSaving || !isModified}>
-                            {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                            {isModified ? '* Guardar Cambios' : 'Guardar Plantilla'}
-                        </Button>
+                        <div className="ml-auto flex shrink-0 items-center gap-2">
+                            <Button variant={isPreviewMode ? 'default' : 'secondary'} className={isPreviewMode ? 'bg-indigo-600 hover:bg-indigo-700' : ''} onClick={handleTogglePreview}>
+                                {isPreviewMode ? <EyeOff className="mr-2 h-4 w-4" /> : <Eye className="mr-2 h-4 w-4" />}
+                                {isPreviewMode ? 'Salir de Preview' : 'Live Preview'}
+                            </Button>
+                            <Button onClick={handleSave} disabled={isSaving || !isModified || (isCoreCatalog && scopeValidationIssues.length > 0)}>
+                                {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                                {isModified ? '* Guardar Cambios' : 'Guardar Plantilla'}
+                            </Button>
+                        </div>
                     </div>
                 </div>
 
                 {/* Secondary Preview Toolbar — Dedicated space for navigation controls */}
                 {isPreviewMode && (
-                    <div className="flex gap-2 items-center bg-indigo-50/50 p-2 px-4 rounded-xl border border-indigo-100/50 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300">
-                        <div className="flex items-center gap-2 pr-3 border-r border-indigo-100 mr-1">
+                    <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-xl border border-indigo-100/50 bg-indigo-50/50 p-2 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300">
+                        <div className="mr-1 flex shrink-0 items-center gap-2 border-r border-indigo-100 pr-3">
                             <Eye className="h-3.5 w-3.5 text-indigo-500" />
-                            <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">Navegación de Preview</span>
+                            <span className="whitespace-nowrap text-[10px] font-bold uppercase tracking-widest text-indigo-400">Navegación de Preview</span>
                         </div>
                         
                         <Button
@@ -2967,7 +3070,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                             onClick={handleBasePreview}
                             disabled={isLoadingRandom}
                             title="Volver al producto con el nombre más largo (Caso de Estrés)"
-                            className="h-8 text-xs font-medium text-indigo-600 hover:text-indigo-700 hover:bg-indigo-100/50 transition-colors"
+                            className="h-8 shrink-0 text-xs font-medium text-indigo-600 transition-colors hover:bg-indigo-100/50 hover:text-indigo-700"
                         >
                             <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
                             Caso Base (Nombre Largo)
@@ -2979,7 +3082,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                             onClick={handleRandomPreview}
                             disabled={isLoadingRandom}
                             title="Cargar un producto aleatorio en el preview"
-                            className="h-8 text-xs font-medium text-indigo-600 hover:text-indigo-700 hover:bg-indigo-100/50 transition-colors"
+                            className="h-8 shrink-0 text-xs font-medium text-indigo-600 transition-colors hover:bg-indigo-100/50 hover:text-indigo-700"
                         >
                             {isLoadingRandom
                                 ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -2987,8 +3090,77 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                             Producto Aleatorio
                         </Button>
 
-                        <div className="flex-1" />
-                        <span className="text-[10px] text-indigo-300 italic hidden md:block">
+                        {isCoreCatalog && (
+                            <div className="relative min-w-[17rem] flex-1 basis-[22rem]">
+                                <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-3.5 w-3.5 -translate-y-1/2 text-indigo-400" />
+                                <Input
+                                    type="search"
+                                    value={previewSearchQuery}
+                                    onChange={(event) => {
+                                        const nextQuery = event.target.value
+                                        setPreviewSearchQuery(nextQuery)
+                                        if (nextQuery.trim().length < 1) {
+                                            setPreviewSearchResults([])
+                                            setIsSearchingPreview(false)
+                                        } else {
+                                            setIsSearchingPreview(true)
+                                        }
+                                    }}
+                                    onKeyDown={(event) => {
+                                        if (event.key !== 'Enter') return
+                                        const exactMatch = previewSearchResults.find((option) => (
+                                            option.code.toLowerCase() === previewSearchQuery.trim().toLowerCase()
+                                        ))
+                                        if (exactMatch) void handleSelectPreviewTarget(exactMatch)
+                                    }}
+                                    placeholder={`Buscar ${getCatalogScopeLabel(catalogScope).toLowerCase()} por código o nombre...`}
+                                    aria-label={`Buscar ${getCatalogScopeLabel(catalogScope).toLowerCase()} por código o nombre para la previsualización`}
+                                    className="h-8 w-full border-indigo-200 bg-white pl-8 pr-8 text-xs shadow-none"
+                                />
+                                {isSearchingPreview || isLoadingSelectedPreview ? (
+                                    <Loader2 className="absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-indigo-500" />
+                                ) : previewSearchQuery ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setPreviewSearchQuery('')
+                                            setPreviewSearchResults([])
+                                        }}
+                                        className="absolute right-2 top-1/2 rounded p-1 -translate-y-1/2 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                                        aria-label="Limpiar búsqueda de previsualización"
+                                    >
+                                        <X className="h-3.5 w-3.5" />
+                                    </button>
+                                ) : null}
+
+                                {previewSearchQuery.trim().length >= 1 && (
+                                    <div className="absolute z-30 mt-1 max-h-60 w-full overflow-y-auto rounded-lg border border-indigo-100 bg-white p-1 shadow-lg">
+                                        {isSearchingPreview ? (
+                                            <p className="px-3 py-2 text-xs text-slate-400">Buscando coincidencias...</p>
+                                        ) : previewSearchResults.length > 0 ? (
+                                            previewSearchResults.map((option) => (
+                                                <button
+                                                    key={option.id}
+                                                    type="button"
+                                                    onClick={() => void handleSelectPreviewTarget(option)}
+                                                    className="flex w-full flex-col rounded-md px-3 py-2 text-left transition-colors hover:bg-indigo-50"
+                                                >
+                                                    <span className="font-mono text-[11px] font-semibold text-indigo-700">{option.code}</span>
+                                                    <span className="line-clamp-1 text-xs text-slate-700">{option.name}</span>
+                                                    {option.detail && (
+                                                        <span className="mt-0.5 text-[10px] text-slate-400">{option.detail}</span>
+                                                    )}
+                                                </button>
+                                            ))
+                                        ) : (
+                                            <p className="px-3 py-2 text-xs text-slate-400">No hay coincidencias por código o nombre.</p>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        <span className="ml-auto hidden min-[1600px]:block text-[10px] italic text-indigo-300">
                             Visualizando: {typeof previewData?.final_name_es === 'string' ? previewData.final_name_es : 'Cargando...'}
                         </span>
                     </div>
@@ -2997,7 +3169,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                 {/* The Canvas Area */}
                 <div
                     ref={workbenchRef}
-                    className="flex-1 overflow-auto bg-slate-100 rounded-xl border relative shadow-inner min-h-125"
+                    className="min-h-0 flex-1 overflow-auto rounded-xl border bg-slate-100 shadow-inner"
                 >
                     <div
                         className="min-h-full p-8 flex items-start justify-center"
@@ -3217,9 +3389,9 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             </div>
 
             {/* Properties Panel */}
-            <div className="w-full xl:w-80 flex flex-col shrink-0 h-full">
-                <Card className="flex-1 flex flex-col overflow-hidden bg-slate-50/50 shadow-inner">
-                    <div className="p-4 border-b border-slate-200 bg-white/50 backdrop-blur-sm shrink-0">
+            <div className="flex w-full shrink-0 flex-col xl:h-full xl:w-[clamp(20rem,23vw,25rem)]">
+                <Card className="flex min-h-[32rem] flex-1 flex-col overflow-hidden bg-slate-50/50 shadow-inner xl:min-h-0">
+                    <div className="shrink-0 border-b border-slate-200 bg-white/50 p-4 backdrop-blur-sm">
                         <h3 className="font-bold text-slate-800 flex items-center gap-2">
                             <Box className="h-4 w-4 text-indigo-500" />
                             Propiedades
@@ -3261,10 +3433,10 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                         </div>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto p-5 custom-scrollbar pb-12">
+                    <div className="flex-1 overflow-y-auto p-4 pb-10 custom-scrollbar">
                     {propertiesPanelTab === 'element' ? (
                         activeEl ? (
-                        <div className="flex flex-col gap-5">
+                        <div className="flex flex-col gap-4">
                             <div>
                                 <Label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Tipo de Elemento</Label>
                                 <Input value={activeEl.type.replace('_', ' ').toUpperCase()} disabled className="bg-muted text-xs font-semibold shadow-none border-transparent" />
@@ -3344,7 +3516,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                             {renderVariableOptionGroups([PRINT_RUNTIME_VARIABLE_GROUP])}
                                             </>
                                         ) : (
-                                            renderVariableOptionGroups(templateVariableGroups.length > 0 ? templateVariableGroups : CORE_VARIABLE_OPTS)
+                                            renderVariableOptionGroups(templateVariableGroups)
                                         )}
                                     </select>
 
@@ -3823,7 +3995,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                     <Label className="font-semibold text-xs text-muted-foreground uppercase flex items-center">Texto y Alineación</Label>
 
 
-                                    <div className="grid grid-cols-1 gap-3">
+                                    <div className="grid grid-cols-1 gap-3 min-[1600px]:grid-cols-2">
                                         <div>
                                             <Label className="text-[11px] mb-1 block">Alineación Horizontal</Label>
                                             <div className="flex gap-1 bg-slate-100 p-1 rounded-md border border-slate-200">
@@ -4015,7 +4187,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                                 <option key={f.key} value={f.key}>{f.label}</option>
                                             ))
                                         ) : (
-                                            renderVariableOptionGroups(templateVariableGroups.length > 0 ? templateVariableGroups : CORE_VARIABLE_OPTS)
+                                            renderVariableOptionGroups(templateVariableGroups)
                                         )}
                                     </select>
                                 </div>
@@ -4028,7 +4200,13 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                         setIsValidating(true);
                                         setValidationResult(null);
                                         try {
-                                            const res = await validateExportFilenameLength(exportFilenameFormat, dataSource);
+                                            const res = await validateExportFilenameLength(
+                                                exportFilenameFormat,
+                                                dataSource,
+                                                isCoreCatalog ? catalogScope : undefined,
+                                                isCoreCatalog ? brandScope : undefined,
+                                                isCoreCatalog ? privateLabelClientName : undefined,
+                                            );
                                             setValidationResult(res);
                                             if (res.success) {
                                                 toast.success(`Validación exitosa: ${res.count} registros cumplen.`);
@@ -4185,7 +4363,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                     >
                                         <option value="core_firplak">Firplak Core (Catálogo Maestro)</option>
                                         <option value="custom_datasets">Bases de Datos (Genérico)</option>
-                                        {dataSource !== 'core_firplak' && dataSource !== 'custom_datasets' && (
+                                        {!isCoreCatalog && dataSource !== 'custom_datasets' && (
                                             <optgroup label="Legacy (Dataset específico)">
                                                 {availableDatasets.map(ds => (
                                                     <option key={ds.id} value={ds.id}>{ds.name}</option>
@@ -4193,6 +4371,53 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                             </optgroup>
                                         )}
                                     </select>
+
+                                    {isCoreCatalog ? (
+                                        <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50/30 p-3">
+                                            <Label className="mb-1.5 block text-[11px] font-bold uppercase text-slate-500">Alcance del catálogo</Label>
+                                            <select
+                                                className="flex h-9 w-full rounded-md border border-indigo-50 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus:border-indigo-200 focus-visible:outline-none"
+                                                value={catalogScope}
+                                                onChange={(event) => {
+                                                    setCatalogScope(normalizeCatalogScope(event.target.value))
+                                                    setPreviewSearchQuery('')
+                                                    setPreviewSearchResults([])
+                                                    setIsModified(true)
+                                                }}
+                                            >
+                                                {CATALOG_SCOPE_OPTIONS.map((option) => (
+                                                    <option key={option.value} value={option.value}>{option.label}</option>
+                                                ))}
+                                            </select>
+                                            <p className="mt-1.5 text-[10px] leading-tight text-slate-400">
+                                                {CATALOG_SCOPE_OPTIONS.find((option) => option.value === catalogScope)?.description}
+                                            </p>
+                                        </div>
+                                    ) : (
+                                        <p className="mt-2 text-[10px] leading-tight text-slate-400">
+                                            Alcance del catálogo: no aplica para fuentes de datos externas.
+                                        </p>
+                                    )}
+
+                                    {isCoreCatalog && scopeValidationIssues.length > 0 && (
+                                        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                                            <div className="flex items-start gap-2">
+                                                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                                                <div>
+                                                    <p className="text-[11px] font-bold">Hay variables incompatibles con {getCatalogScopeLabel(catalogScope)}.</p>
+                                                    <p className="mt-0.5 text-[10px] leading-tight">El guardado queda bloqueado hasta sustituirlas o eliminarlas.</p>
+                                                </div>
+                                            </div>
+                                            <ul className="mt-2 list-disc space-y-1 pl-4 text-[10px] leading-tight">
+                                                {scopeValidationIssues.slice(0, 5).map((issue) => (
+                                                    <li key={`${issue.variable}:${issue.location}`}>{formatCatalogScopeValidationIssue(issue)}</li>
+                                                ))}
+                                                {scopeValidationIssues.length > 5 && (
+                                                    <li>Y {scopeValidationIssues.length - 5} incompatibilidad(es) adicional(es).</li>
+                                                )}
+                                            </ul>
+                                        </div>
+                                    )}
 
                                     {dataSource === 'custom_datasets' && (
                                         <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50/30 p-3">
@@ -4238,21 +4463,21 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                         <Label className="text-[11px] font-bold text-slate-500 mb-1.5 block uppercase">Alcance de Marca</Label>
                                         <select
                                             className="flex h-9 w-full rounded-md border border-indigo-50 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus:border-indigo-200 disabled:opacity-60"
-                                            value={dataSource === 'core_firplak' ? brandScope : 'firplak'}
+                                            value={isCoreCatalog ? brandScope : 'firplak'}
                                             onChange={(e) => {
                                                 const next = (e.target.value as TemplateBrandScope) || 'firplak'
                                                 setBrandScope(next)
                                                 if (next === 'firplak') setPrivateLabelClientName('')
                                                 setIsModified(true)
                                             }}
-                                            disabled={dataSource !== 'core_firplak'}
+                                            disabled={!isCoreCatalog}
                                         >
                                             <option value="firplak">Firplak</option>
                                             <option value="private_label">Marca Propia (Cliente)</option>
                                         </select>
                                     </div>
 
-                                    {dataSource === 'core_firplak' && brandScope === 'private_label' && (
+                                    {isCoreCatalog && brandScope === 'private_label' && (
                                         <div className="mt-4">
                                             <Label className="text-[11px] font-bold text-slate-500 mb-1.5 block uppercase">Cliente Marca Propia</Label>
                                             <select

@@ -14,6 +14,11 @@ import { NewTemplateDialog } from '@/components/templates/NewTemplateDialog'
 import { DeleteTemplateButton } from '@/components/templates/DeleteTemplateButton'
 import { DuplicateTemplateDialog } from '@/components/templates/DuplicateTemplateDialog'
 import { EditTemplateDialog } from '@/components/templates/EditTemplateDialog'
+import {
+  getCatalogScopeLabel,
+  isCoreCatalogDataSource,
+  normalizeCatalogScope,
+} from '@/lib/templates/catalogScope'
 
 interface TemplateRow {
   id: string
@@ -28,6 +33,7 @@ interface TemplateRow {
   version: string
   active: boolean
   data_source: string
+  catalog_scope?: string | null
 }
 
 function formatVersion(version: unknown): string {
@@ -37,6 +43,11 @@ function formatVersion(version: unknown): string {
         return `v${parts[0]}`
     }
     return `v${v}`
+}
+
+function getTemplateCatalogScopeLabel(template: TemplateRow): string | null {
+    if (!isCoreCatalogDataSource(template.data_source)) return null
+    return getCatalogScopeLabel(normalizeCatalogScope(template.catalog_scope))
 }
 
 export default async function TemplatesPage() {
@@ -64,6 +75,7 @@ export default async function TemplatesPage() {
                             <TableRow>
                                 <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500">Nombre de Plantilla</TableHead>
                                 <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500">Tipo de Doc</TableHead>
+                                <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500">Alcance</TableHead>
                                 <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500">Dimensiones (mm)</TableHead>
                                 <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500">Versión</TableHead>
                                 <TableHead className="uppercase tracking-wider text-[10px] font-bold text-slate-500">Estado</TableHead>
@@ -73,15 +85,29 @@ export default async function TemplatesPage() {
                     <TableBody>
                         {templates.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={6} className="h-24 text-center">
+                                <TableCell colSpan={7} className="h-24 text-center">
                                     No se encontraron plantillas.
                                 </TableCell>
                             </TableRow>
                         ) : (
-                            templates.map((template: TemplateRow) => (
+                            templates.map((template: TemplateRow) => {
+                                const catalogScopeLabel = getTemplateCatalogScopeLabel(template)
+
+                                return (
                                 <TableRow key={template.id}>
                                     <TableCell className="font-medium">{template.name}</TableCell>
                                     <TableCell className="capitalize">{template.document_type}</TableCell>
+                                    <TableCell>
+                                        {catalogScopeLabel ? (
+                                            <Badge variant="secondary" className="text-[10px] font-bold uppercase tracking-tight">
+                                                {catalogScopeLabel}
+                                            </Badge>
+                                        ) : (
+                                            <Badge variant="outline" className="text-[10px] font-bold uppercase tracking-tight">
+                                                No aplica
+                                            </Badge>
+                                        )}
+                                    </TableCell>
                                     <TableCell>
                                         {template.width_mm}mm x {template.height_mm}mm
                                         {template.print_target === 'agent_3nstar' && template.media_width_mm && template.media_length_mm
@@ -108,6 +134,8 @@ export default async function TemplatesPage() {
                                                 currentName={template.name}
                                                 currentWidth={template.width_mm}
                                                 currentHeight={template.height_mm}
+                                                currentDataSource={template.data_source}
+                                                currentCatalogScope={normalizeCatalogScope(template.catalog_scope)}
                                             />
                                             <DuplicateTemplateDialog 
                                                 id={template.id} 
@@ -120,7 +148,8 @@ export default async function TemplatesPage() {
                                         </div>
                                     </TableCell>
                                 </TableRow>
-                            ))
+                                )
+                            })
                         )}
                     </TableBody>
                 </Table>

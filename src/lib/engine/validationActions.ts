@@ -4,6 +4,7 @@ import { unstable_cache } from 'next/cache'
 import { computeNameWithNamingComponents } from './namingComponentsEngine'
 import type { ProductPayload } from './translator'
 import { isPrintRuntimeVariable } from '@/lib/templates/printRuntimeVariables'
+import { isCoreCatalogDataSource, normalizeCatalogScope } from '@/lib/templates/catalogScope'
 
 export type PendingSeverity = 'critical' | 'warning'
 export type PendingReasonCode =
@@ -38,6 +39,8 @@ type ProductRecord = Record<string, unknown>
 
 type TemplateRequiredSource = {
     elements_json?: string | null
+    data_source?: string | null
+    catalog_scope?: string | null
     brand_scope?: string | null
     private_label_client_name?: string | null
 }
@@ -162,6 +165,12 @@ function buildRequiredFieldMap(templates: TemplateRequiredSource[]): Map<string,
     const map = new Map<string, { global: boolean; byClient: Set<string> }>()
 
     for (const t of templates) {
+        // Validation status is persisted on product_versions, so only SKU
+        // templates participate in this SKU-backed sweep. Other scopes are
+        // validated at their own generate/print/export target instead of
+        // being duplicated across every descendant SKU.
+        if (!isCoreCatalogDataSource(t.data_source) || normalizeCatalogScope(t.catalog_scope) !== 'sku') continue
+
         let elements: TemplateElement[] = []
         try {
             elements = JSON.parse(t.elements_json || '[]')
@@ -397,7 +406,7 @@ export async function getPendingSummary(): Promise<PendingSummary> {
     const [rowsResult, activeTemplatesResult] = await Promise.all([
         loadPendingProductRows<ComposedProductRow>(),
         dbQuery(`
-            SELECT id, elements_json, brand_scope, private_label_client_name
+            SELECT id, elements_json, data_source, catalog_scope, brand_scope, private_label_client_name
             FROM public.plantillas_doc_tec
             WHERE active = true
         `),

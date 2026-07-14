@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { dbQuery } from '@/lib/supabase'
 import type { ComposedProduct } from '@/lib/engine/product_composer'
 import { apiGuard } from '@/utils/auth/access'
+import { listCatalogTargetContexts } from '@/lib/templates/catalogScopeServer'
+import { getTemplateCatalogScope, isCoreCatalogDataSource } from '@/lib/templates/catalogScope'
 
 function toArray(values: string[] | undefined) {
     if (!values) return []
@@ -51,16 +53,25 @@ export async function GET(request: Request) {
         | { scope: 'firplak' }
         | { scope: 'private_label'; clientName: string } = { scope: 'firplak' }
     let templateBrandWarning: string | null = null
+    let templateDataSource = 'core_firplak'
+    let templateCatalogScope = getTemplateCatalogScope(templateDataSource, null)
 
     if (templateId) {
         const templates = await dbQuery(
-            `SELECT id, brand_scope, private_label_client_name
-             FROM public.plantillas_doc_tec
-             WHERE id = '${templateId.replace(/'/g, "''")}'
+            `SELECT t.id, t.data_source, to_jsonb(t)->>'catalog_scope' AS catalog_scope, t.brand_scope, t.private_label_client_name
+             FROM public.plantillas_doc_tec t
+             WHERE t.id = '${templateId.replace(/'/g, "''")}'
              LIMIT 1`
-        ) as Array<{ brand_scope?: string | null; private_label_client_name?: string | null }>
+        ) as Array<{
+            data_source?: string | null
+            catalog_scope?: string | null
+            brand_scope?: string | null
+            private_label_client_name?: string | null
+        }>
 
         const selectedTemplate = templates[0]
+        templateDataSource = selectedTemplate?.data_source || 'core_firplak'
+        templateCatalogScope = getTemplateCatalogScope(templateDataSource, selectedTemplate?.catalog_scope)
         const brandScope = selectedTemplate?.brand_scope === 'private_label' ? 'private_label' : 'firplak'
         const plc = selectedTemplate?.private_label_client_name ? String(selectedTemplate.private_label_client_name).trim() : ''
 
@@ -82,11 +93,43 @@ export async function GET(request: Request) {
         })
     }
 
+    // Los datasets externos se cargan por su propio flujo asociado a la plantilla.
+    // Nunca deben caer transitoriamente al catálogo Core al cambiar de plantilla.
+    if (!isCoreCatalogDataSource(templateDataSource)) {
+        return NextResponse.json({
+            products: [],
+            totalCount: 0,
+            hasFilter: true,
+            templateBrandWarning: null,
+        })
+    }
+
     if (!hasFilter) {
         return NextResponse.json({
             products: [],
             totalCount: 0,
             hasFilter: false,
+            templateBrandWarning: null,
+        })
+    }
+
+    if (isCoreCatalogDataSource(templateDataSource) && templateCatalogScope && templateCatalogScope !== 'sku') {
+        const result = await listCatalogTargetContexts({
+            scope: templateCatalogScope,
+            familyCodes: effectiveFamilies,
+            referenceCodes,
+            measures: effectiveMeasures,
+            search: query,
+            brandScope: brandFilter.scope,
+            privateLabelClientName: brandFilter.scope === 'private_label' ? brandFilter.clientName : null,
+            limit: pageSize,
+            offset: (page - 1) * pageSize,
+        })
+
+        return NextResponse.json({
+            products: result.targets,
+            totalCount: result.totalCount,
+            hasFilter: true,
             templateBrandWarning: null,
         })
     }
@@ -105,7 +148,15 @@ export async function GET(request: Request) {
     )
 
     return NextResponse.json({
-        products: result.products as ComposedProduct[],
+        products: isCoreCatalogDataSource(templateDataSource)
+            ? result.products.map((product) => ({
+                ...product,
+                catalog_scope: 'sku',
+                catalog_target_id: product.id,
+                target_scope: 'sku',
+                target_id: product.id,
+            })) as ComposedProduct[]
+            : result.products as ComposedProduct[],
         totalCount: result.totalCount,
         hasFilter: true,
         templateBrandWarning: null,

@@ -56,6 +56,7 @@ import {
 } from '@/lib/print/webusb'
 import {
     buildPrintRuntimeValues,
+    getTemplateRenderRuntimeValues,
     isValidOfNumber,
     normalizeOfNumberInput,
     PRINT_RUNTIME_VARIABLE_KEYS,
@@ -63,6 +64,12 @@ import {
 } from '@/lib/templates/printRuntimeVariables'
 import { appendLabelBoxSuffix, expandLabelBoxProducts } from '@/lib/engine/labelParts'
 import { attachDocumentQrUrls, collectRelatedDocumentQrSlots } from '@/lib/templates/documentQrFields'
+import {
+    getTemplateCatalogScope,
+    isCatalogScope,
+    type CatalogScope,
+    type CatalogTarget,
+} from '@/lib/templates/catalogScope'
 
 interface PrintClientProps {
     templates: TemplateOption[]
@@ -127,6 +134,10 @@ interface AgentHealth {
 type PrintRuntimeOverrides = {
     ofNumber?: string | null
     copies?: number
+}
+
+type ScopedTemplateOption = TemplateOption & {
+    catalog_scope?: CatalogScope | null
 }
 
 const defaultPrinterConfig: PrinterConfig = {
@@ -194,6 +205,21 @@ function normalizePrintTransport(value: unknown): PrintTransport {
 function isExternalTemplateDataSource(value: string | null | undefined): boolean {
     const dataSource = String(value || CORE_FIRPLAK_SOURCE).trim()
     return dataSource === GENERIC_DATASETS_SOURCE || UUID_RE.test(dataSource)
+}
+
+function getCatalogTargetForPrint(
+    template: ScopedTemplateOption | null,
+    product: GenerateProduct,
+): CatalogTarget | null {
+    const scope = getTemplateCatalogScope(template?.data_source, template?.catalog_scope)
+    if (!scope) return null
+    if (isCatalogScope(product.catalog_scope) && product.catalog_scope !== scope) return null
+
+    const targetId = typeof product.catalog_target_id === 'string' && product.catalog_target_id.trim()
+        ? product.catalog_target_id.trim()
+        : product.id.trim()
+
+    return targetId ? { scope, id: targetId } : null
 }
 
 function normalizePrinterConfig(value: unknown): PrinterConfig {
@@ -593,6 +619,10 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         if (!selectedTemplate) return false
         const printCopies = normalizePrintCopyCount(runtimeOverrides.copies ?? copies)
         const usesExternalRows = selectedTemplateUsesExternalRows || product.is_external === true
+        const catalogTarget = usesExternalRows ? null : getCatalogTargetForPrint(selectedTemplate, product)
+        if (!usesExternalRows && !catalogTarget) {
+            throw new Error('No fue posible identificar la entidad de catálogo para imprimir.')
+        }
 
         const elements: Array<Record<string, unknown> & DocumentQrTemplateElement> = (() => {
             try { return JSON.parse(selectedTemplate.elements_json || '[]') }
@@ -618,7 +648,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                 ...product,
                 ...buildPrintRuntimeValues({ ofNumber: runtimeOverrides.ofNumber }),
             }
-        } else {
+        } else if (catalogTarget?.scope === 'sku') {
             const engineResult = evaluateProductRules(product as unknown as Parameters<typeof evaluateProductRules>[0], rules as unknown as Parameters<typeof evaluateProductRules>[1])
             const finalNameEs = engineResult.finalNameEs || product.final_name_es || ''
 
@@ -635,9 +665,18 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                 zone_home_en: zoneEn || undefined,
                 ...buildPrintRuntimeValues({ ofNumber: runtimeOverrides.ofNumber }),
             }
+        } else {
+            const zoneEn = await resolveZoneHomeEnForPrintAction(product.zone_home as string | null | undefined)
+            updatedProduct = {
+                ...product,
+                zone_home_en: zoneEn || undefined,
+                ...buildPrintRuntimeValues({ ofNumber: runtimeOverrides.ofNumber }),
+            }
         }
 
-        const labelBoxProducts = expandLabelBoxProducts(updatedProduct)
+        const labelBoxProducts = catalogTarget?.scope === 'sku'
+            ? expandLabelBoxProducts(updatedProduct)
+            : [updatedProduct]
         const hasLabelBoxSet = labelBoxProducts.some(labelBoxProduct => labelBoxProduct._labelBoxTotal !== null)
         const widthPx = Math.round((selectedTemplate.width_mm || 200) * PIXELS_PER_MM)
         const heightPx = Math.round((selectedTemplate.height_mm || 100) * PIXELS_PER_MM)
@@ -667,8 +706,10 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         templateId: selectedTemplate.id,
-                        productId: product.id,
+                        productId: usesExternalRows || catalogTarget?.scope === 'sku' ? product.id : null,
+                        catalogTarget,
                         isExternalSource: usesExternalRows,
+                        ...(!usesExternalRows ? { runtimeValues: getTemplateRenderRuntimeValues(labelBoxProduct) } : {}),
                         format: 'jpg',
                         elements: hydrated,
                         width: widthPx,
@@ -769,8 +810,10 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         templateId: selectedTemplate.id,
-                        productId: product.id,
+                        productId: usesExternalRows || catalogTarget?.scope === 'sku' ? product.id : null,
+                        catalogTarget,
                         isExternalSource: usesExternalRows,
+                        ...(!usesExternalRows ? { runtimeValues: getTemplateRenderRuntimeValues(labelBoxProduct) } : {}),
                         format: printFormat,
                         elements: hydrated,
                         width: widthPx,

@@ -3,12 +3,15 @@
 import { assertPermission } from '@/utils/auth/access'
 import { composeProductsByFilters, type ProductFilters } from '@/lib/engine/product_composer'
 import { dbQuery, supabaseServer } from '@/lib/supabase'
+import { listCatalogTargetContexts } from '@/lib/templates/catalogScopeServer'
+import { normalizeCatalogScope, type CatalogScope, type TemplateBrandScope } from '@/lib/templates/catalogScope'
 
 type PrintTemplateSource = {
     id: string
     data_source: string | null
     brand_scope: string | null
     private_label_client_name: string | null
+    catalog_scope: CatalogScope | null
 }
 
 type DatasetRow = {
@@ -90,7 +93,8 @@ async function getTemplateSource(templateId: string | null): Promise<PrintTempla
     if (!templateId) return null
 
     const rows = await dbQuery(
-        `SELECT id, data_source, brand_scope, private_label_client_name
+        `SELECT id, data_source, brand_scope, private_label_client_name,
+                to_jsonb(plantillas_doc_tec)->>'catalog_scope' AS catalog_scope
          FROM public.plantillas_doc_tec
          WHERE id = $1
          LIMIT 1`,
@@ -157,12 +161,33 @@ export async function getFilteredProducts(
         return getDatasetProducts([dataSource], search, page, pageSize)
     }
 
+    const brandScope: TemplateBrandScope = templateSource?.brand_scope === 'private_label'
+        ? 'private_label'
+        : 'firplak'
+    const catalogScope = normalizeCatalogScope(templateSource?.catalog_scope)
+
+    if (dataSource === CORE_FIRPLAK_SOURCE && catalogScope !== 'sku') {
+        const result = await listCatalogTargetContexts({
+            scope: catalogScope,
+            search,
+            brandScope,
+            privateLabelClientName: templateSource?.private_label_client_name,
+            limit: pageSize,
+            offset: (page - 1) * pageSize,
+        })
+
+        return {
+            products: result.targets,
+            totalCount: result.totalCount,
+        }
+    }
+
     const filters: ProductFilters = {}
     if (search) filters.search = search
-    if (templateSource?.brand_scope === 'private_label') {
+    if (brandScope === 'private_label') {
         filters.brandFilter = {
             scope: 'private_label',
-            clientName: String(templateSource.private_label_client_name || '').trim(),
+            clientName: String(templateSource?.private_label_client_name || '').trim(),
         }
     } else {
         filters.brandFilter = { scope: 'firplak' }

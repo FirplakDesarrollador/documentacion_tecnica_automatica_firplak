@@ -18,6 +18,12 @@ import { PlusCircle, Loader2 } from "lucide-react"
 import { createTemplate } from "@/app/templates/actions"
 import { toast } from "sonner"
 import { getClientsAction } from "@/app/configuration/clients/actions"
+import {
+    CATALOG_SCOPE_OPTIONS,
+    isCoreCatalogDataSource,
+    normalizeCatalogScope,
+    type CatalogScope,
+} from "@/lib/templates/catalogScope"
 
 interface ClientRow {
     id: string
@@ -31,7 +37,9 @@ export function NewTemplateDialog() {
     const [dataSource, setDataSource] = useState<string>('core_firplak')
     const [brandScope, setBrandScope] = useState<'firplak' | 'private_label'>('firplak')
     const [privateLabelClientName, setPrivateLabelClientName] = useState<string>('')
+    const [catalogScope, setCatalogScope] = useState<CatalogScope>('sku')
     const router = useRouter()
+    const isCoreCatalog = isCoreCatalogDataSource(dataSource)
 
     useEffect(() => {
         if (!open) return
@@ -50,6 +58,9 @@ export function NewTemplateDialog() {
         const height = parseFloat(formData.get("height") as string)
         const scope = (formData.get("brand_scope") as string) || 'firplak'
         const plc = (formData.get("private_label_client_name") as string) || ''
+        const selectedCatalogScope = isCoreCatalog
+            ? normalizeCatalogScope(formData.get("catalog_scope"))
+            : null
 
         if (!name || isNaN(width) || isNaN(height) || !dataSource) {
             toast.error("Por favor completa todos los campos correctamente.")
@@ -64,6 +75,7 @@ export function NewTemplateDialog() {
             data_source: dataSource,
             brand_scope: scope === 'private_label' ? 'private_label' : 'firplak',
             private_label_client_name: scope === 'private_label' ? plc : null,
+            catalog_scope: selectedCatalogScope,
         })
         setLoading(false)
 
@@ -109,7 +121,8 @@ export function NewTemplateDialog() {
                                 onChange={(e) => {
                                     const next = e.target.value
                                     setDataSource(next)
-                                    if (next !== 'core_firplak') {
+                                    setCatalogScope('sku')
+                                    if (!isCoreCatalogDataSource(next)) {
                                         setBrandScope('firplak')
                                         setPrivateLabelClientName('')
                                     }
@@ -120,6 +133,26 @@ export function NewTemplateDialog() {
                                 <option value="custom_datasets">Bases de Datos (Genérico)</option>
                             </select>
                         </div>
+                        {isCoreCatalog && (
+                            <div className="grid grid-cols-4 items-center gap-4">
+                                <Label htmlFor="catalog_scope" className="text-right leading-tight">
+                                    Alcance del catálogo
+                                </Label>
+                                <select
+                                    id="catalog_scope"
+                                    name="catalog_scope"
+                                    value={catalogScope}
+                                    onChange={(e) => setCatalogScope(normalizeCatalogScope(e.target.value))}
+                                    className="col-span-3 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                                >
+                                    {CATALOG_SCOPE_OPTIONS.map((option) => (
+                                        <option key={option.value} value={option.value}>
+                                            {option.label}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
                         <div className="grid grid-cols-4 items-center gap-4">
                             <Label htmlFor="brand_scope" className="text-right leading-tight">
                                 Alcance de Marca
@@ -127,20 +160,20 @@ export function NewTemplateDialog() {
                             <select
                                 id="brand_scope"
                                 name="brand_scope"
-                                value={dataSource === 'core_firplak' ? brandScope : 'firplak'}
+                                value={isCoreCatalog ? brandScope : 'firplak'}
                                 onChange={(e) => {
                                     const next = (e.target.value as 'firplak' | 'private_label') || 'firplak'
                                     setBrandScope(next)
                                     if (next === 'firplak') setPrivateLabelClientName('')
                                 }}
-                                disabled={dataSource !== 'core_firplak'}
+                                disabled={!isCoreCatalog}
                                 className="col-span-3 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-60"
                             >
                                 <option value="firplak">Firplak</option>
                                 <option value="private_label">Marca Propia (Cliente)</option>
                             </select>
                         </div>
-                        {dataSource === 'core_firplak' && brandScope === 'private_label' && (
+                        {isCoreCatalog && brandScope === 'private_label' && (
                             <div className="grid grid-cols-4 items-center gap-4">
                                 <Label htmlFor="private_label_client_name" className="text-right leading-tight">
                                     Cliente

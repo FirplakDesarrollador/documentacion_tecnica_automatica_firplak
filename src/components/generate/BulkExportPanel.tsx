@@ -35,6 +35,8 @@ import {
     filenameFormatUsesLabelBoxVariable,
 } from '@/lib/engine/labelParts'
 import { attachDocumentQrUrls, collectRelatedDocumentQrSlots } from '@/lib/templates/documentQrFields'
+import { getTemplateCatalogScope, isCatalogScope, type CatalogTarget } from '@/lib/templates/catalogScope'
+import { getTemplateRenderRuntimeValues } from '@/lib/templates/printRuntimeVariables'
 
 type RuleSet = Record<string, unknown>[]
 type RuleProduct = Parameters<typeof evaluateProductRules>[0]
@@ -109,6 +111,20 @@ async function attachResolvedDocumentQrUrls(product: GenerateProduct, elements: 
     }
 }
 
+function getCatalogTarget(template: TemplateOption, product: GenerateProduct): CatalogTarget | null {
+    const templateScope = getTemplateCatalogScope(template.data_source, template.catalog_scope)
+    if (!templateScope) return null
+
+    if (isCatalogScope(product.catalog_scope) && product.catalog_scope !== templateScope) {
+        return null
+    }
+
+    const id = typeof product.catalog_target_id === 'string' && product.catalog_target_id.trim()
+        ? product.catalog_target_id
+        : product.id
+    return id ? { scope: templateScope, id } : null
+}
+
 
 async function exportOneProduct(
     product: GenerateProduct, 
@@ -146,14 +162,20 @@ async function exportOneProduct(
     const assetMap = await resolveAssetsAction(assetIds)
 
     // 3. Preparar nombres derivados usando el motor de reglas en caliente (español + inglés)
-    const engineResult = evaluateProductRules(product as unknown as RuleProduct, rules as Parameters<typeof evaluateProductRules>[1])
-    const final_name_es = engineResult.finalNameEs || product.final_name_es || ''
-    
-    // Traducir a inglés en caliente usando el motor adaptativo
-    const { translateProductToEnglish } = await import('@/lib/engine/translator')
-    const productType = (product.product_type || 'MUEBLE').toUpperCase()
-    const translationResult = await translateProductToEnglish(product as ProductPayload, productType, engineResult.activeVariableIds)
-    const final_name_en = translationResult.translatedName || product.final_name_en || ''
+    const catalogTarget = getCatalogTarget(template, product)
+    const isNonSkuTarget = catalogTarget?.scope !== undefined && catalogTarget.scope !== 'sku'
+    let final_name_es = product.final_name_es || ''
+    let final_name_en = typeof product.final_name_en === 'string' ? product.final_name_en : ''
+
+    if (!isNonSkuTarget) {
+        const engineResult = evaluateProductRules(product as unknown as RuleProduct, rules as Parameters<typeof evaluateProductRules>[1])
+        final_name_es = engineResult.finalNameEs || final_name_es
+
+        const { translateProductToEnglish } = await import('@/lib/engine/translator')
+        const productType = (product.product_type || 'MUEBLE').toUpperCase()
+        const translationResult = await translateProductToEnglish(product as ProductPayload, productType, engineResult.activeVariableIds)
+        final_name_en = translationResult.translatedName || final_name_en
+    }
     
     const zoneEn = await resolveZoneHomeEnAction(product.zone_home as string | null | undefined)
     
@@ -165,7 +187,7 @@ async function exportOneProduct(
         zone_home_en: zoneEn || undefined 
     }
 
-    const labelBoxProducts = expandLabelBoxProducts(updatedProduct)
+    const labelBoxProducts = isNonSkuTarget ? [updatedProduct] : expandLabelBoxProducts(updatedProduct)
     const filenameFormat = template.export_filename_format || '{sku_base}_{final_name_es}'
     const hasLabelBoxFilenameVariable = filenameFormatUsesLabelBoxVariable(filenameFormat)
     let exportedCount = 0
@@ -193,8 +215,10 @@ async function exportOneProduct(
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                productId: product.id,
+                templateId: template.id,
+                ...(catalogTarget ? { target: catalogTarget } : { productId: product.id }),
                 isExternalSource: product.is_external === true,
+                ...(catalogTarget ? { runtimeValues: getTemplateRenderRuntimeValues(labelBoxProduct) } : {}),
                 elements: hydrated,
                 format,
                 width: widthPx,
@@ -382,7 +406,8 @@ export function BulkExportPanel({
                     exportFilterMeasures,
                     exportFilterSearch,
                     exportBrandScope,
-                    exportPrivateLabelClientName
+                    exportPrivateLabelClientName,
+                    getTemplateCatalogScope(template.data_source, template.catalog_scope) || 'sku',
                 )
                 exportItems = allProducts.map(p => ({ product: p as unknown as GenerateProduct, status: 'pending' as ExportStatus }))
                 setItems(exportItems)

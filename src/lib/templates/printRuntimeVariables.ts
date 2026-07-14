@@ -9,6 +9,11 @@ export const PRINT_RUNTIME_VARIABLE_KEYS = {
 export type PrintRuntimeVariableKey =
     typeof PRINT_RUNTIME_VARIABLE_KEYS[keyof typeof PRINT_RUNTIME_VARIABLE_KEYS]
 
+export type TemplateRenderRuntimeValues = {
+    ofNumber?: string | null
+    partesTexto?: string | null
+}
+
 export const PRINT_RUNTIME_VARIABLE_OPTIONS: { key: PrintRuntimeVariableKey; label: string }[] = [
     { key: PRINT_RUNTIME_VARIABLE_KEYS.printDatetime, label: 'Fecha y hora de impresion' },
     { key: PRINT_RUNTIME_VARIABLE_KEYS.ofNumber, label: 'OF / Orden de fabricacion' },
@@ -35,6 +40,38 @@ export function isValidOfNumber(value: string | null | undefined) {
 
 export function normalizeOfNumberInput(value: string) {
     return value.replace(/\D/g, '').slice(0, 4)
+}
+
+function readRuntimeValue(source: Record<string, unknown>, key: string) {
+    const value = source[key]
+    if (value === null || value === undefined) return null
+    const normalized = String(value).trim()
+    return normalized || null
+}
+
+export function getTemplateRenderRuntimeValues(source: Record<string, unknown>): TemplateRenderRuntimeValues {
+    return {
+        ofNumber: readRuntimeValue(source, PRINT_RUNTIME_VARIABLE_KEYS.ofNumber),
+        partesTexto: readRuntimeValue(source, PRINT_RUNTIME_VARIABLE_KEYS.partesTexto),
+    }
+}
+
+function parseRuntimePayloadValue(value: unknown): string | null | undefined {
+    if (value === null || value === undefined) return null
+    if (typeof value === 'string' || typeof value === 'number') return String(value).trim()
+    return undefined
+}
+
+export function parseTemplateRenderRuntimeValues(value: unknown): TemplateRenderRuntimeValues | null {
+    if (value === null || value === undefined) return {}
+    if (typeof value !== 'object' || Array.isArray(value)) return null
+
+    const source = value as Record<string, unknown>
+    const ofNumber = parseRuntimePayloadValue(source.ofNumber)
+    const partesTexto = parseRuntimePayloadValue(source.partesTexto)
+    if (ofNumber === undefined || partesTexto === undefined) return null
+
+    return { ofNumber, partesTexto }
 }
 
 export function formatPrintDateTime(date: Date = new Date()) {

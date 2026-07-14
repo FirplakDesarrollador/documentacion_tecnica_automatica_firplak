@@ -3,6 +3,8 @@
 import { supabaseServer } from '@/lib/supabase'
 import type { ProductFilters } from '@/lib/engine/product_composer'
 import { assertPermission } from '@/utils/auth/access'
+import { listCatalogTargetContexts, type CatalogTargetContext } from '@/lib/templates/catalogScopeServer'
+import { normalizeCatalogScope, type CatalogScope } from '@/lib/templates/catalogScope'
 
 async function assertAdminAccess() {
     await assertPermission('module:generate')
@@ -85,9 +87,38 @@ export async function getAllFilteredProductsAction(
     measures: string[],
     search: string | null,
     brandScope: string,
-    privateLabelClientName: string
+    privateLabelClientName: string,
+    catalogScope: CatalogScope = 'sku',
 ) {
     await assertAdminAccess()
+
+    const normalizedCatalogScope = normalizeCatalogScope(catalogScope)
+    const normalizedBrandScope = brandScope === 'private_label' ? 'private_label' : 'firplak'
+
+    if (normalizedCatalogScope !== 'sku') {
+        const targets: CatalogTargetContext[] = []
+        let offset = 0
+        let totalCount = 0
+
+        do {
+            const page = await listCatalogTargetContexts({
+                scope: normalizedCatalogScope,
+                familyCodes: families.length > 0 ? families : undefined,
+                referenceCodes: references.length > 0 ? references : undefined,
+                measures: measures.length > 0 ? measures : undefined,
+                search: search || undefined,
+                brandScope: normalizedBrandScope,
+                privateLabelClientName: normalizedBrandScope === 'private_label' ? privateLabelClientName : null,
+                limit: 500,
+                offset,
+            })
+            targets.push(...page.targets)
+            totalCount = page.totalCount
+            offset += page.targets.length
+        } while (offset < totalCount && offset > 0)
+
+        return targets
+    }
 
     const { composeProductsByFilters } = await import('@/lib/engine/product_composer')
 
@@ -97,11 +128,17 @@ export async function getAllFilteredProductsAction(
         measures: measures.length > 0 ? measures : undefined,
         search: search || undefined,
         brandFilter:
-            brandScope === 'firplak'
+            normalizedBrandScope === 'firplak'
                 ? { scope: 'firplak' }
                 : { scope: 'private_label', clientName: privateLabelClientName },
     }
 
     const result = await composeProductsByFilters(filters, 10000)
-    return result.products
+    return result.products.map((product) => ({
+        ...product,
+        catalog_scope: 'sku' as const,
+        catalog_target_id: product.id,
+        target_scope: 'sku' as const,
+        target_id: product.id,
+    }))
 }

@@ -14,6 +14,11 @@ import {
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Badge } from '@/components/ui/badge'
+import {
+    getCatalogScopeLabel,
+    isCoreCatalogDataSource,
+    type CatalogScope,
+} from '@/lib/templates/catalogScope'
 
 export interface TemplateOption {
     id: string
@@ -31,6 +36,7 @@ export interface TemplateOption {
     export_formats?: string
     export_filename_format?: string
     data_source?: string
+    catalog_scope?: CatalogScope | null
     template_font_family?: string
     brand_scope?: 'firplak' | 'private_label'
     private_label_client_name?: string | null
@@ -96,6 +102,11 @@ export function TemplatePicker({ templates, selectedTemplateId, onSelect, update
                         >
                             <div className="flex items-center gap-2 w-full">
                                 <span className="font-medium text-slate-800 text-sm">{t.name}</span>
+                                {isCoreCatalogDataSource(t.data_source) && (
+                                    <Badge variant="outline" className="border-indigo-200 bg-indigo-50 text-[10px] font-semibold text-indigo-700">
+                                        {getCatalogScopeLabel(t.catalog_scope)}
+                                    </Badge>
+                                )}
                                 {t.active && (
                                     <Badge variant="default" className="bg-green-600 text-[10px] px-1.5 py-0 ml-auto shrink-0">Activa</Badge>
                                 )}

@@ -21,6 +21,13 @@ import {
     expandLabelBoxProducts,
     filenameFormatUsesLabelBoxVariable,
 } from '@/lib/engine/labelParts'
+import {
+    getTemplateCatalogScope,
+    isCatalogScope,
+    type CatalogScope,
+    type CatalogTarget,
+} from '@/lib/templates/catalogScope'
+import { getTemplateRenderRuntimeValues } from '@/lib/templates/printRuntimeVariables'
 
 interface PreviewClientProps {
     product: Record<string, unknown>
@@ -47,6 +54,8 @@ type PreviewProduct = Record<string, unknown> & {
     is_exportable?: boolean
     is_external?: boolean
     zone_home?: string | null
+    catalog_scope?: CatalogScope
+    catalog_target_id?: string
 }
 
 type TemplateElement = Record<string, unknown> & {
@@ -104,6 +113,20 @@ function parseTemplateElements(elementsJson: string): TemplateElement[] {
     }
 }
 
+function getCatalogTarget(template: TemplateOption, product: PreviewProduct): CatalogTarget | null {
+    const templateScope = getTemplateCatalogScope(template.data_source, template.catalog_scope)
+    if (!templateScope) return null
+
+    if (isCatalogScope(product.catalog_scope) && product.catalog_scope !== templateScope) {
+        return null
+    }
+
+    const id = typeof product.catalog_target_id === 'string' && product.catalog_target_id.trim()
+        ? product.catalog_target_id
+        : product.id
+    return id ? { scope: templateScope, id } : null
+}
+
 function normalizeHydratedElements(elements: Record<string, unknown>[]): HydratedPreviewElement[] {
     return elements.map((element) => {
         const resolvedSrc = typeof element.resolvedSrc === 'string' ? element.resolvedSrc : undefined
@@ -144,15 +167,28 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
         }
     }, [rawProduct, engineResult])
 
+    const compatibleTemplates = useMemo(() => {
+        if (product.is_external === true) {
+            return templates.filter((template) => template.id === selectedTemplateId)
+        }
+
+        const productScope = isCatalogScope(product.catalog_scope) ? product.catalog_scope : 'sku'
+        return templates.filter(
+            (template) => getTemplateCatalogScope(template.data_source, template.catalog_scope) === productScope,
+        )
+    }, [product.catalog_scope, product.is_external, selectedTemplateId, templates])
+
     const selectedTemplate = useMemo(
-        () => templates.find(template => template.id === selectedTemplateId) ?? null,
-        [templates, selectedTemplateId]
+        () => compatibleTemplates.find(template => template.id === selectedTemplateId) ?? compatibleTemplates[0] ?? null,
+        [compatibleTemplates, selectedTemplateId]
     )
 
-    const previewProducts = useMemo(
-        () => expandLabelBoxProducts(product) as PreviewProduct[],
-        [product]
-    )
+    const previewProducts = useMemo(() => {
+        const target = selectedTemplate ? getCatalogTarget(selectedTemplate, product) : null
+        return target?.scope !== undefined && target.scope !== 'sku'
+            ? [product]
+            : expandLabelBoxProducts(product) as PreviewProduct[]
+    }, [product, selectedTemplate])
 
     const elements = useMemo(
         () => selectedTemplate ? parseTemplateElements(selectedTemplate.elements_json || '[]') : [],
@@ -341,16 +377,23 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                 const productWithZone = zoneEn ? { ...previewProduct, zone_home_en: zoneEn } : previewProduct
                 const enrichedProduct = enrichProductDataWithIcons(productWithZone, assetMap)
                 const rawDownloadName = hydrateText(filenameFormat, enrichedProduct)
+                const catalogTarget = getCatalogTarget(selectedTemplate, previewProduct)
                 const downloadName = sanitizeFilename(
-                    hasLabelBoxFilenameVariable ? rawDownloadName : appendLabelBoxSuffix(rawDownloadName, previewProduct)
+                    hasLabelBoxFilenameVariable || (catalogTarget && catalogTarget.scope !== 'sku')
+                        ? rawDownloadName
+                        : appendLabelBoxSuffix(rawDownloadName, previewProduct)
                 )
 
                 const response = await fetch('/api/export', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        productId: previewProduct.id,
+                        templateId: selectedTemplate.id,
+                        ...(catalogTarget
+                            ? { target: catalogTarget }
+                            : { productId: previewProduct.id }),
                         isExternalSource: previewProduct.is_external === true,
+                        ...(catalogTarget ? { runtimeValues: getTemplateRenderRuntimeValues(previewProduct) } : {}),
                         elements: hydrated,
                         format: effectiveExportFormat,
                         width: widthPx,
@@ -389,8 +432,8 @@ export function PreviewClient({ product: rawProduct, templates, initialTemplateI
                 <div className="flex items-center gap-3 flex-wrap">
                     <span className="text-sm text-slate-500 font-medium">Plantilla:</span>
                     <TemplatePicker
-                        templates={templates}
-                        selectedTemplateId={selectedTemplateId}
+                        templates={compatibleTemplates}
+                        selectedTemplateId={selectedTemplate?.id ?? null}
                         onSelect={setSelectedTemplateId}
                     />
                     {selectedTemplate && (

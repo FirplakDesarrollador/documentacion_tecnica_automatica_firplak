@@ -1,10 +1,116 @@
 import { dbQuery } from '@/lib/supabase'
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { getFamilyFilters, getReferenceFilters } from '@/lib/data/filters'
 import { GenerateClient } from '@/components/generate/GenerateClient'
+import type { GenerateProduct } from '@/components/generate/GenerateProductTable'
+import type { TemplateOption } from '@/components/generate/TemplatePicker'
 import { FileOutput } from 'lucide-react'
 import { loadAllRulesForNamingType } from '@/lib/engine/namingComponents'
-import type { ComposedProduct } from '@/lib/engine/product_composer'
+import { listCatalogTargetContexts, type CatalogTargetContext } from '@/lib/templates/catalogScopeServer'
+import { getTemplateCatalogScope, isCatalogScope, isCoreCatalogDataSource } from '@/lib/templates/catalogScope'
+
+type LinkedDatasetRow = {
+    id: string
+    name: string | null
+}
+
+type DatasetRow = {
+    id: string
+    data_json: string | Record<string, unknown>
+}
+
+type GenerateProductIdentity = {
+    id: string
+    code: string
+    final_name_es: string | null
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : {}
+}
+
+function parseDatasetData(value: string | Record<string, unknown>): Record<string, unknown> {
+    const parsed: unknown = typeof value === 'string' ? JSON.parse(value) : value
+    return asRecord(parsed)
+}
+
+function getTextValue(record: Record<string, unknown>, key: string): string | null {
+    const value = record[key]
+    if (typeof value === 'string') return value || null
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+    return null
+}
+
+function getFirstTextValue(record: Record<string, unknown>, keys: string[]): string | null {
+    for (const key of keys) {
+        const value = getTextValue(record, key)
+        if (value) return value
+    }
+    return null
+}
+
+function getNumberValue(record: Record<string, unknown>, key: string): number | null {
+    const value = record[key]
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+    if (typeof value === 'string' && value.trim()) {
+        const parsed = Number(value)
+        return Number.isFinite(parsed) ? parsed : null
+    }
+    return null
+}
+
+function getStringArray(record: Record<string, unknown>, key: string): string[] | undefined {
+    const value = record[key]
+    return Array.isArray(value) && value.every((item): item is string => typeof item === 'string')
+        ? value
+        : undefined
+}
+
+function toGenerateProduct(source: GenerateProductIdentity): GenerateProduct {
+    const record = source as unknown as Record<string, unknown>
+    return {
+        ...record,
+        id: source.id,
+        code: source.code,
+        final_name_es: source.final_name_es,
+        product_type: getTextValue(record, 'product_type'),
+        validation_status: getTextValue(record, 'validation_status') || '',
+        familia_code: getTextValue(record, 'familia_code') || getTextValue(record, 'family_code'),
+        isometric_asset_id: getTextValue(record, 'isometric_asset_id'),
+        barcode_text: getTextValue(record, 'barcode_text'),
+        commercial_measure: getTextValue(record, 'commercial_measure'),
+        weight_kg: getNumberValue(record, 'weight_kg'),
+        width_cm: getNumberValue(record, 'width_cm'),
+        depth_cm: getNumberValue(record, 'depth_cm'),
+        height_cm: getNumberValue(record, 'height_cm'),
+        color_code: getTextValue(record, 'color_code'),
+        color_name: getTextValue(record, 'color_name'),
+        ref_code: getTextValue(record, 'ref_code'),
+        effective_status: getTextValue(record, 'effective_status') || undefined,
+        is_exportable: typeof record.is_exportable === 'boolean' ? record.is_exportable : undefined,
+        inactive_reasons: getStringArray(record, 'inactive_reasons'),
+        catalog_scope: isCatalogScope(record.catalog_scope) ? record.catalog_scope : undefined,
+        catalog_target_id: getTextValue(record, 'catalog_target_id') || undefined,
+    }
+}
+
+function toScopedGenerateProduct(target: CatalogTargetContext): GenerateProduct {
+    return toGenerateProduct(target)
+}
+
+function toExternalDatasetProduct(row: DatasetRow): GenerateProduct {
+    const data = parseDatasetData(row.data_json)
+    const source = {
+        ...data,
+        id: row.id,
+        code: getFirstTextValue(data, ['code', 'sku', 'id']) || row.id,
+        final_name_es: getFirstTextValue(data, ['final_name_es', 'name', 'nombre']) || 'Registro dataset',
+        status: 'ACTIVO',
+        is_external: true,
+    }
+    return toGenerateProduct(source)
+}
 
 export default async function GeneratePage({
     searchParams: searchParamsPromise,
@@ -55,7 +161,7 @@ export default async function GeneratePage({
     const hasFilter = f.length > 0 || r.length > 0 || m.length > 0 || (typeof q === 'string' && q.trim().length > 0)
 
     // --- Cargar productos filtrados ---
-    let products: ComposedProduct[] = []
+    let products: GenerateProduct[] = []
     let totalCount = 0
     // Se cargan después de determinar la plantilla seleccionada (para aplicar discriminación de marca).
 
@@ -69,15 +175,16 @@ export default async function GeneratePage({
     // --- Cargar plantillas activas ---
      
     const templates = await dbQuery(
-        `SELECT id, name, document_type, width_mm, height_mm, orientation, print_target, media_width_mm, media_length_mm, media_gap_mm, active, elements_json, export_formats, export_filename_format, data_source, template_font_family, brand_scope, private_label_client_name
-         FROM public.plantillas_doc_tec WHERE active = true ORDER BY created_at ASC`
-    ) as any[] || []
+        `SELECT t.id, t.name, t.document_type, t.width_mm, t.height_mm, t.orientation, t.print_target, t.media_width_mm, t.media_length_mm, t.media_gap_mm, t.active, t.elements_json, t.export_formats, t.export_filename_format, t.data_source, to_jsonb(t)->>'catalog_scope' AS catalog_scope, t.template_font_family, t.brand_scope, t.private_label_client_name
+         FROM public.plantillas_doc_tec t WHERE t.active = true ORDER BY t.created_at ASC`
+    ) as TemplateOption[] || []
 
     // --- Cargar componentes del motor de nombres ---
     const rules = await loadAllRulesForNamingType('final_complete_name')
 
-    const selectedTemplateInfo = templates.find((t: { id: string; data_source?: string; brand_scope?: string; private_label_client_name?: string | null; name?: string }) => t.id === templateId) || templates[0]
+    const selectedTemplateInfo = templates.find((template) => template.id === templateId) || templates[0]
     const templateDataSource = selectedTemplateInfo?.data_source || 'core_firplak'
+    const templateCatalogScope = getTemplateCatalogScope(templateDataSource, selectedTemplateInfo?.catalog_scope)
 
     const isLegacySpecificDataset =
         templateDataSource !== 'core_firplak' &&
@@ -99,11 +206,11 @@ export default async function GeneratePage({
             JOIN public.custom_datasets d ON d.id = l.dataset_id
             WHERE l.template_id = '${String(selectedTemplateInfo.id).replace(/'/g, "''")}'
             ORDER BY d.created_at DESC
-        `) as any[] || []
+        `) as LinkedDatasetRow[] || []
 
         // Show ALL linked datasets — synced or not — so the user can preview any associated data.
         // The sync status is visible in the DatasetConfigurator.
-        availableDatasetsForTemplate = linkedDatasets.map((d: { id: string; name: string | null }) => ({
+        availableDatasetsForTemplate = linkedDatasets.map((d) => ({
             id: String(d.id),
             name: String(d.name || ''),
         }))
@@ -142,19 +249,9 @@ export default async function GeneratePage({
             FROM public.custom_dataset_rows 
             WHERE dataset_id = '${effectiveDatasetId.replace(/'/g, "''")}'
             LIMIT 500
-        `) as any[] || []
+        `) as DatasetRow[] || []
         
-         products = dsRows.map((r: { id: string; data_json: string | Record<string, unknown> }) => {
-             const parsed = typeof r.data_json === 'string' ? JSON.parse(r.data_json) : r.data_json
-             return {
-                 ...parsed,
-                 id: r.id,
-                 code: parsed.code || parsed.sku || parsed.id || r.id,
-                 final_name_es: parsed.final_name_es || parsed.name || parsed.nombre || 'Registro dataset',
-                 status: 'ACTIVO',
-                 is_external: true,
-             }
-         })
+         products = dsRows.map(toExternalDatasetProduct)
          totalCount = products.length
      } else if (brandScope === 'private_label' && !plc) {
         // Private label template without client configured: block listing/export safely.
@@ -165,19 +262,45 @@ export default async function GeneratePage({
     } else if (hasFilter) {
         // Si no viene `f`, intentamos derivar la familia desde `r` (cuando viene en formato triple).
         const effectiveFamilies = f.length > 0 ? f : familiesFromR
-        const filtersObj = {
-            families: effectiveFamilies,
-            references: rDecoded,
-            measures: mDecoded.length > 0 ? mDecoded : m,
-            search: q || undefined,
-            brandFilter,
-        }
-        
-        const { composeProductsByFilters } = await import('@/lib/engine/product_composer')
         const offset = (page - 1) * pageSize
-        const result = await composeProductsByFilters(filtersObj, pageSize, offset)
-        products = result.products
-        totalCount = result.totalCount
+        const effectiveMeasures = mDecoded.length > 0 ? mDecoded : m
+
+        if (isCoreCatalogDataSource(templateDataSource) && templateCatalogScope && templateCatalogScope !== 'sku') {
+            const result = await listCatalogTargetContexts({
+                scope: templateCatalogScope,
+                familyCodes: effectiveFamilies,
+                referenceCodes: rDecoded,
+                measures: effectiveMeasures,
+                search: q || undefined,
+                brandScope,
+                privateLabelClientName: plc || null,
+                limit: pageSize,
+                offset,
+            })
+            products = result.targets.map(toScopedGenerateProduct)
+            totalCount = result.totalCount
+        } else {
+            const filtersObj = {
+                families: effectiveFamilies,
+                references: rDecoded,
+                measures: effectiveMeasures,
+                search: q || undefined,
+                brandFilter,
+            }
+            const { composeProductsByFilters } = await import('@/lib/engine/product_composer')
+            const result = await composeProductsByFilters(filtersObj, pageSize, offset)
+            const composedProducts = result.products.map(toGenerateProduct)
+            products = isCoreCatalogDataSource(templateDataSource)
+                ? composedProducts.map((product) => ({
+                    ...product,
+                    catalog_scope: 'sku' as const,
+                    catalog_target_id: product.id,
+                    target_scope: 'sku',
+                    target_id: product.id,
+                }))
+                : composedProducts
+            totalCount = result.totalCount
+        }
     }
 
     return (
@@ -209,7 +332,7 @@ export default async function GeneratePage({
 
             <GenerateClient
                  
-                products={products as any}
+                products={products}
                 templates={templates}
                 rules={rules}
                 families={families}
