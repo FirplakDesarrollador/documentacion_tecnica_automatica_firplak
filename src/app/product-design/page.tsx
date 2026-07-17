@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { FileText, GitBranch } from 'lucide-react'
+import { FileText, GitBranch, ClipboardCheck } from 'lucide-react'
 
 import { requirePagePermission } from '@/utils/auth/access'
 
@@ -30,6 +30,23 @@ export default async function ProductDesignPage() {
                 <h2 className="font-semibold text-slate-900">Importación y alineación LdM/BOM</h2>
                 <p className="mt-1 text-sm text-slate-600">
                   Importa desde SAP, relaciona componentes, revisa faltantes y prepara la base productiva en Supabase + App.
+                </p>
+              </div>
+            </div>
+          </Link>
+
+          <Link
+            href="/product-design/color-audit"
+            className="group rounded-lg border border-slate-200 bg-white p-5 shadow-sm transition hover:border-emerald-300 hover:shadow-md"
+          >
+            <div className="flex items-start gap-4">
+              <div className="rounded-md bg-emerald-50 p-3 text-emerald-700">
+                <ClipboardCheck className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="font-semibold text-slate-900">Auditoría de colores SAP</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  Contrasta U_Color contra el color codificado en todos los SKU de venta, con avance y exportación.
                 </p>
               </div>
             </div>
