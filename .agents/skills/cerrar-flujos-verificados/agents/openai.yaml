@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cierre verificable"
+  short_description: "Verifica y cierra mutaciones de la app"
+  default_prompt: "Usa $cerrar-flujos-verificados para completar esta mutación con lectura posterior y evidencia efectiva."

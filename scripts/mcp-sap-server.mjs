@@ -8,6 +8,7 @@ import { z } from 'zod'
 const DEFAULT_TIMEOUT_MS = 60_000
 const MAX_PREFIXES = 20
 const MAX_PAGE_SIZE = 2_000
+const WRITE_CONFIRMATION_PREFIX = 'CONFIRMAR SAP'
 
 class SapMcpError extends Error {
   constructor(message, statusCode = 500, sapCode = null) {
@@ -48,6 +49,7 @@ function getConfig() {
     password: requiredEnv('SAP_PASSWORD'),
     rejectUnauthorized: booleanEnv('SAP_REJECT_UNAUTHORIZED', false),
     timeoutMs: numberEnv('SAP_TIMEOUT_MS', DEFAULT_TIMEOUT_MS),
+    writesEnabled: booleanEnv('SAP_WRITES_ENABLED', false),
   }
 }
 
@@ -163,11 +165,13 @@ function collectionQuery({ filter, top, skip, select, expand }) {
   return params.length ? `?${params.join('&')}` : ''
 }
 
-async function sapRequest(path, retry = true) {
+async function sapRequest(path, options = {}, retry = true) {
   const config = getConfig()
   const session = await login()
   const normalizedPath = path.startsWith('/') ? path : `/${path}`
   const response = await httpRequest(new URL(`${config.baseUrl}${normalizedPath}`), {
+    method: options.method ?? 'GET',
+    body: options.body,
     headers: { Cookie: session.cookie },
     rejectUnauthorized: config.rejectUnauthorized,
     timeoutMs: config.timeoutMs,
@@ -175,13 +179,33 @@ async function sapRequest(path, retry = true) {
   const payload = parseJson(response.bodyText)
   if ((response.statusCode === 401 || response.statusCode === 403) && retry) {
     cachedSession = null
-    return sapRequest(path, false)
+    return sapRequest(path, options, false)
   }
   if (response.statusCode < 200 || response.statusCode >= 300) {
     const details = errorDetails(payload, `SAP request failed: ${path}`)
     throw new SapMcpError(details.message, response.statusCode || 502, details.code)
   }
   return payload
+}
+
+function assertWriteRequest({ dryRun, confirmation, targetCode }) {
+  if (dryRun) return
+  const expected = `${WRITE_CONFIRMATION_PREFIX} ${targetCode}`
+  if (confirmation?.trim() !== expected) {
+    throw new SapMcpError(`Escribe exactamente: ${expected}`, 400, 'SAP_WRITE_CONFIRMATION_REQUIRED')
+  }
+  if (!getConfig().writesEnabled) {
+    throw new SapMcpError('SAP_WRITES_ENABLED no está activo para el MCP', 403, 'SAP_WRITES_DISABLED')
+  }
+}
+
+async function getExisting(path) {
+  try {
+    return await sapRequest(path)
+  } catch (error) {
+    if (error instanceof SapMcpError && error.statusCode === 404) return null
+    throw error
+  }
 }
 
 function textResult(value) {
@@ -231,6 +255,7 @@ server.registerTool('sap_config_status', {
     optional: {
       SAP_REJECT_UNAUTHORIZED: Boolean(process.env.SAP_REJECT_UNAUTHORIZED?.trim()),
       SAP_TIMEOUT_MS: Boolean(process.env.SAP_TIMEOUT_MS?.trim()),
+      SAP_WRITES_ENABLED: booleanEnv('SAP_WRITES_ENABLED', false),
     },
   })
 })
@@ -246,6 +271,88 @@ server.registerTool('sap_health', {
     version: session.version,
     sessionTimeoutMinutes: session.sessionTimeoutMinutes,
   }
+}))
+
+const writeAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true,
+}
+
+const jsonObjectSchema = z.record(z.string(), z.unknown())
+
+server.registerTool('sap_create_item', {
+  title: 'Create SAP item',
+  description: 'Dry-run by default. Creates one SAP Item only after explicit confirmation and SAP_WRITES_ENABLED=true.',
+  inputSchema: {
+    itemCode: z.string().trim().min(1).max(100),
+    payload: jsonObjectSchema,
+    dryRun: z.boolean().optional(),
+    confirmation: z.string().optional(),
+  },
+  annotations: writeAnnotations,
+}, async ({ itemCode, payload, dryRun = true, confirmation }) => withToolErrors(async () => {
+  const targetCode = itemCode.trim()
+  if (payload.ItemCode !== undefined && payload.ItemCode !== targetCode) {
+    throw new SapMcpError('payload.ItemCode debe coincidir con itemCode', 400, 'SAP_PAYLOAD_MISMATCH')
+  }
+  const createPayload = { ...payload, ItemCode: targetCode }
+  const existing = await getExisting(`/Items(${encodeODataString(targetCode)})`)
+  if (existing) throw new SapMcpError(`El artículo ya existe: ${targetCode}`, 409, 'SAP_ITEM_ALREADY_EXISTS')
+  assertWriteRequest({ dryRun, confirmation, targetCode })
+  if (dryRun) return { dryRun: true, targetCode, createPayload }
+  const created = await sapRequest('/Items', { method: 'POST', body: createPayload })
+  const verified = await sapRequest(`/Items(${encodeODataString(targetCode)})`)
+  return { dryRun: false, targetCode, created, verified }
+}))
+
+server.registerTool('sap_create_product_tree', {
+  title: 'Create SAP product tree',
+  description: 'Dry-run by default. Creates a production BOM assigned to an existing ItemCode.',
+  inputSchema: {
+    treeCode: z.string().trim().min(1).max(100),
+    payload: jsonObjectSchema,
+    dryRun: z.boolean().optional(),
+    confirmation: z.string().optional(),
+  },
+  annotations: writeAnnotations,
+}, async ({ treeCode, payload, dryRun = true, confirmation }) => withToolErrors(async () => {
+  const targetCode = treeCode.trim()
+  if (payload.TreeCode !== undefined && payload.TreeCode !== targetCode) {
+    throw new SapMcpError('payload.TreeCode debe coincidir con treeCode', 400, 'SAP_PAYLOAD_MISMATCH')
+  }
+  const item = await getExisting(`/Items(${encodeODataString(targetCode)})`)
+  if (!item) throw new SapMcpError(`El artículo no existe: ${targetCode}`, 409, 'SAP_ITEM_REQUIRED_FIRST')
+  const existingTree = await getExisting(`/ProductTrees(${encodeODataString(targetCode)})`)
+  if (existingTree) throw new SapMcpError(`La ProductTree ya existe: ${targetCode}`, 409, 'SAP_PRODUCT_TREE_ALREADY_EXISTS')
+  const createPayload = { TreeCode: targetCode, TreeType: 'iProductionTree', Quantity: 1, ...payload }
+  assertWriteRequest({ dryRun, confirmation, targetCode })
+  if (dryRun) return { dryRun: true, targetCode, createPayload }
+  const created = await sapRequest('/ProductTrees', { method: 'POST', body: createPayload })
+  const verified = await sapRequest(`/ProductTrees(${encodeODataString(targetCode)})`)
+  return { dryRun: false, targetCode, created, verified }
+}))
+
+server.registerTool('sap_update_product_tree', {
+  title: 'Update SAP product tree',
+  description: 'Dry-run by default. PATCHes a complete or partial ProductTree payload after explicit confirmation.',
+  inputSchema: {
+    treeCode: z.string().trim().min(1).max(100),
+    payload: jsonObjectSchema,
+    dryRun: z.boolean().optional(),
+    confirmation: z.string().optional(),
+  },
+  annotations: writeAnnotations,
+}, async ({ treeCode, payload, dryRun = true, confirmation }) => withToolErrors(async () => {
+  const targetCode = treeCode.trim()
+  const current = await getExisting(`/ProductTrees(${encodeODataString(targetCode)})`)
+  if (!current) throw new SapMcpError(`La ProductTree no existe: ${targetCode}`, 404, 'SAP_PRODUCT_TREE_NOT_FOUND')
+  assertWriteRequest({ dryRun, confirmation, targetCode })
+  if (dryRun) return { dryRun: true, targetCode, current, updatePayload: payload }
+  const updated = await sapRequest(`/ProductTrees(${encodeODataString(targetCode)})`, { method: 'PATCH', body: payload })
+  const verified = await sapRequest(`/ProductTrees(${encodeODataString(targetCode)})`)
+  return { dryRun: false, targetCode, updated, verified }
 }))
 
 server.registerTool('sap_get_item', {
