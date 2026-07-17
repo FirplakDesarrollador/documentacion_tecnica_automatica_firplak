@@ -1,7 +1,7 @@
 'use client'
 
-import { type FormEvent, type ReactNode, useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight, Layers, Loader2, RefreshCw, Search, X } from 'lucide-react'
+import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react'
+import { ArrowLeft, ChevronDown, ChevronRight, Layers, Loader2, RefreshCw, Search, X } from 'lucide-react'
 
 type SapItem = Record<string, unknown>
 
@@ -23,6 +23,35 @@ type FieldDefinition = {
 type SapApiItemResponse =
   | { success: true; item: SapItem }
   | { success: false; error: string; sapCode?: string | number | null }
+
+type SearchResult = {
+  itemCode: string
+  itemName: string
+}
+
+type ColorOption = {
+  code: string
+  name: string
+}
+
+type SearchCriteria = {
+  code: string
+  description: string
+  color: string
+}
+
+type SapApiSearchResponse =
+  | {
+      success: true
+      items: SearchResult[]
+      hasMore: boolean
+      nextSkip: number | null
+    }
+  | { success: false; error: string; sapCode?: string | number | null }
+
+type SapApiColorsResponse =
+  | { success: true; colors: ColorOption[] }
+  | { success: false; error: string }
 
 type BomNode = {
   itemCode: string
@@ -855,8 +884,94 @@ function BomPanel({
   )
 }
 
+function SearchResultsPanel({
+  results,
+  hasMore,
+  loading,
+  onSelect,
+  onLoadMore,
+}: {
+  results: SearchResult[]
+  hasMore: boolean
+  loading: boolean
+  onSelect: (result: SearchResult) => void
+  onLoadMore: () => void
+}) {
+  return (
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3 sm:px-6">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Resultados SAP</p>
+          <p className="mt-1 text-sm text-slate-600">Selecciona un artículo para consultar sus datos maestros.</p>
+        </div>
+        <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
+          {results.length} resultado{results.length === 1 ? '' : 's'} cargado{results.length === 1 ? '' : 's'}
+        </span>
+      </div>
+
+      {results.length === 0 ? (
+        <div className="p-6 text-sm text-slate-500">SAP no devolvió artículos que coincidan con la búsqueda.</div>
+      ) : (
+        <div role="listbox" aria-label="Artículos encontrados en SAP" className="divide-y divide-slate-100">
+          {results.map(result => (
+            <button
+              key={result.itemCode}
+              type="button"
+              role="option"
+              aria-selected={false}
+              aria-label={result.itemCode + ' ' + result.itemName}
+              onClick={() => onSelect(result)}
+              disabled={loading}
+              className="grid w-full gap-1 px-4 py-3 text-left transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60 sm:grid-cols-[minmax(220px,0.8fr)_minmax(0,2fr)] sm:gap-4 sm:px-6"
+            >
+              <span className="truncate font-mono text-sm font-semibold text-slate-900">{result.itemCode}</span>
+              <span className="truncate text-sm text-slate-600">{result.itemName || 'Sin descripción en SAP'}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {hasMore ? (
+        <div className="flex justify-center border-t border-slate-200 bg-slate-50 px-4 py-3">
+          <button
+            type="button"
+            onClick={onLoadMore}
+            disabled={loading}
+            className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {loading ? <Loader2 className="size-4 animate-spin" /> : null}
+            Ver más resultados
+          </button>
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
 export function ConsultaSapClient({ initialCode, initialItem, initialError }: ConsultaSapClientProps) {
+  const initialResult = initialItem
+    ? {
+        itemCode: itemValue(initialItem, 'ItemCode') || initialCode,
+        itemName: itemValue(initialItem, 'ItemName'),
+      }
+    : null
   const [code, setCode] = useState(initialCode)
+  const [description, setDescription] = useState(itemValue(initialItem, 'ItemName'))
+  const [colorCode, setColorCode] = useState('')
+  const [colorOptions, setColorOptions] = useState<ColorOption[]>([])
+  const [colorError, setColorError] = useState<string | null>(null)
+  const [lastSearchCriteria, setLastSearchCriteria] = useState<SearchCriteria>({
+    code: '',
+    description: '',
+    color: '',
+  })
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([])
+  const [searchHasMore, setSearchHasMore] = useState(false)
+  const [searchSkip, setSearchSkip] = useState(0)
+  const [hasSearched, setHasSearched] = useState(false)
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
+  const [selectedResult, setSelectedResult] = useState<SearchResult | null>(initialResult)
   const [item, setItem] = useState<SapItem | null>(initialItem)
   const [error, setError] = useState<string | null>(initialError)
   const [loading, setLoading] = useState(false)
@@ -867,7 +982,39 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
   const [activeTab, setActiveTab] = useState<SapTabId>('general')
   const [customFieldsVisible, setCustomFieldsVisible] = useState(false)
 
-  const activeCode = itemValue(item, 'ItemCode') || code.trim()
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadColorOptions() {
+      try {
+        const response = await fetch('/api/sap/items/colors', {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+        })
+        const payload = await response.json() as SapApiColorsResponse
+
+        if (!response.ok || !payload.success) {
+          if (!cancelled) setColorError(payload.success ? 'No se pudo cargar el catálogo de colores.' : payload.error)
+          return
+        }
+
+        if (!cancelled) setColorOptions(payload.colors)
+      } catch (fetchError: unknown) {
+        if (!cancelled) {
+          setColorError(fetchError instanceof Error ? fetchError.message : 'No se pudo cargar el catálogo de colores.')
+        }
+      }
+    }
+
+    void loadColorOptions()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const activeCode = itemValue(item, 'ItemCode') || selectedResult?.itemCode || ''
+  const isViewingItem = Boolean(selectedResult)
+  const searchControlsLocked = isViewingItem || loading || searchLoading
   const customFields = useMemo(
     () => USER_FIELDS.filter(field => hasSapValue(item?.[field.key])),
     [item]
@@ -884,7 +1031,8 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
     setBomError(null)
   }
 
-  async function fetchItem(nextCode: string) {
+  async function loadItem(result: SearchResult, preserveSelection: boolean) {
+    const nextCode = result.itemCode
     const normalizedCode = nextCode.trim()
     if (!normalizedCode) {
       setItem(null)
@@ -894,7 +1042,10 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
 
     setLoading(true)
     setError(null)
-    setItem(null)
+    if (!preserveSelection) {
+      setItem(null)
+      setSelectedResult(null)
+    }
     setCode(normalizedCode)
     setActiveTab('general')
     setCustomFieldsVisible(false)
@@ -912,11 +1063,82 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
         return
       }
 
+      const resolvedResult = {
+        itemCode: itemValue(payload.item, 'ItemCode') || normalizedCode,
+        itemName: itemValue(payload.item, 'ItemName') || result.itemName,
+      }
       setItem(payload.item)
+      setSelectedResult(resolvedResult)
+      setCode(resolvedResult.itemCode)
+      setDescription(resolvedResult.itemName)
     } catch (fetchError: unknown) {
       setError(fetchError instanceof Error ? fetchError.message : 'No se pudo consultar SAP.')
+      if (!preserveSelection) {
+        setItem(null)
+        setSelectedResult(null)
+      }
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function searchItems(append: boolean) {
+    const normalizedCode = code.trim()
+    const normalizedDescription = description.trim()
+    const normalizedColor = colorCode.trim().toUpperCase()
+    if (!normalizedCode && !normalizedDescription && !normalizedColor) {
+      setSearchError('Ingresa un número, una descripción, un color o combina varios criterios para buscar en SAP.')
+      return
+    }
+
+    if (!append) {
+      setLastSearchCriteria({
+        code: normalizedCode,
+        description: normalizedDescription,
+        color: normalizedColor,
+      })
+    }
+
+    const nextSkip = append ? searchSkip : 0
+    setSearchLoading(true)
+    setSearchError(null)
+    setError(null)
+    setHasSearched(true)
+
+    if (!append) {
+      setSearchResults([])
+      setSearchHasMore(false)
+      setSearchSkip(0)
+      setItem(null)
+      setSelectedResult(null)
+      resetBom()
+    }
+
+    try {
+      const params = new URLSearchParams({
+        code: normalizedCode,
+        description: normalizedDescription,
+        color: normalizedColor,
+        skip: String(nextSkip),
+      })
+      const response = await fetch('/api/sap/items/search?' + params.toString(), {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      })
+      const payload = await response.json() as SapApiSearchResponse
+
+      if (!response.ok || !payload.success) {
+        setSearchError(payload.success ? 'No se pudo buscar en SAP.' : payload.error)
+        return
+      }
+
+      setSearchResults(previous => append ? [...previous, ...payload.items] : payload.items)
+      setSearchHasMore(payload.hasMore)
+      setSearchSkip(payload.nextSkip ?? nextSkip + payload.items.length)
+    } catch (fetchError: unknown) {
+      setSearchError(fetchError instanceof Error ? fetchError.message : 'No se pudo buscar en SAP.')
+    } finally {
+      setSearchLoading(false)
     }
   }
 
@@ -973,7 +1195,20 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    void fetchItem(code)
+    void searchItems(false)
+  }
+
+  function handleBackToList() {
+    setItem(null)
+    setSelectedResult(null)
+    setCode(lastSearchCriteria.code)
+    setDescription(lastSearchCriteria.description)
+    setColorCode(lastSearchCriteria.color)
+    setError(null)
+    setSearchError(null)
+    setActiveTab('general')
+    setCustomFieldsVisible(false)
+    resetBom()
   }
 
   function handleBomToggle() {
@@ -996,38 +1231,78 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
     <main className="min-h-screen bg-slate-50 p-4 text-slate-900 sm:p-6">
       <div className="mx-auto flex max-w-[1600px] flex-col gap-4">
         <form onSubmit={handleSubmit} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+          <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_minmax(260px,1.2fr)_minmax(180px,0.8fr)_auto] lg:items-end">
             <label className="grid min-w-0 flex-1 gap-1.5">
               <span className="text-sm font-semibold text-slate-800">Número de artículo</span>
               <input
                 value={code}
                 onChange={event => setCode(event.target.value.toUpperCase())}
-                className="h-10 min-w-0 rounded-md border border-slate-300 bg-white px-3 font-mono text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                disabled={searchControlsLocked}
+                className="h-10 min-w-0 rounded-md border border-slate-300 bg-white px-3 font-mono text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
                 placeholder="VBAN12-0012-000-0458"
                 aria-label="Número de artículo SAP"
               />
             </label>
+            <label className="grid min-w-0 gap-1.5">
+              <span className="text-sm font-semibold text-slate-800">Descripción del artículo</span>
+              <input
+                value={description}
+                onChange={event => setDescription(event.target.value)}
+                disabled={searchControlsLocked}
+                className="h-10 min-w-0 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                placeholder="MUEBLE MACAO CLASS 63X48"
+                aria-label="Descripción del artículo SAP"
+              />
+            </label>
+            <label className="grid min-w-0 gap-1.5">
+              <span className="text-sm font-semibold text-slate-800">Color</span>
+              <select
+                value={colorCode}
+                onChange={event => setColorCode(event.target.value)}
+                disabled={searchControlsLocked}
+                aria-label="Color SAP"
+                className="h-10 min-w-0 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+              >
+                <option value="">Todos los colores</option>
+                {colorOptions.map(color => (
+                  <option key={color.code} value={color.code}>
+                    {color.code}{color.name ? ' - ' + color.name : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
             <div className="flex flex-wrap gap-2">
               <button
                 type="submit"
-                disabled={loading}
+                disabled={searchControlsLocked}
                 className="inline-flex h-10 items-center gap-2 rounded-md bg-indigo-600 px-4 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {loading ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
+                {searchLoading ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
                 Consultar
               </button>
               <button
                 type="button"
-                disabled={loading || !code.trim()}
-                onClick={() => void fetchItem(code)}
+                disabled={!selectedResult || loading || searchLoading}
+                onClick={() => selectedResult ? void loadItem(selectedResult, true) : undefined}
                 className="inline-flex h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <RefreshCw className="size-4" />
                 Actualizar
               </button>
+              {selectedResult ? (
+                <button
+                  type="button"
+                  disabled={loading || bomLoading}
+                  onClick={handleBackToList}
+                  className="inline-flex h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <ArrowLeft className="size-4" />
+                  Volver a la lista
+                </button>
+              ) : null}
               <button
                 type="button"
-                disabled={!item || bomLoading}
+                disabled={!item || bomLoading || loading}
                 onClick={handleBomToggle}
                 className={[
                   'inline-flex h-10 items-center gap-2 rounded-md border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60',
@@ -1041,16 +1316,36 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
               </button>
             </div>
             <p className="text-xs font-medium text-slate-500">
-              {loading ? 'Consultando SAP…' : item ? 'Consulta cargada' : 'Sin resultado'}
+              {loading ? 'Consultando SAP…' : searchLoading ? 'Buscando coincidencias…' : item ? 'Artículo seleccionado' : hasSearched ? 'Selecciona un resultado' : 'Listo para buscar'}
             </p>
           </div>
         </form>
+
+        <p className="text-xs text-slate-500">Puedes buscar por número, descripción, color o combinar varios criterios. La descripción busca todas las palabras, sin importar el orden.</p>
+        {colorError ? <p className="text-xs font-medium text-amber-700">{colorError}</p> : null}
+
+        {searchError ? (
+          <div role="alert" className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            <X className="mt-0.5 size-4 shrink-0" />
+            <span>{searchError}</span>
+          </div>
+        ) : null}
 
         {error ? (
           <div role="alert" className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
             <X className="mt-0.5 size-4 shrink-0" />
             <span>{error}</span>
           </div>
+        ) : null}
+
+        {hasSearched && !selectedResult ? (
+          <SearchResultsPanel
+            results={searchResults}
+            hasMore={searchHasMore}
+            loading={searchLoading}
+            onSelect={result => void loadItem(result, false)}
+            onLoadMore={() => void searchItems(true)}
+          />
         ) : null}
 
         {showBom ? (

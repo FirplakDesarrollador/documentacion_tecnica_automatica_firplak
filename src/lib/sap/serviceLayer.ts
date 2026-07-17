@@ -212,6 +212,7 @@ function buildCollectionQuery(input: {
   select?: string[]
   expand?: string[]
   filter?: string
+  orderby?: string
   top?: number
   skip?: number
 }): string {
@@ -221,6 +222,7 @@ function buildCollectionQuery(input: {
   const expansions = input.expand?.map(field => field.trim()).filter(Boolean) ?? []
   if (expansions.length > 0) params.push(`$expand=${encodeURIComponent(expansions.join(','))}`)
   if (input.filter) params.push(`$filter=${encodeURIComponent(input.filter)}`)
+  if (input.orderby) params.push(`$orderby=${encodeURIComponent(input.orderby)}`)
   if (typeof input.top === 'number') params.push(`$top=${input.top}`)
   if (typeof input.skip === 'number') params.push(`$skip=${input.skip}`)
 
@@ -495,13 +497,137 @@ export async function getSapItemsByCodes(
 export async function getSapItemsByPrefix(
   itemCodePrefix: string,
   select?: string[],
-  options?: { timeoutMs?: number; top?: number }
+  options?: { timeoutMs?: number; top?: number; skip?: number }
 ): Promise<SapEntityPayload[]> {
   const normalizedPrefix = normalizeRequiredCode(itemCodePrefix, 'itemCodePrefix')
   const query = buildCollectionQuery({
     select,
     filter: `startswith(ItemCode, ${encodeODataString(normalizedPrefix)})`,
     top: options?.top ?? 200,
+    skip: options?.skip,
+  })
+  const response = await sapServiceLayerRequest<unknown>(`/Items${query}`, {
+    timeoutMs: options?.timeoutMs,
+  })
+
+  return isRecord(response) && Array.isArray(response.value)
+    ? response.value.filter(isRecord)
+    : []
+}
+
+export type SapItemSearchInput = {
+  code?: string
+  description?: string
+  color?: string
+}
+
+export type SapItemSearchOptions = {
+  skip?: number
+  limit?: number
+  timeoutMs?: number
+}
+
+export type SapItemSearchResult = {
+  items: SapEntityPayload[]
+  hasMore: boolean
+  nextSkip: number | null
+}
+
+const SAP_ITEM_SEARCH_SELECT = ['ItemCode', 'ItemName']
+const SAP_ITEM_SEARCH_PAGE_SIZE = 20
+
+function tokenizeItemDescriptionQuery(query: string): string[] {
+  return query
+    .trim()
+    .toUpperCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
+}
+
+export function buildSapItemSearchFilter(input: SapItemSearchInput): string {
+  const filters: string[] = []
+  const normalizedCode = input.code?.trim().toUpperCase() ?? ''
+  const normalizedDescription = input.description?.trim().toUpperCase() ?? ''
+  const normalizedColor = input.color?.trim().toUpperCase() ?? ''
+
+  if (normalizedCode) {
+    filters.push(`startswith(ItemCode, ${encodeODataString(normalizedCode)})`)
+  }
+
+  if (normalizedDescription) {
+    const tokens = tokenizeItemDescriptionQuery(normalizedDescription)
+    filters.push(...tokens.map(token => `contains(ItemName, ${encodeODataString(token)})`))
+  }
+
+  if (normalizedColor) {
+    filters.push(`U_Color eq ${encodeODataString(normalizedColor)}`)
+  }
+
+  if (filters.length === 0) {
+    throw new SapServiceLayerError('search query is required', {
+      statusCode: 400,
+      sapCode: 'SAP_SEARCH_QUERY_REQUIRED',
+    })
+  }
+
+  return filters.join(' and ')
+}
+
+export async function searchSapItems(
+  input: SapItemSearchInput,
+  options: SapItemSearchOptions = {}
+): Promise<SapItemSearchResult> {
+  const skip = Number.isInteger(options.skip) && (options.skip ?? 0) >= 0 ? options.skip ?? 0 : 0
+  const requestedLimit = Number.isInteger(options.limit) && (options.limit ?? 0) > 0
+    ? options.limit ?? SAP_ITEM_SEARCH_PAGE_SIZE
+    : SAP_ITEM_SEARCH_PAGE_SIZE
+  const limit = Math.min(requestedLimit, SAP_ITEM_SEARCH_PAGE_SIZE)
+  const filter = buildSapItemSearchFilter(input)
+  const requestLimit = limit + 1
+  const queryString = buildCollectionQuery({
+    select: SAP_ITEM_SEARCH_SELECT,
+    filter,
+    orderby: 'ItemCode asc',
+    top: requestLimit,
+    skip,
+  })
+  const response = await sapServiceLayerRequest<unknown>(`/Items${queryString}`, {
+    timeoutMs: options.timeoutMs,
+  })
+  const rows = isRecord(response) && Array.isArray(response.value)
+    ? response.value.filter(isRecord)
+    : []
+  const hasMore = rows.length > limit
+  const items = rows.slice(0, limit)
+
+  return {
+    items,
+    hasMore,
+    nextSkip: hasMore ? skip + limit : null,
+  }
+}
+
+/**
+ * Finds sales SKU by their exact `-000-COLOR` suffix. The board matrix uses
+ * this to let SAP define the comparison population before it is reconciled
+ * with the application catalog.
+ */
+export async function getSapSalesSkuItemsByColors(
+  colorCodes: string[],
+  select?: string[],
+  options?: { timeoutMs?: number; top?: number; skip?: number }
+): Promise<SapEntityPayload[]> {
+  const normalizedColors = [...new Set(colorCodes.map(colorCode => colorCode.trim().toUpperCase()).filter(colorCode => /^[A-Z0-9]{4}$/.test(colorCode)))]
+  if (normalizedColors.length === 0) return []
+
+  const colorFilter = normalizedColors
+    .map(colorCode => `endswith(ItemCode, ${encodeODataString(`-000-${colorCode}`)})`)
+    .join(' or ')
+  const query = buildCollectionQuery({
+    select,
+    filter: `startswith(ItemCode, ${encodeODataString('V')}) and (${colorFilter})`,
+    top: options?.top ?? 200,
+    skip: options?.skip,
   })
   const response = await sapServiceLayerRequest<unknown>(`/Items${query}`, {
     timeoutMs: options?.timeoutMs,
