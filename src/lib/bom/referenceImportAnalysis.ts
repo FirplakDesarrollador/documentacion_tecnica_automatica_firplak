@@ -43,6 +43,37 @@ type QuantityObservation = {
 const EPSILON = 0.000001
 const BOARD_THICKNESS_TOLERANCE_MM = 0.5
 
+function consolidatedSnapshotLines(snapshot: DirectBomSnapshot): NormalizedSapBomLine[] {
+  const linesByKey = new Map<string, NormalizedSapBomLine>()
+  for (const line of snapshot.normalizedLines) {
+    if (line.technicalMetadata?.material_kind !== 'board') {
+      linesByKey.set(`line:${line.lineIdentity}`, line)
+      continue
+    }
+    const key = [
+      line.baseItemCode,
+      line.itemCode,
+      line.variantCode4,
+      line.technicalMetadata.material_profile ?? 'none',
+      line.technicalMetadata.format_key ?? 'none',
+      line.warehouse ?? 'none',
+      line.issueMethod ?? 'none',
+      line.inventoryUom ?? 'none',
+    ].join('|')
+    const existing = linesByKey.get(key)
+    if (!existing) {
+      linesByKey.set(key, { ...line, sourceLineCount: line.sourceLineCount ?? 1 })
+      continue
+    }
+    linesByKey.set(key, {
+      ...existing,
+      qty: existing.qty + line.qty,
+      sourceLineCount: (existing.sourceLineCount ?? 1) + (line.sourceLineCount ?? 1),
+    })
+  }
+  return [...linesByKey.values()]
+}
+
 function normalizedText(value: string | null | undefined): string {
   return value?.trim().toUpperCase() ?? ''
 }
@@ -76,12 +107,6 @@ function allSameText(values: Array<string | null>): boolean {
 function asColorMode(configuration: ColorConfiguration | undefined): BomColorMode {
   if (configuration?.colorMode === 'dual' || configuration?.colorMode === 'balance') return configuration.colorMode
   return 'full'
-}
-
-function colorScopeForMode(mode: BomColorMode): ReferenceProductApplicationScope[] {
-  if (mode === 'dual') return ['structure', 'front']
-  if (mode === 'balance') return ['structure', 'front', 'inner_structure']
-  return ['full_product']
 }
 
 function isEdgeBandScope(scope: ReferenceProductApplicationScope): boolean {
@@ -193,26 +218,28 @@ function scopeFromSemantics(
   colorConfigurations: Map<string, ColorConfiguration>,
   context: ReferenceImportContext
 ): ReferenceProductApplicationScope {
+  // CMPD09 is a manufactured piece (for example, PUERTA), never a color
+  // application role. A word in its name must not turn it into a board front.
+  if (line.baseItemCode.trim().toUpperCase().startsWith('CMPD09')) return 'NA'
+
   const fromPublishedReference = persistedSemanticScope(context, line)
   if (fromPublishedReference) return fromPublishedReference
 
   const fromPendingSkuOverride = pendingEdgeScopeFromSkuOverrides(line, evidence, context)
   if (fromPendingSkuOverride) return fromPendingSkuOverride
 
-  if (line.technicalMetadata?.material_kind === 'board') {
+  const materialKind = line.technicalMetadata?.material_kind
+  if (materialKind === 'board') {
     return dualBoardScopeFromEvidence(evidence, colorConfigurations) ?? 'full_product'
   }
 
   const name = normalizedText(line.itemName)
-  if (name.includes('FONDO') && (name.includes('CAJON') || name.includes('DRAWER'))) return 'drawer_bottom'
-  if (name.includes('CANTO')) {
-    if (name.includes('INTERIOR') || name.includes('INTERNA') || name.includes('CAJON')) return 'edge_band_inner'
-    return dualEdgeScopeFromEvidence(evidence, colorConfigurations) ?? 'edge_band_full_product'
-  }
-  if (name.includes('ESTRUCTURA') || name.includes('COSTADO') || name.includes('LATERAL')) return 'structure'
-  if (name.includes('INTERIOR') || name.includes('INTERNA')) return 'inner_structure'
-  if (name.includes('FRENTE') || name.includes('PUERTA') || name.includes('FRONTAL')) return 'front'
-  return 'NA'
+  // Some older SAP snapshots have not yet classified CANTO as edge_band in
+  // technical metadata. Its own semantic name remains enough evidence; no
+  // analogous inference is allowed for manufactured pieces such as PUERTA.
+  if (materialKind !== 'edge_band' && !name.includes('CANTO')) return 'NA'
+  if (name.includes('INTERIOR') || name.includes('INTERNA') || name.includes('CAJON')) return 'edge_band_inner'
+  return dualEdgeScopeFromEvidence(evidence, colorConfigurations) ?? 'edge_band_full_product'
 }
 
 function isColorApplicable(configuration: ColorConfiguration, context: ReferenceImportContext): boolean {
@@ -238,6 +265,7 @@ function lineDetails(evidence: LineEvidence[]): JsonRecord {
       item_name: item.line.itemName,
       material_color: item.line.variantCode4,
       qty: item.line.qty,
+      source_line_count: item.line.sourceLineCount ?? 1,
       warehouse: item.line.warehouse,
       issue_method: item.line.issueMethod,
       visible_order: item.line.sourceOrder,
@@ -462,44 +490,37 @@ function buildConsumptions(
   }
 
   const observationByKey = new Map<string, QuantityObservation[]>()
+  const maxQtyByModeAndScope = new Map<string, number>()
   for (const observation of observations) {
-    const key = [observation.colorMode, observation.scope, observation.profile, observation.formatKey ?? 'none'].join('|')
+    const key = [observation.colorMode, observation.scope, observation.profile].join('|')
     const values = observationByKey.get(key) ?? []
     values.push(observation)
     observationByKey.set(key, values)
+    const modeAndScopeKey = [observation.colorMode, observation.scope].join('|')
+    maxQtyByModeAndScope.set(modeAndScopeKey, Math.max(maxQtyByModeAndScope.get(modeAndScopeKey) ?? 0, observation.qty))
   }
 
   const contradictions: QuantityObservation[][] = []
   const consumptions: BomConsumption[] = []
-  for (const alternative of logical.alternatives) {
-    for (const colorMode of ['full', 'dual', 'balance'] as const) {
-      for (const scope of colorScopeForMode(colorMode)) {
-        const matching = [...observationByKey.entries()]
-          .filter(([key]) => key.startsWith(`${colorMode}|${scope}|${alternative.material_profile}|`))
-        if (matching.length === 0) {
-          consumptions.push({
-            color_mode: colorMode,
-            product_application_scope: scope,
-            material_profile: alternative.material_profile,
-            format_key: null,
-            qty: null,
-            status: 'needs_definition',
-          })
-          continue
-        }
-        for (const [, values] of matching) {
-          if (!allSameNumber(values.map(value => value.qty))) contradictions.push(values)
-          consumptions.push({
-            color_mode: values[0].colorMode,
-            product_application_scope: values[0].scope,
-            material_profile: values[0].profile,
-            format_key: values[0].formatKey,
-            qty: mostCommonNumber(values.map(value => value.qty)),
-            status: 'observed',
-          })
-        }
-      }
+  for (const values of [...observationByKey.values()]) {
+    const representative = values[0]
+    if (!representative) continue
+    const valuesByPhysicalKey = new Map<string, QuantityObservation[]>()
+    for (const value of values) {
+      const physicalKey = [value.skuComplete, value.profile, value.formatKey ?? 'none'].join('|')
+      valuesByPhysicalKey.set(physicalKey, [...(valuesByPhysicalKey.get(physicalKey) ?? []), value])
     }
+    const physicalContradictions = [...valuesByPhysicalKey.values()]
+      .filter(physicalValues => !allSameNumber(physicalValues.map(value => value.qty)))
+    contradictions.push(...physicalContradictions)
+    consumptions.push({
+      color_mode: representative.colorMode,
+      product_application_scope: representative.scope,
+      material_profile: representative.profile,
+      format_key: null,
+      qty: maxQtyByModeAndScope.get([representative.colorMode, representative.scope].join('|')) ?? null,
+      status: 'observed',
+    })
   }
 
   return { consumptions, contradictions }
@@ -645,7 +666,7 @@ export function analyzeReferenceBom(input: {
 
   const evidenceByIdentity = new Map<string, LineEvidence[]>()
   for (const snapshot of capturedSnapshots) {
-    for (const line of snapshot.normalizedLines) {
+    for (const line of consolidatedSnapshotLines(snapshot)) {
       const evidence = evidenceByIdentity.get(line.lineIdentity) ?? []
       evidence.push({ snapshot, line })
       evidenceByIdentity.set(line.lineIdentity, evidence)
@@ -702,7 +723,7 @@ export function analyzeReferenceBom(input: {
           proposedScope: contradiction[0]?.scope ?? null,
           proposedColorCode: null,
           detailsJson: {
-            message: 'La misma combinacion de modo, uso, perfil y formato tiene consumos distintos.',
+            message: 'La misma clave física de SKU, uso, perfil y formato tiene consumos incompatibles.',
             observations: contradiction.map(item => ({
               sku_complete: item.skuComplete,
               qty: item.qty,

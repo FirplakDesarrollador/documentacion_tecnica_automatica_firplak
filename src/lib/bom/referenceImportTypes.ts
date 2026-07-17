@@ -3,6 +3,7 @@ import type {
   BomConsumption,
   BomMaterialAlternative,
   BomColorOverride,
+  BoardProfileConditionalRule,
   ComponentTechnicalMetadata,
   HybridColorCase,
 } from './types'
@@ -49,6 +50,8 @@ export type NormalizedSapBomLine = {
   sourceOrder: number
   sapChildNum: number | null
   qty: number
+  /** Count of identical SAP board rows consolidated into this line. */
+  sourceLineCount?: number
   warehouse: string | null
   issueMethod: string | null
   inventoryUom: string | null
@@ -95,6 +98,8 @@ export type ColorConfiguration = {
   colorMode: 'full' | 'dual' | 'balance' | 'equivalent'
   applicationColors: Record<string, string>
   hybridColorCases?: HybridColorCase[]
+  boardProfileConditions?: BoardProfileConditionalRule[]
+  boardMatrixResolution?: BoardMatrixResolution
   applicationMaterialProfiles: Record<string, string>
   allowedProductTypes: string[]
   allowedManufacturingProcesses: string[]
@@ -187,6 +192,15 @@ export type ReferenceImportSnapshotSummary = {
   }
 }
 
+/** Persisted confirmation that a mixed board color has all its chosen rules. */
+export type BoardMatrixResolution = {
+  status: 'configured'
+  confirmedAt: string
+  sapActiveSkuCount: number
+  checkedSkuCount: number
+  dualCandidateCount: number
+}
+
 export type ReferenceImportActiveOverride = {
   level: 'reference' | 'global_version' | 'version' | 'sku'
   skuComplete: string | null
@@ -199,10 +213,190 @@ export type ReferenceImportActiveOverride = {
   createdAt: string | null
 }
 
+export type BoardMatrixRole = ReferenceProductApplicationScope | 'role_pending'
+export type BoardMatrixRoleSource = 'published_bom' | 'sku_override' | 'evidence' | 'pending'
+export type BoardMatrixStatus =
+  | 'matches'
+  | 'unicolor_candidate'
+  | 'color_override_candidate'
+  | 'profile_override_candidate'
+  | 'dual_candidate'
+  | 'variation_by_design'
+  | 'role_pending'
+  | 'profile_pending'
+  | 'conflict_real'
+  | 'sap_invalid'
+  | 'sap_bom_missing'
+
+export type BoardMatrixEvidence = {
+  skuComplete: string
+  skuItemName: string | null
+  lineIdentity: string
+  baseItemCode: string
+  itemCode: string
+  itemName?: string | null
+  boardColorCode: string
+  materialProfile: string | null
+  /** Profile selected by the SKU reference before a color strategy applies. */
+  referenceMaterialProfile?: string | null
+  formatKey: string | null
+  qty: number
+  /** Number of identical SAP rows represented by this observation. */
+  sourceLineCount?: number
+  role: BoardMatrixRole
+  roleSource: BoardMatrixRoleSource
+}
+
+export type BoardMatrixRow = {
+  key: string
+  sourceColorCode: string
+  role: BoardMatrixRole
+  roleSource: BoardMatrixRoleSource
+  observedColorCodes: string[]
+  proposedColorCode: string | null
+  observedMaterialProfiles: string[]
+  proposedMaterialProfile: string | null
+  referenceMaterialProfile: string | null
+  referenceMaterialProfiles: string[]
+  recommendedColorCode: string | null
+  recommendedMaterialProfile: string | null
+  normalizedConsumptionQty: number | null
+  isProductColorMatch: boolean
+  profileIsReferenceException: boolean
+  /** A board profile strategy exists in the persisted color configuration. */
+  hasConditionalBoardRule: boolean
+  /** The full board decision was closed and stored after a scoped SAP review. */
+  hasPersistedBoardResolution: boolean
+  baseItemCodes: string[]
+  formatKeys: string[]
+  evidence: BoardMatrixEvidence[]
+  status: BoardMatrixStatus
+  statusMessage: string
+}
+
+export type BoardMatrixCatalogIssueReason =
+  | 'sap_invalid'
+  | 'sap_missing'
+  | 'bom_missing'
+  | 'sap_only'
+  | 'supabase_inactive'
+  | 'supabase_kit'
+
+export type BoardMatrixCatalogIssue = {
+  skuComplete: string
+  skuItemName: string | null
+  reason: BoardMatrixCatalogIssueReason
+  /** True only when its existing active reference/version can receive this
+   * missing SAP color without creating any other catalog record. */
+  canCreateColorVariation?: boolean
+}
+
+/**
+ * A color-level rule may be stored only after every eligible active SAP SKU
+ * agrees on the same full-product board and material profile.
+ */
+export type BoardMatrixFullProductRuleCandidate = {
+  boardColorCode: string
+  materialProfile: string
+  evidenceSkuCount: number
+}
+
+export type BoardMatrixConditionalRule = {
+  sourceMaterialProfile: string
+  targetBoardColorCode: string
+  targetMaterialProfile: string
+  evidenceSkuCount: number
+}
+
+/** One complete, evidence-derived way to resolve a unicolor board behavior. */
+export type BoardMatrixConditionalStrategy = {
+  strategyId: string
+  kind: 'keep_product_color' | 'use_internal_default'
+  defaultBoardColorCode: string
+  defaultMaterialProfile: string | null
+  conditions: BoardMatrixConditionalRule[]
+  evidenceSkuCount: number
+}
+
+export type BoardMatrixDualCandidate = {
+  structureColorCode: string
+  structureMaterialProfile: string
+  frontColorCode: string
+  frontMaterialProfile: string
+  evidenceSkuCount: number
+  cases: Array<{
+    skuComplete: string
+    skuItemName: string | null
+    structureQty: number
+    frontQty: number
+    boardLines: Array<{
+      itemCode: string
+      itemName: string | null
+      colorCode: string
+      materialProfile: string | null
+      qty: number
+    }>
+  }>
+}
+
+/**
+ * A board-only Dual override already stored on the exact SKU set. It remains
+ * separate from a color-level Dual case so an exception never becomes global.
+ */
+export type BoardMatrixDualConfiguration = {
+  structureColorCode: string
+  structureMaterialProfile: string
+  frontColorCode: string
+  frontMaterialProfile: string
+}
+
+export type BoardMatrixPersistedDualSkuOverride = {
+  structureColorCode: string
+  structureMaterialProfile: string
+  frontColorCode: string
+  frontMaterialProfile: string
+  skuCompletes: string[]
+  isSapDeviation: boolean
+}
+
+export type BoardMatrixCoveredSapSku = {
+  skuComplete: string
+  skuItemName: string | null
+  bomRead: boolean
+}
+
+export type BoardMatrixCatalogResult = {
+  sourceColorCode: string
+  sapDiscoveredSkuCount: number
+  sapActiveSkuCount: number
+  sapActiveSkus: BoardMatrixCoveredSapSku[]
+  supabaseSkuCount: number
+  supabaseActiveSkuCount: number
+  excludedInactiveSapSkuCount: number
+  excludedKitSkuCount: number
+  checkedSkuCount: number
+  sapReadErrors: Array<{ skuComplete: string; message: string }>
+  invalidSkus: BoardMatrixCatalogIssue[]
+  rows: BoardMatrixRow[]
+  dualGlobalCandidate: boolean
+  dualCandidateMessage: string | null
+  fullProductRuleCandidate: BoardMatrixFullProductRuleCandidate | null
+  fullProductRuleBlockers: string[]
+  boardProfileConditions: BoardProfileConditionalRule[]
+  /** Color-level board mapping used when the BOM has structure and front roles. */
+  boardDualConfiguration: BoardMatrixDualConfiguration | null
+  /** Board-only Dual overrides already stored on SKU, grouped by their mapping. */
+  boardDualSkuOverrides: BoardMatrixPersistedDualSkuOverride[]
+  conditionalRuleStrategies: BoardMatrixConditionalStrategy[]
+  dualCandidates: BoardMatrixDualCandidate[]
+}
+
 export type ReferenceImportWorkspace = {
   run: ReferenceImportRunSummary
   findings: ReferenceImportFinding[]
   snapshots: ReferenceImportSnapshotSummary[]
   proposalItemNames: Record<string, string>
   activeOverrides: ReferenceImportActiveOverride[]
+  /** V02 keeps transient SAP evidence only; it is rebuilt on every analysis. */
+  boardMatrix?: BoardMatrixRow[]
 }

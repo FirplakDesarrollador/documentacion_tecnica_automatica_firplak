@@ -1,9 +1,8 @@
 'use client'
 
-import { useEffect, useState, useTransition } from 'react'
+import { useEffect, useRef, useState, useTransition } from 'react'
 import {
   AlertTriangle,
-  Ban,
   CheckCircle2,
   ClipboardCheck,
   Database,
@@ -15,28 +14,42 @@ import {
 
 import {
   applyTransientIssueMethodsBatchAction,
+  applyTransientBoardFullProductColorRuleAction,
+  confirmTransientBoardMatrixResolutionAction,
   confirmTransientColorMatrixAction,
   confirmTransientColorRuleAction,
   confirmTransientMaterialProfileAction,
-  deactivateTransientSapInactiveSkuInSupabaseAction,
+  createTransientSapColorVariationAction,
   deactivateTransientReferenceBomSkusInSapAction,
   getTransientReferenceBomColorAction,
   listTransientReferenceBomImportCandidatesAction,
   publishTransientReferenceBomAction,
   saveTransientColorOverrideAction,
+  saveTransientBoardConditionalProfileRuleAction,
+  saveTransientBoardDualColorCaseAction,
+  saveTransientBoardDualSkuOverridesAction,
   saveTransientMatrixDualCandidateSkuOverridesAction,
   saveTransientMatrixSkuColorOverrideAction,
   saveTransientReferenceBomColorAction,
+  syncTransientSapInactiveSkusInSupabaseAction,
   validateTransientAbsencesAction,
   verifyTransientColorMatrixAction,
+  type BoardDualMutationResult,
 } from './transientReferenceImportActions'
 import type {
   ReferenceImportCandidate,
   ReferenceImportFinding,
   ReferenceImportWorkspace,
+  BoardMatrixCatalogResult,
+  BoardMatrixConditionalStrategy,
+  BoardMatrixDualConfiguration,
+  BoardMatrixDualCandidate,
+  BoardMatrixPersistedDualSkuOverride,
+  BoardMatrixRow,
 } from '@/lib/bom/referenceImportTypes'
+import { deriveBoardConditionalRuleStrategies, summarizeBoardEvidenceExamples, summarizeBoardProfileEvidence, type BoardEvidenceExample, type BoardProfileEvidenceSummary } from '@/lib/bom/boardMatrix'
 import type { ColorEntry } from '@/app/rules/colors/actions'
-import type { ColorApplicationScope } from '@/app/rules/colors/productiveScopes'
+import { BOARD_MATERIAL_PROFILE_SCOPE_KEYS, type BoardMaterialProfileScope, type ColorApplicationScope } from '@/app/rules/colors/productiveScopes'
 import type { ReferenceProductApplicationScope } from '@/lib/bom/referenceImportScopes'
 
 type Props = {
@@ -62,6 +75,22 @@ type ColorEditorState = {
   finding: ReferenceImportFinding
   color: ColorEntry
 }
+
+type BoardColorRuleEditorState = {
+  sourceColorCode: string
+  boardColorCode: string
+  materialProfile: string
+  evidenceSkuCount: number
+}
+
+type BoardConditionalRuleEditorState = {
+  sourceColorCode: string
+  strategies: BoardMatrixConditionalStrategy[]
+  selectedStrategyId: string
+  saveResult: { success: boolean; message: string } | null
+}
+
+type BoardDualCandidateWithColor = BoardMatrixDualCandidate & { sourceColorCode: string }
 
 type ColorRuleMatrixRow = {
   key: string
@@ -156,6 +185,11 @@ type AnalysisStreamEvent =
 type MatrixVerificationEvent =
   | { type: 'progress'; progress: AnalysisProgress }
   | { type: 'complete'; message: string; success: boolean; results: ColorRuleMatrixCoverage[] }
+  | { type: 'error'; message: string }
+
+type BoardMatrixVerificationEvent =
+  | { type: 'progress'; progress: AnalysisProgress }
+  | { type: 'complete'; message: string; success: boolean; results: BoardMatrixCatalogResult[] }
   | { type: 'error'; message: string }
 
 function useElapsedSeconds(startedAt: number | null): number {
@@ -268,10 +302,6 @@ function expectedColorConfirmation(finding: ReferenceImportFinding): string | nu
   return `CONFIRMAR REGLA ${sourceColorCode} ${finding.proposedScope} ${finding.proposedColorCode}`
 }
 
-function expectedSkuDeactivationConfirmation(skuComplete: string): string {
-  return `INACTIVAR EN SUPABASE ${skuComplete}`
-}
-
 function parseAnalysisStreamEvent(value: string): AnalysisStreamEvent | null {
   try {
     const event = asRecord(JSON.parse(value) as unknown)
@@ -331,6 +361,37 @@ function parseMatrixVerificationEvent(value: string): MatrixVerificationEvent | 
     return null
   }
   return null
+}
+
+function parseBoardMatrixVerificationEvent(value: string): BoardMatrixVerificationEvent | null {
+  try {
+    const event = asRecord(JSON.parse(value) as unknown)
+    const type = asString(event.type)
+    if (type === 'progress') {
+      const progress = asRecord(event.progress)
+      const message = asString(progress.message)
+      if (!message) return null
+      return { type, progress: { stage: asString(progress.stage) ?? 'board_matrix', message, current: asNumber(progress.current), total: asNumber(progress.total) } }
+    }
+    if (type === 'complete' && asString(event.message) && Array.isArray(event.results)) {
+      return { type, message: asString(event.message)!, success: event.success === true, results: event.results as BoardMatrixCatalogResult[] }
+    }
+    if (type === 'error' && asString(event.message)) return { type, message: asString(event.message)! }
+  } catch {
+    return null
+  }
+  return null
+}
+
+async function boardMatrixStartFailure(response: Response): Promise<Error> {
+  const fallback = `No se pudo iniciar el análisis de tableros (HTTP ${response.status}).`
+  try {
+    const payload = asRecord(JSON.parse(await response.text()) as unknown)
+    const message = asString(payload.message) ?? asString(payload.error)
+    return new Error(message ? `${fallback} ${message}` : fallback)
+  } catch {
+    return new Error(fallback)
+  }
 }
 
 function salesReferenceCode(familyCode: string | null, referenceCode: string | null): string {
@@ -465,6 +526,262 @@ function colorAssignmentEvidence(finding: ReferenceImportFinding): Array<{ produ
   })
 }
 
+function boardRoleLabel(row: BoardMatrixRow): string {
+  if (row.role === 'full_product' && !row.isProductColorMatch) return 'Tablero de producto completo (color interno)'
+  return row.role === 'role_pending' ? 'Pendiente de definir' : scopeLabel(row.role)
+}
+
+function boardMatrixStatusLabel(status: BoardMatrixRow['status']): string {
+  const labels: Record<BoardMatrixRow['status'], string> = {
+    matches: 'Coincide',
+    unicolor_candidate: 'Unicolor candidato',
+    color_override_candidate: 'Color interno por validar',
+    profile_override_candidate: 'Perfil SAP distinto por validar',
+    dual_candidate: 'Dual candidato',
+    variation_by_design: 'Variación por diseño',
+    role_pending: 'Rol pendiente',
+    profile_pending: 'Perfil pendiente',
+    conflict_real: 'Conflicto real',
+    sap_invalid: 'SKU inválido',
+    sap_bom_missing: 'Sin LdM',
+  }
+  return labels[status]
+}
+
+type BoardCoverageReport = {
+  key: string
+  role: BoardMatrixRow['role']
+  evidenceSkuCount: number
+  evidenceSkuCompletes: string[]
+  observedColorCodes: string[]
+  observedMaterialProfiles: string[]
+  profileSummaries: BoardProfileEvidenceSummary[]
+  examples: BoardEvidenceExample[]
+  kind: 'profile_candidate' | 'color_candidate' | 'conditional_configured' | 'consistent' | 'incomplete' | 'variation' | 'role_pending' | 'dual_evidence'
+  conclusion: string
+}
+
+function boardCoverageReports(input: {
+  result: BoardMatrixCatalogResult
+  referenceRows: BoardMatrixRow[]
+}): BoardCoverageReport[] {
+  return input.result.rows.map(coverageRow => {
+    const evidenceSkuCompletes = [...new Set(coverageRow.evidence.map(item => item.skuComplete))]
+    const evidenceSkuCount = evidenceSkuCompletes.length
+    const profileSummaries = summarizeBoardProfileEvidence(coverageRow.evidence)
+    const examples = summarizeBoardEvidenceExamples(coverageRow.evidence)
+    const completeReadCoverage = input.result.checkedSkuCount > 0
+      && evidenceSkuCount === input.result.checkedSkuCount
+      && input.result.sapReadErrors.length === 0
+    const hasSingleSapPattern = coverageRow.observedColorCodes.length === 1
+      && coverageRow.observedMaterialProfiles.length === 1
+    const referenceRow = input.referenceRows.find(row =>
+      row.sourceColorCode === coverageRow.sourceColorCode
+      && row.role === coverageRow.role
+    )
+    const hasSameObservedProfile = referenceRow?.observedMaterialProfiles.length === 1
+      && referenceRow.observedMaterialProfiles[0] === coverageRow.observedMaterialProfiles[0]
+    const hasSameObservedColor = referenceRow?.observedColorCodes.length === 1
+      && referenceRow.observedColorCodes[0] === coverageRow.observedColorCodes[0]
+    const observedDescription = `tablero ${coverageRow.observedColorCodes.join(', ') || 'pendiente'} y perfil ${coverageRow.observedMaterialProfiles.join(', ') || 'pendiente'}`
+    const configuredColorMatchesSap = coverageRow.proposedColorCode !== null
+      && coverageRow.observedColorCodes.length === 1
+      && coverageRow.proposedColorCode === coverageRow.observedColorCodes[0]
+    const configuredProfileMatchesSap = coverageRow.proposedMaterialProfile !== null
+      && coverageRow.observedMaterialProfiles.length === 1
+      && coverageRow.proposedMaterialProfile === coverageRow.observedMaterialProfiles[0]
+    const configuredRuleMatchesSap = configuredColorMatchesSap && configuredProfileMatchesSap
+    const isDualRoleEvidence = (coverageRow.role === 'structure' || coverageRow.role === 'front')
+      && input.result.dualCandidates.some(candidate => {
+        const candidateSkus = new Set(candidate.cases.map(candidateCase => candidateCase.skuComplete))
+        return evidenceSkuCompletes.length > 0 && evidenceSkuCompletes.every(skuComplete => candidateSkus.has(skuComplete))
+      })
+
+    if (coverageRow.role === 'full_product' && input.result.boardProfileConditions.length > 0) {
+      return {
+        key: coverageRow.key,
+        role: coverageRow.role,
+        evidenceSkuCount,
+        evidenceSkuCompletes,
+        observedColorCodes: coverageRow.observedColorCodes,
+        observedMaterialProfiles: coverageRow.observedMaterialProfiles,
+        profileSummaries,
+        examples,
+        kind: 'conditional_configured',
+        conclusion: input.result.dualCandidates.length > 0
+          ? 'La decisión unicolor por perfil ya está guardada. Aún quedan casos Dual pendientes de decidir abajo; por eso el color sigue contado en contraste.'
+          : 'La decisión por perfil ya está guardada para este color. Esta evidencia SAP queda como respaldo de la configuración, no como una excepción pendiente.',
+      }
+    }
+
+    if (coverageRow.role === 'role_pending') {
+      return {
+        key: coverageRow.key,
+        role: coverageRow.role,
+        evidenceSkuCount,
+        evidenceSkuCompletes,
+        observedColorCodes: coverageRow.observedColorCodes,
+        observedMaterialProfiles: coverageRow.observedMaterialProfiles,
+        profileSummaries,
+        examples,
+        kind: 'role_pending',
+        conclusion: 'SAP aporta materiales, pero no un rol lógico suficiente. No se propone ninguna regla hasta asignar el rol humano.',
+      }
+    }
+    if (isDualRoleEvidence) {
+      return {
+        key: coverageRow.key,
+        role: coverageRow.role,
+        evidenceSkuCount,
+        evidenceSkuCompletes,
+        observedColorCodes: coverageRow.observedColorCodes,
+        observedMaterialProfiles: coverageRow.observedMaterialProfiles,
+        profileSummaries,
+        examples,
+        kind: 'dual_evidence',
+        conclusion: `Estos ${evidenceSkuCount} SKU pertenecen a un caso Dual detectado abajo. Los SKU unicolor no usan el rol ${scopeLabel(coverageRow.role)} y no se cuentan como evidencia faltante.`,
+      }
+    }
+    if (!completeReadCoverage) {
+      return {
+        key: coverageRow.key,
+        role: coverageRow.role,
+        evidenceSkuCount,
+        evidenceSkuCompletes,
+        observedColorCodes: coverageRow.observedColorCodes,
+        observedMaterialProfiles: coverageRow.observedMaterialProfiles,
+        profileSummaries,
+        examples,
+        kind: 'incomplete',
+        conclusion: `La evidencia cubre ${evidenceSkuCount}/${input.result.checkedSkuCount} SKU con LdM leída. No alcanza para sostener una regla para este color.`,
+      }
+    }
+    if (!hasSingleSapPattern) {
+      return {
+        key: coverageRow.key,
+        role: coverageRow.role,
+        evidenceSkuCount,
+        evidenceSkuCompletes,
+        observedColorCodes: coverageRow.observedColorCodes,
+        observedMaterialProfiles: coverageRow.observedMaterialProfiles,
+        profileSummaries,
+        examples,
+        kind: 'variation',
+        conclusion: `Los ${evidenceSkuCount}/${input.result.checkedSkuCount} SKU leídos no presentan un único patrón: ${observedDescription}. Requiere una decisión por SKU o diseño; no se promueve una regla general.`,
+      }
+    }
+    if (configuredRuleMatchesSap) {
+      return {
+        key: coverageRow.key,
+        role: coverageRow.role,
+        evidenceSkuCount,
+        evidenceSkuCompletes,
+        observedColorCodes: coverageRow.observedColorCodes,
+        observedMaterialProfiles: coverageRow.observedMaterialProfiles,
+        profileSummaries,
+        examples,
+        kind: 'consistent',
+        conclusion: `SAP es uniforme: ${evidenceSkuCount}/${input.result.checkedSkuCount} SKU muestran ${observedDescription}. La regla actual del color ya coincide con esta evidencia.`,
+      }
+    }
+    if (referenceRow?.profileIsReferenceException && hasSameObservedProfile) {
+      return {
+        key: coverageRow.key,
+        role: coverageRow.role,
+        evidenceSkuCount,
+        evidenceSkuCompletes,
+        observedColorCodes: coverageRow.observedColorCodes,
+        observedMaterialProfiles: coverageRow.observedMaterialProfiles,
+        profileSummaries,
+        examples,
+        kind: 'profile_candidate',
+        conclusion: input.result.fullProductRuleCandidate && coverageRow.role === 'full_product'
+          ? `SAP es uniforme: ${evidenceSkuCount}/${input.result.checkedSkuCount} SKU muestran ${observedDescription}. En la referencia seleccionada el patrón es ${referenceRow.referenceMaterialProfile ?? 'pendiente'}; la cobertura completa permite configurar una regla global por color desde esta matriz.`
+          : `SAP es uniforme: ${evidenceSkuCount}/${input.result.checkedSkuCount} SKU muestran ${observedDescription}. En la referencia seleccionada el patrón es ${referenceRow.referenceMaterialProfile ?? 'pendiente'}; requiere decidir si la excepción aplica por color, referencia o SKU.`,
+      }
+    }
+    if (referenceRow && !referenceRow.isProductColorMatch && hasSameObservedColor) {
+      return {
+        key: coverageRow.key,
+        role: coverageRow.role,
+        evidenceSkuCount,
+        evidenceSkuCompletes,
+        observedColorCodes: coverageRow.observedColorCodes,
+        observedMaterialProfiles: coverageRow.observedMaterialProfiles,
+        profileSummaries,
+        examples,
+        kind: 'color_candidate',
+        conclusion: input.result.fullProductRuleCandidate && coverageRow.role === 'full_product'
+          ? `SAP es uniforme: ${evidenceSkuCount}/${input.result.checkedSkuCount} SKU muestran ${observedDescription}. La cobertura completa permite configurar el color interno global desde esta matriz.`
+          : `SAP es uniforme: ${evidenceSkuCount}/${input.result.checkedSkuCount} SKU muestran ${observedDescription}. Requiere decidir si el color interno aplica por color, referencia o SKU.`,
+      }
+    }
+    return {
+      key: coverageRow.key,
+      role: coverageRow.role,
+      evidenceSkuCount,
+      evidenceSkuCompletes,
+      observedColorCodes: coverageRow.observedColorCodes,
+      observedMaterialProfiles: coverageRow.observedMaterialProfiles,
+      profileSummaries,
+      examples,
+      kind: 'consistent',
+      conclusion: `SAP es uniforme: ${evidenceSkuCount}/${input.result.checkedSkuCount} SKU muestran ${observedDescription}. No aparece una excepción para proponer en la referencia seleccionada.`,
+    }
+  })
+}
+
+function boardConditionalStrategiesForCoverage(input: {
+  result: BoardMatrixCatalogResult
+  referenceRows: BoardMatrixRow[]
+}): BoardMatrixConditionalStrategy[] {
+  if (input.result.boardProfileConditions.length > 0) return []
+  if (input.result.conditionalRuleStrategies.length > 0) return input.result.conditionalRuleStrategies
+  const selectedReferenceProfile = input.referenceRows.find(row =>
+    row.sourceColorCode === input.result.sourceColorCode
+    && row.role === 'full_product'
+  )?.referenceMaterialProfile ?? null
+  return deriveBoardConditionalRuleStrategies({
+    sourceColorCode: input.result.sourceColorCode,
+    evidence: input.result.rows.flatMap(row => row.evidence),
+    referenceMaterialProfileHint: selectedReferenceProfile,
+  })
+}
+
+function boardCoverageReportLabel(kind: BoardCoverageReport['kind']): string {
+  const labels: Record<BoardCoverageReport['kind'], string> = {
+    profile_candidate: 'Evidencia para excepción de perfil',
+    color_candidate: 'Evidencia para color interno',
+    conditional_configured: 'Decisión guardada',
+    consistent: 'Sin excepción detectada',
+    incomplete: 'Evidencia incompleta',
+    variation: 'No hay patrón único',
+    role_pending: 'Rol pendiente',
+    dual_evidence: 'Evidencia del caso Dual',
+  }
+  return labels[kind]
+}
+
+function boardCoverageReportClass(kind: BoardCoverageReport['kind']): string {
+  if (kind === 'consistent' || kind === 'conditional_configured') return 'border-emerald-200 bg-emerald-50 text-emerald-950'
+  if (kind === 'incomplete') return 'border-rose-200 bg-rose-50 text-rose-950'
+  if (kind === 'dual_evidence') return 'border-violet-200 bg-violet-50 text-violet-950'
+  if (kind === 'profile_candidate' || kind === 'color_candidate') return 'border-amber-200 bg-amber-50 text-amber-950'
+  return 'border-slate-200 bg-slate-50 text-slate-900'
+}
+
+function boardCatalogIssueLabel(reason: BoardMatrixCatalogResult['invalidSkus'][number]['reason']): string {
+  const labels: Record<BoardMatrixCatalogResult['invalidSkus'][number]['reason'], string> = {
+    sap_invalid: 'Activo en Supabase, pero inactivo o congelado en SAP',
+    sap_missing: 'Activo en Supabase, pero no existe en SAP',
+    bom_missing: 'Activo en SAP, pero sin LdM legible',
+    sap_only: 'Activo en SAP, pero no registrado en Supabase',
+    supabase_inactive: 'Activo en SAP, pero inactivo en Supabase',
+    supabase_kit: 'Activo en SAP, pero catalogado como kit en Supabase',
+  }
+  return labels[reason]
+}
+
 function hasBoardEvidence(finding: ReferenceImportFinding): boolean {
   const evidence = Array.isArray(finding.detailsJson.by_sku) ? finding.detailsJson.by_sku : []
   return evidence.some(item => asString(asRecord(asRecord(item).technical_metadata).material_kind) === 'board')
@@ -485,6 +802,13 @@ function matrixMaterialKinds(findings: ReferenceImportFinding[]): Array<'board' 
 function colorConfigurationScope(finding: ReferenceImportFinding): ColorApplicationScope | null {
   return finding.proposedScope && finding.proposedScope !== 'NA'
     ? finding.proposedScope as ColorApplicationScope
+    : null
+}
+
+function boardMaterialProfileScope(finding: ReferenceImportFinding): BoardMaterialProfileScope | null {
+  const scope = colorConfigurationScope(finding)
+  return scope && BOARD_MATERIAL_PROFILE_SCOPE_KEYS.includes(scope as BoardMaterialProfileScope)
+    ? scope as BoardMaterialProfileScope
     : null
 }
 
@@ -559,6 +883,64 @@ function isMatrixDualCandidateSelected(
 ): boolean {
   const selected = selectedCandidates[candidate.sourceColorCode]
   return Boolean(selected && matrixDualCandidateKey(selected) === matrixDualCandidateKey(candidate))
+}
+
+function boardDualCandidateKey(candidate: BoardDualCandidateWithColor): string {
+  return [
+    candidate.sourceColorCode,
+    candidate.structureColorCode,
+    candidate.structureMaterialProfile,
+    candidate.frontColorCode,
+    candidate.frontMaterialProfile,
+  ].map(normalizedMatrixColorCode).join(':')
+}
+
+function boardDualCandidateOverrideKey(candidate: BoardDualCandidateWithColor): string {
+  return [
+    boardDualCandidateKey(candidate),
+    ...candidate.cases.map(candidateCase => candidateCase.skuComplete.trim().toUpperCase()).sort(),
+  ].join('|')
+}
+
+function boardDualConfigurationMatchesCandidate(
+  configuration: BoardMatrixDualConfiguration | null,
+  candidate: BoardDualCandidateWithColor
+): boolean {
+  return configuration?.structureColorCode === candidate.structureColorCode
+    && configuration.structureMaterialProfile === candidate.structureMaterialProfile
+    && configuration.frontColorCode === candidate.frontColorCode
+    && configuration.frontMaterialProfile === candidate.frontMaterialProfile
+}
+
+function boardDualSkuOverrideMatchesCandidate(
+  override: BoardMatrixPersistedDualSkuOverride,
+  candidate: BoardDualCandidateWithColor
+): boolean {
+  const overrideSkus = [...override.skuCompletes].map(sku => sku.trim().toUpperCase()).sort()
+  const candidateSkus = candidate.cases.map(candidateCase => candidateCase.skuComplete.trim().toUpperCase()).sort()
+  return override.structureColorCode === candidate.structureColorCode
+    && override.structureMaterialProfile === candidate.structureMaterialProfile
+    && override.frontColorCode === candidate.frontColorCode
+    && override.frontMaterialProfile === candidate.frontMaterialProfile
+    && overrideSkus.length === candidateSkus.length
+    && overrideSkus.every((sku, index) => sku === candidateSkus[index])
+}
+
+function boardColorIsReadyForBaseConstruction(result: BoardMatrixCatalogResult): boolean {
+  if (result.sapReadErrors.length > 0 || result.boardProfileConditions.length === 0) return false
+  const candidates = result.dualCandidates.map(candidate => ({ ...candidate, sourceColorCode: result.sourceColorCode }))
+  const resolvedCandidates = candidates.filter(candidate =>
+    boardDualConfigurationMatchesCandidate(result.boardDualConfiguration, candidate)
+    || result.boardDualSkuOverrides.some(override => boardDualSkuOverrideMatchesCandidate(override, candidate))
+  )
+  if (resolvedCandidates.length !== candidates.length) return false
+
+  const resolvedDualSkuCompletes = new Set(resolvedCandidates.flatMap(candidate => candidate.cases.map(candidateCase => candidateCase.skuComplete)))
+  return result.rows.every(row => {
+    if (row.role === 'full_product') return true
+    const evidenceSkuCompletes = new Set(row.evidence.map(item => item.skuComplete))
+    return evidenceSkuCompletes.size > 0 && [...evidenceSkuCompletes].every(skuComplete => resolvedDualSkuCompletes.has(skuComplete))
+  })
 }
 
 function matrixMismatchKey(input: {
@@ -690,6 +1072,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const [search, setSearch] = useState('')
   const [candidates, setCandidates] = useState(initialCandidates)
   const [selectedCandidate, setSelectedCandidate] = useState<ReferenceImportCandidate | null>(initialCandidates[0] ?? null)
+  const [isReferencePickerOpen, setIsReferencePickerOpen] = useState(false)
   const [workspace, setWorkspace] = useState<ReferenceImportWorkspace | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [confirmationTexts, setConfirmationTexts] = useState<Record<string, string>>({})
@@ -719,7 +1102,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const [matrixCoverage, setMatrixCoverage] = useState<{ selectionKey: string; success: boolean; results: ColorRuleMatrixCoverage[] } | null>(null)
   const [matrixVerificationProgress, setMatrixVerificationProgress] = useState<AnalysisProgress | null>(null)
   const [matrixVerificationStartedAt, setMatrixVerificationStartedAt] = useState<number | null>(null)
-  const [skuDeactivationConfirmations, setSkuDeactivationConfirmations] = useState<Record<string, string>>({})
+  const [preparedSupabaseSyncSkus, setPreparedSupabaseSyncSkus] = useState<Record<string, boolean>>({})
   const [skuActionMessages, setSkuActionMessages] = useState<Record<string, string>>({})
   const [selectedMatrixAbsences, setSelectedMatrixAbsences] = useState<Record<string, boolean>>({})
   const [validatedMatrixAbsences, setValidatedMatrixAbsences] = useState<Record<string, boolean>>({})
@@ -730,6 +1113,24 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const [matrixAbsenceStartedAt, setMatrixAbsenceStartedAt] = useState<number | null>(null)
   const [matrixSapDeactivationConfirmation, setMatrixSapDeactivationConfirmation] = useState('')
   const [matrixBatchMessage, setMatrixBatchMessage] = useState<string | null>(null)
+  const [selectedBoardColors, setSelectedBoardColors] = useState<Record<string, boolean>>({})
+  const [boardMatrixCoverage, setBoardMatrixCoverage] = useState<BoardMatrixCatalogResult[] | null>(null)
+  const [visibleBoardCoverageColorCodes, setVisibleBoardCoverageColorCodes] = useState<string[]>([])
+  const [lastBoardMatrixAnalyzedColorCodes, setLastBoardMatrixAnalyzedColorCodes] = useState<string[]>([])
+  const [ignoredBoardCatalogIssues, setIgnoredBoardCatalogIssues] = useState<Record<string, boolean>>({})
+  const [boardMatrixVerificationProgress, setBoardMatrixVerificationProgress] = useState<AnalysisProgress | null>(null)
+  const [boardMatrixVerificationStartedAt, setBoardMatrixVerificationStartedAt] = useState<number | null>(null)
+  const boardMatrixAbortControllerRef = useRef<AbortController | null>(null)
+  const [selectedBoardInactiveAppSkus, setSelectedBoardInactiveAppSkus] = useState<Record<string, boolean>>({})
+  const [boardColorRuleEditor, setBoardColorRuleEditor] = useState<BoardColorRuleEditorState | null>(null)
+  const [boardConditionalRuleEditor, setBoardConditionalRuleEditor] = useState<BoardConditionalRuleEditorState | null>(null)
+  const [selectedBoardDualColorCases, setSelectedBoardDualColorCases] = useState<Record<string, BoardDualCandidateWithColor>>({})
+  const [savedBoardDualColorResults, setSavedBoardDualColorResults] = useState<Record<string, BoardDualMutationResult>>({})
+  const [boardDualCandidateDeviation, setBoardDualCandidateDeviation] = useState<Record<string, boolean>>({})
+  const [boardDualCandidateOverrideReviewed, setBoardDualCandidateOverrideReviewed] = useState<Record<string, boolean>>({})
+  const [boardDualCandidateOverrideApplyingKey, setBoardDualCandidateOverrideApplyingKey] = useState<string | null>(null)
+  const [savedBoardDualSkuOverrideResults, setSavedBoardDualSkuOverrideResults] = useState<Record<string, BoardDualMutationResult>>({})
+  const [boardMatrixMessage, setBoardMatrixMessage] = useState<string | null>(null)
   const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null)
   const [analysisStartedAt, setAnalysisStartedAt] = useState<number | null>(null)
   const [isPending, startTransition] = useTransition()
@@ -738,9 +1139,17 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const matrixRulesElapsedSeconds = useElapsedSeconds(matrixRulesStartedAt)
   const matrixAbsenceElapsedSeconds = useElapsedSeconds(matrixAbsenceStartedAt)
   const matrixCandidateOverrideElapsedSeconds = useElapsedSeconds(matrixCandidateOverrideStartedAt)
+  const boardMatrixVerificationElapsedSeconds = useElapsedSeconds(boardMatrixVerificationStartedAt)
 
+  const boardMatrixRows = workspace?.boardMatrix ?? []
+  const boardMatrixBaseItemCodes = new Set(boardMatrixRows.flatMap(row => row.baseItemCodes))
   const visibleFindings = (workspace?.findings ?? []).filter(finding =>
     !findingIsLocallyResolvedByMatrix(finding, locallyAppliedMatrixConfigs)
+    && !(
+      (finding.findingType === 'material_profile_proposal' || finding.findingType === 'material_consumption_conflict')
+      && finding.baseItemCode !== null
+      && boardMatrixBaseItemCodes.has(finding.baseItemCode)
+    )
   )
   const unresolvedBlockers = visibleFindings.filter(finding => finding.severity === 'blocker' && finding.status === 'open')
   const capturedSnapshots = workspace?.snapshots.filter(snapshot => snapshot.status === 'captured') ?? []
@@ -833,6 +1242,41 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     : []
   const selectedMatrixSapSkuCodes = matrixSapSkuCandidates.filter(item => selectedMatrixSapSkus[item.skuComplete]).map(item => item.skuComplete)
   const expectedMatrixSapDeactivationConfirmation = `INACTIVAR ${selectedMatrixSapSkuCodes.length} SKU EN SAP`
+  const selectedBoardColorCodes = [...new Set(boardMatrixRows.filter(row => selectedBoardColors[row.sourceColorCode]).map(row => row.sourceColorCode))]
+  const boardColorsReadyForBaseConstruction = new Set([
+    ...boardMatrixRows.filter(row => row.hasPersistedBoardResolution).map(row => row.sourceColorCode),
+    ...(boardMatrixCoverage ?? [])
+    .filter(boardColorIsReadyForBaseConstruction)
+    .map(result => result.sourceColorCode),
+  ])
+  const boardConditionalReviewRows = boardMatrixRows.filter(row =>
+    row.status === 'matches' && row.hasConditionalBoardRule && !boardColorsReadyForBaseConstruction.has(row.sourceColorCode)
+  )
+  const boardStandardRows = boardMatrixRows.filter(row =>
+    (row.status === 'matches' && !row.hasConditionalBoardRule)
+    || (row.role === 'full_product' && boardColorsReadyForBaseConstruction.has(row.sourceColorCode))
+  )
+  const boardExceptionRows = boardMatrixRows.filter(row =>
+    row.status !== 'matches' && !boardColorsReadyForBaseConstruction.has(row.sourceColorCode)
+  )
+  const boardStandardConsumption = boardMatrixRows.find(row => row.role === 'full_product')?.normalizedConsumptionQty ?? null
+  const boardReferenceProfile = boardMatrixRows.find(row => row.role === 'full_product')?.referenceMaterialProfile ?? null
+  const boardReferenceProfiles = boardMatrixRows.find(row => row.role === 'full_product')?.referenceMaterialProfiles ?? []
+  const boardSapInactiveAppCandidates = boardMatrixCoverage
+    ? [...new Map(boardMatrixCoverage.flatMap(result => result.invalidSkus)
+      .filter(item => item.reason === 'sap_invalid')
+      .map(item => [item.skuComplete, item] as const)).values()]
+    : []
+  const boardOtherCatalogIssues = boardMatrixCoverage
+    ? [...new Map(boardMatrixCoverage.flatMap(result => result.invalidSkus)
+      .filter(item => item.reason !== 'sap_invalid')
+      .map(item => [item.skuComplete, item] as const)).values()]
+    : []
+  const visibleBoardOtherCatalogIssues = boardOtherCatalogIssues.filter(item => !ignoredBoardCatalogIssues[`${item.skuComplete}:${item.reason}`])
+  const selectedBoardInactiveAppSkuCodes = boardSapInactiveAppCandidates.filter(item => selectedBoardInactiveAppSkus[item.skuComplete]).map(item => item.skuComplete)
+  const selectedBoardConditionalStrategy = boardConditionalRuleEditor?.strategies.find(strategy => strategy.strategyId === boardConditionalRuleEditor.selectedStrategyId) ?? null
+  const allBoardExceptionsSelected = boardExceptionRows.length > 0 && boardExceptionRows.every(row => selectedBoardColors[row.sourceColorCode] === true)
+  const allBoardInactiveAppCandidatesSelected = boardSapInactiveAppCandidates.length > 0 && boardSapInactiveAppCandidates.every(item => selectedBoardInactiveAppSkus[item.skuComplete] === true)
   const reviewFindings = visibleFindings.filter(finding => finding.status === 'open' && finding.severity !== 'info' && finding.findingType !== 'issue_method_review' && finding.findingType !== 'color_rule_proposal')
   const issueMethodFindings = visibleFindings.filter(finding => finding.status === 'open' && finding.findingType === 'issue_method_review')
   const reviewTopicCount = new Set(reviewFindings.map(finding => {
@@ -883,6 +1327,22 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     setLocallyAppliedMatrixSkuOverrides({})
     clearTransientMatrixCandidateOverrideState()
     setReferenceScopeAssignments({})
+    setPreparedSupabaseSyncSkus({})
+    setSkuActionMessages({})
+    setSelectedBoardColors({})
+    setBoardMatrixCoverage(null)
+    setVisibleBoardCoverageColorCodes([])
+    setLastBoardMatrixAnalyzedColorCodes([])
+    setSelectedBoardInactiveAppSkus({})
+    setBoardColorRuleEditor(null)
+    setBoardConditionalRuleEditor(null)
+    setSelectedBoardDualColorCases({})
+    setSavedBoardDualColorResults({})
+    setBoardDualCandidateDeviation({})
+    setBoardDualCandidateOverrideReviewed({})
+    setBoardDualCandidateOverrideApplyingKey(null)
+    setSavedBoardDualSkuOverrideResults({})
+    setBoardMatrixMessage(null)
     setAnalysisStartedAt(startedAt)
     setAnalysisProgress({
       stage: 'starting',
@@ -1005,6 +1465,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
 
   function selectReference(candidate: ReferenceImportCandidate): void {
     setSelectedCandidate(candidate)
+    setIsReferencePickerOpen(false)
     setWorkspace(null)
     setMessage(null)
     setMatrixTargetColorEdits({})
@@ -1016,6 +1477,14 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     setLocallyAppliedMatrixSkuOverrides({})
     clearTransientMatrixCandidateOverrideState()
     setReferenceScopeAssignments({})
+    setPreparedSupabaseSyncSkus({})
+    setSkuActionMessages({})
+    setBoardMatrixCoverage(null)
+    setVisibleBoardCoverageColorCodes([])
+    setLastBoardMatrixAnalyzedColorCodes([])
+    setSelectedBoardInactiveAppSkus({})
+    setBoardColorRuleEditor(null)
+    setBoardMatrixMessage(null)
   }
 
   function analyzeSelectedReference(options?: { retryPendingBomReads?: boolean }): void {
@@ -1246,6 +1715,195 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
         setMatrixCoverage({ selectionKey: matrixVerificationKey, success: result.success, results: result.results })
       } catch (error) {
         setMessage(error instanceof Error ? error.message : 'No se pudo verificar la matriz.')
+      }
+    })
+  }
+
+  async function verifyBoardMatrixWithProgress(colorCodes: string[], startedAt: number): Promise<{ success: boolean; message: string; results: BoardMatrixCatalogResult[] }> {
+    const abortController = new AbortController()
+    boardMatrixAbortControllerRef.current = abortController
+    setBoardMatrixVerificationStartedAt(startedAt)
+    setBoardMatrixVerificationProgress({ stage: 'starting', message: 'Iniciando la revalidación de tableros en SAP.', current: null, total: null })
+    try {
+      const response = await fetch('/api/product-design/bom/board-matrix/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ colorCodes }),
+        signal: abortController.signal,
+      })
+      if (!response.ok) throw await boardMatrixStartFailure(response)
+      if (!response.body) throw new Error('El análisis de tableros se inició sin una respuesta de progreso.')
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let completed: { success: boolean; message: string; results: BoardMatrixCatalogResult[] } | null = null
+      try {
+        while (true) {
+          const next = await reader.read()
+          if (next.done) break
+          buffer += decoder.decode(next.value, { stream: true })
+          const events = buffer.split('\n\n')
+          buffer = events.pop() ?? ''
+          for (const rawEvent of events) {
+            const payload = rawEvent.split('\n').find(line => line.startsWith('data: '))?.slice(6)
+            if (!payload) continue
+            const event = parseBoardMatrixVerificationEvent(payload)
+            if (!event) continue
+            if (event.type === 'progress') {
+              setBoardMatrixVerificationProgress(event.progress)
+              continue
+            }
+            if (event.type === 'error') throw new Error(event.message)
+            completed = { success: event.success, message: event.message, results: event.results }
+          }
+        }
+      } finally {
+        reader.releaseLock()
+      }
+      if (!completed) throw new Error('El análisis de tableros terminó sin devolver un resultado.')
+      return completed
+    } finally {
+      if (boardMatrixAbortControllerRef.current === abortController) boardMatrixAbortControllerRef.current = null
+      setBoardMatrixVerificationProgress(null)
+      setBoardMatrixVerificationStartedAt(null)
+    }
+  }
+
+  async function persistClosedBoardResolution(result: BoardMatrixCatalogResult): Promise<void> {
+    if (!boardColorIsReadyForBaseConstruction(result)) return
+    const saved = await confirmTransientBoardMatrixResolutionAction({
+      sourceColorCode: result.sourceColorCode,
+      sapActiveSkuCount: result.sapActiveSkuCount,
+      checkedSkuCount: result.checkedSkuCount,
+      dualCandidateCount: result.dualCandidates.length,
+    })
+    if (!saved.success) throw new Error(saved.message)
+    setWorkspace(current => current ? {
+      ...current,
+      boardMatrix: current.boardMatrix?.map(row => row.sourceColorCode === result.sourceColorCode
+        ? { ...row, hasPersistedBoardResolution: true }
+        : row),
+    } : current)
+  }
+
+  function cancelBoardMatrixVerification(): void {
+    const abortController = boardMatrixAbortControllerRef.current
+    if (!abortController || abortController.signal.aborted) return
+    abortController.abort()
+    setBoardMatrixMessage('Cancelando la revalidación de tableros. SAP terminará únicamente las consultas que ya estuvieran en curso.')
+  }
+
+  function verifyBoardMatrixInSap(): void {
+    if (selectedBoardColorCodes.length === 0) {
+      setBoardMatrixMessage('Selecciona al menos un color de producto para revalidarlo en SAP.')
+      return
+    }
+    runTask(async () => {
+      const startedAt = Date.now()
+      try {
+        setVisibleBoardCoverageColorCodes([])
+        const result = await verifyBoardMatrixWithProgress(selectedBoardColorCodes, startedAt)
+        setBoardMatrixCoverage(current => {
+          const refreshedColors = new Set(result.results.map(coverage => coverage.sourceColorCode))
+          return [
+            ...(current ?? []).filter(coverage => !refreshedColors.has(coverage.sourceColorCode)),
+            ...result.results,
+          ]
+        })
+        setVisibleBoardCoverageColorCodes(result.results.map(coverage => coverage.sourceColorCode))
+        setLastBoardMatrixAnalyzedColorCodes(result.results.map(coverage => coverage.sourceColorCode))
+        setSelectedBoardColors({})
+        for (const coverage of result.results) await persistClosedBoardResolution(coverage)
+        setSelectedBoardInactiveAppSkus({})
+        setIgnoredBoardCatalogIssues({})
+        setSelectedBoardDualColorCases({})
+        setSavedBoardDualColorResults({})
+        setBoardDualCandidateDeviation({})
+        setBoardDualCandidateOverrideReviewed({})
+        setBoardDualCandidateOverrideApplyingKey(null)
+        setSavedBoardDualSkuOverrideResults({})
+        setBoardMatrixMessage(`${result.message} Tiempo total: ${formatElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000))}.`)
+      } catch (error) {
+        const cancelled = error instanceof Error && error.name === 'AbortError'
+        setBoardMatrixMessage(cancelled
+          ? 'Revalidación de tableros cancelada. No se iniciarán más consultas SAP de este lote.'
+          : error instanceof Error ? error.message : 'No se pudo revalidar la matriz de tableros.')
+      }
+    })
+  }
+
+  function toggleAllBoardExceptions(): void {
+    const nextSelected = !allBoardExceptionsSelected
+    setSelectedBoardColors(current => ({
+      ...current,
+      ...Object.fromEntries(boardExceptionRows.map(row => [row.sourceColorCode, nextSelected])),
+    }))
+    setSelectedBoardInactiveAppSkus({})
+    setIgnoredBoardCatalogIssues({})
+    setVisibleBoardCoverageColorCodes([])
+    setBoardColorRuleEditor(null)
+    setBoardMatrixMessage(null)
+  }
+
+  function toggleAllBoardInactiveAppCandidates(): void {
+    const nextSelected = !allBoardInactiveAppCandidatesSelected
+    setSelectedBoardInactiveAppSkus(current => ({
+      ...current,
+      ...Object.fromEntries(boardSapInactiveAppCandidates.map(item => [item.skuComplete, nextSelected])),
+    }))
+  }
+
+  function syncBoardInactiveSkusInSupabase(): void {
+    if (selectedBoardInactiveAppSkuCodes.length === 0) return
+    runTask(async () => {
+      try {
+        const result = await syncTransientSapInactiveSkusInSupabaseAction({ skuCompletes: selectedBoardInactiveAppSkuCodes })
+        const synchronizedSkuCodes = new Set(result.results.filter(item => item.success).map(item => item.skuComplete))
+        setBoardMatrixCoverage(current => current?.map(coverage => {
+          const reconciled = coverage.invalidSkus.filter(item => item.reason === 'sap_invalid' && synchronizedSkuCodes.has(item.skuComplete))
+          return reconciled.length === 0
+            ? coverage
+            : {
+              ...coverage,
+              supabaseActiveSkuCount: Math.max(0, coverage.supabaseActiveSkuCount - reconciled.length),
+              invalidSkus: coverage.invalidSkus.filter(item => !(item.reason === 'sap_invalid' && synchronizedSkuCodes.has(item.skuComplete))),
+            }
+        }) ?? null)
+        setBoardMatrixMessage(`${result.message} Se aplicó únicamente a los SKU seleccionados, sin volver a recorrer SAP. ${result.results.map(item => `${item.skuComplete}: ${item.message}`).join(' ')}`)
+        setSelectedBoardInactiveAppSkus({})
+      } catch (error) {
+        setBoardMatrixMessage(error instanceof Error ? error.message : 'No se pudo sincronizar el estado de los SKU en Supabase.')
+      }
+    })
+  }
+
+  function ignoreBoardCatalogIssue(item: BoardMatrixCatalogResult['invalidSkus'][number]): void {
+    setIgnoredBoardCatalogIssues(current => ({ ...current, [`${item.skuComplete}:${item.reason}`]: true }))
+    setBoardMatrixMessage(`${item.skuComplete} se ignoró solo en esta sesión. No se modificó SAP ni Supabase.`)
+  }
+
+  function createBoardSapColorVariation(item: BoardMatrixCatalogResult['invalidSkus'][number]): void {
+    if (item.reason !== 'sap_only') return
+    runTask(async () => {
+      try {
+        const result = await createTransientSapColorVariationAction({
+          skuComplete: item.skuComplete,
+          sapDescriptionOriginal: item.skuItemName,
+        })
+        setBoardMatrixMessage(result.message)
+        if (!result.success) return
+        setBoardMatrixCoverage(current => current?.map(coverage => ({
+          ...coverage,
+          supabaseSkuCount: coverage.invalidSkus.some(issue => issue.skuComplete === item.skuComplete && issue.reason === 'sap_only')
+            ? coverage.supabaseSkuCount + 1
+            : coverage.supabaseSkuCount,
+          supabaseActiveSkuCount: coverage.invalidSkus.some(issue => issue.skuComplete === item.skuComplete && issue.reason === 'sap_only')
+            ? coverage.supabaseActiveSkuCount + 1
+            : coverage.supabaseActiveSkuCount,
+          invalidSkus: coverage.invalidSkus.filter(issue => !(issue.skuComplete === item.skuComplete && issue.reason === 'sap_only')),
+        })) ?? null)
+      } catch (error) {
+        setBoardMatrixMessage(error instanceof Error ? error.message : 'No se pudo crear la variación de color en Supabase.')
       }
     })
   }
@@ -1522,31 +2180,244 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     })
   }
 
-  function deactivateInactiveSku(skuComplete: string): void {
+  function syncInactiveSkuInSupabase(skuComplete: string): void {
     if (!workspace) return
+    if (!preparedSupabaseSyncSkus[skuComplete]) {
+      setPreparedSupabaseSyncSkus(current => ({ ...current, [skuComplete]: true }))
+      setSkuActionMessages(current => ({ ...current, [skuComplete]: 'SAP se volverá a consultar antes de sincronizar este estado en Supabase.' }))
+      return
+    }
     runTask(async () => {
       setSkuActionMessages(current => ({ ...current, [skuComplete]: 'Comprobando el estado en SAP...' }))
       try {
-        const result = await deactivateTransientSapInactiveSkuInSupabaseAction({
-          referenceId: workspace.run.referenceId,
-          skuComplete,
-          confirmationText: skuDeactivationConfirmations[skuComplete] ?? '',
-        })
+        const result = await syncTransientSapInactiveSkusInSupabaseAction({ skuCompletes: [skuComplete] })
         setMessage(result.message)
-        setSkuActionMessages(current => ({ ...current, [skuComplete]: result.message }))
+        setSkuActionMessages(current => ({ ...current, [skuComplete]: result.results[0]?.message ?? result.message }))
+        setPreparedSupabaseSyncSkus(current => Object.fromEntries(
+          Object.entries(current).filter(([code]) => code !== skuComplete)
+        ))
         if (!result.success) return
 
         const nextCandidates = await listTransientReferenceBomImportCandidatesAction(search)
         setCandidates(nextCandidates)
         setSelectedCandidate(current => nextCandidates.find(candidate => candidate.referenceId === current?.referenceId) ?? current)
         setWorkspace(null)
-        setSkuDeactivationConfirmations(current => Object.fromEntries(
-          Object.entries(current).filter(([code]) => code !== skuComplete)
-        ))
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'No se pudo inactivar el SKU en Supabase.'
         setMessage(errorMessage)
         setSkuActionMessages(current => ({ ...current, [skuComplete]: errorMessage }))
+      }
+    })
+  }
+
+  function openBoardColorRuleEditor(candidate: NonNullable<BoardMatrixCatalogResult['fullProductRuleCandidate']>, sourceColorCode: string): void {
+    setBoardColorRuleEditor({
+      sourceColorCode,
+      boardColorCode: candidate.boardColorCode,
+      materialProfile: candidate.materialProfile,
+      evidenceSkuCount: candidate.evidenceSkuCount,
+    })
+  }
+
+  function saveBoardColorRule(): void {
+    if (!boardColorRuleEditor) return
+    const draft = boardColorRuleEditor
+    runTask(async () => {
+      try {
+        const result = await applyTransientBoardFullProductColorRuleAction({
+          colorCode: draft.sourceColorCode,
+          boardColorCode: draft.boardColorCode,
+          materialProfile: draft.materialProfile,
+        })
+        setBoardMatrixMessage(result.success ? `Regla global guardada para ${draft.sourceColorCode}.` : result.message)
+        if (!result.success) return
+        const updateRow = (row: BoardMatrixRow): BoardMatrixRow => row.sourceColorCode === draft.sourceColorCode && row.role === 'full_product'
+          ? {
+            ...row,
+            proposedColorCode: draft.boardColorCode,
+            proposedMaterialProfile: draft.materialProfile,
+            status: row.status === 'profile_override_candidate' || row.status === 'color_override_candidate' ? 'matches' : row.status,
+            statusMessage: 'La regla global del color coincide con la evidencia SAP validada.',
+          }
+          : row
+        setWorkspace(current => current ? {
+          ...current,
+          boardMatrix: current.boardMatrix?.map(updateRow),
+        } : current)
+        setBoardMatrixCoverage(current => current?.map(coverage => coverage.sourceColorCode === draft.sourceColorCode ? {
+          ...coverage,
+          rows: coverage.rows.map(updateRow),
+        } : coverage) ?? null)
+        setBoardColorRuleEditor(null)
+      } catch (error) {
+        setBoardMatrixMessage(error instanceof Error ? error.message : 'No se pudo guardar la regla global de tablero.')
+      }
+    })
+  }
+
+  function openBoardConditionalRuleEditor(sourceColorCode: string, strategies: BoardMatrixConditionalStrategy[]): void {
+    const firstStrategy = strategies[0]
+    if (!firstStrategy) return
+    setBoardConditionalRuleEditor({
+      sourceColorCode,
+      strategies,
+      selectedStrategyId: firstStrategy.strategyId,
+      saveResult: null,
+    })
+  }
+
+  function saveBoardConditionalRule(): void {
+    if (!boardConditionalRuleEditor) return
+    const draft = boardConditionalRuleEditor
+    const selectedStrategy = draft.strategies.find(strategy => strategy.strategyId === draft.selectedStrategyId)
+    if (!selectedStrategy) return
+    const hasPendingDualCandidate = boardMatrixCoverage?.some(coverage =>
+      coverage.sourceColorCode === draft.sourceColorCode && coverage.dualCandidates.length > 0
+    ) ?? false
+    runTask(async () => {
+      try {
+        const result = await saveTransientBoardConditionalProfileRuleAction({
+          sourceColorCode: draft.sourceColorCode,
+          defaultBoardColorCode: selectedStrategy.defaultBoardColorCode,
+          defaultMaterialProfile: selectedStrategy.defaultMaterialProfile,
+          conditions: selectedStrategy.conditions,
+        })
+        setBoardMatrixMessage(result.message)
+        setBoardConditionalRuleEditor(current => current ? {
+          ...current,
+          saveResult: { success: result.success, message: result.message },
+        } : current)
+        if (!result.success) return
+        const updateRow = (row: BoardMatrixRow): BoardMatrixRow => row.sourceColorCode === draft.sourceColorCode && row.role === 'full_product'
+          ? {
+            ...row,
+            proposedColorCode: selectedStrategy.defaultBoardColorCode,
+            proposedMaterialProfile: selectedStrategy.defaultMaterialProfile,
+            hasConditionalBoardRule: true,
+            hasPersistedBoardResolution: false,
+            status: hasPendingDualCandidate ? row.status : 'matches',
+            statusMessage: hasPendingDualCandidate
+              ? 'La estrategia unicolor está guardada, pero este color conserva casos Dual pendientes de decisión.'
+              : 'La estrategia condicional de tablero está guardada en la configuración del color.',
+          }
+          : row
+        setWorkspace(current => current ? {
+          ...current,
+          boardMatrix: current.boardMatrix?.map(updateRow),
+        } : current)
+        const coverage = boardMatrixCoverage?.find(item => item.sourceColorCode === draft.sourceColorCode)
+        if (coverage) {
+          const updatedCoverage = {
+            ...coverage,
+            rows: coverage.rows.map(updateRow),
+            boardProfileConditions: result.boardProfileConditions ?? coverage.boardProfileConditions,
+            conditionalRuleStrategies: [],
+          }
+          setBoardMatrixCoverage(current => current?.map(item => item.sourceColorCode === draft.sourceColorCode ? updatedCoverage : item) ?? null)
+          await persistClosedBoardResolution(updatedCoverage)
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'No se pudo guardar la regla condicional de tablero.'
+        setBoardMatrixMessage(message)
+        setBoardConditionalRuleEditor(current => current ? { ...current, saveResult: { success: false, message } } : current)
+      }
+    })
+  }
+
+  function chooseBoardDualColorCase(candidate: BoardDualCandidateWithColor): void {
+    setSelectedBoardDualColorCases(current => {
+      const selected = current[candidate.sourceColorCode]
+      if (selected && boardDualCandidateKey(selected) === boardDualCandidateKey(candidate)) {
+        const remaining = { ...current }
+        delete remaining[candidate.sourceColorCode]
+        return remaining
+      }
+      return { ...current, [candidate.sourceColorCode]: candidate }
+    })
+  }
+
+  function saveBoardDualColorCase(candidate: BoardDualCandidateWithColor): void {
+    runTask(async () => {
+      try {
+        const result = await saveTransientBoardDualColorCaseAction({
+          sourceColorCode: candidate.sourceColorCode,
+          skuCompletes: candidate.cases.map(candidateCase => candidateCase.skuComplete),
+          structureColorCode: candidate.structureColorCode,
+          structureMaterialProfile: candidate.structureMaterialProfile,
+          frontColorCode: candidate.frontColorCode,
+          frontMaterialProfile: candidate.frontMaterialProfile,
+        })
+        setBoardMatrixMessage(result.message)
+        if (result.success && result.savedConfiguration) {
+          const candidateKey = boardDualCandidateKey(candidate)
+          setSavedBoardDualColorResults(current => ({ ...current, [candidateKey]: result }))
+          setWorkspace(current => current ? {
+            ...current,
+            boardMatrix: current.boardMatrix?.map(row => row.sourceColorCode === candidate.sourceColorCode
+              ? { ...row, hasPersistedBoardResolution: false }
+              : row),
+          } : current)
+          const coverage = boardMatrixCoverage?.find(item => item.sourceColorCode === candidate.sourceColorCode)
+          if (coverage) {
+            const updatedCoverage = { ...coverage, boardDualConfiguration: result.savedConfiguration }
+            setBoardMatrixCoverage(current => current?.map(item => item.sourceColorCode === candidate.sourceColorCode ? updatedCoverage : item) ?? null)
+            await persistClosedBoardResolution(updatedCoverage)
+          }
+          setSelectedBoardDualColorCases(current => {
+            const next = { ...current }
+            delete next[candidate.sourceColorCode]
+            return next
+          })
+        }
+      } catch (error) {
+        setBoardMatrixMessage(error instanceof Error ? error.message : 'No se pudo guardar el caso Dual del color.')
+      }
+    })
+  }
+
+  function applyBoardDualCandidateSkuOverrides(candidate: BoardDualCandidateWithColor): void {
+    const candidateKey = boardDualCandidateOverrideKey(candidate)
+    if (!boardDualCandidateOverrideReviewed[candidateKey]) return
+    setBoardDualCandidateOverrideApplyingKey(candidateKey)
+    runTask(async () => {
+      try {
+        const result = await saveTransientBoardDualSkuOverridesAction({
+          sourceColorCode: candidate.sourceColorCode,
+          skuCompletes: candidate.cases.map(candidateCase => candidateCase.skuComplete),
+          structureColorCode: candidate.structureColorCode,
+          structureMaterialProfile: candidate.structureMaterialProfile,
+          frontColorCode: candidate.frontColorCode,
+          frontMaterialProfile: candidate.frontMaterialProfile,
+          isSapDeviation: boardDualCandidateDeviation[candidateKey] === true,
+        })
+        setBoardMatrixMessage(result.message)
+        if (result.success && result.savedSkuOverride) {
+          setSavedBoardDualSkuOverrideResults(current => ({ ...current, [candidateKey]: result }))
+          setWorkspace(current => current ? {
+            ...current,
+            boardMatrix: current.boardMatrix?.map(row => row.sourceColorCode === candidate.sourceColorCode
+              ? { ...row, hasPersistedBoardResolution: false }
+              : row),
+          } : current)
+          const coverage = boardMatrixCoverage?.find(item => item.sourceColorCode === candidate.sourceColorCode)
+          if (coverage) {
+            const savedSkuCompletes = new Set(result.savedSkuOverride.skuCompletes)
+            const retainedOverrides = coverage.boardDualSkuOverrides.flatMap(override => {
+              const retainedSkuCompletes = override.skuCompletes.filter(skuComplete => !savedSkuCompletes.has(skuComplete))
+              return retainedSkuCompletes.length > 0 ? [{ ...override, skuCompletes: retainedSkuCompletes }] : []
+            })
+            const updatedCoverage = {
+              ...coverage,
+              boardDualSkuOverrides: [...retainedOverrides, result.savedSkuOverride],
+            }
+            setBoardMatrixCoverage(current => current?.map(item => item.sourceColorCode === candidate.sourceColorCode ? updatedCoverage : item) ?? null)
+            await persistClosedBoardResolution(updatedCoverage)
+          }
+        }
+      } catch (error) {
+        setBoardMatrixMessage(error instanceof Error ? error.message : 'No se pudieron guardar los overrides Dual por SKU.')
+      } finally {
+        setBoardDualCandidateOverrideApplyingKey(null)
       }
     })
   }
@@ -1593,52 +2464,38 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
         </div>
       ) : null}
 
-      <section className="grid gap-5 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.6fr)]">
-        <aside className="border border-slate-200 bg-white p-4">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="font-semibold text-slate-950">Productos de venta</h2>
-            <button
-              type="button"
-              title="Buscar referencias"
-              onClick={searchReferences}
-              disabled={isPending}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-300 text-slate-700 disabled:opacity-50"
-            >
-              <Search className="h-4 w-4" />
-            </button>
+      <section className="flex min-w-0 flex-col gap-5">
+        {isReferencePickerOpen ? <section className="border border-slate-200 bg-white p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold text-slate-950">Buscar producto de venta</h2>
+              <p className="mt-1 text-xs text-slate-500">Elige una referencia y el selector volverá a cerrarse.</p>
+            </div>
+            <button type="button" onClick={() => setIsReferencePickerOpen(false)} className="h-8 border border-slate-300 px-3 text-xs font-semibold text-slate-700">Cerrar</button>
           </div>
           <div className="mt-3 flex gap-2">
             <input
+              autoFocus
               value={search}
               onChange={event => setSearch(event.target.value)}
-              onKeyDown={event => {
-                if (event.key === 'Enter') searchReferences()
-              }}
-              placeholder="Codigo de producto, por ejemplo VBAN05-0001"
-              className="h-9 min-w-0 flex-1 rounded-md border border-slate-300 px-3 text-sm outline-none ring-sky-600 focus:ring-1"
+              onKeyDown={event => { if (event.key === 'Enter') searchReferences() }}
+              placeholder="Código de producto, por ejemplo VBAN05-0001"
+              className="h-9 min-w-0 flex-1 border border-slate-300 px-3 text-sm outline-none ring-sky-600 focus:ring-1"
             />
+            <button type="button" title="Buscar referencias" onClick={searchReferences} disabled={isPending} className="inline-flex h-9 w-9 items-center justify-center border border-slate-300 text-slate-700 disabled:opacity-50"><Search className="h-4 w-4" /></button>
           </div>
-          <div className="mt-4 max-h-[520px] space-y-1 overflow-y-auto pr-1">
+          <div className="mt-3 grid max-h-64 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
             {candidates.map(candidate => {
               const selected = candidate.referenceId === selectedCandidate?.referenceId
-              return (
-                <button
-                  key={candidate.referenceId}
-                  type="button"
-                  onClick={() => selectReference(candidate)}
-                  className={`w-full border px-3 py-3 text-left ${selected ? 'border-sky-400 bg-sky-50' : 'border-transparent hover:border-slate-200 hover:bg-slate-50'}`}
-                >
-                  <span className="block font-mono text-xs font-semibold text-slate-700">
-                    {salesReferenceCode(candidate.familyCode, candidate.referenceCode)}
-                  </span>
-                  <span className="mt-1 block text-sm font-medium text-slate-950">{candidate.productName}</span>
-                  <span className="mt-1 block text-xs text-slate-500">{candidate.activeSkuCount} colores activos</span>
-                </button>
-              )
+              return <button key={candidate.referenceId} type="button" onClick={() => selectReference(candidate)} className={`border px-3 py-2 text-left ${selected ? 'border-sky-400 bg-sky-50' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}>
+                <span className="block font-mono text-xs font-semibold text-slate-700">{salesReferenceCode(candidate.familyCode, candidate.referenceCode)}</span>
+                <span className="mt-1 block text-sm font-medium text-slate-950">{candidate.productName}</span>
+                <span className="mt-1 block text-xs text-slate-500">{candidate.activeSkuCount} colores activos</span>
+              </button>
             })}
             {candidates.length === 0 ? <p className="px-1 py-4 text-sm text-slate-500">Sin referencias para mostrar.</p> : null}
           </div>
-        </aside>
+        </section> : null}
 
         <div className="flex min-w-0 flex-col gap-5">
           <section className="border border-slate-200 bg-white p-5">
@@ -1655,6 +2512,11 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                   </p>
                 ) : null}
               </div>
+              <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => setIsReferencePickerOpen(current => !current)} className="inline-flex h-10 items-center gap-2 border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800">
+                <Search className="h-4 w-4" />
+                Cambiar referencia
+              </button>
               <button
                 type="button"
                 onClick={() => analyzeSelectedReference({ retryPendingBomReads: true })}
@@ -1668,6 +2530,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                     ? 'Volver a comprobar SAP'
                     : 'Analizar LdM en SAP'}
               </button>
+              </div>
             </div>
           </section>
 
@@ -1680,6 +2543,229 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
 
           {workspace ? (
             <>
+              {boardMatrixRows.length > 0 ? (
+                <section className="border border-violet-200 bg-white">
+                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-violet-100 bg-violet-50 px-5 py-4">
+                    <div>
+                      <h2 className="font-semibold text-slate-950">Matriz interna de tableros (V03)</h2>
+                      <p className="mt-1 text-sm text-slate-600">SAP define primero la cobertura transversal; Supabase se contrasta después. Las reglas globales solo se habilitan con evidencia completa y uniforme.</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={toggleAllBoardExceptions} disabled={boardExceptionRows.length === 0} className="h-9 border border-violet-300 bg-white px-3 text-sm font-semibold text-violet-900 disabled:opacity-50">
+                      {allBoardExceptionsSelected ? 'Quitar selección' : `Seleccionar excepciones (${boardExceptionRows.length})`}
+                    </button>
+                    <button type="button" onClick={verifyBoardMatrixInSap} disabled={isPending || Boolean(boardMatrixVerificationProgress) || selectedBoardColorCodes.length === 0} className="inline-flex h-9 items-center gap-2 border border-violet-300 bg-white px-3 text-sm font-semibold text-violet-900 disabled:opacity-50">
+                      {boardMatrixVerificationProgress ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
+                      {boardMatrixVerificationProgress ? 'Revalidando SAP…' : 'Revalidar colores seleccionados'}
+                    </button>
+                    </div>
+                  </div>
+                  <div className="grid border-b border-violet-100 bg-white text-sm sm:grid-cols-3">
+                    <div className="border-b border-violet-100 px-5 py-3 sm:border-b-0 sm:border-r"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Patron principal</p><p className="mt-1 font-mono font-semibold text-slate-900">{boardReferenceProfile ?? 'Pendiente'}</p><p className="mt-1 text-xs text-slate-500">Perfiles vistos: {boardReferenceProfiles.join(', ') || '-'}</p></div>
+                    <div className="border-b border-violet-100 px-5 py-3 sm:border-b-0 sm:border-r"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Consumo normalizado</p><p className="mt-1 font-mono font-semibold text-slate-900">{boardStandardConsumption === null ? 'Pendiente' : formatMatrixQuantity(boardStandardConsumption)}</p><p className="mt-1 text-xs text-slate-500">Mayor consumo observado por rol, sin depender del formato.</p></div>
+                    <div className="px-5 py-3"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Pendientes de contraste</p><p className="mt-1 font-semibold text-slate-900">{boardExceptionRows.length} caso(s)</p><p className="mt-1 text-xs text-slate-500">{boardStandardRows.length} fila(s) válidas y alineadas para construcción BOM base.</p></div>
+                  </div>
+                  {boardMatrixVerificationProgress ? <div aria-live="polite" className="border-b border-violet-100 bg-violet-50 px-5 py-3 text-sm text-violet-950">
+                    <p className="font-semibold">Revalidación de tableros en curso</p>
+                    <p className="mt-1">Tiempo transcurrido: {formatElapsedSeconds(boardMatrixVerificationElapsedSeconds)}</p>
+                    <p className="mt-1">{boardMatrixVerificationProgress.message}{boardMatrixVerificationProgress.current !== null && boardMatrixVerificationProgress.total !== null ? ` (${boardMatrixVerificationProgress.current} de ${boardMatrixVerificationProgress.total})` : ''}</p>
+                    {boardMatrixVerificationProgress.total !== null && boardMatrixVerificationProgress.total > 0 ? <progress className="mt-3 h-2 w-full accent-violet-700" value={boardMatrixVerificationProgress.current ?? 0} max={boardMatrixVerificationProgress.total} /> : <div className="mt-3 h-2 w-full animate-pulse bg-violet-200" />}
+                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                      <button type="button" onClick={cancelBoardMatrixVerification} className="h-8 border border-violet-400 bg-white px-3 text-xs font-semibold text-violet-950">Cancelar validación SAP</button>
+                      <p className="text-xs text-violet-900">Detiene las siguientes consultas del lote; una consulta SAP ya iniciada puede terminar.</p>
+                    </div>
+                  </div> : null}
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-left text-sm">
+                      <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-3 py-3">Verificar</th><th className="px-3 py-3">Color producto</th><th className="px-3 py-3">Rol lógico</th><th className="px-3 py-3">Tablero SAP / candidato</th><th className="px-3 py-3">Perfil SAP / patrón</th><th className="px-3 py-3">Bases, formatos y consumo</th><th className="px-3 py-3">Estado</th></tr></thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {boardExceptionRows.map(row => <tr key={row.key} className="align-top text-slate-800">
+                          <td className="px-3 py-3"><input aria-label={`Verificar color ${row.sourceColorCode}`} type="checkbox" checked={selectedBoardColors[row.sourceColorCode] === true} onChange={event => { setSelectedBoardColors(current => ({ ...current, [row.sourceColorCode]: event.target.checked })); setVisibleBoardCoverageColorCodes([]); setSelectedBoardInactiveAppSkus({}); setBoardColorRuleEditor(null); setBoardMatrixMessage(null) }} /></td>
+                          <td className="px-3 py-3 font-mono font-semibold">{row.sourceColorCode}</td>
+                          <td className="px-3 py-3"><p>{boardRoleLabel(row)}</p><p className="mt-1 text-xs text-slate-500">{row.roleSource === 'published_bom' ? 'BOM publicada' : row.roleSource === 'sku_override' ? 'Override semántico vigente' : row.roleSource === 'evidence' ? 'Unico tablero en LdM' : 'Sin evidencia suficiente'}</p></td>
+                          <td className="px-3 py-3 font-mono text-xs"><p>{row.observedColorCodes.join(', ') || '-'}</p>{row.recommendedColorCode ? <p className="mt-1 text-slate-500">Interno candidato: {row.recommendedColorCode}</p> : row.isProductColorMatch ? <p className="mt-1 text-emerald-700">Coincide con producto</p> : null}{row.proposedColorCode ? <p className="mt-1 text-slate-500">Configurado: {row.proposedColorCode}</p> : null}</td>
+                          <td className="px-3 py-3 font-mono text-xs"><p>{row.observedMaterialProfiles.join(', ') || '-'}</p><p className="mt-1 text-slate-500">Principal: {row.referenceMaterialProfile ?? 'Pendiente'}</p><p className="mt-1 text-slate-500">Vistos: {row.referenceMaterialProfiles.join(', ') || '-'}</p>{row.status === 'profile_override_candidate' && row.recommendedMaterialProfile ? <p className="mt-1 text-violet-800">Candidato según SAP: {row.recommendedMaterialProfile}</p> : null}</td>
+                          <td className="px-3 py-3 text-xs"><p>{row.baseItemCodes.join(', ') || '-'}</p><p className="mt-1 font-mono text-slate-500">{row.formatKeys.join(', ') || 'Formato pendiente'}</p><p className="mt-1 font-mono font-semibold text-violet-900">Max.: {row.normalizedConsumptionQty === null ? 'Pendiente' : formatMatrixQuantity(row.normalizedConsumptionQty)}</p></td>
+                          <td className="px-3 py-3"><p className={row.status === 'matches' ? 'font-semibold text-emerald-700' : row.status === 'conflict_real' ? 'font-semibold text-rose-700' : 'font-semibold text-amber-700'}>{boardMatrixStatusLabel(row.status)}</p><p className="mt-1 max-w-xs text-xs text-slate-500">{row.statusMessage}</p><details className="mt-2 text-xs"><summary className="cursor-pointer font-semibold text-violet-800">{row.evidence.length} evidencia(s) SAP</summary><div className="mt-1 space-y-1 font-mono text-slate-600">{row.evidence.map(item => <p key={`${item.skuComplete}:${item.itemCode}:${item.lineIdentity}`}>{item.skuComplete} · {item.itemCode} · {formatMatrixQuantity(item.qty)}{(item.sourceLineCount ?? 1) > 1 ? ` · ${item.sourceLineCount} líneas SAP consolidadas` : ''}</p>)}</div></details></td>
+                        </tr>)}
+                      </tbody>
+                    </table>
+                  </div>
+                  {boardExceptionRows.length === 0 ? <p className="border-t border-violet-100 px-5 py-4 text-sm text-emerald-800">No hay excepciones para contrastar: todos los tableros observados coinciden con el patrón actual.</p> : null}
+                  {boardConditionalReviewRows.length > 0 ? <section className="border-t border-violet-100 bg-violet-50 px-5 py-4 text-sm text-violet-950">
+                    <p className="font-semibold">Reglas condicionales vigentes</p>
+                    <p className="mt-1 text-xs text-violet-900">Ya están guardadas en Supabase, pero no se cuentan como filas válidas de la BOM base. Revalídalas para consultar SAP nuevamente y continuar con cualquier caso Dual que aparezca.</p>
+                    <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                      {boardConditionalReviewRows.map(row => <label key={row.key} className="flex cursor-pointer items-start gap-3 border border-violet-200 bg-white p-3 text-xs">
+                        <input aria-label={`Revalidar regla condicional del color ${row.sourceColorCode}`} type="checkbox" checked={selectedBoardColors[row.sourceColorCode] === true} onChange={event => { setSelectedBoardColors(current => ({ ...current, [row.sourceColorCode]: event.target.checked })); setVisibleBoardCoverageColorCodes([]); setSelectedBoardInactiveAppSkus({}); setBoardColorRuleEditor(null); setBoardMatrixMessage(null) }} />
+                        <span><span className="block font-mono font-semibold text-slate-900">{row.sourceColorCode} · {boardRoleLabel(row)}</span><span className="mt-1 block font-mono text-slate-600">Base: {row.proposedColorCode ?? row.sourceColorCode} · {row.proposedMaterialProfile ?? 'perfil por referencia'}</span><span className="mt-1 block text-violet-900">Seleccionar para revalidar en SAP.</span></span>
+                      </label>)}
+                    </div>
+                  </section> : null}
+                  {boardStandardRows.length > 0 ? <details className="border-t border-violet-100 bg-slate-50 px-5 py-3 text-sm text-slate-700"><summary className="cursor-pointer font-semibold text-violet-900">Ver {boardStandardRows.length} fila(s) válidas y alineadas para construcción BOM base</summary><div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{boardStandardRows.map(row => <div key={row.key} className="border border-slate-200 bg-white px-3 py-2 text-xs"><p className="font-mono font-semibold text-slate-900">{row.sourceColorCode} · {boardRoleLabel(row)}</p><p className="mt-1 font-mono text-slate-600">{row.observedColorCodes.join(', ')} · {row.observedMaterialProfiles.join(', ')}</p>{row.hasPersistedBoardResolution ? <p className="mt-1 text-emerald-800">Configuración de tableros guardada; SAP se contrasta solo al revalidar.</p> : null}{!row.isProductColorMatch && row.proposedColorCode ? <p className="mt-1 text-emerald-800">Regla configurada: color interno {row.proposedColorCode}</p> : null}<p className="mt-1 text-slate-500">Máx. {row.normalizedConsumptionQty === null ? 'pendiente' : formatMatrixQuantity(row.normalizedConsumptionQty)}</p></div>)}</div></details> : null}
+                  <div className="border-t border-violet-100 px-5 py-4 text-sm text-slate-700">
+                    {lastBoardMatrixAnalyzedColorCodes.length > 0 ? <p>Análisis SAP recién consultado para {lastBoardMatrixAnalyzedColorCodes.length} color(es); los resultados concilian esa evidencia con el catálogo de Supabase.</p> : null}
+                    {boardMatrixMessage ? <p className="mt-2 font-medium text-slate-800" aria-live="polite">{boardMatrixMessage}</p> : null}
+                    {boardMatrixCoverage ? <div className="mt-4 space-y-3">
+                      {boardMatrixCoverage.filter(result => visibleBoardCoverageColorCodes.includes(result.sourceColorCode)).map(result => {
+                        const readyForBaseConstruction = boardColorIsReadyForBaseConstruction(result)
+                        const reports = boardCoverageReports({ result, referenceRows: boardMatrixRows })
+                        const candidate = result.fullProductRuleCandidate
+                        const candidateAlreadyConfigured = candidate !== null && result.rows.some(row =>
+                          row.role === 'full_product'
+                          && row.proposedColorCode === candidate.boardColorCode
+                          && row.proposedMaterialProfile === candidate.materialProfile
+                        )
+                        const boardDualCandidates = result.dualCandidates.map(dualCandidate => ({ ...dualCandidate, sourceColorCode: result.sourceColorCode }))
+                        const dualCandidateSkuCompletes = new Set(boardDualCandidates.flatMap(candidate => candidate.cases.map(candidateCase => candidateCase.skuComplete)))
+                        const pendingRoleAlreadyGroupedAsDual = reports.some(report =>
+                          report.kind === 'role_pending'
+                          && report.evidenceSkuCompletes.length > 0
+                          && report.evidenceSkuCompletes.every(skuComplete => dualCandidateSkuCompletes.has(skuComplete))
+                        )
+                        const visibleReports = reports.filter(report =>
+                          !(candidateAlreadyConfigured && report.role === 'full_product' && report.kind === 'consistent')
+                           && !(report.kind === 'role_pending' && report.evidenceSkuCompletes.length > 0 && report.evidenceSkuCompletes.every(skuComplete => dualCandidateSkuCompletes.has(skuComplete)))
+                           && report.kind !== 'dual_evidence'
+                        )
+                        const conditionalRuleStrategies = boardConditionalStrategiesForCoverage({ result, referenceRows: boardMatrixRows })
+                        return <div key={result.sourceColorCode} className="border border-violet-200 bg-violet-50 p-3 text-violet-950">
+                           <p className="font-semibold">Cobertura SAP del color {result.sourceColorCode}: {result.checkedSkuCount}/{result.sapActiveSkuCount} SKU activos con LdM leída</p>
+                           <p className="mt-1 text-xs">Supabase: {result.supabaseActiveSkuCount} SKU activos no kit · Excluidos por SAP: {result.excludedInactiveSapSkuCount} inactivo(s) y {result.excludedKitSkuCount} kit(s).</p>
+                           {result.boardProfileConditions.length > 0 ? <div className="mt-3 border border-violet-200 bg-white p-2 text-xs text-violet-950"><p className="font-semibold">Reglas condicionales de tablero vigentes</p>{result.boardProfileConditions.map(rule => <p key={rule.rule_id} className="mt-1 font-mono">Si perfil base {rule.source_material_profile}: tablero {rule.target_color_code} · {rule.target_material_profile}</p>)}</div> : null}
+                           <details className="mt-2 text-xs text-slate-700"><summary className="cursor-pointer font-semibold text-violet-900">Ver los {result.sapActiveSkus.length} SKU de venta incluidos</summary><div className="mt-2 space-y-1 border-l-2 border-violet-200 pl-3 font-mono"><p className="font-sans text-slate-600">Solo códigos V*, versión 000; el tablero CMPD no cuenta como SKU de cobertura.</p>{result.sapActiveSkus.map(sku => <p key={sku.skuComplete}><span className="font-semibold">{sku.skuComplete}</span> · {sku.skuItemName ?? 'Sin nombre SAP'} · {sku.bomRead ? 'LdM leída' : 'LdM no leída'}</p>)}</div></details>
+                          {visibleReports.length > 0 ? <div className="mt-3 grid gap-2 xl:grid-cols-2">
+                            {visibleReports.map(report => <div key={report.key} className={`border p-3 text-xs ${boardCoverageReportClass(report.kind)}`}>
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <p className="font-semibold">{report.role === 'role_pending' ? 'Pendiente de definir' : scopeLabel(report.role)}</p>
+                                <span className="font-semibold">{boardCoverageReportLabel(report.kind)}</span>
+                              </div>
+                              <p className="mt-2">SAP observado en {report.evidenceSkuCount}/{result.checkedSkuCount} SKU leídos</p>
+                               <p className="mt-1 font-mono">Tablero: {report.observedColorCodes.join(', ') || '-'} · Perfil: {report.observedMaterialProfiles.join(', ') || '-'}</p>
+                              <p className="mt-2">{report.conclusion}</p>
+                              {report.role === 'full_product' && conditionalRuleStrategies.length > 0 ? <button type="button" onClick={() => openBoardConditionalRuleEditor(result.sourceColorCode, conditionalRuleStrategies)} disabled={isPending} className="mt-3 h-8 border border-violet-300 bg-white px-2 text-xs font-semibold text-violet-950 disabled:opacity-50">Ver alternativas unicolor por perfil</button> : null}
+                              {report.examples.length > 0 ? <div className="mt-3 border-t border-current/20 pt-2 text-[11px]">
+                                <p className="font-semibold">Ejemplos SAP representativos ({report.examples.length} línea(s), {report.evidenceSkuCount} SKU con evidencia)</p>
+                                <div className="mt-1 space-y-1">
+                                  {report.examples.map(example => <p key={`${report.key}:${example.skuComplete}:${example.itemCode}`}><span className="font-mono font-semibold">{example.skuComplete}</span> · {example.skuItemName ?? 'Sin nombre SAP'} · <span className="font-mono">{example.itemCode}</span> · tablero {example.boardColorCode} · {example.materialProfile ?? 'perfil pendiente'} · {formatMatrixQuantity(example.qty)}{example.skuBoardPatterns.length > 1 ? ` · En este SKU: ${example.skuBoardPatterns.join(' + ')}` : ''}</p>)}
+                                </div>
+                              </div> : null}
+                               {report.kind === 'variation' ? <div className="mt-3 grid gap-2 md:grid-cols-3">
+                                 {report.profileSummaries.map(summary => <div key={summary.materialProfile} className="border border-slate-300 bg-white p-2 text-slate-800">
+                                   <p className="font-mono font-semibold">{summary.materialProfile}: {summary.skuCount} SKU</p>
+                                   <p className="mt-1 text-slate-600">Ejemplos SAP:</p>
+                                   <div className="mt-1 space-y-1 font-mono text-[11px] text-slate-600">
+                                     {summary.examples.map(example => <p key={`${summary.materialProfile}:${example.skuComplete}:${example.itemCode}`}><span className="font-semibold text-slate-800">{example.skuComplete}</span> · {example.skuItemName ?? 'Sin nombre SAP'}</p>)}
+                                   </div>
+                                 </div>)}
+                               </div> : null}
+                             </div>)}
+                          </div> : <p className="mt-3 border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">SAP leyó las LdM, pero no encontró una línea de tablero elegible para resumir.</p>}
+                           {boardDualCandidates.length > 0 ? <div className="mt-3 border border-violet-200 bg-white p-3 text-xs text-violet-950">
+                             <p className="font-semibold">Casos Dual de tableros detectados por SAP</p>
+                             <p className="mt-1 text-slate-600">Cada caso reúne SKU con exactamente dos tableros. La mayor área observada propone estructura y la menor frente; elige un único caso para el color o guárdalo como override de esos SKU.</p>
+                              {pendingRoleAlreadyGroupedAsDual ? <p className="mt-1 text-slate-600">Los SKU sin rol publicado ya están agrupados en estos casos Dual; no se repiten como pendiente separado.</p> : null}
+                              <div className="mt-3 grid gap-3 xl:grid-cols-2">
+                               {boardDualCandidates.map((dualCandidate, index) => {
+                                 const candidateKey = boardDualCandidateKey(dualCandidate)
+                                 const overrideKey = boardDualCandidateOverrideKey(dualCandidate)
+                                  const selectedAsColorCase = selectedBoardDualColorCases[result.sourceColorCode]
+                                    && boardDualCandidateKey(selectedBoardDualColorCases[result.sourceColorCode]) === candidateKey
+                                  const configuredBoardDual = boardDualConfigurationMatchesCandidate(result.boardDualConfiguration, dualCandidate)
+                                  const persistedSkuOverride = result.boardDualSkuOverrides.find(override => boardDualSkuOverrideMatchesCandidate(override, dualCandidate))
+                                  const colorSaveResult = savedBoardDualColorResults[candidateKey]
+                                  const skuOverrideSaveResult = savedBoardDualSkuOverrideResults[overrideKey]
+                                  const savedAsSkuOverride = Boolean(persistedSkuOverride) || skuOverrideSaveResult?.success === true
+                                  const savedAsColorCase = configuredBoardDual || savedAsSkuOverride
+                                 const overrideReviewed = boardDualCandidateOverrideReviewed[overrideKey] === true
+                                 const overrideApplying = boardDualCandidateOverrideApplyingKey === overrideKey
+                                 return <article key={candidateKey} className="border border-violet-200 bg-violet-50 p-3 text-slate-800">
+                                   <div className="flex flex-wrap items-start justify-between gap-2">
+                                     <div>
+                                       <p className="font-semibold text-violet-950">Caso {index + 1}</p>
+                                       <p className="mt-1 font-mono text-xs">Estructura propuesta: {dualCandidate.structureColorCode} · {dualCandidate.structureMaterialProfile}</p>
+                                       <p className="font-mono text-xs">Frente propuesto: {dualCandidate.frontColorCode} · {dualCandidate.frontMaterialProfile}</p>
+                                       <p className="mt-1 text-xs text-slate-600">{dualCandidate.evidenceSkuCount} SKU con este patrón.</p>
+                                     </div>
+                                      <button type="button" onClick={() => chooseBoardDualColorCase(dualCandidate)} disabled={isPending || savedAsSkuOverride} className={`border px-2 py-1.5 text-xs font-semibold disabled:opacity-50 ${selectedAsColorCase ? 'border-violet-800 bg-violet-800 text-white' : 'border-violet-300 bg-white text-violet-950'}`}>{savedAsSkuOverride ? 'Resuelto por override SKU' : selectedAsColorCase ? 'Definición Dual elegida' : 'Usar definición Dual'}</button>
+                                   </div>
+                                   <div className="mt-3 space-y-2 border-t border-violet-200 pt-2">
+                                     {dualCandidate.cases.map(candidateCase => <div key={candidateCase.skuComplete} className="text-[11px]">
+                                       <p><span className="font-mono font-semibold">{candidateCase.skuComplete}</span>{candidateCase.skuItemName ? ` — ${candidateCase.skuItemName}` : ''}</p>
+                                       <p className="mt-1 text-slate-600">Estructura: {formatMatrixQuantity(candidateCase.structureQty)} · Frente: {formatMatrixQuantity(candidateCase.frontQty)}</p>
+                                       {candidateCase.boardLines.map(boardLine => <p key={`${candidateCase.skuComplete}:${boardLine.itemCode}:${boardLine.qty}`} className="mt-1 font-mono text-slate-600">{boardLine.itemCode}{boardLine.itemName ? ` — ${boardLine.itemName}` : ''} · {boardLine.colorCode} · {boardLine.materialProfile ?? 'perfil pendiente'} · {formatMatrixQuantity(boardLine.qty)}</p>)}
+                                     </div>)}
+                                   </div>
+                                    {configuredBoardDual ? <div className={`mt-3 border p-2 ${colorSaveResult?.verification?.state === 'effective' ? 'border-emerald-200 bg-emerald-50 text-emerald-950' : 'border-amber-200 bg-amber-50 text-amber-950'}`}>
+                                      <p className="font-semibold">Dual de tableros guardado en Estructura y Frente</p>
+                                      <p className="mt-1">Se confirmó en Supabase: estructura {dualCandidate.structureColorCode} · {dualCandidate.structureMaterialProfile}; frente {dualCandidate.frontColorCode} · {dualCandidate.frontMaterialProfile}. Los SKU con estos dos roles usan esta definición; los unicolor siguen usando Producto completo. No modifica cantos.</p>
+                                     {colorSaveResult?.verification ? <div className="mt-2 border-t border-current/20 pt-2"><p className="font-semibold">Comprobación de resolución</p>{colorSaveResult.verification.state === 'effective' ? <p className="mt-1">La BOM resuelta confirmó estructura y frente para todos los SKU afectados.</p> : <p className="mt-1">{colorSaveResult.verification.note ?? 'La configuración existe, pero la BOM actual todavía no permite confirmar ambos roles.'}</p>}{colorSaveResult.verification.skuResults.map(verification => <p key={verification.skuComplete} className="mt-1 font-mono">{verification.skuComplete} · estructura {verification.structure.resolvedItemCode ?? 'sin rol'} · frente {verification.front.resolvedItemCode ?? 'sin rol'}</p>)}</div> : <p className="mt-2 text-slate-600">Configuración vigente. Revalida el color para consultar la evidencia SAP actual.</p>}
+                                   </div> : null}
+                                    {savedAsSkuOverride ? <div className={`mt-3 border p-2 ${skuOverrideSaveResult?.verification?.state === 'effective' ? 'border-emerald-200 bg-emerald-50 text-emerald-950' : 'border-amber-200 bg-amber-50 text-amber-950'}`}>
+                                      <p className="font-semibold">Overrides por SKU confirmados en Supabase</p>
+                                      <p className="mt-1">{skuOverrideSaveResult ? `Se releieron los ${dualCandidate.cases.length} SKU` : `Se encontró esta configuración vigente para los ${dualCandidate.cases.length} SKU`} con estructura {dualCandidate.structureColorCode} · {dualCandidate.structureMaterialProfile} y frente {dualCandidate.frontColorCode} · {dualCandidate.frontMaterialProfile}. No modifica cantos.</p>
+                                      {skuOverrideSaveResult?.verification?.state === 'effective' ? <p className="mt-2">La BOM resuelta confirmó ambos roles para todos los SKU.</p> : <p className="mt-2">{skuOverrideSaveResult?.verification?.note ?? 'La configuración está guardada. Esta lectura SAP confirma el patrón; la resolución efectiva se comprueba al resolver la BOM de esos SKU.'}</p>}
+                                     {skuOverrideSaveResult?.verification?.skuResults.map(verification => <p key={verification.skuComplete} className="mt-1 font-mono">{verification.skuComplete} · estructura {verification.structure.resolvedItemCode ?? 'sin rol'} · frente {verification.front.resolvedItemCode ?? 'sin rol'}</p>)}
+                                   </div> : null}
+                                    {!savedAsColorCase && (selectedAsColorCase ? <div className="mt-3 border border-violet-300 bg-white p-2"><p className="font-semibold">Aplicar Dual al color</p><p className="mt-1 text-slate-600">Guardará estos valores directamente en Estructura y Frente. Las BOM unicolor continúan usando Producto completo.</p><button type="button" onClick={() => saveBoardDualColorCase(dualCandidate)} disabled={isPending} className="mt-2 bg-violet-800 px-2 py-1.5 font-semibold text-white disabled:opacity-50">Aplicar Dual al color</button></div> : <div className="mt-3 border border-sky-200 bg-sky-50 p-2 text-sky-950"><p className="font-semibold">Override por SKU</p><p className="mt-1">Úsalo si este patrón es específico de estos SKU o una desviación que no debe convertirse en regla del color.</p><label className="mt-2 flex items-start gap-2"><input type="checkbox" checked={boardDualCandidateDeviation[overrideKey] === true} onChange={event => setBoardDualCandidateDeviation(current => ({ ...current, [overrideKey]: event.target.checked }))} disabled={isPending || overrideApplying} /><span>Es una desviación SAP pendiente de corrección humana.</span></label><div className="mt-2 flex flex-wrap items-center gap-2"><label className="inline-flex items-center gap-2 border border-sky-300 bg-white px-2 py-1.5 font-semibold"><input type="checkbox" checked={overrideReviewed} onChange={event => setBoardDualCandidateOverrideReviewed(current => ({ ...current, [overrideKey]: event.target.checked }))} disabled={isPending || overrideApplying} />Revisé los {dualCandidate.cases.length} SKU</label><button type="button" onClick={() => applyBoardDualCandidateSkuOverrides(dualCandidate)} disabled={isPending || overrideApplying || !overrideReviewed} className="border border-sky-700 bg-sky-800 px-2 py-1.5 font-semibold text-white disabled:opacity-50">{overrideApplying ? 'Guardando overrides…' : `Aplicar overrides a ${dualCandidate.cases.length} SKU`}</button></div></div>)}
+                                 </article>
+                               })}
+                             </div>
+                           </div> : null}
+                           {candidate ? <div className="mt-3 border border-emerald-200 bg-white p-3 text-xs text-emerald-950">
+                            <p className="font-semibold">{candidateAlreadyConfigured ? 'Regla global vigente y validada en SAP' : 'Regla global propuesta por SAP'}</p>
+                            <p className="mt-1">Producto completo: tablero <span className="font-mono">{candidate.boardColorCode}</span> · perfil <span className="font-mono">{candidate.materialProfile}</span> · cobertura {candidate.evidenceSkuCount}/{result.sapActiveSkuCount} SKU activos.</p>
+                            {!candidateAlreadyConfigured ? <button type="button" onClick={() => openBoardColorRuleEditor(candidate, result.sourceColorCode)} disabled={isPending} className="mt-3 h-8 bg-emerald-800 px-2 text-xs font-semibold text-white disabled:opacity-50">Configurar regla global de color</button> : null}
+                          </div> : null}
+                          {!readyForBaseConstruction && !candidate && result.fullProductRuleBlockers.length > 0 ? <details className="mt-3 border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950"><summary className="cursor-pointer font-semibold">Por qué todavía no se puede guardar una regla global</summary><ul className="mt-2 list-disc space-y-1 pl-4">{result.fullProductRuleBlockers.map(blocker => <li key={blocker}>{blocker}</li>)}</ul></details> : null}
+                          {result.rows.some(row => row.status === 'role_pending') && !pendingRoleAlreadyGroupedAsDual ? <p className="mt-1 text-xs">Roles no determinables: requieren decisión humana; no se deducen por código físico, base ni cantidad.</p> : null}
+                          {result.dualGlobalCandidate ? <p className="mt-3 text-xs font-semibold">Dual global candidato para consulta humana: {result.dualCandidateMessage ?? 'todos los SKU elegibles presentan el mismo patrón Dual.'}</p> : null}
+                          {result.sapReadErrors.map(error => <p key={error.skuComplete} className="mt-1 text-xs text-rose-800">{error.skuComplete}: {error.message}</p>)}
+                        </div>
+                      })}
+                      {boardSapInactiveAppCandidates.length > 0 ? <div className="border border-amber-200 bg-amber-50 p-3 text-amber-950">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <p className="font-semibold">Estados por conciliar con Supabase</p>
+                            <p className="mt-1 max-w-3xl text-xs">Estos SKU estaban activos en Supabase al iniciar la cobertura, pero SAP los reportó inactivos o congelados en este mismo análisis. No participaron en la comparación. Puedes inactivarlos directamente en Supabase; no se modifica SAP ni se repite el análisis.</p>
+                          </div>
+                          <button type="button" onClick={toggleAllBoardInactiveAppCandidates} disabled={isPending} className="h-8 border border-amber-300 bg-white px-2 text-xs font-semibold text-amber-900 disabled:opacity-50">
+                            {allBoardInactiveAppCandidatesSelected ? 'Quitar selección' : 'Seleccionar todos'}
+                          </button>
+                        </div>
+                        <div className="mt-3 space-y-1 text-xs">
+                          {boardSapInactiveAppCandidates.map(item => <label key={item.skuComplete} className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedBoardInactiveAppSkus[item.skuComplete] === true}
+                              onChange={event => {
+                                setSelectedBoardInactiveAppSkus(current => ({ ...current, [item.skuComplete]: event.target.checked }))
+                              }}
+                            />
+                            <span className="font-mono">{item.skuComplete}</span> · {item.skuItemName ?? 'Sin nombre SAP'} · inactivo o congelado en SAP
+                          </label>)}
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={syncBoardInactiveSkusInSupabase}
+                            disabled={isPending || selectedBoardInactiveAppSkuCodes.length === 0}
+                            className="h-8 bg-amber-800 px-2 text-xs font-semibold text-white disabled:opacity-50"
+                          >
+                            {`Inactivar ${selectedBoardInactiveAppSkuCodes.length} SKU en Supabase`}
+                          </button>
+                        </div>
+                      </div> : null}
+                      {visibleBoardOtherCatalogIssues.length > 0 ? <div className="border border-slate-200 bg-slate-50 p-3 text-slate-800">
+                        <p className="font-semibold">Diferencias SAP ↔ Supabase que requieren decisión</p>
+                        <p className="mt-1 text-xs">Se muestran porque pueden cambiar la población real del color. No se registran ni modifican automáticamente; primero define si se debe crear, activar, corregir o excluir cada SKU.</p>
+                        <div className="mt-2 space-y-2 text-xs">{visibleBoardOtherCatalogIssues.map(item => <div key={`${item.skuComplete}:${item.reason}`} className="border border-slate-200 bg-white p-2"><p><span className="font-mono font-semibold">{item.skuComplete}</span> · {item.skuItemName ?? 'Sin nombre SAP'} · {boardCatalogIssueLabel(item.reason)}</p>{item.reason === 'sap_only' ? <div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={() => ignoreBoardCatalogIssue(item)} disabled={isPending} className="h-7 border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 disabled:opacity-50">Ignorar por ahora</button>{item.canCreateColorVariation ? <button type="button" onClick={() => createBoardSapColorVariation(item)} disabled={isPending} className="h-7 bg-sky-800 px-2 text-xs font-semibold text-white disabled:opacity-50">Crear variación de color</button> : null}</div> : null}</div>)}</div>
+                      </div> : null}
+                    </div> : null}
+                  </div>
+                </section>
+              ) : null}
+
               {colorMatrixRows.length > 0 ? (
                 <section className="border border-sky-200 bg-white">
                   <div className="flex flex-wrap items-start justify-between gap-3 border-b border-sky-100 bg-sky-50 px-5 py-4">
@@ -1942,40 +3028,28 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                             {sapInactiveSkuCodes.length} {sapInactiveSkuCodes.length === 1 ? 'código inactivo' : 'códigos inactivos'} en SAP
                           </h2>
                           <p className="mt-1 text-sm text-rose-900">
-                            Puedes inactivarlos aquí para alinear Supabase. Antes de guardar, la app volverá a confirmar el estado de cada código en SAP.
+                            La aplicación puede sincronizar su estado con SAP. Antes de cambiar Supabase, volverá a confirmar cada código en SAP; esta acción no modifica SAP.
                           </p>
                           <div className="mt-3 space-y-3">
                             {sapInactiveSkuCodes.map(skuComplete => {
-                              const expectedConfirmation = expectedSkuDeactivationConfirmation(skuComplete)
-                              const enteredConfirmation = skuDeactivationConfirmations[skuComplete] ?? ''
+                              const isPrepared = preparedSupabaseSyncSkus[skuComplete] === true
                               return (
                                 <div key={skuComplete} className="border border-rose-200 bg-white p-3">
                                   <p className="font-mono text-sm font-semibold text-slate-950">{skuComplete}</p>
                                   <p className="mt-1 text-xs text-slate-600">
-                                    Para inactivarlo únicamente en Supabase, escribe <span className="font-mono font-semibold text-slate-800">{expectedConfirmation}</span>
+                                    SAP lo reportó inactivo o congelado. Puedes alinear únicamente el estado de Supabase.
                                   </p>
                                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                                    <input
-                                      type="text"
-                                      value={enteredConfirmation}
-                                      onChange={event => setSkuDeactivationConfirmations(current => ({
-                                        ...current,
-                                        [skuComplete]: event.target.value,
-                                      }))}
-                                      placeholder={expectedConfirmation}
-                                      className="h-9 min-w-0 flex-1 border border-slate-300 bg-white px-3 text-sm text-slate-950 outline-none focus:border-rose-700"
-                                    />
                                     <button
                                       type="button"
-                                      onClick={() => deactivateInactiveSku(skuComplete)}
-                                      disabled={isPending || enteredConfirmation.trim() !== expectedConfirmation}
+                                      onClick={() => syncInactiveSkuInSupabase(skuComplete)}
+                                      disabled={isPending}
                                       className="inline-flex h-9 items-center gap-2 rounded-md bg-rose-800 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                                     >
-                                      <Ban className="h-4 w-4" />
-                                      Inactivar en Supabase
+                                      {isPrepared ? 'Confirmar sincronización en Supabase' : 'Preparar sincronización'}
                                     </button>
                                   </div>
-                                  <p className="mt-2 text-xs font-medium text-rose-800">Esta acción no modifica SAP.</p>
+                                  {isPrepared ? <p className="mt-2 text-xs font-medium text-rose-800">La confirmación vuelve a consultar SAP antes de modificar solo Supabase.</p> : null}
                                   {skuActionMessages[skuComplete] ? (
                                     <p className="mt-2 text-sm font-semibold text-rose-950" aria-live="polite">
                                       {skuActionMessages[skuComplete]}
@@ -2076,7 +3150,8 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                     </thead>
                     <tbody>
                       {workspace.run.proposedBomStructure.lines.map(line => {
-                        const observedConsumptions = line.consumptions.filter(consumption => consumption.status !== 'needs_definition').length
+                        const observedConsumptionEntries = line.consumptions.filter(consumption => consumption.status !== 'needs_definition')
+                        const observedConsumptions = observedConsumptionEntries.length
                         const pendingConsumptions = line.consumptions.filter(consumption => consumption.status === 'needs_definition').length
                         const baseItemName = line.base_item_code ? workspace.proposalItemNames[line.base_item_code] : null
                         const materialGroupItemNames = line.line_kind === 'material_group'
@@ -2135,10 +3210,9 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                                 <span className="tabular-nums">{line.qty}</span>
                               ) : (
                                 <>
-                                  <p>{observedConsumptions} observados</p>
-                                  <p className={pendingConsumptions > 0 ? 'mt-1 text-amber-700' : 'mt-1 text-emerald-700'}>
-                                    {pendingConsumptions > 0 ? `${pendingConsumptions} por definir` : 'Todos definidos'}
-                                  </p>
+                                  <p>{observedConsumptions} configuraci{observedConsumptions === 1 ? 'ón' : 'ones'} con evidencia SAP</p>
+                                  {observedConsumptionEntries.map((consumption, index) => <p key={`${consumption.color_mode}:${consumption.product_application_scope}:${consumption.material_profile}:${index}`} className="mt-1 text-xs text-slate-500">{scopeLabel(consumption.product_application_scope)} · {consumption.material_profile} · {consumption.qty === null ? 'pendiente' : formatMatrixQuantity(consumption.qty)}</p>)}
+                                  {pendingConsumptions > 0 ? <p className="mt-1 text-amber-700">{pendingConsumptions} configuración(es) presente(s) sin evidencia SAP</p> : null}
                                 </>
                               )}
                             </td>
@@ -2153,7 +3227,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                 </div>
                 {pendingConsumptionCount > 0 ? (
                   <p className="border-t border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-900">
-                    Hay {pendingConsumptionCount} consumo{pendingConsumptionCount === 1 ? '' : 's'} por definir para configuraciones dual o balance que SAP no evidenció. Permanecen visibles y no bloquean publicar la BOM base; esos SKU quedarán pendientes de consumo hasta definirlos.
+                    Hay {pendingConsumptionCount} configuración{pendingConsumptionCount === 1 ? '' : 'es'} de consumo presente{pendingConsumptionCount === 1 ? '' : 's'} sin evidencia SAP. La propuesta no crea combinaciones Dual o Balance que no existan en la referencia; estos casos requieren evidencia o una decisión humana antes de definir consumo.
                   </p>
                 ) : null}
               </section>
@@ -2434,6 +3508,50 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
           ) : null}
         </div>
       </section>
+      {boardColorRuleEditor ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+          <section role="dialog" aria-modal="true" aria-labelledby="board-color-rule-title" className="w-full max-w-lg border border-emerald-200 bg-white p-5 shadow-xl">
+            <h2 id="board-color-rule-title" className="text-lg font-semibold text-slate-950">Configurar regla global del color {boardColorRuleEditor.sourceColorCode}</h2>
+            <p className="mt-2 text-sm text-slate-700">La regla se guarda directamente en la configuración del color y se aplica cuando una BOM use el rol <strong>Tablero producto completo</strong>.</p>
+            <dl className="mt-4 grid gap-3 border border-emerald-100 bg-emerald-50 p-3 text-sm text-emerald-950 sm:grid-cols-3">
+              <div><dt className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Color producto</dt><dd className="mt-1 font-mono font-semibold">{boardColorRuleEditor.sourceColorCode}</dd></div>
+              <div><dt className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Tablero interno</dt><dd className="mt-1 font-mono font-semibold">{boardColorRuleEditor.boardColorCode}</dd></div>
+              <div><dt className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Perfil</dt><dd className="mt-1 font-mono font-semibold">{boardColorRuleEditor.materialProfile}</dd></div>
+            </dl>
+            <p className="mt-3 text-xs text-slate-600">SAP respaldó esta combinación en {boardColorRuleEditor.evidenceSkuCount} SKU activos. Al guardar se vuelve a validar SAP antes de escribir. No cambia consumos, formatos, BOM base ni overrides por SKU.</p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setBoardColorRuleEditor(null)} className="h-9 border border-slate-300 px-3 text-sm font-semibold text-slate-800">Cancelar</button>
+              <button type="button" onClick={saveBoardColorRule} disabled={isPending} className="h-9 bg-emerald-800 px-3 text-sm font-semibold text-white disabled:opacity-50">Guardar regla global</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {boardConditionalRuleEditor ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+          <section role="dialog" aria-modal="true" aria-labelledby="board-conditional-rule-title" className="w-full max-w-2xl border border-violet-200 bg-white p-5 shadow-xl">
+            <h2 id="board-conditional-rule-title" className="text-lg font-semibold text-slate-950">Alternativas unicolor por perfil · color {boardConditionalRuleEditor.sourceColorCode}</h2>
+            <p className="mt-2 text-sm text-slate-700">SAP muestra que este color no siempre usa el mismo tablero interno. Cada alternativa cruza el perfil que usa la referencia con el tablero observado en SAP; elige una forma de resolverlo para cualquier referencia que use este color.</p>
+            <div className="mt-4 grid gap-3">
+              {boardConditionalRuleEditor.strategies.map((strategy, index) => {
+                const selected = strategy.strategyId === boardConditionalRuleEditor.selectedStrategyId
+                return <label key={strategy.strategyId} className={`cursor-pointer border p-3 ${selected ? 'border-violet-700 bg-violet-50' : 'border-slate-200 bg-white'}`}>
+                  <input type="radio" name="board-conditional-strategy" checked={selected} onChange={() => setBoardConditionalRuleEditor(current => current ? { ...current, selectedStrategyId: strategy.strategyId, saveResult: null } : current)} disabled={boardConditionalRuleEditor.saveResult?.success === true} className="sr-only" />
+                  <p className="font-semibold text-violet-950">Alternativa {index + 1}: {strategy.kind === 'keep_product_color' ? `conservar ${boardConditionalRuleEditor.sourceColorCode} como color interno base` : `usar ${strategy.defaultBoardColorCode} · ${strategy.defaultMaterialProfile} como combinación interna base`}</p>
+                  <p className="mt-2 text-xs text-slate-700">Por defecto: <span className="font-mono font-semibold">{strategy.defaultBoardColorCode}</span>{strategy.defaultMaterialProfile ? <><span> · </span><span className="font-mono font-semibold">{strategy.defaultMaterialProfile}</span></> : ' · el perfil lo determina cada referencia'}.</p>
+                  <div className="mt-2 space-y-1 border-l-2 border-violet-200 pl-2 text-xs text-slate-700"><p className="font-semibold">Excepciones respaldadas por SAP</p>{strategy.conditions.map(condition => <p key={`${condition.sourceMaterialProfile}:${condition.targetBoardColorCode}:${condition.targetMaterialProfile}`}>Si la referencia trabaja <span className="font-mono font-semibold">{condition.sourceMaterialProfile}</span>: tablero <span className="font-mono font-semibold">{condition.targetBoardColorCode}</span> · perfil <span className="font-mono font-semibold">{condition.targetMaterialProfile}</span> ({condition.evidenceSkuCount} SKU).</p>)}</div>
+                </label>
+              })}
+            </div>
+            {selectedBoardConditionalStrategy ? <p className="mt-3 border border-violet-200 bg-violet-50 p-2 text-xs text-violet-950">Vas a guardar: por defecto {selectedBoardConditionalStrategy.defaultBoardColorCode}{selectedBoardConditionalStrategy.defaultMaterialProfile ? ` · ${selectedBoardConditionalStrategy.defaultMaterialProfile}` : ' sin perfil fijo'}, con {selectedBoardConditionalStrategy.conditions.length} excepción(es) de perfil.</p> : null}
+            {boardConditionalRuleEditor.saveResult ? <p className={`mt-3 border p-3 text-sm ${boardConditionalRuleEditor.saveResult.success ? 'border-emerald-200 bg-emerald-50 text-emerald-950' : 'border-rose-200 bg-rose-50 text-rose-950'}`} role="status">{boardConditionalRuleEditor.saveResult.success ? 'Configuración guardada en Supabase. ' : ''}{boardConditionalRuleEditor.saveResult.message}</p> : null}
+            <p className="mt-3 text-xs text-slate-600">Solo modifica la configuración de tableros de este color. No cambia cantos, consumos, formatos ni SAP.</p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setBoardConditionalRuleEditor(null)} className="h-9 border border-slate-300 px-3 text-sm font-semibold text-slate-800">{boardConditionalRuleEditor.saveResult?.success ? 'Cerrar' : 'Cancelar'}</button>
+              <button type="button" onClick={saveBoardConditionalRule} disabled={isPending || !selectedBoardConditionalStrategy || boardConditionalRuleEditor.saveResult?.success === true} className="h-9 bg-violet-800 px-3 text-sm font-semibold text-white disabled:opacity-50">{boardConditionalRuleEditor.saveResult?.success ? 'Alternativa guardada' : 'Guardar alternativa elegida'}</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
       {colorEditor ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
           <section role="dialog" aria-modal="true" className="max-h-[90vh] w-full max-w-xl overflow-y-auto border border-slate-200 bg-white p-5 shadow-xl">
@@ -2458,9 +3576,9 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                   return { ...current, color: { ...current.color, application_colors_json: { ...current.color.application_colors_json, [scope]: event.target.value.toUpperCase().slice(0, 4) } } }
                 })} className="h-9 border border-slate-300 px-2 font-mono uppercase" maxLength={4} />
               </label>
-              {hasBoardEvidence(colorEditor.finding) ? <label className="grid gap-1 text-sm font-semibold text-slate-700">Perfil de material
-                <select value={colorConfigurationScope(colorEditor.finding) ? colorEditor.color.application_material_profiles_json[colorConfigurationScope(colorEditor.finding)!] ?? '' : ''} onChange={event => setColorEditor(current => {
-                  const scope = current ? colorConfigurationScope(current.finding) : null
+              {hasBoardEvidence(colorEditor.finding) && boardMaterialProfileScope(colorEditor.finding) ? <label className="grid gap-1 text-sm font-semibold text-slate-700">Perfil de material
+                <select value={boardMaterialProfileScope(colorEditor.finding) ? colorEditor.color.application_material_profiles_json[boardMaterialProfileScope(colorEditor.finding)!] ?? '' : ''} onChange={event => setColorEditor(current => {
+                  const scope = current ? boardMaterialProfileScope(current.finding) : null
                   if (!current || !scope) return current
                   return { ...current, color: { ...current.color, application_material_profiles_json: { ...current.color.application_material_profiles_json, [scope]: event.target.value || undefined } } }
                 })} className="h-9 border border-slate-300 bg-white px-2">

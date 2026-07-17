@@ -6,14 +6,17 @@ import { revalidatePath } from 'next/cache'
 import { assertPermission } from '@/utils/auth/access'
 import {
   COLOR_APPLICATION_SCOPE_KEYS,
+  BOARD_MATERIAL_PROFILE_SCOPE_KEYS,
   COLOR_MODE_OPTIONS,
   MATERIAL_PROFILE_OPTIONS,
   SAP_COLOR_CODE_PATTERN,
   type ColorApplicationMap,
   type ColorApplicationScope,
+  type BoardMaterialProfileScope,
   type ColorMaterialProfileMap,
   type ColorMode,
 } from './productiveScopes'
+import type { BoardProfileConditionalRule } from '@/lib/bom/types'
 
 export type ColorEntry = {
   code_4dig: string
@@ -21,6 +24,7 @@ export type ColorEntry = {
   color_mode: ColorMode
   application_colors_json: ColorApplicationMap
   application_material_profiles_json: ColorMaterialProfileMap
+  board_profile_conditions: BoardProfileConditionalRule[]
   allowed_product_types: string[]
   allowed_manufacturing_processes: string[]
   is_active: boolean
@@ -37,7 +41,7 @@ type UpsertColorInput = {
   notes?: string | null
   isNew?: boolean
   application_colors_json?: Partial<Record<ColorApplicationScope, string | null | undefined>> | null
-  application_material_profiles_json?: Partial<Record<ColorApplicationScope, string | null | undefined>> | null
+  application_material_profiles_json?: Partial<Record<BoardMaterialProfileScope, string | null | undefined>> | null
 }
 
 const COLOR_SELECT_COLUMNS = `
@@ -146,7 +150,7 @@ function normalizeApplicationColors(value: unknown): ColorApplicationMap {
 function normalizeApplicationMaterialProfiles(value: unknown): ColorMaterialProfileMap {
   const source = parseJsonRecord(value)
   const normalized: ColorMaterialProfileMap = {}
-  for (const scope of COLOR_APPLICATION_SCOPE_KEYS) {
+  for (const scope of BOARD_MATERIAL_PROFILE_SCOPE_KEYS) {
     const rawValue = source[scope]
     if (typeof rawValue !== 'string') continue
     const profile = rawValue.trim().toUpperCase()
@@ -157,6 +161,30 @@ function normalizeApplicationMaterialProfiles(value: unknown): ColorMaterialProf
   return normalized
 }
 
+function normalizeBoardProfileConditions(value: unknown): BoardProfileConditionalRule[] {
+  const rawRules = parseJsonRecord(value).board_profile_conditions
+  if (!Array.isArray(rawRules)) return []
+  return rawRules.flatMap((rawRule, index) => {
+    const rule = parseJsonRecord(rawRule)
+    const sourceMaterialProfile = typeof rule.source_material_profile === 'string' ? rule.source_material_profile.trim().toUpperCase() : ''
+    const targetColorCode = typeof rule.target_color_code === 'string' ? rule.target_color_code.trim().toUpperCase() : ''
+    const targetMaterialProfile = typeof rule.target_material_profile === 'string' ? rule.target_material_profile.trim().toUpperCase() : ''
+    if (
+      rule.product_application_scope !== 'full_product'
+      || !MATERIAL_PROFILE_OPTIONS.includes(sourceMaterialProfile as (typeof MATERIAL_PROFILE_OPTIONS)[number])
+      || !SAP_COLOR_CODE_PATTERN.test(targetColorCode)
+      || !MATERIAL_PROFILE_OPTIONS.includes(targetMaterialProfile as (typeof MATERIAL_PROFILE_OPTIONS)[number])
+    ) return []
+    return [{
+      rule_id: typeof rule.rule_id === 'string' && rule.rule_id.trim() ? rule.rule_id.trim() : `board_profile_${index + 1}`,
+      product_application_scope: 'full_product',
+      source_material_profile: sourceMaterialProfile,
+      target_color_code: targetColorCode,
+      target_material_profile: targetMaterialProfile,
+    }]
+  })
+}
+
 function normalizeColorRow(row: Record<string, unknown>): ColorEntry {
   return {
     code_4dig: typeof row.code_4dig === 'string' ? row.code_4dig : '',
@@ -164,6 +192,7 @@ function normalizeColorRow(row: Record<string, unknown>): ColorEntry {
     color_mode: normalizeColorMode(row.color_mode),
     application_colors_json: normalizeApplicationColors(row.application_colors_json),
     application_material_profiles_json: normalizeApplicationMaterialProfiles(row.application_material_profiles_json),
+    board_profile_conditions: normalizeBoardProfileConditions(row.application_colors_json),
     allowed_product_types: normalizeTextArray(row.allowed_product_types),
     allowed_manufacturing_processes: normalizeTextArray(row.allowed_manufacturing_processes),
     is_active: typeof row.is_active === 'boolean' ? row.is_active : true,
@@ -209,7 +238,7 @@ function normalizeApplicationMaterialProfilePatch(input: unknown) {
   if (input === undefined) return null
   if (!isRecord(input)) return {}
   const patch: ColorMaterialProfileMap = {}
-  for (const scope of COLOR_APPLICATION_SCOPE_KEYS) {
+  for (const scope of BOARD_MATERIAL_PROFILE_SCOPE_KEYS) {
     const rawValue = input[scope]
     const profile = typeof rawValue === 'string' ? rawValue.trim().toUpperCase() : ''
     if (!profile) continue
@@ -333,14 +362,11 @@ export async function upsertColorAction(data: UpsertColorInput) {
            allowed_manufacturing_processes = ARRAY(SELECT jsonb_array_elements_text($4::jsonb)),
            is_active = $5,
            notes = $6,
-           application_colors_json = CASE
-             WHEN $7::jsonb IS NULL THEN application_colors_json
-             ELSE (COALESCE(application_colors_json, '{}'::jsonb)${REMOVE_MANAGED_APPLICATION_SCOPES_SQL}) || $7::jsonb
-           END,
-           application_material_profiles_json = CASE
-             WHEN $8::jsonb IS NULL THEN application_material_profiles_json
-             ELSE $8::jsonb
-           END
+           application_colors_json = COALESCE(
+             (COALESCE(application_colors_json, '{}'::jsonb)${REMOVE_MANAGED_APPLICATION_SCOPES_SQL}) || $7::jsonb,
+             application_colors_json
+           ),
+           application_material_profiles_json = COALESCE($8::jsonb, application_material_profiles_json)
        WHERE code_4dig = $9
        RETURNING ${COLOR_SELECT_COLUMNS}`,
       [

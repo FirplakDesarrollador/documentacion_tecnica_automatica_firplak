@@ -15,11 +15,21 @@ export type ColorApplicationScope = (typeof COLOR_APPLICATION_SCOPE_KEYS)[number
 
 export type ColorApplicationMap = Partial<Record<ColorApplicationScope, string>>
 
+export const BOARD_MATERIAL_PROFILE_SCOPE_KEYS = [
+  'full_product',
+  'structure',
+  'front',
+  'inner_structure',
+  'drawer_bottom',
+] as const
+
+export type BoardMaterialProfileScope = (typeof BOARD_MATERIAL_PROFILE_SCOPE_KEYS)[number]
+
 export const MATERIAL_PROFILE_OPTIONS = ['ST', 'RH', 'CARB2'] as const
 
 export type MaterialProfile = (typeof MATERIAL_PROFILE_OPTIONS)[number]
 
-export type ColorMaterialProfileMap = Partial<Record<ColorApplicationScope, MaterialProfile>>
+export type ColorMaterialProfileMap = Partial<Record<BoardMaterialProfileScope, MaterialProfile>>
 
 export const MATERIAL_PROFILE_LABELS: Record<MaterialProfile, string> = {
   ST: 'ST',

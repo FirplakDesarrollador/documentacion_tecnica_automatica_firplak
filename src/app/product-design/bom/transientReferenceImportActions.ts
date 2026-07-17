@@ -6,6 +6,7 @@ import { dbQuery } from '@/lib/supabase'
 import { supabaseTable } from '@/lib/supabaseDynamic'
 import {
   analyzeReferenceBomImportTransient,
+  analyzeReferenceImportBoardMatrix,
   listReferenceImportCandidates,
   type DirectColorRuleMatrixSelection,
   verifyReferenceImportColorRulesMatrixDirect,
@@ -13,7 +14,7 @@ import {
 } from '@/lib/bom/referenceImport'
 import type { ReferenceBomStructure, ReferenceImportWorkspace } from '@/lib/bom/referenceImportTypes'
 import { isReferenceProductApplicationScope, type ReferenceProductApplicationScope } from '@/lib/bom/referenceImportScopes'
-import type { HybridColorCase } from '@/lib/bom/types'
+import type { BoardProfileConditionalRule, HybridColorCase } from '@/lib/bom/types'
 import { normalizeBomStructure } from '@/lib/bom/resolve'
 import { getSapItem, getSapItemBom, productTreeStructureMatches, updateSapItem, updateSapProductTreeIssueMethod, type SapEntityPayload } from '@/lib/sap/serviceLayer'
 import { parseSapItemCode, readSapFrozen, readSapValid } from '@/lib/bom/sapMapping'
@@ -36,6 +37,43 @@ type MatrixHybridColorCase = {
   structureColorCode: string
   frontColorCode: string
   skuCompletes: string[]
+}
+
+export type BoardDualResolvedScope = {
+  resolvedItemCode: string | null
+  materialProfile: string | null
+  resolutionStatus: string | null
+  matchesExpected: boolean
+}
+
+export type BoardDualVerification = {
+  state: 'effective' | 'configuration_saved'
+  skuResults: Array<{
+    skuComplete: string
+    structure: BoardDualResolvedScope
+    front: BoardDualResolvedScope
+  }>
+  note: string | null
+}
+
+export type BoardDualMutationResult = {
+  success: boolean
+  message: string
+  savedConfiguration?: {
+    structureColorCode: string
+    structureMaterialProfile: string
+    frontColorCode: string
+    frontMaterialProfile: string
+  }
+  savedSkuOverride?: {
+    structureColorCode: string
+    structureMaterialProfile: string
+    frontColorCode: string
+    frontMaterialProfile: string
+    skuCompletes: string[]
+    isSapDeviation: boolean
+  }
+  verification?: BoardDualVerification
 }
 
 type ReferenceSemanticScopeAssignment = {
@@ -78,11 +116,83 @@ function isColorCode(value: string): boolean {
   return /^[A-Z0-9]{4}$/.test(value)
 }
 
+function isBoardMaterialProfile(value: string): boolean {
+  return value === 'ST' || value === 'RH' || value === 'CARB2'
+}
+
 function normalizeSkuCompletes(value: string[]): string[] {
   return [...new Set(value
     .map(skuComplete => skuComplete.trim().toUpperCase())
     .filter(Boolean))]
     .sort()
+}
+
+function expectedBoardDualScope(input: {
+  rows: Record<string, unknown>[]
+  scope: 'structure' | 'front'
+  targetColorCode: string
+  targetMaterialProfile: string
+}): BoardDualResolvedScope {
+  const row = input.rows.find(candidate => readString(candidate.product_application_scope) === input.scope)
+  const resolvedItemCode = readString(row?.resolved_item_code)?.toUpperCase() ?? null
+  const materialProfile = readString(row?.material_profile)?.toUpperCase() ?? null
+  const resolutionStatus = readString(row?.resolution_status) ?? null
+  return {
+    resolvedItemCode,
+    materialProfile,
+    resolutionStatus,
+    matchesExpected: resolvedItemCode?.endsWith(`-${input.targetColorCode}`) === true
+      && materialProfile === input.targetMaterialProfile
+      && resolutionStatus === 'resolved',
+  }
+}
+
+async function verifyPersistedBoardDualEffect(input: {
+  skuCompletes: string[]
+  structureColorCode: string
+  structureMaterialProfile: string
+  frontColorCode: string
+  frontMaterialProfile: string
+}): Promise<BoardDualVerification> {
+  try {
+    const skuResults = await Promise.all(input.skuCompletes.map(async skuComplete => {
+      const rows: Record<string, unknown>[] = await dbQuery(
+        `SELECT product_application_scope, resolved_item_code, material_profile, resolution_status
+         FROM public.resolved_bom_for_sku($1)
+         WHERE product_application_scope IN ('structure', 'front')
+         ORDER BY sort_order, line_id`,
+        [skuComplete]
+      )
+      return {
+        skuComplete,
+        structure: expectedBoardDualScope({ rows, scope: 'structure', targetColorCode: input.structureColorCode, targetMaterialProfile: input.structureMaterialProfile }),
+        front: expectedBoardDualScope({ rows, scope: 'front', targetColorCode: input.frontColorCode, targetMaterialProfile: input.frontMaterialProfile }),
+      }
+    }))
+    const isEffective = skuResults.every(result => result.structure.matchesExpected && result.front.matchesExpected)
+    return {
+      state: isEffective ? 'effective' : 'configuration_saved',
+      skuResults,
+      note: isEffective ? null : 'La configuración quedó guardada, pero la BOM base actual no resuelve ambos roles de tablero con este caso todavía.',
+    }
+  } catch (error) {
+    return {
+      state: 'configuration_saved',
+      skuResults: [],
+      note: error instanceof Error ? `La configuración se guardó, pero no se pudo comprobar la resolución: ${error.message}` : 'La configuración se guardó, pero no se pudo comprobar la resolución.',
+    }
+  }
+}
+
+function jsonStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string')
+  if (typeof value !== 'string') return []
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : []
+  } catch {
+    return []
+  }
 }
 
 function storedHybridColorCases(value: unknown): HybridColorCase[] {
@@ -104,6 +214,14 @@ function storedHybridColorCases(value: unknown): HybridColorCase[] {
       })
     )
     if (Object.keys(applicationColors).length === 0) return []
+    const applicationMaterialProfiles = Object.fromEntries(
+      Object.entries(jsonRecord(candidate.application_material_profiles)).flatMap(([scope, rawMaterialProfile]) => {
+        if (typeof rawMaterialProfile !== 'string') return []
+        const materialProfile = rawMaterialProfile.trim().toUpperCase()
+        return isBoardMaterialProfile(materialProfile) ? [[scope, materialProfile] as const] : []
+      })
+    )
+    const materialKind = candidate.material_kind === 'board' ? 'board' as const : undefined
     return [{
       case_id: typeof candidate.case_id === 'string' && candidate.case_id.trim()
         ? candidate.case_id.trim()
@@ -111,8 +229,35 @@ function storedHybridColorCases(value: unknown): HybridColorCase[] {
       color_mode: colorMode,
       sku_completes: skuCompletes,
       application_colors: applicationColors,
+      ...(Object.keys(applicationMaterialProfiles).length > 0 ? { application_material_profiles: applicationMaterialProfiles } : {}),
+      ...(materialKind ? { material_kind: materialKind } : {}),
     }]
   })
+}
+
+function storedColorOverrides(value: unknown): Record<string, unknown>[] {
+  const rawOverrides = jsonRecord(value).color_overrides
+  return Array.isArray(rawOverrides) ? rawOverrides.flatMap(override => isRecord(override) ? [{ ...override }] : []) : []
+}
+
+function hasPersistedBoardDualOverride(input: {
+  value: unknown
+  sourceColorCode: string
+  scope: 'structure' | 'front'
+  targetColorCode: string
+  targetMaterialProfile: string
+}): boolean {
+  return storedColorOverrides(input.value).some(override =>
+    normalizedColorCode(readString(override.color_code) ?? '') === input.sourceColorCode
+    && readString(override.product_application_scope) === input.scope
+    && normalizedColorCode(readString(override.target_color_code) ?? '') === input.targetColorCode
+    && readString(override.material_profile)?.toUpperCase() === input.targetMaterialProfile
+  )
+}
+
+function storedOperations(value: unknown): unknown[] {
+  const operations = jsonRecord(value).operations
+  return Array.isArray(operations) ? operations : []
 }
 
 function normalizedMatrixHybridCase(input: MatrixHybridColorCase): MatrixHybridColorCase {
@@ -461,6 +606,415 @@ export async function saveTransientMatrixDualCandidateSkuOverridesAction(input: 
   }
 }
 
+/** Saves a complete, SAP-derived unicolor board strategy for one color. */
+export async function saveTransientBoardConditionalProfileRuleAction(input: {
+  sourceColorCode: string
+  defaultBoardColorCode: string
+  defaultMaterialProfile: string | null
+  conditions: Array<{
+    sourceMaterialProfile: string
+    targetBoardColorCode: string
+    targetMaterialProfile: string
+  }>
+}): Promise<{ success: boolean; message: string; boardProfileConditions?: BoardProfileConditionalRule[] }> {
+  await assertPermission('module:product-design')
+  try {
+    const sourceColorCode = normalizedColorCode(input.sourceColorCode)
+    const defaultBoardColorCode = normalizedColorCode(input.defaultBoardColorCode)
+    const defaultMaterialProfile = input.defaultMaterialProfile?.trim().toUpperCase() || null
+    const conditions = input.conditions.map(condition => ({
+      sourceMaterialProfile: condition.sourceMaterialProfile.trim().toUpperCase(),
+      targetBoardColorCode: normalizedColorCode(condition.targetBoardColorCode),
+      targetMaterialProfile: condition.targetMaterialProfile.trim().toUpperCase(),
+    }))
+    if (![sourceColorCode, defaultBoardColorCode, ...conditions.map(condition => condition.targetBoardColorCode)].every(isColorCode)) {
+      throw new Error('Los colores de producto y tablero deben tener cuatro caracteres.')
+    }
+    if (conditions.length === 0) throw new Error('La estrategia necesita al menos una excepción de perfil respaldada por SAP.')
+    if (
+      (defaultMaterialProfile !== null && !isBoardMaterialProfile(defaultMaterialProfile))
+      || conditions.some(condition => !isBoardMaterialProfile(condition.sourceMaterialProfile) || !isBoardMaterialProfile(condition.targetMaterialProfile))
+    ) {
+      throw new Error('Los perfiles de tablero deben ser ST, RH o CARB2.')
+    }
+
+    const colorRows: Record<string, unknown>[] = await dbQuery(
+      `SELECT application_colors_json, application_material_profiles_json
+       FROM public.colors
+       WHERE code_4dig = $1
+       LIMIT 1`,
+      [sourceColorCode]
+    )
+    const color = colorRows[0]
+    if (!color) throw new Error(`No existe el color ${sourceColorCode} en Supabase.`)
+    const applicationColors = jsonRecord(color.application_colors_json)
+    const materialProfiles = jsonRecord(color.application_material_profiles_json)
+    // Edge bands may historically fall back to full_product. Freeze that
+    // current effective value before changing the board default so this action
+    // remains board-only even on older color records without an edge key.
+    if (!readString(applicationColors.edge_band_full_product)) {
+      applicationColors.edge_band_full_product = readString(applicationColors.full_product) ?? sourceColorCode
+    }
+    if (!readString(materialProfiles.edge_band_full_product) && readString(materialProfiles.full_product)) {
+      materialProfiles.edge_band_full_product = readString(materialProfiles.full_product)!
+    }
+    const boardProfileConditions: BoardProfileConditionalRule[] = conditions.map(condition => ({
+      rule_id: `board_profile_${condition.sourceMaterialProfile.toLowerCase()}_${condition.targetBoardColorCode.toLowerCase()}_${condition.targetMaterialProfile.toLowerCase()}`,
+      product_application_scope: 'full_product',
+      source_material_profile: condition.sourceMaterialProfile,
+      target_color_code: condition.targetBoardColorCode,
+      target_material_profile: condition.targetMaterialProfile,
+    }))
+    applicationColors.full_product = defaultBoardColorCode
+    applicationColors.board_profile_conditions = boardProfileConditions
+    delete applicationColors.board_matrix_resolution
+    if (defaultMaterialProfile === null) delete materialProfiles.full_product
+    else materialProfiles.full_product = defaultMaterialProfile
+
+    const savedRows: Record<string, unknown>[] = await dbQuery(
+      `UPDATE public.colors
+       SET application_colors_json = $1::jsonb,
+           application_material_profiles_json = $2::jsonb
+       WHERE code_4dig = $3
+       RETURNING code_4dig`,
+      [JSON.stringify(applicationColors), JSON.stringify(materialProfiles), sourceColorCode]
+    )
+    if (!readString(savedRows[0]?.code_4dig)) throw new Error(`No se pudo guardar la regla condicional de ${sourceColorCode}.`)
+    revalidatePath('/configuration/colors')
+    revalidatePath('/product-design/bom')
+    return {
+      success: true,
+      boardProfileConditions,
+      message: `Estrategia de tablero guardada para ${sourceColorCode}: por defecto ${defaultBoardColorCode}${defaultMaterialProfile ? ` · ${defaultMaterialProfile}` : ' · perfil definido por la referencia'}; ${conditions.length} excepción(es) por perfil. No modifica cantos, consumos, formatos ni SAP.`,
+    }
+  } catch (error) {
+    return { success: false, message: error instanceof Error ? error.message : 'No se pudo guardar la regla condicional de tablero.' }
+  }
+}
+
+/**
+ * Records that a scoped SAP review closed every board decision for one color.
+ * It stores only the decision summary, never the SAP evidence rows themselves.
+ */
+export async function confirmTransientBoardMatrixResolutionAction(input: {
+  sourceColorCode: string
+  sapActiveSkuCount: number
+  checkedSkuCount: number
+  dualCandidateCount: number
+}): Promise<{ success: boolean; message: string; confirmedAt?: string }> {
+  await assertPermission('module:product-design')
+  try {
+    const sourceColorCode = normalizedColorCode(input.sourceColorCode)
+    if (!isColorCode(sourceColorCode)) throw new Error('El color debe tener cuatro caracteres.')
+    if (!Number.isInteger(input.sapActiveSkuCount) || input.sapActiveSkuCount < 0 || !Number.isInteger(input.checkedSkuCount) || input.checkedSkuCount < 0 || !Number.isInteger(input.dualCandidateCount) || input.dualCandidateCount < 0) {
+      throw new Error('La evidencia de cierre de la matriz no es válida.')
+    }
+    const colorRows: Record<string, unknown>[] = await dbQuery(
+      `SELECT application_colors_json
+       FROM public.colors
+       WHERE code_4dig = $1
+       LIMIT 1`,
+      [sourceColorCode]
+    )
+    const color = colorRows[0]
+    if (!color) throw new Error(`No existe el color ${sourceColorCode} en Supabase.`)
+    const applicationColors = jsonRecord(color.application_colors_json)
+    if (!Array.isArray(applicationColors.board_profile_conditions) || applicationColors.board_profile_conditions.length === 0) {
+      throw new Error(`El color ${sourceColorCode} no tiene una regla condicional de tablero que cerrar.`)
+    }
+    const confirmedAt = new Date().toISOString()
+    applicationColors.board_matrix_resolution = {
+      status: 'configured',
+      confirmed_at: confirmedAt,
+      sap_active_sku_count: input.sapActiveSkuCount,
+      checked_sku_count: input.checkedSkuCount,
+      dual_candidate_count: input.dualCandidateCount,
+      source: 'reference_import',
+    }
+    const savedRows: Record<string, unknown>[] = await dbQuery(
+      `UPDATE public.colors
+       SET application_colors_json = $1::jsonb
+       WHERE code_4dig = $2
+       RETURNING code_4dig, application_colors_json`,
+      [JSON.stringify(applicationColors), sourceColorCode]
+    )
+    const savedApplicationColors = jsonRecord(savedRows[0]?.application_colors_json)
+    const savedResolution = jsonRecord(savedApplicationColors.board_matrix_resolution)
+    if (normalizedColorCode(readString(savedRows[0]?.code_4dig) ?? '') !== sourceColorCode || savedResolution.status !== 'configured' || readString(savedResolution.confirmed_at) !== confirmedAt) {
+      throw new Error(`No se pudo confirmar la resolución del color ${sourceColorCode}.`)
+    }
+    revalidatePath('/configuration/colors')
+    revalidatePath('/product-design/bom')
+    return {
+      success: true,
+      confirmedAt,
+      message: `Configuración de tableros cerrada para ${sourceColorCode}. La regla queda vigente; SAP solo se reconsulta si vuelves a solicitarlo.`,
+    }
+  } catch (error) {
+    return { success: false, message: error instanceof Error ? error.message : 'No se pudo confirmar la resolución de tableros.' }
+  }
+}
+
+/**
+ * Persists a user-approved board Dual exception for an explicit SKU set. It
+ * changes only the configured board roles and preserves any edge-band rules.
+ */
+export async function saveTransientBoardDualSkuOverridesAction(input: {
+  skuCompletes: string[]
+  sourceColorCode: string
+  structureColorCode: string
+  structureMaterialProfile: string
+  frontColorCode: string
+  frontMaterialProfile: string
+  isSapDeviation: boolean
+}): Promise<BoardDualMutationResult> {
+  const access = await assertPermission('module:product-design')
+  try {
+    const skuCompletes = normalizeSkuCompletes(input.skuCompletes)
+    const sourceColorCode = normalizedColorCode(input.sourceColorCode)
+    const structureColorCode = normalizedColorCode(input.structureColorCode)
+    const frontColorCode = normalizedColorCode(input.frontColorCode)
+    const structureMaterialProfile = input.structureMaterialProfile.trim().toUpperCase()
+    const frontMaterialProfile = input.frontMaterialProfile.trim().toUpperCase()
+    if (skuCompletes.length === 0) throw new Error('Selecciona al menos un SKU para el caso Dual.')
+    if (![sourceColorCode, structureColorCode, frontColorCode].every(isColorCode)) {
+      throw new Error('El color de producto, estructura y frentes deben tener cuatro caracteres.')
+    }
+    if (structureColorCode === frontColorCode) throw new Error('Un caso Dual necesita un tablero de estructura distinto al de frentes.')
+    if (!isBoardMaterialProfile(structureMaterialProfile) || !isBoardMaterialProfile(frontMaterialProfile)) {
+      throw new Error('Los perfiles de tablero deben ser ST, RH o CARB2.')
+    }
+
+    const skuRows: Record<string, unknown>[] = await dbQuery(
+      `SELECT sku.sku_complete, sku.color_code, sku.bom_overrides
+       FROM public.product_skus sku
+       JOIN public.product_versions version ON version.id = sku.version_id
+       WHERE sku.sku_complete IN (${skuCompletes.map((_, index) => `$${index + 1}`).join(', ')})
+         AND version.version_code = '000'`,
+      skuCompletes
+    )
+    const skuByCode = new Map(skuRows.flatMap(row => {
+      const skuComplete = readString(row.sku_complete)?.toUpperCase()
+      return skuComplete ? [[skuComplete, row] as const] : []
+    }))
+    const missingSkuCompletes = skuCompletes.filter(skuComplete => !skuByCode.has(skuComplete))
+    if (missingSkuCompletes.length > 0) throw new Error(`No existen como SKU versión 000: ${missingSkuCompletes.join(', ')}.`)
+    const unexpectedColorSkus = skuCompletes.filter(skuComplete => normalizedColorCode(readString(skuByCode.get(skuComplete)?.color_code) ?? '') !== sourceColorCode)
+    if (unexpectedColorSkus.length > 0) throw new Error(`No pertenecen al color ${sourceColorCode}: ${unexpectedColorSkus.join(', ')}.`)
+
+    const reason = input.isSapDeviation
+      ? `Matriz de tableros: Dual por SKU como desviación SAP pendiente de corrección humana. Estructura ${structureColorCode} ${structureMaterialProfile}; frente ${frontColorCode} ${frontMaterialProfile}.`
+      : `Matriz de tableros: Dual confirmado por SKU. Estructura ${structureColorCode} ${structureMaterialProfile}; frente ${frontColorCode} ${frontMaterialProfile}.`
+    const patches = skuCompletes.map(skuComplete => {
+      const current = skuByCode.get(skuComplete)
+      const retainedOverrides = storedColorOverrides(current?.bom_overrides).filter(override => !(
+        override.source === 'reference_import'
+        && typeof override.reason === 'string'
+        && override.reason.startsWith('Matriz de tableros:')
+        && override.color_code === sourceColorCode
+        && (override.product_application_scope === 'structure' || override.product_application_scope === 'front')
+      ))
+      return {
+        sku_complete: skuComplete,
+        bom_overrides: {
+          schema_version: 2,
+          operations: storedOperations(current?.bom_overrides),
+          color_overrides: [...retainedOverrides, {
+            override_id: crypto.randomUUID(),
+            color_code: sourceColorCode,
+            product_application_scope: 'structure',
+            base_item_code: null,
+            target_color_code: structureColorCode,
+            material_profile: structureMaterialProfile,
+            reason,
+            source: 'reference_import',
+            actor_id: access.user?.id ?? null,
+          }, {
+            override_id: crypto.randomUUID(),
+            color_code: sourceColorCode,
+            product_application_scope: 'front',
+            base_item_code: null,
+            target_color_code: frontColorCode,
+            material_profile: frontMaterialProfile,
+            reason,
+            source: 'reference_import',
+            actor_id: access.user?.id ?? null,
+          }],
+        },
+      }
+    })
+    const updated: Record<string, unknown>[] = await dbQuery(
+      `WITH patches AS (
+          SELECT sku_complete, bom_overrides
+          FROM jsonb_to_recordset($1::jsonb) AS patch(sku_complete text, bom_overrides jsonb)
+        ), updated_skus AS (
+          UPDATE public.product_skus sku
+          SET bom_overrides = patches.bom_overrides
+          FROM patches, public.product_versions version
+          WHERE sku.sku_complete = patches.sku_complete
+            AND sku.version_id = version.id
+            AND version.version_code = '000'
+          RETURNING sku.sku_complete
+        )
+        SELECT COALESCE(jsonb_agg(updated_skus.sku_complete), '[]'::jsonb) AS sku_completes
+        FROM updated_skus`,
+       [JSON.stringify(patches)]
+    )
+    const savedSkuCompletes = normalizeSkuCompletes(jsonStringArray(updated[0]?.sku_completes))
+    if (savedSkuCompletes.length !== skuCompletes.length) {
+      throw new Error('No se pudieron guardar todos los overrides del caso Dual.')
+    }
+    const readBackRows: Record<string, unknown>[] = await dbQuery(
+      `SELECT sku.sku_complete, sku.bom_overrides
+       FROM public.product_skus sku
+       JOIN public.product_versions version ON version.id = sku.version_id
+       WHERE sku.sku_complete IN (${skuCompletes.map((_, index) => `$${index + 1}`).join(', ')})
+         AND version.version_code = '000'`,
+      skuCompletes
+    )
+    const readBackBySku = new Map(readBackRows.flatMap(row => {
+      const skuComplete = readString(row.sku_complete)?.toUpperCase()
+      return skuComplete ? [[skuComplete, row] as const] : []
+    }))
+    const unverifiedSkuCompletes = skuCompletes.filter(skuComplete => {
+      const row = readBackBySku.get(skuComplete)
+      return !hasPersistedBoardDualOverride({ value: row?.bom_overrides, sourceColorCode, scope: 'structure', targetColorCode: structureColorCode, targetMaterialProfile: structureMaterialProfile })
+        || !hasPersistedBoardDualOverride({ value: row?.bom_overrides, sourceColorCode, scope: 'front', targetColorCode: frontColorCode, targetMaterialProfile: frontMaterialProfile })
+    })
+    if (unverifiedSkuCompletes.length > 0) {
+      throw new Error(`Los overrides no quedaron confirmados para: ${unverifiedSkuCompletes.join(', ')}.`)
+    }
+    const verification = await verifyPersistedBoardDualEffect({
+      skuCompletes,
+      structureColorCode,
+      structureMaterialProfile,
+      frontColorCode,
+      frontMaterialProfile,
+    })
+    const invalidatedResolutionRows: Record<string, unknown>[] = await dbQuery(
+      `UPDATE public.colors
+       SET application_colors_json = COALESCE(application_colors_json, '{}'::jsonb) - 'board_matrix_resolution'
+       WHERE code_4dig = $1
+       RETURNING code_4dig`,
+      [sourceColorCode]
+    )
+    if (normalizedColorCode(readString(invalidatedResolutionRows[0]?.code_4dig) ?? '') !== sourceColorCode) {
+      throw new Error(`No se pudo actualizar el estado de resolución del color ${sourceColorCode}.`)
+    }
+    revalidatePath('/product-design/bom')
+    return {
+      success: true,
+      verification,
+      savedSkuOverride: {
+        structureColorCode,
+        structureMaterialProfile,
+        frontColorCode,
+        frontMaterialProfile,
+        skuCompletes,
+        isSapDeviation: input.isSapDeviation,
+      },
+      message: `${input.isSapDeviation ? 'Override Dual por SKU guardado como desviación SAP.' : 'Caso Dual por SKU guardado.'} Se configuraron ${skuCompletes.length} SKU(s): estructura ${structureColorCode} ${structureMaterialProfile} y frente ${frontColorCode} ${frontMaterialProfile}. No se modificaron cantos ni SAP.`,
+    }
+  } catch (error) {
+    return { success: false, message: error instanceof Error ? error.message : 'No se pudo guardar el caso Dual de tableros.' }
+  }
+}
+
+/**
+ * Stores the board colors and profiles for the structure/front roles of one
+ * color. A SKU is Dual because its BOM exposes those two roles; unicolor BOMs
+ * continue resolving through full_product.
+ */
+export async function saveTransientBoardDualColorCaseAction(input: {
+  sourceColorCode: string
+  skuCompletes: string[]
+  structureColorCode: string
+  structureMaterialProfile: string
+  frontColorCode: string
+  frontMaterialProfile: string
+}): Promise<BoardDualMutationResult> {
+  await assertPermission('module:product-design')
+  try {
+    const sourceColorCode = normalizedColorCode(input.sourceColorCode)
+    const skuCompletes = normalizeSkuCompletes(input.skuCompletes)
+    const structureColorCode = normalizedColorCode(input.structureColorCode)
+    const structureMaterialProfile = input.structureMaterialProfile.trim().toUpperCase()
+    const frontColorCode = normalizedColorCode(input.frontColorCode)
+    const frontMaterialProfile = input.frontMaterialProfile.trim().toUpperCase()
+    if (skuCompletes.length === 0) throw new Error('El caso Dual no contiene SKU con evidencia SAP.')
+    if (![sourceColorCode, structureColorCode, frontColorCode].every(isColorCode)) {
+      throw new Error('El color del producto, estructura y frente debe tener cuatro caracteres.')
+    }
+    if (structureColorCode === frontColorCode) throw new Error('Un caso Dual necesita tableros distintos para estructura y frente.')
+    if (!isBoardMaterialProfile(structureMaterialProfile) || !isBoardMaterialProfile(frontMaterialProfile)) {
+      throw new Error('Los perfiles de tablero deben ser ST, RH o CARB2.')
+    }
+
+    const colorRows: Record<string, unknown>[] = await dbQuery(
+      `SELECT application_colors_json, application_material_profiles_json
+       FROM public.colors
+       WHERE code_4dig = $1
+       LIMIT 1`,
+      [sourceColorCode]
+    )
+    const color = colorRows[0]
+    if (!color) throw new Error(`No existe el color ${sourceColorCode} en Supabase.`)
+    const applicationColors = jsonRecord(color.application_colors_json)
+    if (!readString(applicationColors.edge_band_full_product)) {
+      applicationColors.edge_band_full_product = readString(applicationColors.full_product) ?? sourceColorCode
+    }
+    const materialProfiles = jsonRecord(color.application_material_profiles_json)
+    applicationColors.structure = structureColorCode
+    applicationColors.front = frontColorCode
+    delete applicationColors.board_matrix_resolution
+    materialProfiles.structure = structureMaterialProfile
+    materialProfiles.front = frontMaterialProfile
+    const retainedHybridCases = storedHybridColorCases(applicationColors)
+      .filter(existingCase => existingCase.material_kind !== 'board')
+    if (retainedHybridCases.length > 0) applicationColors.hybrid_color_cases = retainedHybridCases
+    else delete applicationColors.hybrid_color_cases
+
+    const savedRows: Record<string, unknown>[] = await dbQuery(
+      `UPDATE public.colors
+       SET application_colors_json = $1::jsonb,
+           application_material_profiles_json = $2::jsonb
+       WHERE code_4dig = $3
+       RETURNING code_4dig, application_colors_json, application_material_profiles_json`,
+      [JSON.stringify(applicationColors), JSON.stringify(materialProfiles), sourceColorCode]
+    )
+    if (normalizedColorCode(readString(savedRows[0]?.code_4dig) ?? '') !== sourceColorCode) {
+      throw new Error(`No se pudo guardar el caso Dual de tablero para ${sourceColorCode}.`)
+    }
+    const savedApplicationColors = jsonRecord(savedRows[0]?.application_colors_json)
+    const savedMaterialProfiles = jsonRecord(savedRows[0]?.application_material_profiles_json)
+    if (
+      normalizedColorCode(readString(savedApplicationColors.structure) ?? '') !== structureColorCode
+      || normalizedColorCode(readString(savedApplicationColors.front) ?? '') !== frontColorCode
+      || readString(savedMaterialProfiles.structure)?.toUpperCase() !== structureMaterialProfile
+      || readString(savedMaterialProfiles.front)?.toUpperCase() !== frontMaterialProfile
+    ) throw new Error(`La configuración Dual de ${sourceColorCode} no quedó disponible al releer el color.`)
+    const verification = await verifyPersistedBoardDualEffect({
+      skuCompletes,
+      structureColorCode,
+      structureMaterialProfile,
+      frontColorCode,
+      frontMaterialProfile,
+    })
+    revalidatePath('/configuration/colors')
+    revalidatePath('/product-design/bom')
+    return {
+      success: true,
+      savedConfiguration: { structureColorCode, structureMaterialProfile, frontColorCode, frontMaterialProfile },
+      verification,
+      message: verification.state === 'effective'
+        ? `Configuración Dual de tableros aplicada y comprobada para ${sourceColorCode}: estructura ${structureColorCode} ${structureMaterialProfile}; frente ${frontColorCode} ${frontMaterialProfile}.`
+        : `Configuración Dual de tableros guardada para ${sourceColorCode}: estructura ${structureColorCode} ${structureMaterialProfile}; frente ${frontColorCode} ${frontMaterialProfile}. ${verification.note ?? ''}`,
+    }
+  } catch (error) {
+    return { success: false, message: error instanceof Error ? error.message : 'No se pudo guardar el caso Dual de tableros.' }
+  }
+}
+
 export async function verifyTransientColorMatrixAction(input: {
   selections: MatrixSelection[]
 }): Promise<{ success: boolean; message: string; results: ColorRuleCoverageResult[] }> {
@@ -653,23 +1207,112 @@ export async function applyTransientIssueMethodsBatchAction(input: {
   }
 }
 
-export async function deactivateTransientSapInactiveSkuInSupabaseAction(input: { referenceId: string; skuComplete: string; confirmationText: string }): Promise<ActionResult> {
+export async function syncTransientSapInactiveSkusInSupabaseAction(input: { skuCompletes: string[] }): Promise<{
+  success: boolean
+  message: string
+  results: Array<{ skuComplete: string; success: boolean; changed: boolean; message: string }>
+}> {
+  await assertPermission('module:product-design')
+  const skuCompletes = [...new Set(input.skuCompletes.map(value => value.trim().toUpperCase()).filter(Boolean))]
+  if (skuCompletes.length === 0) return { success: false, message: 'Selecciona al menos un SKU para sincronizar.', results: [] }
+  const results: Array<{ skuComplete: string; success: boolean; changed: boolean; message: string }> = []
+  for (const skuComplete of skuCompletes) {
+    try {
+      // These SKU come from the board matrix that just read their SAP status.
+      // This is a Supabase-only reconciliation, so it must mutate precisely the
+      // selected evidence set instead of triggering another broad SAP scan.
+      const rows: Record<string, unknown>[] = await dbQuery(
+        `UPDATE public.product_skus sku
+         SET status = 'INACTIVO', updated_at = now()
+         FROM public.product_versions version
+         WHERE sku.version_id = version.id
+           AND version.version_code = '000'
+           AND sku.sku_complete = $1
+           AND COALESCE(sku.status, 'ACTIVO') = 'ACTIVO'
+         RETURNING sku.id`,
+        [skuComplete]
+      )
+      const changed = readString(rows[0]?.id) !== null
+      results.push({
+        skuComplete,
+        success: true,
+        changed,
+        message: changed ? 'Supabase quedó inactivo según la evidencia SAP recién analizada.' : 'Ya estaba inactivo en Supabase.',
+      })
+    } catch (error) {
+      results.push({
+        skuComplete,
+        success: false,
+        changed: false,
+        message: error instanceof Error ? error.message : 'No se pudo sincronizar el estado en Supabase.',
+      })
+    }
+  }
+  const failedCount = results.filter(result => !result.success).length
+  const changedCount = results.filter(result => result.changed).length
+  return {
+    success: failedCount === 0,
+    message: `${changedCount} SKU sincronizado(s) como inactivo(s) en Supabase; ${failedCount} sin cambio.`,
+    results,
+  }
+}
+
+/**
+ * Adds only the missing color variant of an already-active reference/version.
+ * It intentionally cannot create a reference, version, color, or SAP item.
+ */
+export async function createTransientSapColorVariationAction(input: {
+  skuComplete: string
+  sapDescriptionOriginal: string | null
+}): Promise<{ success: boolean; message: string }> {
   await assertPermission('module:product-design')
   const skuComplete = input.skuComplete.trim().toUpperCase()
-  const expected = `INACTIVAR EN SUPABASE ${skuComplete}`
-  try {
-    if (input.confirmationText.trim() !== expected) throw new Error(`Escribe exactamente: ${expected}`)
-    const item = await getSapItem(skuComplete, ['ItemCode', 'Valid', 'Frozen'])
-    if (readSapValid(item) !== false && readSapFrozen(item) !== true) throw new Error('SAP ya no reporta este SKU como inactivo.')
-    const rows: Record<string, unknown>[] = await dbQuery(
-      `UPDATE public.product_skus sku SET status = 'INACTIVO', updated_at = now() FROM public.product_versions version WHERE sku.version_id = version.id AND version.reference_id = $1 AND version.version_code = '000' AND sku.sku_complete = $2 RETURNING sku.id`,
-      [input.referenceId, skuComplete]
-    )
-    if (!readString(rows[0]?.id)) throw new Error('El SKU no pertenece a la referencia seleccionada.')
-    return refreshed(input.referenceId, `${skuComplete} quedó inactivo en la app y SAP se volvió a analizar.`)
-  } catch (error) {
-    return failure(error, 'No se pudo inactivar el SKU en la app.')
+  const segments = skuComplete.split('-')
+  const colorCode = segments.at(-1) ?? ''
+  const versionCode = segments.at(-2) ?? ''
+  const skuBase = segments.slice(0, -1).join('-')
+  if (!/^V[A-Z0-9]*$/.test(segments[0] ?? '') || versionCode !== '000' || !isColorCode(colorCode) || !skuBase) {
+    return { success: false, message: 'El SKU no tiene el formato V*, versión 000 y color de cuatro caracteres requerido para crear una variación.' }
   }
+
+  const existingRows: Record<string, unknown>[] = await dbQuery(
+    'SELECT id FROM public.product_skus WHERE sku_complete = $1 LIMIT 1',
+    [skuComplete]
+  )
+  if (readString(existingRows[0]?.id)) return { success: false, message: `${skuComplete} ya está registrado en Supabase.` }
+
+  const versionRows: Record<string, unknown>[] = await dbQuery(
+    `SELECT v.id
+     FROM public.product_versions v
+     JOIN public.product_references r ON r.id = v.reference_id
+     WHERE v.sku_base = $1
+       AND v.version_code = '000'
+       AND COALESCE(v.status, 'ACTIVO') = 'ACTIVO'
+       AND COALESCE(r.status, 'ACTIVO') = 'ACTIVO'
+     LIMIT 2`,
+    [skuBase]
+  )
+  if (versionRows.length !== 1) {
+    return {
+      success: false,
+      message: versionRows.length === 0
+        ? 'No existe una referencia y versión 000 activas en Supabase para crear esta variación de color.'
+        : 'Hay más de una versión activa candidata; no se creó ninguna variación.',
+    }
+  }
+
+  const createdRows: Record<string, unknown>[] = await dbQuery(
+    `INSERT INTO public.product_skus (
+       version_id, sku_complete, color_code, sap_description_original, status, sku_attrs,
+       naming_stale, naming_stale_at, naming_stale_final_complete_name,
+       naming_stale_sap_description_recommended, updated_at
+     ) VALUES ($1, $2, $3, $4, 'ACTIVO', '{}'::jsonb, true, now(), true, true, now())
+     RETURNING id`,
+    [readString(versionRows[0]?.id), skuComplete, colorCode, readString(input.sapDescriptionOriginal)]
+  )
+  if (!readString(createdRows[0]?.id)) return { success: false, message: 'Supabase no confirmó la creación de la variación de color.' }
+  revalidatePath('/product-design/bom')
+  return { success: true, message: `${skuComplete} se creó en Supabase como variación activa del color ${colorCode}. No se modificó SAP.` }
 }
 
 export async function deactivateTransientReferenceBomSkusInSapAction(input: {
@@ -801,4 +1444,97 @@ export async function saveTransientReferenceBomColorAction(color: ColorEntry): P
   const saved = await upsertColorAction({ ...color, isNew: false })
   revalidatePath('/product-design/bom')
   return saved
+}
+
+export type BoardFullProductColorRuleActionResult = {
+  success: boolean
+  message: string
+  color: ColorEntry | null
+}
+
+/**
+ * Stores only the global color rule that SAP has just revalidated. The action
+ * deliberately re-runs the SAP-first matrix so a stale browser result cannot
+ * persist a rule after the underlying SKU population changed.
+ */
+export async function applyTransientBoardFullProductColorRuleAction(input: {
+  colorCode: string
+  boardColorCode: string
+  materialProfile: string
+}): Promise<BoardFullProductColorRuleActionResult> {
+  try {
+    await assertPermission('module:product-design')
+    const colorCode = normalizedColorCode(input.colorCode)
+    const boardColorCode = normalizedColorCode(input.boardColorCode)
+    const materialProfile = input.materialProfile.trim().toUpperCase()
+    if (!isColorCode(colorCode) || !isColorCode(boardColorCode)) {
+      throw new Error('El color de producto y el color de tablero deben tener cuatro caracteres.')
+    }
+    if (materialProfile !== 'ST' && materialProfile !== 'RH' && materialProfile !== 'CARB2') {
+      throw new Error('El perfil de tablero debe ser ST, RH o CARB2.')
+    }
+
+    const [coverage] = await analyzeReferenceImportBoardMatrix({ colorCodes: [colorCode] })
+    const candidate = coverage?.fullProductRuleCandidate
+    if (!coverage || !candidate || coverage.fullProductRuleBlockers.length > 0) {
+      const reason = coverage?.fullProductRuleBlockers[0] ?? 'SAP no devolvió una evidencia completa para esta regla.'
+      return {
+        success: false,
+        message: `No se guardó la regla global del color ${colorCode}: ${reason}`,
+        color: null,
+      }
+    }
+    if (candidate.boardColorCode !== boardColorCode || candidate.materialProfile !== materialProfile) {
+      return {
+        success: false,
+        message: `SAP acaba de validar tablero ${candidate.boardColorCode} con perfil ${candidate.materialProfile}; la propuesta abierta ya no coincide.`,
+        color: null,
+      }
+    }
+
+    const color = (await getColorsAction()).find(item => item.code_4dig === colorCode)
+    if (!color) throw new Error(`No existe el color ${colorCode} en Supabase.`)
+    if (color.color_mode === 'dual' || color.color_mode === 'balance') {
+      return {
+        success: false,
+        message: `El color ${colorCode} es ${color.color_mode}; requiere una regla por rol y no una regla global de producto completo.`,
+        color: null,
+      }
+    }
+    if (
+      color.application_colors_json.full_product === boardColorCode
+      && color.application_material_profiles_json.full_product === materialProfile
+    ) {
+      return {
+        success: true,
+        message: `La regla global del color ${colorCode} ya coincide con SAP: producto completo usa tablero ${boardColorCode} y perfil ${materialProfile}.`,
+        color,
+      }
+    }
+
+    const saved = await upsertColorAction({
+      ...color,
+      isNew: false,
+      application_colors_json: {
+        ...color.application_colors_json,
+        full_product: boardColorCode,
+      },
+      application_material_profiles_json: {
+        ...color.application_material_profiles_json,
+        full_product: materialProfile,
+      },
+    })
+    revalidatePath('/product-design/bom')
+    return {
+      success: true,
+      message: `Regla global guardada para ${colorCode}: producto completo usa tablero ${boardColorCode} y perfil ${materialProfile}, respaldado por ${candidate.evidenceSkuCount} SKU activos de SAP. No cambió consumos, formatos, BOM base ni overrides por SKU.`,
+      color: saved,
+    }
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : 'No se pudo guardar la regla global de tablero.',
+      color: null,
+    }
+  }
 }

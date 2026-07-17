@@ -22,6 +22,7 @@ import { Label } from '@/components/ui/label'
 import {
     COLOR_APPLICATION_SCOPE_KEYS,
     COLOR_APPLICATION_SCOPE_LABELS,
+    BOARD_MATERIAL_PROFILE_SCOPE_KEYS,
     MATERIAL_PROFILE_LABELS,
     MATERIAL_PROFILE_OPTIONS,
     COLOR_MODE_LABELS,
@@ -29,10 +30,12 @@ import {
     SAP_COLOR_CODE_PATTERN,
     type ColorApplicationMap,
     type ColorApplicationScope,
+    type BoardMaterialProfileScope,
     type ColorMaterialProfileMap,
     type ColorMode,
     type MaterialProfile,
 } from './productiveScopes'
+import type { BoardProfileConditionalRule } from '@/lib/bom/types'
 
 interface ColorEntry {
     code_4dig: string
@@ -40,6 +43,7 @@ interface ColorEntry {
     color_mode: ColorMode
     application_colors_json: ColorApplicationMap
     application_material_profiles_json: ColorMaterialProfileMap
+    board_profile_conditions: BoardProfileConditionalRule[]
     allowed_product_types: string[]
     allowed_manufacturing_processes: string[]
     is_active: boolean
@@ -74,17 +78,17 @@ function getEditableApplicationColors(color?: { application_colors_json?: Partia
     return values
 }
 
-type EditableMaterialProfileMap = Record<ColorApplicationScope, MaterialProfile | ''>
+type EditableMaterialProfileMap = Record<BoardMaterialProfileScope, MaterialProfile | ''>
 
 function createEmptyMaterialProfiles(): EditableMaterialProfileMap {
     const values = {} as EditableMaterialProfileMap
-    for (const scope of COLOR_APPLICATION_SCOPE_KEYS) values[scope] = ''
+    for (const scope of BOARD_MATERIAL_PROFILE_SCOPE_KEYS) values[scope] = ''
     return values
 }
 
-function getEditableMaterialProfiles(color?: { application_material_profiles_json?: Partial<Record<ColorApplicationScope, string>> } | null): EditableMaterialProfileMap {
+function getEditableMaterialProfiles(color?: { application_material_profiles_json?: Partial<Record<BoardMaterialProfileScope, string>> } | null): EditableMaterialProfileMap {
     const values = createEmptyMaterialProfiles()
-    for (const scope of COLOR_APPLICATION_SCOPE_KEYS) {
+    for (const scope of BOARD_MATERIAL_PROFILE_SCOPE_KEYS) {
         const profile = color?.application_material_profiles_json?.[scope]
         values[scope] = MATERIAL_PROFILE_OPTIONS.includes(profile as MaterialProfile)
             ? profile as MaterialProfile
@@ -108,9 +112,9 @@ function getApplicationColorsPayload(applicationColors: ColorApplicationMap | un
     return payload
 }
 
-function getMaterialProfilesPayload(materialProfiles: Partial<Record<ColorApplicationScope, string>> | undefined): ColorMaterialProfileMap {
+function getMaterialProfilesPayload(materialProfiles: Partial<Record<BoardMaterialProfileScope, string>> | undefined): ColorMaterialProfileMap {
     const payload: ColorMaterialProfileMap = {}
-    for (const scope of COLOR_APPLICATION_SCOPE_KEYS) {
+    for (const scope of BOARD_MATERIAL_PROFILE_SCOPE_KEYS) {
         const profile = materialProfiles?.[scope]?.trim().toUpperCase() ?? ''
         if (MATERIAL_PROFILE_OPTIONS.includes(profile as (typeof MATERIAL_PROFILE_OPTIONS)[number])) {
             payload[scope] = profile as (typeof MATERIAL_PROFILE_OPTIONS)[number]
@@ -217,7 +221,7 @@ export default function ColorsClient({ initialData, manufacturingProcesses, prod
         } : prev)
     }
 
-    const updateMaterialProfile = (scope: ColorApplicationScope, rawValue: string) => {
+    const updateMaterialProfile = (scope: BoardMaterialProfileScope, rawValue: string) => {
         const profile = MATERIAL_PROFILE_OPTIONS.includes(rawValue as MaterialProfile)
             ? rawValue as MaterialProfile
             : ''
@@ -624,7 +628,7 @@ export default function ColorsClient({ initialData, manufacturingProcesses, prod
                                 </p>
                             </div>
                             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-                                {COLOR_APPLICATION_SCOPE_KEYS.map((scope) => (
+                                {BOARD_MATERIAL_PROFILE_SCOPE_KEYS.map((scope) => (
                                     <div key={scope} className="grid gap-1">
                                         <Label htmlFor={`material-profile-${scope}`} className="truncate text-[11px] font-semibold text-slate-600">
                                             {COLOR_APPLICATION_SCOPE_LABELS[scope]}
@@ -643,6 +647,13 @@ export default function ColorsClient({ initialData, manufacturingProcesses, prod
                                     </div>
                                 ))}
                             </div>
+                            {editingColor?.board_profile_conditions && editingColor.board_profile_conditions.length > 0 ? <div className="mt-3 border border-violet-200 bg-violet-50 p-3 text-xs text-violet-950">
+                                <p className="font-semibold">Reglas condicionales de tablero</p>
+                                <p className="mt-1 text-violet-900">Producto completo conserva su color base y su perfil se resuelve primero por la BOM. Estas reglas solo cambian el tablero cuando se cumple el perfil efectivo indicado.</p>
+                                <div className="mt-2 space-y-1 font-mono">
+                                    {editingColor.board_profile_conditions.map(rule => <p key={rule.rule_id}>Si Producto completo resuelve <span className="font-semibold">{rule.source_material_profile}</span>: tablero <span className="font-semibold">{rule.target_color_code}</span> · perfil <span className="font-semibold">{rule.target_material_profile}</span></p>)}
+                                </div>
+                            </div> : null}
                         </div>
                         </div>
 

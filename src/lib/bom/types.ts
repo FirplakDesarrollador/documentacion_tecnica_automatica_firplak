@@ -31,6 +31,21 @@ export type HybridColorCase = {
   color_mode: Extract<BomColorMode, 'dual' | 'balance'>
   sku_completes: string[]
   application_colors: Record<string, string>
+  application_material_profiles?: Record<string, string>
+  /** A board-only case must not alter edge-band resolution. */
+  material_kind?: 'board'
+}
+
+/**
+ * A board-only exception evaluated after the reference BOM selects its base
+ * material profile. It never participates in edge-band resolution.
+ */
+export type BoardProfileConditionalRule = {
+  rule_id: string
+  product_application_scope: 'full_product'
+  source_material_profile: MaterialProfile
+  target_color_code: string
+  target_material_profile: MaterialProfile
 }
 
 export type ComponentTechnicalMetadata = {
@@ -156,6 +171,7 @@ export type Colorway = {
   color_mode: 'full' | 'dual' | 'balance' | 'equivalent'
   application_colors_json: Record<string, string>
   hybrid_color_cases?: HybridColorCase[]
+  board_profile_conditions?: BoardProfileConditionalRule[]
   application_material_profiles_json: Record<string, string>
   allowed_product_types: string[]
   is_active: boolean

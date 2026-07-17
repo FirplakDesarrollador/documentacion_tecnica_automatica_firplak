@@ -45,9 +45,8 @@ export function inferMaterialProfile(itemName: string): {
   source: string | null
 } {
   const normalizedName = itemName.trim().toUpperCase()
-  if (/\bCARB(?:2)?\b/.test(normalizedName)) {
-    return { normalized: 'CARB2', source: normalizedName.match(/\bCARB(?:2)?\b/)?.[0] ?? 'CARB' }
-  }
+  const carbSource = normalizedName.match(/\bCARB(?:2)?\b/)?.[0] ?? null
+  if (carbSource) return { normalized: 'CARB2', source: carbSource }
   if (/\bRH\b/.test(normalizedName)) return { normalized: 'RH', source: 'RH' }
   if (/\bST\b/.test(normalizedName)) return { normalized: 'ST', source: 'ST' }
   return { normalized: null, source: null }
