@@ -6,7 +6,7 @@ import { dbQuery } from '@/lib/supabase'
 
 export type SapEntityPayload = Record<string, unknown>
 
-type SapHttpMethod = 'GET' | 'POST' | 'PATCH'
+type SapHttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE'
 
 type SapConfig = {
   loginUrl: URL
@@ -693,6 +693,54 @@ export async function createSapItem(payload: SapEntityPayload): Promise<unknown>
   return sapServiceLayerRequest('/Items', {
     method: 'POST',
     body: payload,
+  })
+}
+
+export type SapProductTreeCreateLine = {
+  ItemCode: string
+  Quantity: number
+  Warehouse?: string | null
+  IssueMethod?: string | null
+  Comment?: string | null
+}
+
+export async function createSapProductTree(input: {
+  treeCode: string
+  lines: SapProductTreeCreateLine[]
+  quantity?: number
+  treeType?: string
+}): Promise<unknown> {
+  await assertSapWritesEnabled()
+  const treeCode = normalizeRequiredCode(input.treeCode, 'treeCode')
+  if (input.lines.length === 0) {
+    throw new SapServiceLayerError('ProductTree requires at least one line', {
+      statusCode: 400,
+      sapCode: 'SAP_VALIDATION_ERROR',
+    })
+  }
+  return sapServiceLayerRequest('/ProductTrees', {
+    method: 'POST',
+    body: {
+      TreeCode: treeCode,
+      Quantity: input.quantity ?? 1,
+      TreeType: input.treeType ?? 'iProductionTree',
+      ProductTreeLines: input.lines.map((line, index) => ({
+        ItemCode: line.ItemCode,
+        Quantity: line.Quantity,
+        Warehouse: line.Warehouse ?? null,
+        IssueMethod: line.IssueMethod ?? 'im_Manual',
+        Comment: line.Comment ?? null,
+        ChildNum: index,
+      })),
+    },
+  })
+}
+
+export async function deleteSapItem(itemCode: string): Promise<unknown> {
+  await assertSapWritesEnabled()
+  const normalizedCode = normalizeRequiredCode(itemCode, 'itemCode')
+  return sapServiceLayerRequest(`/Items(${encodeODataString(normalizedCode)})`, {
+    method: 'DELETE',
   })
 }
 
