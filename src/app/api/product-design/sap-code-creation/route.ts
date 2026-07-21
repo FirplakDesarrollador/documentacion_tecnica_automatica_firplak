@@ -259,6 +259,7 @@ async function executeSapItemDeletion(input: CreationRequest) {
     itemCode: inspection.itemCode,
     itemExists: true,
     treeExists: Boolean(inspection.bom),
+    treeCode: inspection.bom?.treeCode ?? null,
     treeLineCount: inspection.bom?.lineCount ?? 0,
     parentTrees: inspection.associations.parentTrees,
     productionOrders: inspection.associations.productionOrders,
@@ -314,14 +315,15 @@ async function executeSapItemDeletion(input: CreationRequest) {
   let itemDeleted = false
   try {
     if (inspection.bom) {
-      await deleteSapProductTree(inspection.itemCode)
-      const treeAfter = await getSapItemBom(inspection.itemCode)
+      const treeCode = inspection.bom.treeCode || inspection.itemCode
+      await deleteSapProductTree(treeCode)
+      const treeAfter = await getSapItemBom(treeCode)
       if (treeAfter) throw new Error('SAP no confirmó la eliminación de la LdM.')
       treeDeleted = true
       await logOperation(
         'sap_code_delete_bom',
         inspection.itemCode,
-        { treeCode: inspection.itemCode, previousLineCount: inspection.bom.lineCount },
+        { treeCode, previousLineCount: inspection.bom.lineCount },
         { treeDeleted: true },
         true,
       )

@@ -16,7 +16,7 @@ import type { ReferenceBomStructure, ReferenceImportWorkspace } from '@/lib/bom/
 import { isReferenceProductApplicationScope, type ReferenceProductApplicationScope } from '@/lib/bom/referenceImportScopes'
 import type { BoardProfileConditionalRule, HybridColorCase } from '@/lib/bom/types'
 import { normalizeBomStructure } from '@/lib/bom/resolve'
-import { deleteSapItem, getSapItem, getSapItemBom, productTreeStructureMatches, updateSapItem, updateSapProductTreeIssueMethod, type SapEntityPayload } from '@/lib/sap/serviceLayer'
+import { deleteSapItem, deleteSapProductTree, getSapItem, getSapItemBom, getSapProductTreeUsages, productTreeStructureMatches, updateSapItem, updateSapProductTreeIssueMethod, type SapEntityPayload } from '@/lib/sap/serviceLayer'
 import { parseSapItemCode, readSapFrozen, readSapValid } from '@/lib/bom/sapMapping'
 import { syncMissingSapComponentsToCatalog } from '@/lib/sap/componentCatalogSync'
 import { getColorsAction, upsertColorAction, type ColorEntry } from '@/app/rules/colors/actions'
@@ -1360,23 +1360,70 @@ export async function deleteTransientSapOnlySkuAction(input: {
   skuComplete: string
   dryRun: boolean
   confirmed: boolean
-}): Promise<{ success: boolean; dryRun: boolean; message: string }> {
+}): Promise<{ success: boolean; dryRun: boolean; message: string; treeDeleted?: boolean; treeCode?: string | null; parentTrees?: string[] }> {
   await assertPermission('module:product-design')
   const skuComplete = input.skuComplete.trim().toUpperCase()
+  let treeDeleted = false
+  let treeCode: string | null = null
+  let parentTrees: string[] = []
   try {
     await getSapItem(skuComplete, ['ItemCode', 'ItemName', 'Valid', 'Frozen'])
-    if (input.dryRun) return { success: true, dryRun: true, message: `Dry-run listo para eliminar ${skuComplete} de SAP.` }
+    const bom = await getSapItemBom(skuComplete)
+    parentTrees = (await getSapProductTreeUsages(skuComplete)).map(tree => tree.treeCode)
+    treeCode = bom?.treeCode || null
+    if (input.dryRun) {
+      return {
+        success: true,
+        dryRun: true,
+        treeCode,
+        parentTrees,
+        message: parentTrees.length > 0
+          ? `No se puede eliminar ${skuComplete} automáticamente porque está asociado como componente en estas LdM superiores: ${parentTrees.join(', ')}. Primero deben resolverse esas asociaciones.`
+          : bom
+            ? `Dry-run listo para desasociar primero la LdM ${treeCode} (${bom.lines.length} líneas) y después eliminar ${skuComplete} de SAP. Los componentes internos no se eliminarán.`
+            : `Dry-run listo para eliminar ${skuComplete} de SAP. No se encontró una LdM propia para desasociar.`,
+      }
+    }
     if (!input.confirmed) throw new Error('Confirma la acción con la casilla antes de eliminar el código de SAP.')
+    if (parentTrees.length > 0) {
+      throw new Error(`El código está asociado como componente en estas LdM superiores: ${parentTrees.join(', ')}. No se modificó ninguna LdM.`)
+    }
+
+    if (bom) {
+      const resolvedTreeCode = bom.treeCode || skuComplete
+      await deleteSapProductTree(resolvedTreeCode)
+      const treeAfter = await getSapItemBom(resolvedTreeCode)
+      if (treeAfter) throw new Error(`SAP no confirmó la eliminación de la LdM ${resolvedTreeCode}.`)
+      treeDeleted = true
+      treeCode = resolvedTreeCode
+    }
+
     await deleteSapItem(skuComplete)
     try {
       await getSapItem(skuComplete, ['ItemCode'])
       throw new Error(`SAP todavía devuelve ${skuComplete}; la eliminación no quedó verificada.`)
     } catch (error) {
       if (error instanceof Error && error.message.includes('todavía devuelve')) throw error
+      throw new Error(`No se pudo verificar la eliminación de ${skuComplete} en SAP: ${error instanceof Error ? error.message : 'error desconocido'}`)
     }
-    return { success: true, dryRun: false, message: `${skuComplete} fue eliminado y verificado en SAP.` }
+    return {
+      success: true,
+      dryRun: false,
+      treeDeleted,
+      treeCode,
+      message: `${skuComplete} fue eliminado y verificado en SAP${treeDeleted ? `; la LdM ${treeCode} fue desasociada previamente y sus componentes internos se conservaron.` : '.'}`,
+    }
   } catch (error) {
-    return { success: false, dryRun: input.dryRun, message: error instanceof Error ? error.message : 'No se pudo eliminar el código en SAP.' }
+    return {
+      success: false,
+      dryRun: input.dryRun,
+      treeDeleted,
+      treeCode,
+      parentTrees,
+      message: treeDeleted
+        ? `La LdM ${treeCode} fue desasociada, pero el código ${skuComplete} no pudo eliminarse: ${error instanceof Error ? error.message : 'error desconocido'}`
+        : error instanceof Error ? error.message : 'No se pudo eliminar el código en SAP.',
+    }
   }
 }
 

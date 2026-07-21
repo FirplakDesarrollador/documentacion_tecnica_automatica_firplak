@@ -696,23 +696,52 @@ export async function getSapProductTreeUsages(
   options?: { timeoutMs?: number; top?: number },
 ): Promise<SapProductTreeUsage[]> {
   const normalizedCode = normalizeRequiredCode(itemCode, 'itemCode')
-  const query = buildCollectionQuery({
-    select: ['TreeCode', 'TreeType', 'ProductDescription'],
-    filter: `ProductTreeLines/any(line: line/ItemCode eq ${encodeODataString(normalizedCode)})`,
-    orderby: 'TreeCode asc',
-    top: options?.top ?? 50,
-  })
-  const response = await sapServiceLayerRequest<unknown>(`/ProductTrees${query}`, {
-    timeoutMs: options?.timeoutMs,
-  })
+  const pageSize = Math.min(Math.max(options?.top ?? 50, 1), 100)
+  const usages: SapProductTreeUsage[] = []
+  let skip = 0
+  let hasMore = true
 
-  return recordsFromCollectionResponse(response)
-    .map(row => ({
-      treeCode: readStringField(row, 'TreeCode') ?? '',
-      treeType: readStringField(row, 'TreeType'),
-      productDescription: readStringField(row, 'ProductDescription'),
-    }))
-    .filter(row => row.treeCode.length > 0)
+  while (hasMore) {
+    const queryOption = [
+      '$expand=ProductTrees($select=TreeCode,TreeType,ProductDescription),ProductTrees/ProductTreeLines($select=ItemCode,ParentItem)',
+      `$filter=ProductTrees/TreeCode eq ProductTrees/ProductTreeLines/ParentItem and ProductTrees/ProductTreeLines/ItemCode eq ${encodeODataString(normalizedCode)}`,
+      '$orderby=ProductTrees/TreeCode asc',
+      `$top=${pageSize}`,
+      `$skip=${skip}`,
+    ].join('&')
+    const response: unknown = await sapServiceLayerRequest<unknown>('/QueryService_PostQuery', {
+      method: 'POST',
+      body: {
+        QueryPath: '$crossjoin(ProductTrees,ProductTrees/ProductTreeLines)',
+        QueryOption: queryOption,
+      },
+      timeoutMs: options?.timeoutMs,
+    })
+    const rows = recordsFromCollectionResponse(response)
+
+    for (const row of rows) {
+      const tree = isRecord(row.ProductTrees) ? row.ProductTrees : null
+      const line = isRecord(row['ProductTrees/ProductTreeLines']) ? row['ProductTrees/ProductTreeLines'] : null
+      const lineItemCode = readStringField(line, 'ItemCode')?.toUpperCase()
+      if (!tree || lineItemCode !== normalizedCode) continue
+      const treeCode = readStringField(tree, 'TreeCode') ?? ''
+      if (treeCode) {
+        usages.push({
+          treeCode,
+          treeType: readStringField(tree, 'TreeType'),
+          productDescription: readStringField(tree, 'ProductDescription'),
+        })
+      }
+    }
+
+    if (rows.length >= pageSize) {
+      skip += pageSize
+    } else {
+      hasMore = false
+    }
+  }
+
+  return [...new Map(usages.map(usage => [usage.treeCode, usage])).values()]
 }
 
 export async function getSapProductionOrderUsages(
