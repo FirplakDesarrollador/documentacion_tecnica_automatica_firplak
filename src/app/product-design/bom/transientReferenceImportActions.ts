@@ -16,8 +16,9 @@ import type { ReferenceBomStructure, ReferenceImportWorkspace } from '@/lib/bom/
 import { isReferenceProductApplicationScope, type ReferenceProductApplicationScope } from '@/lib/bom/referenceImportScopes'
 import type { BoardProfileConditionalRule, HybridColorCase } from '@/lib/bom/types'
 import { normalizeBomStructure } from '@/lib/bom/resolve'
-import { getSapItem, getSapItemBom, productTreeStructureMatches, updateSapItem, updateSapProductTreeIssueMethod, type SapEntityPayload } from '@/lib/sap/serviceLayer'
+import { deleteSapItem, getSapItem, getSapItemBom, productTreeStructureMatches, updateSapItem, updateSapProductTreeIssueMethod, type SapEntityPayload } from '@/lib/sap/serviceLayer'
 import { parseSapItemCode, readSapFrozen, readSapValid } from '@/lib/bom/sapMapping'
+import { syncMissingSapComponentsToCatalog } from '@/lib/sap/componentCatalogSync'
 import { getColorsAction, upsertColorAction, type ColorEntry } from '@/app/rules/colors/actions'
 import { assertPermission } from '@/utils/auth/access'
 
@@ -340,14 +341,13 @@ export async function confirmTransientColorRuleAction(input: {
   sourceColorCode: string
   scope: ReferenceProductApplicationScope
   targetColorCode: string
-  confirmationText: string
+  confirmed: boolean
 }): Promise<ActionResult> {
   await assertPermission('module:product-design')
   const sourceColorCode = input.sourceColorCode.trim().toUpperCase()
   const targetColorCode = input.targetColorCode.trim().toUpperCase()
-  const expected = `CONFIRMAR REGLA ${sourceColorCode} ${input.scope} ${targetColorCode}`
   try {
-    if (input.confirmationText.trim() !== expected) throw new Error(`Confirmación inválida. Escribe exactamente: ${expected}`)
+    if (!input.confirmed) throw new Error('Confirma la acción con la casilla antes de guardar la regla.')
     const rows: Record<string, unknown>[] = await dbQuery(
       `UPDATE public.colors
        SET application_colors_json = jsonb_set(COALESCE(application_colors_json, '{}'::jsonb), ARRAY[$1]::text[], to_jsonb($2::text), true)
@@ -368,14 +368,13 @@ export async function confirmTransientMaterialProfileAction(input: {
   sourceColorCode: string
   scope: ReferenceProductApplicationScope
   materialProfile: string
-  confirmationText: string
+  confirmed: boolean
 }): Promise<ActionResult> {
   await assertPermission('module:product-design')
   const sourceColorCode = input.sourceColorCode.trim().toUpperCase()
   const materialProfile = input.materialProfile.trim().toUpperCase()
-  const expected = `CONFIRMAR PERFIL ${sourceColorCode} ${input.scope} ${materialProfile}`
   try {
-    if (input.confirmationText.trim() !== expected) throw new Error(`Confirmación inválida. Escribe exactamente: ${expected}`)
+    if (!input.confirmed) throw new Error('Confirma la acción con la casilla antes de guardar el perfil.')
     const rows: Record<string, unknown>[] = await dbQuery(
       `UPDATE public.colors
        SET application_material_profiles_json = jsonb_set(COALESCE(application_material_profiles_json, '{}'::jsonb), ARRAY[$1]::text[], to_jsonb($2::text), true)
@@ -1148,14 +1147,14 @@ export async function applyTransientIssueMethodsBatchAction(input: {
   referenceId: string
   targetIssueMethod: 'im_Manual' | 'im_Backflush'
   dryRun: boolean
-  confirmationText: string
+  confirmed: boolean
   items: IssueMethodItem[]
-}): Promise<ActionResult & { issueMethodResult?: { dryRun: boolean; confirmationRequired: string; results: Array<{ skuComplete: string; childNum: number; itemCode: string; success: boolean; changed: boolean; message: string }> } }> {
+}): Promise<ActionResult & { issueMethodResult?: { dryRun: boolean; results: Array<{ skuComplete: string; childNum: number; itemCode: string; success: boolean; changed: boolean; message: string }> } }> {
   const access = await assertPermission('module:product-design')
   const items = [...new Map(input.items.map(item => [`${item.skuComplete}:${item.childNum}:${item.itemCode}`, item])).values()]
-  const confirmationRequired = `APLICAR METODO ${input.targetIssueMethod} EN SAP PARA ${items.length} LINEAS`
+  
   try {
-    if (!input.dryRun && input.confirmationText.trim() !== confirmationRequired) throw new Error(`Confirmación inválida. Escribe exactamente: ${confirmationRequired}`)
+    if (!input.dryRun && !input.confirmed) throw new Error('Confirma la acción con la casilla antes de modificar los métodos en SAP.')
     const results: Array<{ skuComplete: string; childNum: number; itemCode: string; success: boolean; changed: boolean; message: string }> = []
     for (const item of items) {
       let success = false
@@ -1188,7 +1187,7 @@ export async function applyTransientIssueMethodsBatchAction(input: {
       } finally {
         await supabaseTable('sap_operation_logs').insert({
           operation_type: 'product_tree_issue_method_update', item_code: item.skuComplete, requested_status: input.targetIssueMethod,
-          dry_run: input.dryRun, confirmation_text: input.confirmationText, sap_payload: { child_num: item.childNum, item_code: item.itemCode },
+          dry_run: input.dryRun, confirmation_text: input.confirmed ? 'CHECKED' : '', sap_payload: { child_num: item.childNum, item_code: item.itemCode },
           sap_response: response, success, error_message: success ? null : message, created_by: access.user?.id ?? null,
         })
       }
@@ -1200,7 +1199,7 @@ export async function applyTransientIssueMethodsBatchAction(input: {
       success: failedCount === 0,
       message: input.dryRun ? `Dry-run: ${results.length} línea(s), ${failedCount} con error.` : `${results.filter(result => result.success).length} línea(s) verificada(s) en SAP; ${failedCount} con error.`,
       workspace,
-      issueMethodResult: { dryRun: input.dryRun, confirmationRequired, results },
+      issueMethodResult: { dryRun: input.dryRun, results },
     }
   } catch (error) {
     return { ...failure(error, 'No se pudieron homologar los métodos de salida.'), issueMethodResult: undefined }
@@ -1264,8 +1263,10 @@ export async function syncTransientSapInactiveSkusInSupabaseAction(input: { skuC
 export async function createTransientSapColorVariationAction(input: {
   skuComplete: string
   sapDescriptionOriginal: string | null
-}): Promise<{ success: boolean; message: string }> {
+  componentItemCodes?: string[]
+}): Promise<{ success: boolean; message: string; importedComponentItemCodes?: string[] }> {
   await assertPermission('module:product-design')
+  const importedComponentItemCodes: string[] = []
   const skuComplete = input.skuComplete.trim().toUpperCase()
   const segments = skuComplete.split('-')
   const colorCode = segments.at(-1) ?? ''
@@ -1280,6 +1281,34 @@ export async function createTransientSapColorVariationAction(input: {
     [skuComplete]
   )
   if (readString(existingRows[0]?.id)) return { success: false, message: `${skuComplete} ya está registrado en Supabase.` }
+
+  const suppliedComponentItemCodes = [...new Set((input.componentItemCodes ?? []).map(code => code.trim().toUpperCase()).filter(Boolean))]
+  const directBom = suppliedComponentItemCodes.length === 0 ? await getSapItemBom(skuComplete) : null
+  const componentItemCodes = suppliedComponentItemCodes.length > 0
+    ? suppliedComponentItemCodes
+    : [...new Set((directBom?.lines ?? [])
+      .map(line => parseSapItemCode(line.ItemCode))
+      .filter(parsed => !parsed.isSalesSku)
+      .map(parsed => parsed.itemCode))]
+  if (componentItemCodes.length === 0) return { success: false, message: 'No se creÃ³ la variaciÃ³n: SAP no entregÃ³ componentes de la LdM para importar en la misma operaciÃ³n.' }
+  const existingComponentRows: Record<string, unknown>[] = await dbQuery(
+    `SELECT item_code FROM public.component_items WHERE item_code IN (${componentItemCodes.map((_, index) => `$${index + 1}`).join(', ')})`,
+    componentItemCodes,
+  )
+  const existingComponentCodes = new Set(existingComponentRows.map(row => readString(row.item_code)?.toUpperCase()).filter((code): code is string => Boolean(code)))
+  const missingComponentCodes = componentItemCodes.filter(code => !existingComponentCodes.has(code))
+  if (missingComponentCodes.length > 0) {
+    const syncResult = await syncMissingSapComponentsToCatalog(missingComponentCodes.map(itemCode => ({ itemCode, defaultIssueMethod: null })))
+    if (syncResult.errors.length > 0 || syncResult.missingInSapItemCodes.length > 0 || syncResult.unavailableItemCodes.length > 0) {
+      const details = [
+        ...syncResult.errors,
+        syncResult.missingInSapItemCodes.length > 0 ? `No existe en SAP: ${syncResult.missingInSapItemCodes.join(', ')}` : null,
+        syncResult.unavailableItemCodes.length > 0 ? `SAP lo reporta inactivo/congelado: ${syncResult.unavailableItemCodes.join(', ')}` : null,
+      ].filter((value): value is string => Boolean(value)).join(' ')
+      return { success: false, message: `No se creÃ³ la variaciÃ³n porque no se pudieron importar todos los componentes en esta misma operaciÃ³n. ${details}` }
+    }
+    importedComponentItemCodes.push(...syncResult.importedItemCodes)
+  }
 
   const versionRows: Record<string, unknown>[] = await dbQuery(
     `SELECT v.id
@@ -1312,26 +1341,61 @@ export async function createTransientSapColorVariationAction(input: {
   )
   if (!readString(createdRows[0]?.id)) return { success: false, message: 'Supabase no confirmó la creación de la variación de color.' }
   revalidatePath('/product-design/bom')
-  return { success: true, message: `${skuComplete} se creó en Supabase como variación activa del color ${colorCode}. No se modificó SAP.` }
+  const verifiedSkuRows: Record<string, unknown>[] = await dbQuery(
+    `SELECT sku_complete FROM public.product_skus WHERE sku_complete = $1 AND status = 'ACTIVO' LIMIT 1`,
+    [skuComplete],
+  )
+  const verifiedComponentRows: Record<string, unknown>[] = await dbQuery(
+    `SELECT item_code FROM public.component_items WHERE item_code IN (${componentItemCodes.map((_, index) => `$${index + 1}`).join(', ')})`,
+    componentItemCodes,
+  )
+  const verifiedComponentCodes = new Set(verifiedComponentRows.map(row => readString(row.item_code)?.toUpperCase()).filter((code): code is string => Boolean(code)))
+  if (!readString(verifiedSkuRows[0]?.sku_complete) || componentItemCodes.some(code => !verifiedComponentCodes.has(code))) {
+    return { success: false, message: 'La operación no quedó verificada: faltó confirmar el SKU o alguno de sus componentes.' }
+  }
+  return { success: true, importedComponentItemCodes, message: `${skuComplete} y ${componentItemCodes.length} componente(s) quedaron confirmados en Supabase en esta misma operación. No se modificó SAP.` }
+}
+
+export async function deleteTransientSapOnlySkuAction(input: {
+  skuComplete: string
+  dryRun: boolean
+  confirmed: boolean
+}): Promise<{ success: boolean; dryRun: boolean; message: string }> {
+  await assertPermission('module:product-design')
+  const skuComplete = input.skuComplete.trim().toUpperCase()
+  try {
+    await getSapItem(skuComplete, ['ItemCode', 'ItemName', 'Valid', 'Frozen'])
+    if (input.dryRun) return { success: true, dryRun: true, message: `Dry-run listo para eliminar ${skuComplete} de SAP.` }
+    if (!input.confirmed) throw new Error('Confirma la acción con la casilla antes de eliminar el código de SAP.')
+    await deleteSapItem(skuComplete)
+    try {
+      await getSapItem(skuComplete, ['ItemCode'])
+      throw new Error(`SAP todavía devuelve ${skuComplete}; la eliminación no quedó verificada.`)
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('todavía devuelve')) throw error
+    }
+    return { success: true, dryRun: false, message: `${skuComplete} fue eliminado y verificado en SAP.` }
+  } catch (error) {
+    return { success: false, dryRun: input.dryRun, message: error instanceof Error ? error.message : 'No se pudo eliminar el código en SAP.' }
+  }
 }
 
 export async function deactivateTransientReferenceBomSkusInSapAction(input: {
   skuCompletes: string[]
   dryRun: boolean
-  confirmationText: string
-}): Promise<{ success: boolean; message: string; confirmationRequired: string; results: Array<{ skuComplete: string; success: boolean; changed: boolean; message: string }> }> {
+  confirmed: boolean
+}): Promise<{ success: boolean; message: string; results: Array<{ skuComplete: string; success: boolean; changed: boolean; message: string }> }> {
   const access = await assertPermission('module:product-design')
   const skuCompletes = [...new Set(input.skuCompletes.map(value => value.trim().toUpperCase()).filter(Boolean))]
-  const confirmationRequired = `INACTIVAR ${skuCompletes.length} SKU EN SAP`
   const payload: SapEntityPayload = { Valid: 'tNO', Frozen: 'tYES' }
-  if (skuCompletes.length === 0) return { success: false, message: 'Selecciona al menos un SKU.', confirmationRequired, results: [] }
-  if (!input.dryRun && input.confirmationText.trim() !== confirmationRequired) return { success: false, message: `Confirmación inválida. Escribe exactamente: ${confirmationRequired}`, confirmationRequired, results: [] }
+  if (skuCompletes.length === 0) return { success: false, message: 'Selecciona al menos un SKU.', results: [] }
+  if (!input.dryRun && !input.confirmed) return { success: false, message: 'Confirma la acción con la casilla antes de inactivar en SAP.', results: [] }
   if (!input.dryRun) {
     const rows: Record<string, unknown>[] = await dbQuery(
       `SELECT COUNT(DISTINCT item_code) AS count FROM public.sap_operation_logs WHERE operation_type = 'item_status_update' AND requested_status = 'INACTIVO' AND dry_run = true AND success = true AND item_code IN (SELECT value FROM jsonb_array_elements_text($1::jsonb)) AND created_at >= now() - interval '30 minutes'`,
       [JSON.stringify(skuCompletes)]
     )
-    if (Number(rows[0]?.count ?? 0) !== skuCompletes.length) return { success: false, message: 'Primero ejecuta el dry-run de todos los SKU seleccionados; vale durante 30 minutos.', confirmationRequired, results: [] }
+  if (Number(rows[0]?.count ?? 0) !== skuCompletes.length) return { success: false, message: 'Primero ejecuta el dry-run de todos los SKU seleccionados; vale durante 30 minutos.', results: [] }
   }
   const results: Array<{ skuComplete: string; success: boolean; changed: boolean; message: string }> = []
   for (const skuComplete of skuCompletes) {
@@ -1360,11 +1424,11 @@ export async function deactivateTransientReferenceBomSkusInSapAction(input: {
       errorMessage = error instanceof Error ? error.message : 'No se pudo inactivar en SAP.'
       results.push({ skuComplete, success, changed, message: errorMessage })
     } finally {
-      await supabaseTable('sap_operation_logs').insert({ operation_type: 'item_status_update', item_code: skuComplete, requested_status: 'INACTIVO', dry_run: input.dryRun, confirmation_text: input.confirmationText, sap_payload: payload, sap_response: response, success, error_message: errorMessage, created_by: access.user?.id ?? null })
+      await supabaseTable('sap_operation_logs').insert({ operation_type: 'item_status_update', item_code: skuComplete, requested_status: 'INACTIVO', dry_run: input.dryRun, confirmation_text: input.confirmed ? 'CHECKED' : '', sap_payload: payload, sap_response: response, success, error_message: errorMessage, created_by: access.user?.id ?? null })
     }
   }
   const failedCount = results.filter(result => !result.success).length
-  return { success: failedCount === 0, message: input.dryRun ? `Dry-run de ${results.length} SKU: ${failedCount} con error.` : `${results.filter(result => result.success).length} SKU verificado(s) en SAP; ${failedCount} con error.`, confirmationRequired, results }
+  return { success: failedCount === 0, message: input.dryRun ? `Dry-run de ${results.length} SKU: ${failedCount} con error.` : `${results.filter(result => result.success).length} SKU verificado(s) en SAP; ${failedCount} con error.`, results }
 }
 
 function applyReferenceSemanticScopeAssignments(

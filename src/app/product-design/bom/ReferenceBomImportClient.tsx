@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useTransition } from 'react'
+import Link from 'next/link'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -20,6 +21,7 @@ import {
   confirmTransientColorRuleAction,
   confirmTransientMaterialProfileAction,
   createTransientSapColorVariationAction,
+  deleteTransientSapOnlySkuAction,
   deactivateTransientReferenceBomSkusInSapAction,
   getTransientReferenceBomColorAction,
   listTransientReferenceBomImportCandidatesAction,
@@ -67,7 +69,7 @@ type OverrideDraft = {
 
 type IssueMethodDraft = {
   targetIssueMethod: 'im_Manual' | 'im_Backflush'
-  confirmationText: string
+  confirmed: boolean
   result: string | null
 }
 
@@ -295,11 +297,9 @@ function findingTitle(finding: ReferenceImportFinding): string {
   return labels[finding.findingType] ?? finding.findingType.replaceAll('_', ' ')
 }
 
-function expectedColorConfirmation(finding: ReferenceImportFinding): string | null {
-  if (finding.findingType !== 'color_rule_proposal' || !finding.proposedScope || !finding.proposedColorCode) return null
-  const sourceColorCode = asString(finding.detailsJson.source_color_code)
-  if (!sourceColorCode) return null
-  return `CONFIRMAR REGLA ${sourceColorCode} ${finding.proposedScope} ${finding.proposedColorCode}`
+function requiresColorConfirmation(finding: ReferenceImportFinding): boolean {
+  return finding.findingType === 'color_rule_proposal'
+    && Boolean(finding.proposedScope && finding.proposedColorCode && asString(finding.detailsJson.source_color_code))
 }
 
 function parseAnalysisStreamEvent(value: string): AnalysisStreamEvent | null {
@@ -1053,19 +1053,17 @@ function affectedBaseItemCodes(finding: ReferenceImportFinding): string[] {
   return [...new Set([...asStringArray(finding.detailsJson.base_item_codes), ...fromAlternatives])]
 }
 
-function expectedMaterialGroupConfirmation(finding: ReferenceImportFinding): string | null {
-  if (finding.findingType !== 'material_group_confirmation') return null
+function requiresMaterialGroupConfirmation(finding: ReferenceImportFinding): boolean {
+  if (finding.findingType !== 'material_group_confirmation') return false
   const codes = affectedBaseItemCodes(finding)
-  return codes.length > 1 ? `CONFIRMAR GRUPO ${codes.sort().join(' + ')}` : null
+  return codes.length > 1
 }
 
-function expectedMaterialProfileConfirmation(finding: ReferenceImportFinding): string | null {
-  if (finding.findingType !== 'material_profile_proposal' || !finding.proposedScope) return null
+function requiresMaterialProfileConfirmation(finding: ReferenceImportFinding): boolean {
+  if (finding.findingType !== 'material_profile_proposal' || !finding.proposedScope) return false
   const sourceColorCode = asString(finding.detailsJson.source_color_code)
   const materialProfile = asString(finding.detailsJson.material_profile)
-  return sourceColorCode && materialProfile
-    ? `CONFIRMAR PERFIL ${sourceColorCode} ${finding.proposedScope} ${materialProfile}`
-    : null
+  return Boolean(sourceColorCode && materialProfile)
 }
 
 export function ReferenceBomImportClient({ initialCandidates }: Props) {
@@ -1075,9 +1073,9 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const [isReferencePickerOpen, setIsReferencePickerOpen] = useState(false)
   const [workspace, setWorkspace] = useState<ReferenceImportWorkspace | null>(null)
   const [message, setMessage] = useState<string | null>(null)
-  const [confirmationTexts, setConfirmationTexts] = useState<Record<string, string>>({})
+  const [confirmationChecks, setConfirmationChecks] = useState<Record<string, boolean>>({})
   const [overrideDrafts, setOverrideDrafts] = useState<Record<string, OverrideDraft>>({})
-  const [issueMethodDraft, setIssueMethodDraft] = useState<IssueMethodDraft>({ targetIssueMethod: 'im_Manual', confirmationText: '', result: null })
+  const [issueMethodDraft, setIssueMethodDraft] = useState<IssueMethodDraft>({ targetIssueMethod: 'im_Manual', confirmed: false, result: null })
   const [overrideEditors, setOverrideEditors] = useState<Record<string, boolean>>({})
   const [colorEditor, setColorEditor] = useState<ColorEditorState | null>(null)
   const [selectedMatrixRules, setSelectedMatrixRules] = useState<Record<string, boolean>>({})
@@ -1111,7 +1109,9 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const [matrixAbsenceProceedingKey, setMatrixAbsenceProceedingKey] = useState<string | null>(null)
   const [isValidatingMatrixAbsences, setIsValidatingMatrixAbsences] = useState(false)
   const [matrixAbsenceStartedAt, setMatrixAbsenceStartedAt] = useState<number | null>(null)
-  const [matrixSapDeactivationConfirmation, setMatrixSapDeactivationConfirmation] = useState('')
+  const [matrixSapDeactivationConfirmed, setMatrixSapDeactivationConfirmed] = useState(false)
+  const [sapOnlyActionConfirmed, setSapOnlyActionConfirmed] = useState<Record<string, boolean>>({})
+  const [sapOnlyActionMessages, setSapOnlyActionMessages] = useState<Record<string, string>>({})
   const [matrixBatchMessage, setMatrixBatchMessage] = useState<string | null>(null)
   const [selectedBoardColors, setSelectedBoardColors] = useState<Record<string, boolean>>({})
   const [boardMatrixCoverage, setBoardMatrixCoverage] = useState<BoardMatrixCatalogResult[] | null>(null)
@@ -1157,6 +1157,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const sapActiveSkuCount = asNumber(workspace?.run.summaryJson.sap_active_sku_count)
   const supabaseOnlyColors = asStringArray(workspace?.run.summaryJson.supabase_only_sku_colors)
   const sapOnlyColors = asStringArray(workspace?.run.summaryJson.sap_only_sku_colors)
+  const sapOnlySkuCodes = asStringArray(workspace?.run.summaryJson.sap_only_sku_codes)
   const sapInactiveSkuCodes = asStringArray(workspace?.run.summaryJson.sap_inactive_sku_codes)
   const sapInactiveColors = asStringArray(workspace?.run.summaryJson.sap_inactive_sku_colors)
   const sapMissingSkuCodes = asStringArray(workspace?.run.summaryJson.sap_missing_sku_codes)
@@ -1241,7 +1242,6 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
       .map(mismatch => [mismatch.skuComplete, { skuComplete: mismatch.skuComplete, itemName: mismatch.skuItemName }] as const))).values()]
     : []
   const selectedMatrixSapSkuCodes = matrixSapSkuCandidates.filter(item => selectedMatrixSapSkus[item.skuComplete]).map(item => item.skuComplete)
-  const expectedMatrixSapDeactivationConfirmation = `INACTIVAR ${selectedMatrixSapSkuCodes.length} SKU EN SAP`
   const selectedBoardColorCodes = [...new Set(boardMatrixRows.filter(row => selectedBoardColors[row.sourceColorCode]).map(row => row.sourceColorCode))]
   const boardColorsReadyForBaseConstruction = new Set([
     ...boardMatrixRows.filter(row => row.hasPersistedBoardResolution).map(row => row.sourceColorCode),
@@ -1286,7 +1286,6 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     return `${finding.findingType}:${finding.lineIdentity ?? finding.id}`
   })).size + (issueMethodFindings.length > 0 ? 1 : 0)
   const issueMethodDifferencesToApply = issueMethodFindings.flatMap(finding => issueMethodDifferences(finding, issueMethodDraft.targetIssueMethod))
-  const expectedIssueConfirmation = `APLICAR METODO ${issueMethodDraft.targetIssueMethod} EN SAP PARA ${issueMethodDifferencesToApply.length} LINEAS`
   const pendingConsumptionCount = workspace?.run.proposedBomStructure.lines.reduce(
     (total, line) => total + line.consumptions.filter(consumption => consumption.status === 'needs_definition').length,
     0
@@ -1512,7 +1511,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
         sourceColorCode: asString(finding.detailsJson.source_color_code) ?? '',
         scope: finding.proposedScope ?? 'NA',
         targetColorCode: finding.proposedColorCode ?? '',
-        confirmationText: confirmationTexts[finding.id] ?? '',
+        confirmed: confirmationChecks[finding.id] === true,
       })
       setMessage(result.message)
       if (result.workspace) setWorkspace(result.workspace)
@@ -1534,7 +1533,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
         sourceColorCode: asString(finding.detailsJson.source_color_code) ?? '',
         scope: finding.proposedScope ?? 'NA',
         materialProfile: asString(finding.detailsJson.material_profile) ?? '',
-        confirmationText: confirmationTexts[finding.id] ?? '',
+        confirmed: confirmationChecks[finding.id] === true,
       })
       setMessage(result.message)
       if (result.workspace) setWorkspace(result.workspace)
@@ -1596,7 +1595,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
         referenceId: workspace.run.referenceId,
         targetIssueMethod: issueMethodDraft.targetIssueMethod,
         dryRun,
-        confirmationText: issueMethodDraft.confirmationText,
+        confirmed: issueMethodDraft.confirmed,
         items: issueMethodDifferencesToApply.flatMap(item => item.childNum !== null ? [{
           skuComplete: item.skuComplete,
           childNum: item.childNum,
@@ -1608,7 +1607,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
       setIssueMethodDraft(current => ({
         ...current,
         result: detail,
-        confirmationText: dryRun ? result.issueMethodResult?.confirmationRequired ?? current.confirmationText : current.confirmationText,
+        confirmed: dryRun ? false : current.confirmed,
       }))
       if (result.workspace) setWorkspace(result.workspace)
     })
@@ -1884,11 +1883,20 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
 
   function createBoardSapColorVariation(item: BoardMatrixCatalogResult['invalidSkus'][number]): void {
     if (item.reason !== 'sap_only') return
+    const coverage = boardMatrixCoverage?.find(result => result.invalidSkus.some(issue => issue.skuComplete === item.skuComplete && issue.reason === 'sap_only'))
+    const componentItemCodes = [...new Set(coverage?.rows.flatMap(row => row.evidence
+      .filter(evidence => evidence.skuComplete === item.skuComplete)
+      .map(evidence => evidence.itemCode)) ?? [])]
+    if (componentItemCodes.length === 0) {
+      setBoardMatrixMessage(`${item.skuComplete}: no hay evidencia de componentes SAP para crear la variacion y sus componentes en una sola operacion.`)
+      return
+    }
     runTask(async () => {
       try {
         const result = await createTransientSapColorVariationAction({
           skuComplete: item.skuComplete,
           sapDescriptionOriginal: item.skuItemName,
+          componentItemCodes,
         })
         setBoardMatrixMessage(result.message)
         if (!result.success) return
@@ -2127,13 +2135,10 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
       const result = await deactivateTransientReferenceBomSkusInSapAction({
         skuCompletes: selectedMatrixSapSkuCodes,
         dryRun,
-        confirmationText: matrixSapDeactivationConfirmation,
+        confirmed: dryRun ? false : matrixSapDeactivationConfirmed,
       })
       setMatrixBatchMessage(`${result.message} ${result.results.map(item => `${item.skuComplete}: ${item.message}`).join(' ')}`)
-      if (dryRun) {
-        setMatrixSapDeactivationConfirmation(result.confirmationRequired)
-        return
-      }
+      if (dryRun) return
       if (!result.success || !workspace) return
       const coverage = await verifyTransientColorMatrixAction({
         selections: selectedColorMatrixRows.flatMap(row => row.suggestedTargetColorCode ? [{
@@ -2147,7 +2152,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
       setMatrixCoverage({ selectionKey: matrixVerificationKey, success: coverage.success, results: coverage.results })
       setMessage(coverage.message)
       setSelectedMatrixSapSkus({})
-      setMatrixSapDeactivationConfirmation('')
+      setMatrixSapDeactivationConfirmed(false)
     })
   }
 
@@ -2206,6 +2211,80 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
         const errorMessage = error instanceof Error ? error.message : 'No se pudo inactivar el SKU en Supabase.'
         setMessage(errorMessage)
         setSkuActionMessages(current => ({ ...current, [skuComplete]: errorMessage }))
+      }
+    })
+  }
+
+  function rerunAfterSapOnlyAction(skuComplete: string, message: string): void {
+    setSapOnlyActionMessages(current => ({ ...current, [skuComplete]: message }))
+    if (!workspace) return
+    void analyzeReferenceWithProgress(workspace.run.referenceId)
+  }
+
+  function createSapOnlySkuInApp(skuComplete: string): void {
+    runTask(async () => {
+      try {
+        const result = await createTransientSapColorVariationAction({ skuComplete, sapDescriptionOriginal: null })
+        if (!result.success) {
+          setSapOnlyActionMessages(current => ({ ...current, [skuComplete]: result.message }))
+          return
+        }
+        rerunAfterSapOnlyAction(skuComplete, result.message)
+      } catch (error) {
+        setSapOnlyActionMessages(current => ({ ...current, [skuComplete]: error instanceof Error ? error.message : 'No se pudo registrar el SKU en la app.' }))
+      }
+    })
+  }
+
+  function inactivateSapOnlySku(skuComplete: string): void {
+    runTask(async () => {
+      try {
+        const dryRun = await deactivateTransientReferenceBomSkusInSapAction({
+          skuCompletes: [skuComplete],
+          dryRun: true,
+          confirmed: false,
+        })
+        const confirmed = sapOnlyActionConfirmed[skuComplete] === true
+        if (!confirmed) {
+          setSapOnlyActionMessages(current => ({ ...current, [skuComplete]: `${dryRun.message} Marca la casilla de confirmación para continuar.` }))
+          return
+        }
+        const result = await deactivateTransientReferenceBomSkusInSapAction({
+          skuCompletes: [skuComplete],
+          dryRun: false,
+          confirmed: true,
+        })
+        const message = `${result.message} ${result.results[0]?.message ?? ''}`.trim()
+        if (!result.success) {
+          setSapOnlyActionMessages(current => ({ ...current, [skuComplete]: message }))
+          return
+        }
+        rerunAfterSapOnlyAction(skuComplete, message)
+      } catch (error) {
+        setSapOnlyActionMessages(current => ({ ...current, [skuComplete]: error instanceof Error ? error.message : 'No se pudo inactivar el SKU en SAP.' }))
+      }
+    })
+  }
+
+  function deleteSapOnlySku(skuComplete: string): void {
+    if (!workspace) return
+    const referenceId = workspace.run.referenceId
+    runTask(async () => {
+      try {
+        if (!sapOnlyActionConfirmed[skuComplete]) {
+          const dryRun = await deleteTransientSapOnlySkuAction({ skuComplete, dryRun: true, confirmed: false })
+          setSapOnlyActionMessages(current => ({ ...current, [skuComplete]: `${dryRun.message} Marca la casilla de confirmación para continuar.` }))
+          return
+        }
+        const result = await deleteTransientSapOnlySkuAction({
+          skuComplete,
+          dryRun: false,
+          confirmed: true,
+        })
+        setSapOnlyActionMessages(current => ({ ...current, [skuComplete]: result.message }))
+        if (result.success) await analyzeReferenceWithProgress(referenceId)
+      } catch (error) {
+        setSapOnlyActionMessages(current => ({ ...current, [skuComplete]: error instanceof Error ? error.message : 'No se pudo eliminar el SKU en SAP.' }))
       }
     })
   }
@@ -2438,34 +2517,43 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   }
 
   return (
-    <div className="mx-auto flex max-w-7xl flex-col gap-6">
-      <header className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-5">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-wide text-sky-700">LdM/BOM SAP</p>
-          <h1 className="mt-1 text-2xl font-bold text-slate-950">Importacion de LdM por referencia</h1>
+    <div className="bom-screen mx-auto flex max-w-7xl flex-col gap-6">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
+        <div className="flex items-center gap-3">
+          <Link href="/product-design" className="text-sm font-semibold text-sky-700 hover:text-sky-900">← Producto</Link>
+          <span className="h-5 w-px bg-slate-200" aria-hidden="true" />
+          <p className="text-sm font-semibold text-slate-700">LdM/BOM SAP</p>
         </div>
-        {workspace ? (
-          <button
-            type="button"
-            onClick={publishRun}
-            disabled={isPending || hasIncompleteSource || workspace.run.status !== 'needs_review' || unresolvedBlockers.length > 0}
-            className="inline-flex h-10 items-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Upload className="h-4 w-4" />
-            Publicar BOM
-          </button>
-        ) : null}
       </header>
 
-      {message ? (
-        <div className="flex items-start gap-2 border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-          <ClipboardCheck className="mt-0.5 h-4 w-4 shrink-0 text-sky-700" />
-          <p>{message}</p>
+      {isReferencePickerOpen ? <section className="hidden border border-slate-200 bg-white p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-slate-950">Cambiar referencia</h2>
+            <p className="mt-1 text-xs text-slate-500">Busca por código o por el nombre que identifica el producto.</p>
+          </div>
+          <button type="button" onClick={() => setIsReferencePickerOpen(false)} className="h-8 border border-slate-300 px-3 text-xs font-semibold text-slate-700">Cerrar</button>
         </div>
-      ) : null}
+        <div className="mt-3 flex gap-2">
+          <input autoFocus value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') searchReferences() }} placeholder="Código o nombre del producto" className="h-9 min-w-0 flex-1 border border-slate-300 px-3 text-sm outline-none ring-sky-600 focus:ring-1" />
+          <button type="button" title="Buscar referencias" onClick={searchReferences} disabled={isPending} className="inline-flex h-9 w-9 items-center justify-center border border-slate-300 text-slate-700 disabled:opacity-50"><Search className="h-4 w-4" /></button>
+        </div>
+        <div className="mt-3 grid max-h-64 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
+          {candidates.map(candidate => {
+            const selected = candidate.referenceId === selectedCandidate?.referenceId
+            return <button key={candidate.referenceId} type="button" onClick={() => selectReference(candidate)} className={`border px-3 py-2 text-left ${selected ? 'border-sky-400 bg-sky-50' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}>
+              <span className="block font-mono text-xs font-semibold text-slate-700">{salesReferenceCode(candidate.familyCode, candidate.referenceCode)}</span>
+              <span className="mt-1 block text-sm font-medium text-slate-950">{candidate.productDescription ?? candidate.productName}</span>
+              <span className="mt-1 block text-xs text-slate-500">{candidate.activeSkuCount} colores activos</span>
+              {candidate.hasBom ? <span className="mt-2 inline-flex border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">BOM ya publicada · se sobreescribe al publicar</span> : null}
+            </button>
+          })}
+          {candidates.length === 0 ? <p className="px-1 py-4 text-sm text-slate-500">Sin referencias para mostrar.</p> : null}
+        </div>
+      </section> : null}
 
       <section className="flex min-w-0 flex-col gap-5">
-        {isReferencePickerOpen ? <section className="border border-slate-200 bg-white p-4">
+        {isReferencePickerOpen ? <section className="hidden border border-slate-200 bg-white p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="font-semibold text-slate-950">Buscar producto de venta</h2>
@@ -2498,17 +2586,18 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
         </section> : null}
 
         <div className="flex min-w-0 flex-col gap-5">
-          <section className="border border-slate-200 bg-white p-5">
+          <section className="border-b border-slate-200 bg-white px-5 py-4 sm:px-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Producto de venta seleccionado</p>
-                <p className="font-mono text-sm font-semibold text-slate-700">
-                  {selectedCandidate ? salesReferenceCode(selectedCandidate.familyCode, selectedCandidate.referenceCode) : 'Sin seleccion'}
-                </p>
-                <h2 className="mt-1 text-lg font-semibold text-slate-950">{selectedCandidate?.productName ?? 'Selecciona una referencia'}</h2>
+                <p className="sr-only">Referencia seleccionada</p>
+                <h2 className="flex flex-wrap items-center gap-x-2 text-lg font-semibold text-slate-950">
+                  <span>{selectedCandidate ? salesReferenceCode(selectedCandidate.familyCode, selectedCandidate.referenceCode) : 'Sin seleccion'}</span>
+                  <span className="text-slate-400" aria-hidden="true">|</span>
+                  <span>{selectedCandidate?.productDescription ?? selectedCandidate?.productName ?? 'Selecciona una referencia'}</span>
+                </h2>
                 {selectedCandidate ? (
-                  <p className="mt-1 text-sm text-slate-600">
-                    {selectedCandidate.manufacturingProcess ?? 'Proceso sin definir'} · {selectedCandidate.productType ?? 'Tipo sin definir'}
+                  <p className="mt-1 text-sm font-semibold uppercase tracking-wide text-slate-600">
+                    {selectedCandidate.manufacturingProcess ?? 'Proceso sin definir'}
                   </p>
                 ) : null}
               </div>
@@ -2528,11 +2617,37 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                   ? canRetryOnlyPendingBomReads ? 'Reintentar LdM pendientes' : 'Analizar LdM en SAP'
                   : hasSapCatalogMismatch
                     ? 'Volver a comprobar SAP'
-                    : 'Analizar LdM en SAP'}
+                    : 'Comparar LdM en SAP'}
               </button>
               </div>
             </div>
           </section>
+
+          {isReferencePickerOpen ? <section className="border border-slate-200 bg-white p-5 sm:p-6">
+            <div className="flex gap-2">
+              <input autoFocus value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') searchReferences() }} placeholder="Código o descripción del producto" className="h-9 min-w-0 flex-1 border border-slate-300 px-3 text-sm outline-none ring-sky-600 focus:ring-1" />
+              <button type="button" title="Buscar referencias" onClick={searchReferences} disabled={isPending} className="inline-flex h-9 w-9 items-center justify-center border border-slate-300 text-slate-700 disabled:opacity-50"><Search className="h-4 w-4" /></button>
+            </div>
+            <div className="mt-3 grid max-h-64 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
+              {candidates.map(candidate => {
+                const selected = candidate.referenceId === selectedCandidate?.referenceId
+                return <button key={candidate.referenceId} type="button" onClick={() => selectReference(candidate)} className={`border px-3 py-2 text-left ${selected ? 'border-sky-400 bg-sky-50' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}>
+                  <span className="block font-mono text-xs font-semibold text-slate-700">{salesReferenceCode(candidate.familyCode, candidate.referenceCode)}</span>
+                  <span className="mt-1 block text-sm font-medium text-slate-950">{candidate.productDescription ?? candidate.productName}</span>
+                  <span className="mt-1 block text-xs text-slate-500">{candidate.activeSkuCount} colores activos</span>
+                  {candidate.hasBom ? <span className="mt-2 inline-flex border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">BOM ya publicada · se sobreescribe al publicar</span> : null}
+                </button>
+              })}
+              {candidates.length === 0 ? <p className="px-1 py-4 text-sm text-slate-500">Sin referencias para mostrar.</p> : null}
+            </div>
+          </section> : null}
+
+          {message ? (
+            <div className="flex items-start gap-2 border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+              <ClipboardCheck className="mt-0.5 h-4 w-4 shrink-0 text-sky-700" />
+              <p>{message}</p>
+            </div>
+          ) : null}
 
           {analysisProgress ? <section aria-live="polite" className="border border-sky-200 bg-sky-50 px-5 py-4 text-sm text-sky-950">
             <div className="flex items-center gap-2 font-semibold"><LoaderCircle className="h-4 w-4 animate-spin" />Análisis SAP en curso</div>
@@ -2967,8 +3082,8 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                           <p className="mt-1 text-xs">Primero ejecuta el dry-run. Después confirma el grupo; cada SKU se verifica en SAP y solo los confirmados se sincronizan como inactivos en la app.</p>
                           <div className="mt-2 flex flex-wrap gap-2">
                             <button type="button" onClick={() => deactivateMatrixSkusInSap(true)} disabled={isPending || selectedMatrixSapSkuCodes.length === 0} className="h-8 border border-rose-300 bg-white px-2 text-xs font-semibold text-rose-900 disabled:opacity-50">Probar seleccionados</button>
-                            <input value={matrixSapDeactivationConfirmation} onChange={event => setMatrixSapDeactivationConfirmation(event.target.value)} placeholder={expectedMatrixSapDeactivationConfirmation} className="h-8 min-w-[240px] border border-rose-300 bg-white px-2 font-mono text-xs text-slate-900" />
-                            <button type="button" onClick={() => deactivateMatrixSkusInSap(false)} disabled={isPending || selectedMatrixSapSkuCodes.length === 0 || matrixSapDeactivationConfirmation.trim() !== expectedMatrixSapDeactivationConfirmation} className="h-8 bg-rose-800 px-2 text-xs font-semibold text-white disabled:opacity-50">Confirmar inactivación</button>
+                            <label className="inline-flex h-8 items-center gap-2 border border-rose-300 bg-white px-2 text-xs font-semibold text-rose-950"><input type="checkbox" checked={matrixSapDeactivationConfirmed} onChange={event => setMatrixSapDeactivationConfirmed(event.target.checked)} />Confirmo inactivar los SKU seleccionados en SAP</label>
+                            <button type="button" onClick={() => deactivateMatrixSkusInSap(false)} disabled={isPending || selectedMatrixSapSkuCodes.length === 0 || !matrixSapDeactivationConfirmed} className="h-8 bg-rose-800 px-2 text-xs font-semibold text-white disabled:opacity-50">Confirmar inactivación</button>
                           </div>
                         </div> : null}
                         {matrixBatchMessage ? <p className="text-sm font-medium text-slate-800">{matrixBatchMessage}</p> : null}
@@ -3015,6 +3130,12 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                     <p className="text-xs text-slate-500">requieren una acción</p>
                   </div>
                 </div>
+              </section>
+
+              <section className="border border-sky-200 bg-sky-50 px-5 py-4 text-sm text-sky-950">
+                <p className="font-semibold">Componentes importados y subestructuras</p>
+                <p className="mt-1">Componentes: {asNumber(workspace.run.summaryJson.component_item_count) ?? 0} · árboles internos leídos: {asNumber(workspace.run.summaryJson.component_tree_count) ?? 0} · profundidad observada: {asNumber(workspace.run.summaryJson.component_tree_observed_max_depth) ?? 0}.</p>
+                <p className="mt-1 text-xs">La publicación usa esta misma expansión recursiva y conserva cada LdM interna en `component_items`; el límite operativo actual es profundidad 12 y 150 nodos.</p>
               </section>
 
               {hasSapCatalogMismatch ? (
@@ -3071,7 +3192,20 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                         </div>
                       ) : null}
                       {genericSupabaseOnlyColors.length > 0 ? <p className="mt-1 text-sm text-rose-900">Activos solo en la app: {genericSupabaseOnlyColors.join(', ')}. Vuelve a ejecutar el análisis para obtener el estado SAP detallado.</p> : null}
-                      {sapOnlyColors.length > 0 ? <p className="mt-3 text-sm text-rose-900">Activos solo en SAP: {sapOnlyColors.join(', ')}. Regístralos en la app o confirma que deban inactivarse en SAP.</p> : null}
+                      {sapOnlyColors.length > 0 ? <div className="mt-3 border border-rose-200 bg-rose-50 p-3 text-rose-950">
+                        <p className="font-semibold">Activos solo en SAP: {sapOnlyColors.join(', ')}</p>
+                        <p className="mt-1 text-sm">Cada SKU debe resolverse desde aquí: registrarlo en la app, inactivarlo en SAP o eliminarlo de SAP.</p>
+                        {sapOnlySkuCodes.length > 0 ? <div className="mt-3 space-y-2">{sapOnlySkuCodes.map(skuComplete => <div key={skuComplete} className="border border-rose-200 bg-white p-3">
+                          <p className="font-mono text-sm font-semibold">{skuComplete}</p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <button type="button" onClick={() => createSapOnlySkuInApp(skuComplete)} disabled={isPending} className="h-8 bg-sky-800 px-2 text-xs font-semibold text-white disabled:opacity-50">Crear en la app</button>
+                            <label className="inline-flex h-8 items-center gap-2 border border-rose-300 bg-white px-2 text-xs font-semibold text-rose-950"><input type="checkbox" checked={sapOnlyActionConfirmed[skuComplete] === true} onChange={event => setSapOnlyActionConfirmed(current => ({ ...current, [skuComplete]: event.target.checked }))} />Confirmo la acción en SAP</label>
+                            <button type="button" onClick={() => inactivateSapOnlySku(skuComplete)} disabled={isPending} className="h-8 bg-amber-800 px-2 text-xs font-semibold text-white disabled:opacity-50">Inactivar en SAP</button>
+                            <button type="button" onClick={() => deleteSapOnlySku(skuComplete)} disabled={isPending} className="h-8 bg-rose-800 px-2 text-xs font-semibold text-white disabled:opacity-50">Eliminar en SAP</button>
+                          </div>
+                          {sapOnlyActionMessages[skuComplete] ? <p className="mt-2 text-xs font-semibold" aria-live="polite">{sapOnlyActionMessages[skuComplete]}</p> : null}
+                        </div>)}</div> : <p className="mt-2 text-xs">El análisis no devolvió los SKU exactos; vuelve a analizar para habilitar acciones individuales.</p>}
+                      </div> : null}
                     </div>
                   </div>
                 </section>
@@ -3230,6 +3364,22 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                     Hay {pendingConsumptionCount} configuración{pendingConsumptionCount === 1 ? '' : 'es'} de consumo presente{pendingConsumptionCount === 1 ? '' : 's'} sin evidencia SAP. La propuesta no crea combinaciones Dual o Balance que no existan en la referencia; estos casos requieren evidencia o una decisión humana antes de definir consumo.
                   </p>
                 ) : null}
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Publicar la BOM base recomendada</p>
+                    <p className="mt-1 text-xs text-slate-600">Solo se habilita cuando la lectura SAP está completa y no quedan bloqueadores sin resolver.</p>
+                    {unresolvedBlockers.length > 0 ? <p className="mt-1 text-xs font-semibold text-rose-700">No disponible: hay {unresolvedBlockers.length} pendiente{unresolvedBlockers.length === 1 ? '' : 's'} bloqueante{unresolvedBlockers.length === 1 ? '' : 's'}.</p> : null}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={publishRun}
+                    disabled={isPending || hasIncompleteSource || workspace.run.status !== 'needs_review' || unresolvedBlockers.length > 0}
+                    className="inline-flex h-10 items-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Upload className="h-4 w-4" />
+                    Publicar BOM
+                  </button>
+                </div>
               </section>
 
               {workspace.activeOverrides.length > 0 ? (
@@ -3272,10 +3422,10 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                 </div>
                 <div className="divide-y divide-slate-200">
                   {reviewFindings.map(finding => {
-                    const colorConfirmation = expectedColorConfirmation(finding)
-                    const groupConfirmation = expectedMaterialGroupConfirmation(finding)
-                    const profileConfirmation = expectedMaterialProfileConfirmation(finding)
-                    const confirmation = colorConfirmation ?? groupConfirmation ?? profileConfirmation
+                    const colorConfirmation = requiresColorConfirmation(finding)
+                    const groupConfirmation = requiresMaterialGroupConfirmation(finding)
+                    const profileConfirmation = requiresMaterialProfileConfirmation(finding)
+                    const confirmation = colorConfirmation || groupConfirmation || profileConfirmation
                     const assignments = colorAssignmentEvidence(finding)
                     const affectedCodes = affectedBaseItemCodes(finding)
                     const baseItemName = finding.baseItemCode ? workspace.proposalItemNames[finding.baseItemCode] : null
@@ -3333,14 +3483,8 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                                   ? 'Confirmará que estas alternativas son una sola posición lógica de la BOM. Los consumos pendientes seguirán visibles y no se inventarán.'
                                   : `Guardará el perfil ${asString(finding.detailsJson.material_profile)} para el color ${asString(finding.detailsJson.source_color_code)} en ${scopeLabel(finding.proposedScope)}. No modifica SAP.`}
                             </p>
-                            <p className="mt-2 text-sm text-sky-900">Para confirmar, escribe exactamente: <span className="font-mono text-xs">{confirmation}</span></p>
                             <div className="mt-3 flex flex-wrap gap-2">
-                            <input
-                              value={confirmationTexts[finding.id] ?? ''}
-                              onChange={event => setConfirmationTexts(current => ({ ...current, [finding.id]: event.target.value }))}
-                              placeholder={confirmation}
-                              className="h-9 min-w-[260px] flex-1 rounded-md border border-slate-300 px-3 font-mono text-xs outline-none ring-sky-600 focus:ring-1"
-                            />
+                            <label className="inline-flex h-9 items-center gap-2 border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-800"><input type="checkbox" checked={confirmationChecks[finding.id] === true} onChange={event => setConfirmationChecks(current => ({ ...current, [finding.id]: event.target.checked }))} />Confirmo esta configuración</label>
                             <button
                               type="button"
                               onClick={() => {
@@ -3348,7 +3492,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                                 else if (groupConfirmation) confirmMaterialGroup()
                                 else confirmMaterialProfile(finding)
                               }}
-                              disabled={isPending || confirmationTexts[finding.id]?.trim() !== confirmation}
+                              disabled={isPending || confirmationChecks[finding.id] !== true}
                               className="h-9 rounded-md bg-slate-950 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               {groupConfirmation ? 'Confirmar grupo' : profileConfirmation ? 'Confirmar perfil' : 'Confirmar regla'}
@@ -3479,7 +3623,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                         Método para todas las líneas anteriores
                         <select
                           value={issueMethodDraft.targetIssueMethod}
-                          onChange={event => setIssueMethodDraft(current => ({ ...current, targetIssueMethod: event.target.value as IssueMethodDraft['targetIssueMethod'], confirmationText: '', result: null }))}
+                           onChange={event => setIssueMethodDraft(current => ({ ...current, targetIssueMethod: event.target.value as IssueMethodDraft['targetIssueMethod'], confirmed: false, result: null }))}
                           className="h-9 border border-violet-300 bg-white px-2 text-sm text-slate-900"
                         >
                           <option value="im_Manual">Manual</option>
@@ -3490,10 +3634,9 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                         Probar sin escribir SAP
                       </button>
                     </div>
-                    <p className="mt-3 text-xs text-violet-900">Después del dry-run, escribe: <span className="font-mono font-semibold">{expectedIssueConfirmation}</span></p>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      <input value={issueMethodDraft.confirmationText} onChange={event => setIssueMethodDraft(current => ({ ...current, confirmationText: event.target.value }))} placeholder={expectedIssueConfirmation} className="h-9 min-w-[280px] flex-1 border border-violet-300 bg-white px-3 font-mono text-xs text-slate-900" />
-                      <button type="button" onClick={() => applyIssueMethodsBatch(false)} disabled={isPending || issueMethodDraft.confirmationText.trim() !== expectedIssueConfirmation || issueMethodDifferencesToApply.length === 0} className="h-9 bg-violet-800 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+                      <label className="inline-flex h-9 items-center gap-2 border border-violet-300 bg-white px-3 text-xs font-semibold text-violet-950"><input type="checkbox" checked={issueMethodDraft.confirmed} onChange={event => setIssueMethodDraft(current => ({ ...current, confirmed: event.target.checked }))} />Confirmo modificar estos métodos en SAP</label>
+                      <button type="button" onClick={() => applyIssueMethodsBatch(false)} disabled={isPending || !issueMethodDraft.confirmed || issueMethodDifferencesToApply.length === 0} className="h-9 bg-violet-800 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
                         Aplicar y verificar en SAP
                       </button>
                     </div>

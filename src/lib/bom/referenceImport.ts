@@ -102,6 +102,7 @@ type ComponentTraversal = {
   treesByItemCode: Map<string, ComponentTreeSnapshot>
   sourceLinesByItemCode: Map<string, ComponentBomLine>
   findings: ReferenceImportFindingDraft[]
+  maxDepth: number
 }
 
 type ExistingComponentItem = {
@@ -144,6 +145,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function buildReferenceProductDescription(parts: unknown[]): string | null {
+  const normalizedParts = parts.flatMap(value => {
+    const text = readString(value)
+    return text && text.toUpperCase() !== 'NA' ? [text] : []
+  })
+  return normalizedParts.length > 0 ? normalizedParts.join(' ') : null
 }
 
 function readNumber(value: unknown, fallback = 0): number {
@@ -944,6 +953,7 @@ export async function expandComponentTrees(snapshots: DirectBomSnapshot[]): Prom
   const queued = new Set<string>()
   const visited = new Set<string>()
   let nodeLimitReported = false
+  let maxDepth = 0
 
   for (const snapshot of snapshots) {
     if (snapshot.status !== 'captured') continue
@@ -966,7 +976,7 @@ export async function expandComponentTrees(snapshots: DirectBomSnapshot[]): Prom
           findings.push(errorFinding({
             key: 'component-tree:node-limit',
             type: 'component_tree_node_limit',
-            severity: 'warning',
+            severity: 'blocker',
             details: { max_nodes: COMPONENT_TREE_MAX_NODES },
           }))
           nodeLimitReported = true
@@ -984,12 +994,13 @@ export async function expandComponentTrees(snapshots: DirectBomSnapshot[]): Prom
     }))
 
     for (const { candidate, tree } of trees) {
+      maxDepth = Math.max(maxDepth, candidate.depth)
       treesByItemCode.set(candidate.itemCode, tree)
       if (tree.readError) {
         findings.push(errorFinding({
           key: `component-tree:read:${candidate.itemCode}`,
           type: 'component_tree_read_failed',
-          severity: 'warning',
+          severity: 'blocker',
           baseItemCode: parseSapItemCode(candidate.itemCode).baseItemCode,
           details: {
             item_code: candidate.itemCode,
@@ -1009,7 +1020,7 @@ export async function expandComponentTrees(snapshots: DirectBomSnapshot[]): Prom
           findings.push(errorFinding({
             key: `component-tree:cycle:${[...childAncestors, child.itemCode].join('>')}`,
             type: 'component_tree_cycle',
-            severity: 'warning',
+            severity: 'blocker',
             baseItemCode: child.baseItemCode,
             details: {
               item_code: child.itemCode,
@@ -1023,7 +1034,7 @@ export async function expandComponentTrees(snapshots: DirectBomSnapshot[]): Prom
           findings.push(errorFinding({
             key: `component-tree:depth:${candidate.itemCode}:${child.itemCode}`,
             type: 'component_tree_max_depth',
-            severity: 'warning',
+            severity: 'blocker',
             baseItemCode: child.baseItemCode,
             details: {
               parent_item_code: candidate.itemCode,
@@ -1045,7 +1056,7 @@ export async function expandComponentTrees(snapshots: DirectBomSnapshot[]): Prom
     }
   }
 
-  return { treesByItemCode, sourceLinesByItemCode, findings }
+  return { treesByItemCode, sourceLinesByItemCode, findings, maxDepth }
 }
 
 async function getExistingComponentItems(itemCodes: string[]): Promise<Map<string, ExistingComponentItem>> {
@@ -1595,6 +1606,8 @@ export async function analyzeReferenceBomImport(input: {
       )
     })
     const { snapshots, componentResult } = await enrichDirectComponents(rawSnapshots)
+    const componentTraversal = await expandComponentTrees(snapshots)
+    const expandedComponentResult = await upsertExpandedComponents(componentTraversal)
     await persistSnapshots(runId, snapshots)
 
     const colorCodes = snapshots.flatMap(snapshot => [
@@ -1622,8 +1635,11 @@ export async function analyzeReferenceBomImport(input: {
     const findings = [...new Map([
       ...directAnalysis.findings,
       ...reconciliationFindings,
+      ...componentTraversal.findings,
       ...componentResult.metadataFindings,
       ...componentResult.uomFindings,
+      ...expandedComponentResult.metadataFindings,
+      ...expandedComponentResult.uomFindings,
     ].map(finding => [finding.findingKey, finding])).values()]
     const blockerCount = findings.filter(finding => finding.severity === 'blocker' && finding.status === 'open').length
     const summaryJson: JsonRecord = {
@@ -1637,9 +1653,11 @@ export async function analyzeReferenceBomImport(input: {
       sap_inactive_sku_colors: reconciliation.sapInactiveSkuCodes.map(skuColorCode).filter((color): color is string => color !== null),
       sap_missing_sku_codes: reconciliation.notFoundInSapSkuCodes,
       sap_missing_sku_colors: reconciliation.notFoundInSapSkuCodes.map(skuColorCode).filter((color): color is string => color !== null),
+      sap_only_sku_codes: reconciliation.onlyInSapSkuCodes,
       sap_only_sku_colors: reconciliation.onlyInSapSkuCodes.map(skuColorCode).filter((color): color is string => color !== null),
-      component_item_count: componentResult.count,
-      component_tree_count: 0,
+      component_item_count: componentResult.count + expandedComponentResult.count,
+      component_tree_count: componentTraversal.treesByItemCode.size,
+      component_tree_observed_max_depth: componentTraversal.maxDepth,
       open_blocker_count: blockerCount,
       open_warning_count: findings.filter(finding => finding.severity === 'warning' && finding.status === 'open').length,
       component_tree_max_depth: COMPONENT_TREE_MAX_DEPTH,
@@ -1893,6 +1911,8 @@ export async function analyzeReferenceBomImportTransient(input: {
   const { snapshots: enrichedSnapshots, componentResult } = await enrichDirectComponents(snapshotsToEnrich)
   const enrichedSnapshotsBySku = new Map(enrichedSnapshots.map(snapshot => [snapshot.skuComplete.toUpperCase(), snapshot]))
   const snapshots = rawSnapshots.map(snapshot => enrichedSnapshotsBySku.get(snapshot.skuComplete.toUpperCase()) ?? snapshot)
+  const componentTraversal = await expandComponentTrees(snapshots)
+  const expandedComponentResult = await upsertExpandedComponents(componentTraversal)
   await reportReferenceImportAnalysisProgress(input.onProgress, {
     stage: 'component_metadata',
     message: isSelectiveRetry
@@ -1924,8 +1944,11 @@ export async function analyzeReferenceBomImportTransient(input: {
   const findings = [...new Map([
     ...directAnalysis.findings,
     ...reconciliationFindings,
+    ...componentTraversal.findings,
     ...componentResult.metadataFindings,
     ...componentResult.uomFindings,
+    ...expandedComponentResult.metadataFindings,
+    ...expandedComponentResult.uomFindings,
   ].map(finding => [finding.findingKey, finding])).values()]
   const blockerCount = findings.filter(finding => finding.severity === 'blocker' && finding.status === 'open').length
   const summaryJson: JsonRecord = {
@@ -1939,9 +1962,11 @@ export async function analyzeReferenceBomImportTransient(input: {
     sap_inactive_sku_colors: reconciliation.sapInactiveSkuCodes.map(skuColorCode).filter((color): color is string => color !== null),
     sap_missing_sku_codes: reconciliation.notFoundInSapSkuCodes,
     sap_missing_sku_colors: reconciliation.notFoundInSapSkuCodes.map(skuColorCode).filter((color): color is string => color !== null),
+    sap_only_sku_codes: reconciliation.onlyInSapSkuCodes,
     sap_only_sku_colors: reconciliation.onlyInSapSkuCodes.map(skuColorCode).filter((color): color is string => color !== null),
-    component_item_count: componentResult.count,
-    component_tree_count: 0,
+    component_item_count: componentResult.count + expandedComponentResult.count,
+    component_tree_count: componentTraversal.treesByItemCode.size,
+    component_tree_observed_max_depth: componentTraversal.maxDepth,
     open_blocker_count: blockerCount,
     open_warning_count: findings.filter(finding => finding.severity === 'warning' && finding.status === 'open').length,
   }
@@ -2147,7 +2172,12 @@ export async function listReferenceImportCandidates(search = ''): Promise<Refere
   )`
   const searchClause = normalizedSearch
     ? `WHERE ${salesReferenceCode} ILIKE $1
-       OR r.product_name ILIKE $1`
+       OR r.product_name ILIKE $1
+       OR r.designation ILIKE $1
+       OR r.commercial_measure ILIKE $1
+       OR r.special_label ILIKE $1
+       OR r.ref_attrs ->> 'accessory_text' ILIKE $1
+       OR f.product_type ILIKE $1`
     : ''
   const rows: Record<string, unknown>[] = await dbQuery(
     `SELECT
@@ -2155,6 +2185,15 @@ export async function listReferenceImportCandidates(search = ''): Promise<Refere
       r.family_code,
       r.reference_code,
       r.product_name,
+      r.designation,
+      r.commercial_measure,
+      r.special_label,
+      r.ref_attrs ->> 'accessory_text' AS accessory_text,
+      CASE
+        WHEN jsonb_typeof(r.product_bom_structure -> 'lines') = 'array'
+        THEN jsonb_array_length(r.product_bom_structure -> 'lines') > 0
+        ELSE false
+      END AS has_bom,
       f.manufacturing_process,
       f.product_type,
       COUNT(s.id) FILTER (
@@ -2171,6 +2210,10 @@ export async function listReferenceImportCandidates(search = ''): Promise<Refere
       r.family_code,
       r.reference_code,
       r.product_name,
+      r.designation,
+      r.commercial_measure,
+      r.special_label,
+      r.ref_attrs ->> 'accessory_text',
       f.manufacturing_process,
       f.product_type
     HAVING COUNT(s.id) FILTER (
@@ -2192,6 +2235,15 @@ export async function listReferenceImportCandidates(search = ''): Promise<Refere
       familyCode: readString(row.family_code),
       referenceCode,
       productName,
+      productDescription: buildReferenceProductDescription([
+        row.product_type,
+        row.designation,
+        productName,
+        row.commercial_measure,
+        row.accessory_text,
+        row.special_label,
+      ]),
+      hasBom: row.has_bom === true,
       manufacturingProcess: readString(row.manufacturing_process),
       productType: readString(row.product_type),
       activeSkuCount: readNumber(row.active_sku_count),

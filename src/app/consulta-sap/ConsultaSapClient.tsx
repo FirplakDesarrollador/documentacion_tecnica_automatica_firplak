@@ -943,7 +943,7 @@ function SearchResultsPanel({
             className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? <Loader2 className="size-4 animate-spin" /> : null}
-            Ver más resultados
+            Cargar 20 resultados más
           </button>
         </div>
       ) : null}

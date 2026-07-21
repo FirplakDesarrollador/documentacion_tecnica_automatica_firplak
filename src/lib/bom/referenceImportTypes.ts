@@ -16,6 +16,7 @@ export type ReferenceImportContext = {
   familyCode: string | null
   referenceCode: string
   productName: string
+  productDescription?: string | null
   manufacturingProcess: string | null
   productType: string | null
   /**
@@ -35,6 +36,8 @@ export type ReferenceImportSku = {
 
 export type ReferenceImportCandidate = ReferenceImportContext & {
   activeSkuCount: number
+  productDescription: string | null
+  hasBom: boolean
   lastRunStatus: string | null
   lastRunCreatedAt: string | null
 }
