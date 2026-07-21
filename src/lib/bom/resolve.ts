@@ -353,6 +353,28 @@ function selectedAlternative(
   return line.alternatives.find(alternative => alternative.is_default) ?? null
 }
 
+function boardAlternativeFromComponents(input: {
+  materialProfile: MaterialProfile | null
+  variantCode: string
+  componentItems: Map<string, ComponentItem>
+}): BomMaterialAlternative | null {
+  if (!input.materialProfile) return null
+  const candidates = [...input.componentItems.values()]
+    .filter(component =>
+      component.technical_metadata?.material_kind === 'board'
+      && component.technical_metadata.material_profile === input.materialProfile
+      && (component.variant_code_4 === input.variantCode || component.variant_code_4 === '0000')
+    )
+  const baseItemCodes = [...new Set(candidates.map(component => component.base_item_code))]
+  if (baseItemCodes.length !== 1) return null
+  return {
+    alternative_id: `derived_${input.materialProfile}`,
+    base_item_code: baseItemCodes[0] ?? '',
+    material_profile: input.materialProfile,
+    is_default: false,
+  }
+}
+
 function materialGroupIsBoard(
   line: BomStructureLine,
   componentItems: Map<string, ComponentItem>
@@ -538,12 +560,18 @@ export function resolveBomForSku(input: {
         isBoardMaterial,
       })
       const profile = boardProfileCondition?.target_material_profile ?? configuredProfile
+      const proposedVariantCode = boardProfileCondition?.target_color_code
+        ?? resolveVariant({ colorway: input.colorway, hybridColorCase: lineHybridColorCase, colorMode: lineColorMode, scope, skuColorCode: input.skuColorCode, colorOverride })
       const alternative = selectedAlternative(line, profile)
+        ?? (isBoardMaterial
+          ? boardAlternativeFromComponents({
+            materialProfile: profile,
+            variantCode: proposedVariantCode,
+            componentItems: input.componentItems,
+          })
+          : null)
       const resolvedProfile = profile ?? alternative?.material_profile ?? null
-      const variantCode = alternative
-        ? boardProfileCondition?.target_color_code
-          ?? resolveVariant({ colorway: input.colorway, hybridColorCase: lineHybridColorCase, colorMode: lineColorMode, scope, skuColorCode: input.skuColorCode, colorOverride })
-        : '0000'
+      const variantCode = alternative ? proposedVariantCode : '0000'
       const component = alternative
         ? resolveComponent(alternative.base_item_code, variantCode, input.componentItems)
         : null

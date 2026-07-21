@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { FileText, GitBranch, ClipboardCheck } from 'lucide-react'
+import { FileText, GitBranch, ClipboardCheck, WandSparkles } from 'lucide-react'
 
 import { requirePagePermission } from '@/utils/auth/access'
 
@@ -18,6 +18,15 @@ export default async function ProductDesignPage() {
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
+          <Link
+            href="/product-design/sap-code-creation"
+            className="group rounded-lg border border-violet-200 bg-white p-5 shadow-sm transition hover:border-violet-400 hover:shadow-md"
+          >
+            <div className="flex items-start gap-4">
+              <div className="rounded-md bg-violet-50 p-3 text-violet-700"><WandSparkles className="h-5 w-5" /></div>
+              <div><h2 className="font-semibold text-slate-900">Creación de variantes SAP</h2><p className="mt-1 text-sm text-slate-600">Prepara, compara y crea códigos de color con la LdM V2 de la referencia.</p></div>
+            </div>
+          </Link>
           <Link
             href="/product-design/bom"
             className="group rounded-lg border border-slate-200 bg-white p-5 shadow-sm transition hover:border-indigo-300 hover:shadow-md"

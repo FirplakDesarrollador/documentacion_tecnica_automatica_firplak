@@ -1231,6 +1231,48 @@ test('applies a 0493 board condition only when the reference profile is ST', () 
   assert.deepEqual(rhWithNardoDefault.map(item => item.resolved_item_code), ['CMPD06-0004-000-0493'])
 })
 
+test('infers the two edge-band roles from consumption and does not create a drawer-bottom role', () => {
+  const edgeMetadata = metadata({ material_kind: 'edge_band', material_profile: 'PVC', thickness_mm: 0.45, metadata_source: 'sap_and_name' })
+  const analysis = analyzeReferenceBom({
+    context: {
+      referenceId: 'reference', familyCode: 'BAN05', referenceCode: '0001', productName: 'Prueba cantos',
+      manufacturingProcess: 'MUEBLES NACIONAL', productType: 'MUEBLE',
+    },
+    snapshots: [snapshot('VBAN05-0001-000-0493', '0493', [
+      line({ baseItemCode: 'CMPD06-0003-000', variantCode4: '0493', sourceOrder: 1, itemName: 'CANTO PVC 19X0,45MM', qty: 6.72, technicalMetadata: edgeMetadata }),
+      line({ baseItemCode: 'CMPD06-0005-000', variantCode4: '0493', sourceOrder: 2, itemName: 'CANTO PVC 19X2MM CAJON', qty: 2.03, technicalMetadata: edgeMetadata }),
+    ])],
+    colorConfigurations: new Map(),
+  })
+  const lines = analysis.proposedBomStructure.lines
+  assert.equal(lines.find(line => line.base_item_code === 'CMPD06-0003-000')?.product_application_scope, 'edge_band_body')
+  assert.equal(lines.find(line => line.base_item_code === 'CMPD06-0005-000')?.product_application_scope, 'edge_band_front')
+  assert.equal(lines.some(line => line.product_application_scope === 'edge_band_inner' || line.product_application_scope === 'edge_band_drawer_bottom'), false)
+})
+
+test('derives a missing board base from the target profile when the reference keeps only ST', () => {
+  const structure: BomStructure = {
+    schema_version: 2, structure_type: 'production', input_warehouse_code: '01', output_warehouse_code: null,
+    lines: [{
+      line_id: 'board', sort_order: 1, line_kind: 'material_group', base_item_code: null, product_application_scope: 'full_product', qty: null,
+      input_warehouse_code: null, issue_method_override: null,
+      alternatives: [{ alternative_id: 'st', base_item_code: 'CMPD06-0001-000', material_profile: 'ST', is_default: true }],
+      consumptions: [{ color_mode: 'full', product_application_scope: 'full_product', material_profile: 'CARB2', format_key: null, qty: 0.92, status: 'confirmed' }],
+    }],
+  }
+  const components = new Map([
+    ['CMPD06-0001-000-0493', component('CMPD06-0001-000-0493', 'TABLERO ST 15MM AUSTRAL', metadata({ material_kind: 'board', material_profile: 'ST' }))],
+    ['CMPD06-0008-000-1371', component('CMPD06-0008-000-1371', 'TABLERO CARB 15MM AUSTRAL', metadata({ material_kind: 'board', material_profile: 'CARB2' }))],
+  ])
+  const colorway: Colorway = {
+    code_4dig: '0493', name_color_sap: 'AUSTRAL', color_mode: 'full', application_colors_json: { full_product: '0493' },
+    board_profile_conditions: [{ rule_id: 'st_to_carb2', product_application_scope: 'full_product', source_material_profile: 'ST', target_color_code: '1371', target_material_profile: 'CARB2' }],
+    application_material_profiles_json: {}, allowed_product_types: [], is_active: true,
+  }
+  const resolved = resolveBomForSku({ skuComplete: 'VBAN05-0001-000-0493', skuColorCode: '0493', structure, globalOverrides: emptyOverrides, versionOverrides: emptyOverrides, colorway, componentItems: components })
+  assert.deepEqual(resolved.map(item => item.resolved_item_code), ['CMPD06-0008-000-1371'])
+})
+
 test('derives reusable unicolor strategies from SAP board evidence and reference profiles', () => {
   const strategies = deriveBoardConditionalRuleStrategies({
     sourceColorCode: '0493',

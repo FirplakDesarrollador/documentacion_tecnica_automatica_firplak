@@ -238,8 +238,47 @@ function scopeFromSemantics(
   // technical metadata. Its own semantic name remains enough evidence; no
   // analogous inference is allowed for manufactured pieces such as PUERTA.
   if (materialKind !== 'edge_band' && !name.includes('CANTO')) return 'NA'
-  if (name.includes('INTERIOR') || name.includes('INTERNA') || name.includes('CAJON')) return 'edge_band_inner'
+  // Los fondos de cajón se fabrican sin canto. No convertir una mención a
+  // cajón en un rol de canto interno: los únicos roles automáticos de canto
+  // son estructura y frentes, y cuando hay dos referencias se resuelven por
+  // consumo más abajo.
+  if (name.includes('INTERIOR') || name.includes('INTERNA')) return 'edge_band_full_product'
   return dualEdgeScopeFromEvidence(evidence, colorConfigurations) ?? 'edge_band_full_product'
+}
+
+function isEdgeBandEvidence(evidence: LineEvidence[]): boolean {
+  const line = evidence[0]?.line
+  return line?.technicalMetadata?.material_kind === 'edge_band'
+    || normalizedText(line?.itemName).includes('CANTO')
+}
+
+function inferTwoEdgeBandRoles(logicals: LogicalEvidence[]): LogicalEvidence[] {
+  const candidates = logicals.filter(logical =>
+    logical.scope === 'edge_band_full_product'
+    && logical.lines.length === 1
+    && isEdgeBandEvidence(logical.lines[0]?.evidence ?? [])
+  )
+  if (candidates.length !== 2) return logicals
+
+  const representativeQty = (logical: LogicalEvidence): number => {
+    const quantities = logical.lines[0]?.evidence.map(item => item.line.qty) ?? []
+    return mostCommonNumber(quantities)
+  }
+  const [first, second] = candidates
+  if (!first || !second) return logicals
+  const firstQty = representativeQty(first)
+  const secondQty = representativeQty(second)
+  if (Math.abs(firstQty - secondQty) < EPSILON) return logicals
+  const structure = firstQty > secondQty ? first : second
+  const front = structure === first ? second : first
+  const roleByKey = new Map([
+    [structure.key, 'edge_band_body' as const],
+    [front.key, 'edge_band_front' as const],
+  ])
+  return logicals.map(logical => ({
+    ...logical,
+    scope: roleByKey.get(logical.key) ?? logical.scope,
+  }))
 }
 
 function isColorApplicable(configuration: ColorConfiguration, context: ReferenceImportContext): boolean {
@@ -454,7 +493,8 @@ function findLogicalEvidence(
     })
   }
 
-  return result.sort((left, right) => left.sortOrder - right.sortOrder || left.key.localeCompare(right.key))
+  return inferTwoEdgeBandRoles(result)
+    .sort((left, right) => left.sortOrder - right.sortOrder || left.key.localeCompare(right.key))
 }
 
 function buildConsumptions(
