@@ -15,23 +15,47 @@ import {
   createSapItem,
   createSapProductTree,
   deleteSapItem,
+  deleteSapProductTree,
   getSapItem,
   getSapItemBom,
+  getSapProductTreeUsages,
+  getSapProductionOrderUsages,
   SapServiceLayerError,
   updateSapItem,
   type SapEntityPayload,
 } from '@/lib/sap/serviceLayer'
 import { isPlainObject, sapApiErrorResponse } from '@/app/api/sap/_utils'
+import { updateSapItemStatusAction } from '@/app/product-design/actions'
+import {
+  classifySapDeletionBlockReason,
+  createConfirmation,
+  deleteConfirmation,
+  deletionBlockLabel,
+  readSapItemLifecycleState,
+  type SapItemTargetStatus,
+} from '@/lib/sap/itemLifecycle'
+import { SAP_CODE_MANAGEMENT_PERMISSION } from '@/types/auth'
 
 export const runtime = 'nodejs'
 
 type CreationRequest = {
-  action: 'prepare' | 'compare' | 'create'
+  action: 'prepare' | 'compare' | 'create' | 'inspect' | 'status' | 'delete'
   referenceId: string
   versionId: string
   colorCode: string
   barcodeIntent: 'none' | 'provided'
   barcodeValue?: string
+  itemCode: string
+  targetStatus?: SapItemTargetStatus
+  dryRun: boolean
+  confirmationText: string
+}
+
+type AssociationReport = {
+  parentTrees: Array<{ treeCode: string; treeType: string | null; productDescription: string | null }>
+  productionOrders: Array<{ absoluteEntry: number | null; documentNumber: number | null; itemNo: string | null; status: string | null }>
+  complete: boolean
+  warnings: string[]
 }
 
 type CreationContext = {
@@ -125,8 +149,11 @@ async function loadComponentItemRows(): Promise<Record<string, unknown>[]> {
 
 function parseRequest(value: unknown): CreationRequest {
   const body = isPlainObject(value) ? value : {}
-  const action = body.action === 'compare' || body.action === 'create' ? body.action : 'prepare'
+  const supportedActions = new Set<CreationRequest['action']>(['prepare', 'compare', 'create', 'inspect', 'status', 'delete'])
+  const requestedAction = text(body.action) as CreationRequest['action']
+  const action = supportedActions.has(requestedAction) ? requestedAction : 'prepare'
   const barcodeIntent = body.barcodeIntent === 'provided' ? 'provided' : 'none'
+  const targetStatus = body.targetStatus === 'INACTIVO' ? 'INACTIVO' : body.targetStatus === 'ACTIVO' ? 'ACTIVO' : undefined
   return {
     action,
     referenceId: text(body.referenceId),
@@ -134,6 +161,10 @@ function parseRequest(value: unknown): CreationRequest {
     colorCode: text(body.colorCode).toUpperCase().padStart(4, '0'),
     barcodeIntent,
     barcodeValue: text(body.barcodeValue),
+    itemCode: text(body.itemCode).toUpperCase(),
+    targetStatus,
+    dryRun: body.dryRun !== false,
+    confirmationText: text(body.confirmationText),
   }
 }
 
@@ -170,6 +201,189 @@ async function getOptionalSapItem(itemCode: string): Promise<SapEntityPayload | 
   catch (error) {
     if (error instanceof SapServiceLayerError && error.statusCode === 404) return null
     throw error
+  }
+}
+
+async function inspectAssociations(itemCode: string): Promise<AssociationReport> {
+  const warnings: string[] = []
+  let complete = true
+  let parentTrees: AssociationReport['parentTrees'] = []
+  let productionOrders: AssociationReport['productionOrders'] = []
+
+  try {
+    parentTrees = await getSapProductTreeUsages(itemCode)
+  } catch (error) {
+    complete = false
+    warnings.push(`No se pudieron consultar las LdM superiores: ${error instanceof Error ? error.message : 'error desconocido'}`)
+  }
+
+  try {
+    productionOrders = await getSapProductionOrderUsages(itemCode)
+  } catch (error) {
+    complete = false
+    warnings.push(`No se pudieron consultar las OF asociadas: ${error instanceof Error ? error.message : 'error desconocido'}`)
+  }
+
+  return { parentTrees, productionOrders, complete, warnings }
+}
+
+async function inspectSapItem(itemCode: string) {
+  const normalizedCode = text(itemCode).toUpperCase()
+  if (!normalizedCode) throw new Error('El ItemCode SAP es obligatorio.')
+  const item = await getSapItem(normalizedCode)
+  const bom = await getSapItemBom(normalizedCode)
+  const associations = await inspectAssociations(normalizedCode)
+  const mirrorRows = await dbQuery(
+    `SELECT sku_complete, status FROM public.product_skus WHERE sku_complete = $1 LIMIT 1`,
+    [normalizedCode],
+  )
+
+  return {
+    itemCode: normalizedCode,
+    item,
+    lifecycle: readSapItemLifecycleState(item),
+    bom: bom
+      ? { treeCode: bom.treeCode, treeType: bom.treeType, lineCount: bom.lines.length, lines: bom.lines }
+      : null,
+    associations,
+    supabaseMirror: mirrorRows[0]
+      ? { found: true, skuComplete: text(mirrorRows[0].sku_complete), status: text(mirrorRows[0].status) || null }
+      : { found: false, skuComplete: null, status: null },
+  }
+}
+
+async function executeSapItemDeletion(input: CreationRequest) {
+  const inspection = await inspectSapItem(input.itemCode)
+  const expectedConfirmation = deleteConfirmation(inspection.itemCode)
+  const deletionPlan = {
+    itemCode: inspection.itemCode,
+    itemExists: true,
+    treeExists: Boolean(inspection.bom),
+    treeLineCount: inspection.bom?.lineCount ?? 0,
+    parentTrees: inspection.associations.parentTrees,
+    productionOrders: inspection.associations.productionOrders,
+    associationCheckComplete: inspection.associations.complete,
+    warnings: inspection.associations.warnings,
+  }
+
+  if (input.dryRun) {
+    await logOperation('sap_code_delete_dry_run', inspection.itemCode, deletionPlan, inspection, true, null, { dryRun: true })
+    return {
+      success: true,
+      mode: 'delete',
+      dryRun: true,
+      confirmationRequired: expectedConfirmation,
+      plan: deletionPlan,
+      message: 'Dry-run listo. Ningún registro de SAP fue modificado.',
+    }
+  }
+
+  if (input.confirmationText !== expectedConfirmation) {
+    throw new Error(`ConfirmaciÃ³n invÃ¡lida. Escribe exactamente: ${expectedConfirmation}`)
+  }
+
+  if (!inspection.associations.complete) {
+    await logOperation('sap_code_delete_blocked', inspection.itemCode, deletionPlan, inspection, false, 'No se pudo completar la consulta de asociaciones.')
+    return {
+      success: false,
+      mode: 'delete',
+      blocked: true,
+      confirmationRequired: expectedConfirmation,
+      plan: deletionPlan,
+      message: 'Eliminación bloqueada: no se pudieron verificar todas las asociaciones SAP. Puedes inactivar el artículo.',
+    }
+  }
+
+  if (inspection.associations.parentTrees.length > 0 || inspection.associations.productionOrders.length > 0) {
+    const reason = inspection.associations.parentTrees.length > 0 ? 'SUPERIOR_BOM' : 'PRODUCTION_ORDER'
+    const message = deletionBlockLabel(reason)
+    await logOperation('sap_code_delete_blocked', inspection.itemCode, deletionPlan, inspection, false, message)
+    return {
+      success: false,
+      mode: 'delete',
+      blocked: true,
+      confirmationRequired: expectedConfirmation,
+      plan: deletionPlan,
+      blockReason: reason,
+      message: `${message} Puedes inactivar el artículo sin modificar sus componentes.`,
+    }
+  }
+
+  await assertSapWritesEnabled()
+  let treeDeleted = false
+  let itemDeleted = false
+  try {
+    if (inspection.bom) {
+      await deleteSapProductTree(inspection.itemCode)
+      const treeAfter = await getSapItemBom(inspection.itemCode)
+      if (treeAfter) throw new Error('SAP no confirmó la eliminación de la LdM.')
+      treeDeleted = true
+      await logOperation(
+        'sap_code_delete_bom',
+        inspection.itemCode,
+        { treeCode: inspection.itemCode, previousLineCount: inspection.bom.lineCount },
+        { treeDeleted: true },
+        true,
+      )
+    }
+
+    await deleteSapItem(inspection.itemCode)
+    const itemAfter = await getOptionalSapItem(inspection.itemCode)
+    if (itemAfter) throw new Error('SAP no confirmó la eliminación del artículo.')
+    itemDeleted = true
+    await logOperation(
+      'sap_code_delete_item',
+      inspection.itemCode,
+      { itemCode: inspection.itemCode },
+      { itemDeleted: true },
+      true,
+    )
+
+    const { error: mirrorError } = await supabaseTable('product_skus')
+      .update({ status: 'INACTIVO' })
+      .eq('sku_complete', inspection.itemCode)
+    if (mirrorError) throw new Error(`SAP eliminó el artículo, pero no se pudo marcar el SKU espejo como inactivo: ${mirrorError.message}`)
+    const mirrorRows = await dbQuery(
+      `SELECT sku_complete, status FROM public.product_skus WHERE sku_complete = $1 LIMIT 1`,
+      [inspection.itemCode],
+    )
+    const mirror = mirrorRows[0]
+      ? { found: true, status: text(mirrorRows[0].status) || null }
+      : { found: false, status: null }
+
+    await logOperation('sap_code_delete', inspection.itemCode, deletionPlan, { treeDeleted, itemDeleted, mirror }, true)
+    return {
+      success: true,
+      mode: 'delete',
+      dryRun: false,
+      itemCode: inspection.itemCode,
+      treeDeleted,
+      itemDeleted,
+      supabaseMirror: mirror,
+      message: `Artículo ${inspection.itemCode} eliminado y verificado en SAP${mirror.found ? '; SKU espejo conservado como INACTIVO.' : '.'}`,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'SAP rechazó la eliminación.'
+    const blockReason = classifySapDeletionBlockReason(message)
+    let afterItem: SapEntityPayload | null = null
+    let itemReadbackComplete = true
+    try {
+      afterItem = await getOptionalSapItem(inspection.itemCode)
+    } catch {
+      itemReadbackComplete = false
+    }
+    const itemKnownToExist = Boolean(afterItem) || !itemReadbackComplete
+    const partial = { treeDeleted, itemDeleted, itemStillExists: itemReadbackComplete ? Boolean(afterItem) : null, itemReadbackComplete, blockReason }
+    await logOperation('sap_code_delete_partial', inspection.itemCode, deletionPlan, partial, false, message)
+    return {
+      success: false,
+      mode: 'delete',
+      partial,
+      fallback: itemKnownToExist ? 'INACTIVAR' : null,
+      message: treeDeleted && itemKnownToExist
+        ? `La LdM fue eliminada, pero SAP bloqueó el artículo: ${deletionBlockLabel(blockReason)} Se propone inactivar el artículo.`
+        : message,
+    }
   }
 }
 
@@ -301,9 +515,17 @@ async function buildContext(input: CreationRequest): Promise<CreationContext> {
   }
 }
 
-async function logOperation(operationType: string, itemCode: string, payload: SapEntityPayload, response: unknown, success: boolean, errorMessage: string | null = null) {
+async function logOperation(
+  operationType: string,
+  itemCode: string,
+  payload: SapEntityPayload,
+  response: unknown,
+  success: boolean,
+  errorMessage: string | null = null,
+  options?: { dryRun?: boolean },
+) {
   await supabaseTable('sap_operation_logs').insert({
-    operation_type: operationType, item_code: itemCode, dry_run: false, sap_payload: payload,
+    operation_type: operationType, item_code: itemCode, dry_run: options?.dryRun ?? false, sap_payload: payload,
     sap_response: response && typeof response === 'object' ? response : {}, success, error_message: errorMessage,
   })
 }
@@ -330,6 +552,33 @@ export async function POST(request: Request) {
   if (guard.response) return guard.response
   try {
     const input = parseRequest(await request.json())
+    if (input.action === 'inspect') {
+      const inspection = await inspectSapItem(input.itemCode)
+      return NextResponse.json({ success: true, mode: 'inspect', ...inspection })
+    }
+
+    const isMutation = input.action === 'create' || input.action === 'status' || input.action === 'delete'
+    if (isMutation) {
+      const mutationGuard = await apiGuard(SAP_CODE_MANAGEMENT_PERMISSION)
+      if (mutationGuard.response) return mutationGuard.response
+    }
+
+    if (input.action === 'status') {
+      if (!input.itemCode || !input.targetStatus) throw new Error('ItemCode y estado objetivo son obligatorios.')
+      const result = await updateSapItemStatusAction({
+        itemCode: input.itemCode,
+        targetStatus: input.targetStatus,
+        dryRun: input.dryRun,
+        confirmationText: input.confirmationText,
+      })
+      return NextResponse.json(result, { status: result.success ? 200 : 409 })
+    }
+
+    if (input.action === 'delete') {
+      const result = await executeSapItemDeletion(input)
+      return NextResponse.json(result, { status: result.success ? 200 : 409 })
+    }
+
     const context = await buildContext(input)
     const existing = await getOptionalSapItem(context.targetItemCode)
     const existingBom = await getSapItemBom(context.targetItemCode)
@@ -345,6 +594,10 @@ export async function POST(request: Request) {
     }
     if (existing) throw new Error(`${context.targetItemCode} ya existe en SAP. Usa Comparar para revisar diferencias.`)
     if (context.missing.length > 0) throw new Error(`La LdM no está completa para ${context.colorCode}: ${context.missing.join(', ')}`)
+    const expectedConfirmation = createConfirmation(context.targetItemCode)
+    if (input.confirmationText !== expectedConfirmation) {
+      throw new Error(`ConfirmaciÃ³n invÃ¡lida. Escribe exactamente: ${expectedConfirmation}`)
+    }
     await assertSapWritesEnabled()
     let createdItem = false
     try {

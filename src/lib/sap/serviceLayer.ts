@@ -597,7 +597,10 @@ export async function searchSapItems(
   const rows = isRecord(response) && Array.isArray(response.value)
     ? response.value.filter(isRecord)
     : []
-  const hasMore = rows.length > limit
+  const nextLink = isRecord(response)
+    ? readStringField(response, 'odata.nextLink') ?? readStringField(response, '@odata.nextLink')
+    : null
+  const hasMore = rows.length >= limit || Boolean(nextLink)
   const items = rows.slice(0, limit)
 
   return {
@@ -668,6 +671,79 @@ export async function getSapProductTreesByPrefixes(
   return isRecord(response) && Array.isArray(response.value)
     ? response.value.filter(isRecord)
     : []
+}
+
+export type SapProductTreeUsage = {
+  treeCode: string
+  treeType: string | null
+  productDescription: string | null
+}
+
+export type SapProductionOrderUsage = {
+  absoluteEntry: number | null
+  documentNumber: number | null
+  itemNo: string | null
+  status: string | null
+}
+
+function recordsFromCollectionResponse(value: unknown): Record<string, unknown>[] {
+  if (!isRecord(value) || !Array.isArray(value.value)) return []
+  return value.value.filter(isRecord)
+}
+
+export async function getSapProductTreeUsages(
+  itemCode: string,
+  options?: { timeoutMs?: number; top?: number },
+): Promise<SapProductTreeUsage[]> {
+  const normalizedCode = normalizeRequiredCode(itemCode, 'itemCode')
+  const query = buildCollectionQuery({
+    select: ['TreeCode', 'TreeType', 'ProductDescription'],
+    filter: `ProductTreeLines/any(line: line/ItemCode eq ${encodeODataString(normalizedCode)})`,
+    orderby: 'TreeCode asc',
+    top: options?.top ?? 50,
+  })
+  const response = await sapServiceLayerRequest<unknown>(`/ProductTrees${query}`, {
+    timeoutMs: options?.timeoutMs,
+  })
+
+  return recordsFromCollectionResponse(response)
+    .map(row => ({
+      treeCode: readStringField(row, 'TreeCode') ?? '',
+      treeType: readStringField(row, 'TreeType'),
+      productDescription: readStringField(row, 'ProductDescription'),
+    }))
+    .filter(row => row.treeCode.length > 0)
+}
+
+export async function getSapProductionOrderUsages(
+  itemCode: string,
+  options?: { timeoutMs?: number; top?: number },
+): Promise<SapProductionOrderUsage[]> {
+  const normalizedCode = normalizeRequiredCode(itemCode, 'itemCode')
+  const query = buildCollectionQuery({
+    select: ['AbsoluteEntry', 'DocumentNumber', 'ItemNo', 'ProductionOrderStatus'],
+    filter: `ItemNo eq ${encodeODataString(normalizedCode)}`,
+    orderby: 'AbsoluteEntry desc',
+    top: options?.top ?? 50,
+  })
+  const response = await sapServiceLayerRequest<unknown>(`/ProductionOrders${query}`, {
+    timeoutMs: options?.timeoutMs,
+  })
+
+  return recordsFromCollectionResponse(response).map(row => ({
+    absoluteEntry: readNumberField(row, 'AbsoluteEntry'),
+    documentNumber: readNumberField(row, 'DocumentNumber'),
+    itemNo: readStringField(row, 'ItemNo'),
+    status: readStringField(row, 'ProductionOrderStatus'),
+  }))
+}
+
+export async function deleteSapProductTree(treeCode: string): Promise<unknown> {
+  await assertSapWritesEnabled()
+  const normalizedCode = normalizeRequiredCode(treeCode, 'treeCode')
+  return sapServiceLayerRequest(`/ProductTrees(${encodeODataString(normalizedCode)})`, {
+    method: 'DELETE',
+  })
 }
 
 export function buildSapItemDuplicatePayload(input: SapItemDuplicateInput & { sourceItem: SapEntityPayload }): SapEntityPayload {
@@ -787,6 +863,7 @@ export type BomNode = {
   itemCode: string
   itemName: string
   quantity: number
+  inventoryUom: string | null
   level: number
   lines: BomNode[]
   loaded: boolean
@@ -800,6 +877,19 @@ function isBomLine(value: unknown): value is BomLine {
 function parseBomLines(lines: unknown): BomLine[] {
   if (!Array.isArray(lines)) return []
   return lines.filter(isBomLine)
+}
+
+async function resolveBomLineInventoryUoms(lines: BomLine[]): Promise<Map<string, string>> {
+  const itemCodes = lines.map(line => line.ItemCode)
+  const items = await getSapItemsByCodes(itemCodes, ['ItemCode', 'InventoryUOM'])
+  const uoms = new Map<string, string>()
+
+  for (const [itemCode, item] of items) {
+    const uom = item.InventoryUOM
+    if (typeof uom === 'string' && uom.trim()) uoms.set(itemCode, uom.trim())
+  }
+
+  return uoms
 }
 
 export async function getSapItemBom(itemCode: string): Promise<{
@@ -904,16 +994,23 @@ export async function getSapItemBomTree(
   try {
     const top = await getSapItemBom(itemCode)
     if (!top) return { tree: null, error: null }
+    const inventoryUoms = await resolveBomLineInventoryUoms(top.lines)
+    const rootItems = await getSapItemsByCodes([top.treeCode], ['ItemCode', 'InventoryUOM'])
+    const rootInventoryUom = rootItems.get(top.treeCode)?.InventoryUOM
 
     const root: BomNode = {
       itemCode: top.treeCode,
       itemName: top.productDescription ?? '',
       quantity: top.quantity,
+      inventoryUom: typeof rootInventoryUom === 'string' && rootInventoryUom.trim()
+        ? rootInventoryUom.trim()
+        : null,
       level: 0,
       lines: top.lines.map(l => ({
         itemCode: l.ItemCode,
         itemName: l.ItemName || '',
         quantity: l.Quantity,
+        inventoryUom: inventoryUoms.get(l.ItemCode) ?? l.InventoryUOM,
         level: 1,
         lines: [],
         loaded: false,
@@ -934,11 +1031,13 @@ export async function getSapItemBomChildren(
   try {
     const bom = await getSapItemBom(itemCode)
     if (!bom) return { lines: [], error: null }
+    const inventoryUoms = await resolveBomLineInventoryUoms(bom.lines)
 
     const lines = bom.lines.map(l => ({
       itemCode: l.ItemCode,
       itemName: l.ItemName || '',
       quantity: l.Quantity,
+      inventoryUom: inventoryUoms.get(l.ItemCode) ?? l.InventoryUOM,
       level: 0,
       lines: [],
       loaded: false,

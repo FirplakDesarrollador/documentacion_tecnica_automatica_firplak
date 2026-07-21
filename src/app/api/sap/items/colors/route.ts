@@ -14,7 +14,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export async function GET() {
-  const guard = await apiGuard('module:consulta-sap')
+  const guard = await apiGuard('module:consulta-sap', 'module:product-design')
   if (guard.response) return guard.response
 
   try {

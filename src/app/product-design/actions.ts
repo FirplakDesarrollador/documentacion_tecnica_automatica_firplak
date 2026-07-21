@@ -5,10 +5,17 @@ import { revalidatePath } from 'next/cache'
 
 import { dbQuery } from '@/lib/supabase'
 import { supabaseTable } from '@/lib/supabaseDynamic'
-import { assertPermission, assertRole } from '@/utils/auth/access'
+import { assertPermission } from '@/utils/auth/access'
 import { getSapItem, updateSapItem, type SapEntityPayload } from '@/lib/sap/serviceLayer'
 import { PILOT_SKUS, type ResolvedBomLine } from '@/lib/bom/types'
-import { readSapFrozen, readSapValid } from '@/lib/bom/sapMapping'
+import {
+  isSapLifecycleState,
+  readSapItemLifecycleState,
+  sapPayloadForTargetStatus,
+  statusConfirmation,
+  type SapItemTargetStatus,
+} from '@/lib/sap/itemLifecycle'
+import { SAP_CODE_MANAGEMENT_PERMISSION } from '@/types/auth'
 import { parseCabinetRouteWorkbook } from '@/lib/routeSheets/cabinetRouteExcel'
 import {
   CABINET_ROUTE_SCHEMA_VERSION,
@@ -68,7 +75,7 @@ export type CabinetRouteWorkspace = {
 
 export type SapStatusUpdateInput = {
   itemCode: string
-  targetStatus: 'ACTIVO' | 'INACTIVO'
+  targetStatus: SapItemTargetStatus
   dryRun: boolean
   confirmationText: string
 }
@@ -116,14 +123,8 @@ function normalizeSkuInput(value: string): string {
   return value.trim().toUpperCase()
 }
 
-function getTargetSapStatus(status: 'ACTIVO' | 'INACTIVO'): SapEntityPayload {
-  return status === 'ACTIVO'
-    ? { Valid: 'tYES', Frozen: 'tNO' }
-    : { Valid: 'tNO', Frozen: 'tYES' }
-}
-
 function confirmationFor(input: SapStatusUpdateInput): string {
-  return `ACTUALIZAR ${normalizeSkuInput(input.itemCode)} ${input.targetStatus}`
+  return statusConfirmation(input.itemCode, input.targetStatus)
 }
 
 async function getResolvedLines(skuComplete: string): Promise<ResolvedBomLine[]> {
@@ -472,29 +473,50 @@ export async function updateSapItemStatusAction(input: SapStatusUpdateInput): Pr
   confirmationRequired: string
   message: string
   payload: SapEntityPayload
+  before: ReturnType<typeof readSapItemLifecycleState> | null
+  after: ReturnType<typeof readSapItemLifecycleState> | null
+  supabaseMirror: { found: boolean; status: string | null }
 }> {
-  const access = await assertRole('admin')
+  const access = await assertPermission(SAP_CODE_MANAGEMENT_PERMISSION)
   const itemCode = normalizeSkuInput(input.itemCode)
-  const payload = getTargetSapStatus(input.targetStatus)
+  const payload = sapPayloadForTargetStatus(input.targetStatus)
   const expectedConfirmation = confirmationFor(input)
   let sapResponse: unknown = null
   let success = false
   let errorMessage: string | null = null
+  let beforeState: ReturnType<typeof readSapItemLifecycleState> | null = null
+  let afterState: ReturnType<typeof readSapItemLifecycleState> | null = null
+  let supabaseMirror: { found: boolean; status: string | null } = { found: false, status: null }
 
   try {
     const before = await getSapItem(itemCode, ['ItemCode', 'ItemName', 'Valid', 'Frozen'])
-    const beforeValid = readSapValid(before)
-    const beforeFrozen = readSapFrozen(before)
+    beforeState = readSapItemLifecycleState(before)
 
     if (!input.dryRun && input.confirmationText.trim() !== expectedConfirmation) {
       throw new Error(`Confirmación inválida. Escribe exactamente: ${expectedConfirmation}`)
     }
 
     if (!input.dryRun) {
+      const current = await getSapItem(itemCode, ['ItemCode', 'ItemName', 'Valid', 'Frozen'])
+      beforeState = readSapItemLifecycleState(current)
       sapResponse = await updateSapItem(itemCode, payload)
-      await supabaseTable('product_skus')
+      const after = await getSapItem(itemCode, ['ItemCode', 'ItemName', 'Valid', 'Frozen'])
+      afterState = readSapItemLifecycleState(after)
+      if (!isSapLifecycleState(afterState, input.targetStatus)) {
+        throw new Error(`SAP no confirmÃ³ el estado ${input.targetStatus} para ${itemCode}.`)
+      }
+      const { error: mirrorError } = await supabaseTable('product_skus')
         .update({ status: input.targetStatus })
         .eq('sku_complete', itemCode)
+      if (mirrorError) throw new Error(`SAP quedÃ³ actualizado, pero no se pudo sincronizar el SKU espejo: ${mirrorError.message}`)
+      const mirrorRows = await dbQuery(
+        `SELECT sku_complete, status FROM public.product_skus WHERE sku_complete = $1 LIMIT 1`,
+        [itemCode],
+      )
+      supabaseMirror = {
+        found: mirrorRows.length > 0,
+        status: readString(mirrorRows[0]?.status),
+      }
     }
 
     success = true
@@ -503,9 +525,12 @@ export async function updateSapItemStatusAction(input: SapStatusUpdateInput): Pr
       dryRun: input.dryRun,
       confirmationRequired: expectedConfirmation,
       message: input.dryRun
-        ? `Dry-run listo. SAP actual: Valid=${String(beforeValid)} Frozen=${String(beforeFrozen)}.`
-        : `${itemCode} actualizado en SAP y Supabase.`,
+        ? `Dry-run listo. SAP actual: Valid=${String(beforeState?.valid)} Frozen=${String(beforeState?.frozen)}.`
+        : `${itemCode} actualizado y verificado en SAP${supabaseMirror.found ? ' y en su SKU espejo.' : '; no existe SKU espejo en Supabase.'}`,
       payload,
+      before: beforeState,
+      after: afterState,
+      supabaseMirror,
     }
   } catch (error) {
     errorMessage = error instanceof Error ? error.message : 'No se pudo actualizar estado SAP'
@@ -515,6 +540,9 @@ export async function updateSapItemStatusAction(input: SapStatusUpdateInput): Pr
       confirmationRequired: expectedConfirmation,
       message: errorMessage,
       payload,
+      before: beforeState,
+      after: afterState,
+      supabaseMirror,
     }
   } finally {
     await supabaseTable('sap_operation_logs')

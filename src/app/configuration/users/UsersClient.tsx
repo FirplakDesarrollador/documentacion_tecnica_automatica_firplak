@@ -28,7 +28,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import {
   ADMIN_ROLE,
   APP_MODULES,
+  INTERNAL_PERMISSIONS,
+  SAP_CODE_MANAGEMENT_PERMISSION,
   getRoleLabel,
+  type Permission,
   type ModulePermission,
   type UserRole,
 } from '@/types/auth'
@@ -51,7 +54,7 @@ type RoleFormState = {
   label: string
   description: string
   active: boolean
-  allowedModules: ModulePermission[]
+  allowedModules: Permission[]
 }
 
 function getErrorMessage(error: unknown) {
@@ -287,11 +290,29 @@ export default function UsersClient({
   const toggleRoleModule = (moduleKey: ModulePermission) => {
     setRoleForm((current) => {
       const exists = current.allowedModules.includes(moduleKey)
+      const nextAllowed = exists
+        ? current.allowedModules.filter((item) => item !== moduleKey)
+        : [...current.allowedModules, moduleKey]
+      const withInternalDefaults = moduleKey === 'module:product-design' && !exists
+        ? [...nextAllowed, SAP_CODE_MANAGEMENT_PERMISSION]
+        : moduleKey === 'module:product-design' && exists
+          ? nextAllowed.filter((item) => item !== SAP_CODE_MANAGEMENT_PERMISSION)
+          : nextAllowed
+      return {
+        ...current,
+        allowedModules: [...new Set(withInternalDefaults)],
+      }
+    })
+  }
+
+  const toggleInternalPermission = (permission: Permission) => {
+    setRoleForm((current) => {
+      const exists = current.allowedModules.includes(permission)
       return {
         ...current,
         allowedModules: exists
-          ? current.allowedModules.filter((item) => item !== moduleKey)
-          : [...current.allowedModules, moduleKey],
+          ? current.allowedModules.filter((item) => item !== permission)
+          : [...current.allowedModules, permission],
       }
     })
   }
@@ -737,6 +758,36 @@ export default function UsersClient({
                         <span className="min-w-0 truncate font-semibold">
                           {module.label}
                           {disabled ? <Lock className="ml-1 inline h-3 w-3 shrink-0" /> : null}
+                        </span>
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+
+              <div className="grid gap-2">
+                <Label className="text-xs font-bold uppercase text-slate-700">Permisos internos</Label>
+                <div className="grid gap-2">
+                  {INTERNAL_PERMISSIONS.map((permission) => {
+                    const moduleEnabled = roleForm.allowedModules.includes(permission.module)
+                    const checked = roleForm.allowedModules.includes(permission.key)
+                    return (
+                      <label
+                        key={permission.key}
+                        className={`flex items-start gap-2 rounded-lg border px-2.5 py-2 text-sm ${
+                          moduleEnabled ? 'border-indigo-200 bg-indigo-50/40 text-slate-700' : 'border-slate-200 bg-slate-50 text-slate-400'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={!moduleEnabled}
+                          onChange={() => toggleInternalPermission(permission.key)}
+                          className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 disabled:opacity-50"
+                        />
+                        <span className="min-w-0">
+                          <span className="block font-semibold">{permission.label}</span>
+                          <span className="block text-xs text-slate-500">{permission.description}</span>
                         </span>
                       </label>
                     )

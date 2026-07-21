@@ -8,10 +8,11 @@ import {
   ADMIN_ROLE,
   APP_MODULES,
   assertUserRole,
-  getDefaultModulesForRole,
+  getDefaultPermissionsForRole,
   getRoleLabel,
   normalizeUserRole,
-  sanitizeAllowedModules,
+  sanitizeAllowedPermissions,
+  type Permission,
   type UserRole,
 } from '@/types/auth'
 import { assertRole } from '@/utils/auth/access'
@@ -92,15 +93,20 @@ function toAdminUserRow(user: User, profile: UserProfileRow | null, currentUserI
 
 function toAdminRoleRow(row: AppRoleDbRow, userCount: number): AdminRoleRow {
   const roleKey = normalizeUserRole(row.key)
-  const modules = roleKey === ADMIN_ROLE
-    ? sanitizeAllowedModules(APP_MODULES.map((module) => module.key))
-    : sanitizeAllowedModules(row.allowed_modules)
+  const permissions: Permission[] = roleKey === ADMIN_ROLE
+    ? [
+        ...APP_MODULES.map((module) => module.key as Permission),
+        'action:print',
+        'action:naming:manage',
+        'action:sap-code:manage',
+      ]
+    : sanitizeAllowedPermissions(row.allowed_modules)
 
   return {
     key: roleKey,
     label: getRoleLabel(roleKey, row.label),
     description: row.description ?? null,
-    allowedModules: modules,
+    allowedModules: permissions,
     isSystem: row.is_system === true,
     active: row.active !== false,
     createdAt: row.created_at,
@@ -114,7 +120,7 @@ function toFallbackRoleRow(roleKey: string, userCount: number): AdminRoleRow {
     key: roleKey,
     label: getRoleLabel(roleKey),
     description: null,
-    allowedModules: getDefaultModulesForRole(roleKey),
+    allowedModules: getDefaultPermissionsForRole(roleKey),
     isSystem: true,
     active: true,
     createdAt: null,
@@ -444,7 +450,7 @@ export async function createRoleAction(input: SaveRoleInput): Promise<AdminRoleR
 
   const label = normalizeRoleLabel(input.label)
   const description = normalizeRoleDescription(input.description)
-  const allowedModules = sanitizeAllowedModules(input.allowedModules, { assignableOnly: true })
+  const allowedModules = sanitizeAllowedPermissions(input.allowedModules, { assignableOnly: true })
   const admin = createSupabaseAdminClient()
   const { data, error } = await admin
     .from('app_roles')
@@ -477,7 +483,7 @@ export async function updateRoleAction(input: SaveRoleInput): Promise<AdminRoleR
 
   const label = normalizeRoleLabel(input.label)
   const description = normalizeRoleDescription(input.description)
-  const allowedModules = sanitizeAllowedModules(input.allowedModules, { assignableOnly: true })
+  const allowedModules = sanitizeAllowedPermissions(input.allowedModules, { assignableOnly: true })
   const admin = createSupabaseAdminClient()
   const current = await fetchRoleByKey(admin, key)
   if (!current) {

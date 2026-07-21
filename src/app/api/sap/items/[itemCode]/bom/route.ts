@@ -9,7 +9,7 @@ export async function GET(
   request: NextRequest,
   { params: paramsPromise }: { params: Promise<{ itemCode: string }> }
 ) {
-  const guard = await apiGuard('module:consulta-sap')
+  const guard = await apiGuard('module:consulta-sap', 'module:product-design')
   if (guard.response) return guard.response
 
   try {

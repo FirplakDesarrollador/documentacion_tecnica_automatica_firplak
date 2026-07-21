@@ -38,10 +38,13 @@ export const PERMISSIONS = [
   'module:consulta-sap',
   'action:print',
   'action:naming:manage',
+  'action:sap-code:manage',
 ] as const
 
 export type Permission = (typeof PERMISSIONS)[number]
 export type ModulePermission = Extract<Permission, `module:${string}`>
+export type InternalPermission = Extract<Permission, `action:${string}`>
+export const SAP_CODE_MANAGEMENT_PERMISSION = 'action:sap-code:manage' as const
 
 export type AppModuleDefinition = {
   key: ModulePermission
@@ -123,6 +126,27 @@ export const MODULE_PERMISSIONS = APP_MODULES.map((module) => module.key) as Mod
 export const ASSIGNABLE_MODULE_PERMISSIONS = APP_MODULES
   .filter((module) => module.assignable)
   .map((module) => module.key) as ModulePermission[]
+
+export type InternalPermissionDefinition = {
+  key: InternalPermission
+  label: string
+  description: string
+  module: ModulePermission
+}
+
+export const INTERNAL_PERMISSIONS: InternalPermissionDefinition[] = [
+  {
+    key: SAP_CODE_MANAGEMENT_PERMISSION,
+    label: 'Administrar códigos SAP',
+    description: 'Crear, activar, inactivar y eliminar artículos SAP desde variantes.',
+    module: 'module:product-design',
+  },
+]
+
+export const ASSIGNABLE_PERMISSION_KEYS = [
+  ...ASSIGNABLE_MODULE_PERMISSIONS,
+  ...INTERNAL_PERMISSIONS.map((permission) => permission.key),
+] as Permission[]
 
 export type AppRoleRecord = {
   key: string
@@ -215,14 +239,17 @@ export function isModulePermission(value: unknown): value is ModulePermission {
   return MODULE_PERMISSIONS.includes(value as ModulePermission)
 }
 
-export function sanitizeAllowedModules(value: unknown, options: { assignableOnly?: boolean } = {}): ModulePermission[] {
+export function sanitizeAllowedPermissions(value: unknown, options: { assignableOnly?: boolean } = {}): Permission[] {
   const raw = Array.isArray(value) ? value : []
-  const allowedSet = new Set(options.assignableOnly ? ASSIGNABLE_MODULE_PERMISSIONS : MODULE_PERMISSIONS)
-  const modules = raw.filter((item): item is ModulePermission => (
-    isModulePermission(item) && allowedSet.has(item)
+  const allowedSet = new Set(options.assignableOnly ? ASSIGNABLE_PERMISSION_KEYS : PERMISSIONS)
+  return raw.filter((item): item is Permission => (
+    isPermission(item) && allowedSet.has(item)
   ))
+    .filter((item, index, list) => list.indexOf(item) === index)
+}
 
-  return Array.from(new Set(modules))
+export function sanitizeAllowedModules(value: unknown, options: { assignableOnly?: boolean } = {}): ModulePermission[] {
+  return sanitizeAllowedPermissions(value, options).filter(isModulePermission)
 }
 
 export function getDefaultModulesForRole(role: UserRole): ModulePermission[] {
@@ -236,6 +263,12 @@ export function permissionsFromModules(role: UserRole, modules: ModulePermission
   if (permissions.has('module:print')) permissions.add('action:print')
 
   return Array.from(permissions)
+}
+
+export function getDefaultPermissionsForRole(role: UserRole): Permission[] {
+  const permissions = permissionsFromModules(role, getDefaultModulesForRole(role))
+  if (permissions.includes('module:product-design')) permissions.push(SAP_CODE_MANAGEMENT_PERMISSION)
+  return permissions
 }
 
 export function getRoleHomePath(role: UserRole, permissions: Permission[]): string {
@@ -260,15 +293,14 @@ export function resolveRoleAccess(
   const hasDbRole = Boolean(roleRecord)
   const isActive = isAdmin || (hasDbRole ? roleRecord?.active !== false : false)
 
-  const modules = isAdmin
-    ? [...MODULE_PERMISSIONS]
+  const permissions = isAdmin
+    ? [...PERMISSIONS]
     : hasDbRole
-      ? (isActive ? sanitizeAllowedModules(roleRecord?.allowed_modules) : [])
+      ? (isActive ? sanitizeAllowedPermissions(roleRecord?.allowed_modules) : [])
       : options.fallbackToDefaults
-        ? getDefaultModulesForRole(role)
+        ? getDefaultPermissionsForRole(role)
         : []
-
-  const permissions = permissionsFromModules(role, modules)
+  const modules = permissions.filter(isModulePermission)
 
   return {
     role,

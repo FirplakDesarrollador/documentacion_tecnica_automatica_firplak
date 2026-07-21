@@ -1,4 +1,4 @@
-import type { ModulePermission, UserRole } from '@/types/auth'
+import type { Permission, UserRole } from '@/types/auth'
 
 export type AdminUserAuthStatus = 'active' | 'confirmed' | 'invited' | 'pending' | 'blocked'
 
@@ -26,7 +26,7 @@ export type AdminRoleRow = {
   key: UserRole
   label: string
   description: string | null
-  allowedModules: ModulePermission[]
+  allowedModules: Permission[]
   isSystem: boolean
   active: boolean
   createdAt: string | null
@@ -38,6 +38,6 @@ export type SaveRoleInput = {
   key: string
   label: string
   description?: string | null
-  allowedModules: ModulePermission[]
+  allowedModules: Permission[]
   active: boolean
 }
