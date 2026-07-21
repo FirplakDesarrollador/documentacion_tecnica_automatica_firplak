@@ -281,11 +281,22 @@
 }
 
 /* BOM: keep cards and controls visually consistent with the rounded primary actions. */
-.bom-screen :is(section, button, input, select, textarea, details, summary, .border) {
-  border-radius: 0.375rem;
+.bom-screen :is(
+  section,
+  button,
+  input,
+  select,
+  textarea,
+  details,
+  summary,
+  table,
+  .border,
+  [class*="border-"]
+) {
+  border-radius: 0.375rem !important;
 }
 
 .bom-screen table {
-  border-radius: 0.375rem;
+  border-radius: 0.375rem !important;
   overflow: hidden;
 }
