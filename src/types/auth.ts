@@ -256,10 +256,10 @@ export function getDefaultModulesForRole(role: UserRole): ModulePermission[] {
   return [...(DEFAULT_ROLE_MODULES[role] ?? [])]
 }
 
-export function permissionsFromModules(role: UserRole, modules: ModulePermission[]): Permission[] {
+export function permissionsFromModules(role: UserRole, configuredPermissions: Permission[]): Permission[] {
   if (role === ADMIN_ROLE) return [...PERMISSIONS]
 
-  const permissions = new Set<Permission>(modules)
+  const permissions = new Set<Permission>(configuredPermissions)
   if (permissions.has('module:print')) permissions.add('action:print')
 
   return Array.from(permissions)
@@ -296,7 +296,7 @@ export function resolveRoleAccess(
   const permissions = isAdmin
     ? [...PERMISSIONS]
     : hasDbRole
-      ? (isActive ? sanitizeAllowedPermissions(roleRecord?.allowed_modules) : [])
+      ? (isActive ? permissionsFromModules(role, sanitizeAllowedPermissions(roleRecord?.allowed_modules)) : [])
       : options.fallbackToDefaults
         ? getDefaultPermissionsForRole(role)
         : []
