@@ -26,6 +26,7 @@ import {
   getTransientReferenceBomColorAction,
   listTransientReferenceBomImportCandidatesAction,
   publishTransientReferenceBomAction,
+  refreshTransientComponentMetadataAction,
   saveTransientColorOverrideAction,
   saveTransientBoardConditionalProfileRuleAction,
   saveTransientBoardDualColorCaseAction,
@@ -269,6 +270,10 @@ function severityClass(severity: ReferenceImportFinding['severity']): string {
   return 'border-sky-200 bg-sky-50 text-sky-900'
 }
 
+function isTechnicalReviewFinding(finding: ReferenceImportFinding): boolean {
+  return finding.findingType === 'component_metadata_batch_failed'
+}
+
 function findingTitle(finding: ReferenceImportFinding): string {
   const labels: Record<string, string> = {
     color_pattern_classification: 'Color de material sin regla definida',
@@ -291,6 +296,7 @@ function findingTitle(finding: ReferenceImportFinding): string {
     component_tree_node_limit: 'Límite de nodos alcanzado',
     component_tree_read_failed: 'Subestructura no disponible',
     component_uom_missing: 'Unidad de medida pendiente',
+    component_metadata_batch_failed: 'No se pudo validar la metadata de componentes',
     sap_bom_unavailable: 'LdM SAP no disponible',
     sap_reference_sku_not_registered: 'Color activo en SAP no registrado en la app',
   }
@@ -467,6 +473,13 @@ function findingDescription(finding: ReferenceImportFinding): string | null {
     return proposed
       ? `SAP no usa el mismo método de salida en todos los SKU. La propuesta es ${proposed === 'im_Backflush' ? 'bajo notificación' : 'manual'}; revísala primero en dry-run.`
       : 'SAP no usa el mismo método de salida y no hay mayoría para proponer uno. Revísalo antes de hacer cambios en SAP.'
+  }
+
+  if (finding.findingType === 'component_metadata_batch_failed') {
+    const itemCodes = asStringArray(finding.detailsJson.item_codes)
+    const error = asString(finding.detailsJson.error)
+    const items = itemCodes.length > 0 ? ` Componentes afectados: ${itemCodes.join(', ')}.` : ''
+    return `SAP no permitió completar la ficha técnica de estos artículos (unidad de medida, estado, inventariable y dimensiones físicas); no corresponde por sí solo a una LdM interna.${items}${error ? ` Detalle de SAP: ${error}` : ''} El próximo análisis reintentará automáticamente en lotes pequeños; publicar permanece bloqueado hasta confirmar toda la metadata.`
   }
 
   const message = asString(finding.detailsJson.message)
@@ -1133,6 +1146,8 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const [boardMatrixMessage, setBoardMatrixMessage] = useState<string | null>(null)
   const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null)
   const [analysisStartedAt, setAnalysisStartedAt] = useState<number | null>(null)
+  const [lastAnalysisDurationSeconds, setLastAnalysisDurationSeconds] = useState<number | null>(null)
+  const [publishState, setPublishState] = useState<'idle' | 'validating' | 'published' | 'failed'>('idle')
   const [isPending, startTransition] = useTransition()
   const analysisElapsedSeconds = useElapsedSeconds(analysisStartedAt)
   const matrixVerificationElapsedSeconds = useElapsedSeconds(matrixVerificationStartedAt)
@@ -1151,7 +1166,8 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
       && boardMatrixBaseItemCodes.has(finding.baseItemCode)
     )
   )
-  const unresolvedBlockers = visibleFindings.filter(finding => finding.severity === 'blocker' && finding.status === 'open')
+  const unresolvedBlockers = visibleFindings.filter(finding => finding.status === 'open'
+    && (finding.severity === 'blocker' || finding.findingType === 'component_metadata_batch_failed'))
   const capturedSnapshots = workspace?.snapshots.filter(snapshot => snapshot.status === 'captured') ?? []
   const failedSnapshots = workspace?.snapshots.filter(snapshot => snapshot.status === 'failed') ?? []
   const sapActiveSkuCount = asNumber(workspace?.run.summaryJson.sap_active_sku_count)
@@ -1273,13 +1289,23 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
       .map(item => [item.skuComplete, item] as const)).values()]
     : []
   const visibleBoardOtherCatalogIssues = boardOtherCatalogIssues.filter(item => !ignoredBoardCatalogIssues[`${item.skuComplete}:${item.reason}`])
+  const hasBoardMatrixReview = boardExceptionRows.length > 0
+    || boardConditionalReviewRows.length > 0
+    || boardSapInactiveAppCandidates.length > 0
+    || visibleBoardOtherCatalogIssues.length > 0
   const selectedBoardInactiveAppSkuCodes = boardSapInactiveAppCandidates.filter(item => selectedBoardInactiveAppSkus[item.skuComplete]).map(item => item.skuComplete)
   const selectedBoardConditionalStrategy = boardConditionalRuleEditor?.strategies.find(strategy => strategy.strategyId === boardConditionalRuleEditor.selectedStrategyId) ?? null
   const allBoardExceptionsSelected = boardExceptionRows.length > 0 && boardExceptionRows.every(row => selectedBoardColors[row.sourceColorCode] === true)
   const allBoardInactiveAppCandidatesSelected = boardSapInactiveAppCandidates.length > 0 && boardSapInactiveAppCandidates.every(item => selectedBoardInactiveAppSkus[item.skuComplete] === true)
   const reviewFindings = visibleFindings.filter(finding => finding.status === 'open' && finding.severity !== 'info' && finding.findingType !== 'issue_method_review' && finding.findingType !== 'color_rule_proposal')
+  const businessReviewFindings = reviewFindings.filter(finding => !isTechnicalReviewFinding(finding))
+  const technicalReviewFindings = reviewFindings.filter(isTechnicalReviewFinding)
+  const metadataRefreshItemCodes = [...new Set(technicalReviewFindings.flatMap(finding => asStringArray(finding.detailsJson.item_codes)))].sort()
+  const canRefreshOnlyComponentMetadata = metadataRefreshItemCodes.length > 0
+    && unresolvedBlockers.length > 0
+    && unresolvedBlockers.every(isTechnicalReviewFinding)
   const issueMethodFindings = visibleFindings.filter(finding => finding.status === 'open' && finding.findingType === 'issue_method_review')
-  const reviewTopicCount = new Set(reviewFindings.map(finding => {
+  const reviewTopicCount = new Set(businessReviewFindings.map(finding => {
     if (finding.findingType === 'material_profile_proposal') return `material-profile:${finding.lineIdentity}`
     if (finding.findingType === 'color_rule_proposal') return `color-rule:${finding.lineIdentity}`
     if (finding.findingType === 'material_consumption_conflict') return `material-consumption:${finding.lineIdentity}`
@@ -1317,6 +1343,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     retry?: { skuCompletes: string[]; cachedSnapshots: ReferenceImportWorkspace['snapshots'] }
   ): Promise<void> {
     const startedAt = Date.now()
+    setPublishState('idle')
     clearTransientMatrixAbsenceApprovals()
     setSelectedMatrixHybridCases({})
     setMatrixDualAlternatives({})
@@ -1327,7 +1354,10 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     clearTransientMatrixCandidateOverrideState()
     setReferenceScopeAssignments({})
     setPreparedSupabaseSyncSkus({})
-    setSkuActionMessages({})
+    if (!retry) {
+      setSkuActionMessages({})
+      setSapOnlyActionMessages({})
+    }
     setSelectedBoardColors({})
     setBoardMatrixCoverage(null)
     setVisibleBoardCoverageColorCodes([])
@@ -1381,7 +1411,8 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
             }
             if (event.type === 'error') throw new Error(event.message)
             setWorkspace(event.workspace)
-            setMessage(`${event.message} Tiempo total: ${formatElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000))}.`)
+            setLastAnalysisDurationSeconds(Math.floor((Date.now() - startedAt) / 1000))
+            setMessage(null)
             completed = true
           }
         }
@@ -2203,10 +2234,10 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
         ))
         if (!result.success) return
 
-        const nextCandidates = await listTransientReferenceBomImportCandidatesAction(search)
-        setCandidates(nextCandidates)
-        setSelectedCandidate(current => nextCandidates.find(candidate => candidate.referenceId === current?.referenceId) ?? current)
-        setWorkspace(null)
+        await analyzeReferenceWithProgress(workspace.run.referenceId, {
+          skuCompletes: [],
+          cachedSnapshots: workspace.snapshots.filter(snapshot => snapshot.status === 'captured'),
+        })
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'No se pudo inactivar el SKU en Supabase.'
         setMessage(errorMessage)
@@ -2215,10 +2246,13 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     })
   }
 
-  function rerunAfterSapOnlyAction(skuComplete: string, message: string): void {
+  function rerunAfterSapOnlyAction(skuComplete: string, message: string, options?: { readSku?: boolean }): void {
     setSapOnlyActionMessages(current => ({ ...current, [skuComplete]: message }))
     if (!workspace) return
-    void analyzeReferenceWithProgress(workspace.run.referenceId)
+    void analyzeReferenceWithProgress(workspace.run.referenceId, {
+      skuCompletes: options?.readSku ? [skuComplete] : [],
+      cachedSnapshots: workspace.snapshots.filter(snapshot => snapshot.status === 'captured'),
+    })
   }
 
   function createSapOnlySkuInApp(skuComplete: string): void {
@@ -2229,7 +2263,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
           setSapOnlyActionMessages(current => ({ ...current, [skuComplete]: result.message }))
           return
         }
-        rerunAfterSapOnlyAction(skuComplete, result.message)
+        rerunAfterSapOnlyAction(skuComplete, result.message, { readSku: true })
       } catch (error) {
         setSapOnlyActionMessages(current => ({ ...current, [skuComplete]: error instanceof Error ? error.message : 'No se pudo registrar el SKU en la app.' }))
       }
@@ -2504,15 +2538,40 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   function publishRun(): void {
     if (!workspace) return
     runTask(async () => {
-      const result = await publishTransientReferenceBomAction({
-        referenceId: workspace.run.referenceId,
-        semanticScopeAssignments: Object.values(referenceScopeAssignments),
-      })
-      setMessage(result.message)
-      if (result.workspace) {
-        setWorkspace(result.workspace)
-        setReferenceScopeAssignments({})
+      setPublishState('validating')
+      try {
+        const result = await publishTransientReferenceBomAction({
+          referenceId: workspace.run.referenceId,
+          semanticScopeAssignments: Object.values(referenceScopeAssignments),
+        })
+        setMessage(result.message)
+        if (result.success && result.workspace) {
+          setWorkspace(result.workspace)
+          setReferenceScopeAssignments({})
+          setPublishState('published')
+          return
+        }
+        setPublishState('failed')
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : 'No se pudo publicar la BOM.')
+        setPublishState('failed')
       }
+    })
+  }
+
+  function refreshOnlyComponentMetadata(): void {
+    if (!canRefreshOnlyComponentMetadata) return
+    runTask(async () => {
+      const result = await refreshTransientComponentMetadataAction({ itemCodes: metadataRefreshItemCodes })
+      setMessage(result.message)
+      if (!result.success) return
+      const refreshedItemCodes = new Set(result.refreshedItemCodes)
+      setWorkspace(current => current ? {
+        ...current,
+        findings: current.findings.filter(finding => finding.findingType !== 'component_metadata_batch_failed'
+          || asStringArray(finding.detailsJson.item_codes).some(itemCode => !refreshedItemCodes.has(itemCode))),
+      } : current)
+      setPublishState('idle')
     })
   }
 
@@ -2658,7 +2717,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
 
           {workspace ? (
             <>
-              {boardMatrixRows.length > 0 ? (
+              {hasBoardMatrixReview ? (
                 <section className="border border-violet-200 bg-white">
                   <div className="flex flex-wrap items-start justify-between gap-3 border-b border-violet-100 bg-violet-50 px-5 py-4">
                     <div>
@@ -3099,9 +3158,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                     <Database className="h-5 w-5 text-sky-700" />
                     <div>
                       <h2 className="font-semibold text-slate-950">Resultado del analisis SAP</h2>
-                      <p className="text-sm text-slate-600">
-                        {workspace.run.sourceSkuCount} colores activos en la app{sapActiveSkuCount !== null ? ` / ${sapActiveSkuCount} activos en SAP` : ''}
-                      </p>
+                      {lastAnalysisDurationSeconds !== null ? <p className="mt-1 text-xs text-slate-500">Tiempo del último análisis: {formatElapsedSeconds(lastAnalysisDurationSeconds)}.</p> : null}
                     </div>
                   </div>
                   <span className={`rounded-md px-2 py-1 text-xs font-semibold ${statusClass(workspace.run.status)}`}>
@@ -3135,7 +3192,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
               <section className="border border-sky-200 bg-sky-50 px-5 py-4 text-sm text-sky-950">
                 <p className="font-semibold">Componentes importados y subestructuras</p>
                 <p className="mt-1">Componentes: {asNumber(workspace.run.summaryJson.component_item_count) ?? 0} · árboles internos leídos: {asNumber(workspace.run.summaryJson.component_tree_count) ?? 0} · profundidad observada: {asNumber(workspace.run.summaryJson.component_tree_observed_max_depth) ?? 0}.</p>
-                <p className="mt-1 text-xs">La publicación usa esta misma expansión recursiva y conserva cada LdM interna en `component_items`; el límite operativo actual es profundidad 12 y 150 nodos.</p>
+                <p className="mt-1 text-xs">Además de las LdM de venta, se consultan las LdM de los componentes que las tengan. Se guardan como estructura interna del componente para reutilizarlas; no se publican como LdM de venta ni se modifican sus códigos. El límite de seguridad es 12 niveles y 150 componentes distintos por referencia.</p>
               </section>
 
               {hasSapCatalogMismatch ? (
@@ -3228,35 +3285,37 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
               ) : null}
 
               <section className="border border-slate-200 bg-white">
-                <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-                  <h2 className="font-semibold text-slate-950">Evidencia SAP por color</h2>
-                  <span className="text-sm text-slate-500">{workspace.snapshots.length} colores</span>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-left text-sm">
-                    <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                      <tr>
-                        <th className="px-5 py-3">Referencia</th>
-                        <th className="px-5 py-3">Color</th>
-                        <th className="px-5 py-3 text-right">Líneas</th>
-                        <th className="px-5 py-3">Estado</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {workspace.snapshots.map(snapshot => (
-                        <tr key={snapshot.id} className="border-t border-slate-100">
-                          <td className="px-5 py-3 font-mono text-xs text-slate-700">{referenceCodeFromSku(snapshot.skuComplete)}</td>
-                          <td className="px-5 py-3 text-slate-700">{snapshot.skuColorCode ?? '-'}</td>
-                          <td className="px-5 py-3 text-right tabular-nums text-slate-700">{snapshot.lineCount}</td>
-                          <td className="px-5 py-3">
-                            <span className={`rounded-md px-2 py-1 text-xs font-semibold ${statusClass(snapshot.status)}`}>{statusLabel(snapshot.status)}</span>
-                            {snapshot.status === 'failed' && snapshot.errorMessage ? <p className="mt-1 text-xs text-rose-700">{snapshot.errorMessage}</p> : null}
-                          </td>
+                <details>
+                  <summary className="flex cursor-pointer list-none items-center justify-between px-5 py-4">
+                    <h2 className="font-semibold text-slate-950">Evidencia SAP por color</h2>
+                    <span className="text-sm text-slate-500">{workspace.snapshots.length} colores · desplegar</span>
+                  </summary>
+                  <div className="overflow-x-auto border-t border-slate-200">
+                    <table className="min-w-full text-left text-sm">
+                      <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                        <tr>
+                          <th className="px-5 py-3">Referencia</th>
+                          <th className="px-5 py-3">Color</th>
+                          <th className="px-5 py-3 text-right">Líneas</th>
+                          <th className="px-5 py-3">Estado</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody>
+                        {workspace.snapshots.map(snapshot => (
+                          <tr key={snapshot.id} className="border-t border-slate-100">
+                            <td className="px-5 py-3 font-mono text-xs text-slate-700">{referenceCodeFromSku(snapshot.skuComplete)}</td>
+                            <td className="px-5 py-3 text-slate-700">{snapshot.skuColorCode ?? '-'}</td>
+                            <td className="px-5 py-3 text-right tabular-nums text-slate-700">{snapshot.lineCount}</td>
+                            <td className="px-5 py-3">
+                              <span className={`rounded-md px-2 py-1 text-xs font-semibold ${statusClass(snapshot.status)}`}>{statusLabel(snapshot.status)}</span>
+                              {snapshot.status === 'failed' && snapshot.errorMessage ? <p className="mt-1 text-xs text-rose-700">{snapshot.errorMessage}</p> : null}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
               </section>
 
               {!hasIncompleteSource ? (
@@ -3369,15 +3428,18 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                     <p className="text-sm font-semibold text-slate-900">Publicar la BOM base recomendada</p>
                     <p className="mt-1 text-xs text-slate-600">Solo se habilita cuando la lectura SAP está completa y no quedan bloqueadores sin resolver.</p>
                     {unresolvedBlockers.length > 0 ? <p className="mt-1 text-xs font-semibold text-rose-700">No disponible: hay {unresolvedBlockers.length} pendiente{unresolvedBlockers.length === 1 ? '' : 's'} bloqueante{unresolvedBlockers.length === 1 ? '' : 's'}.</p> : null}
+                    {publishState === 'validating' ? <p className="mt-1 text-xs font-semibold text-sky-800" aria-live="polite">Verificando la evidencia SAP antes de publicar. No recargues la página.</p> : null}
+                    {publishState === 'published' ? <p className="mt-1 text-xs font-semibold text-emerald-800">La BOM quedó publicada y verificada.</p> : null}
+                    {publishState === 'failed' ? <p className="mt-1 text-xs font-semibold text-rose-700">La publicación no se completó; revisa el mensaje mostrado arriba.</p> : null}
                   </div>
                   <button
                     type="button"
                     onClick={publishRun}
-                    disabled={isPending || hasIncompleteSource || workspace.run.status !== 'needs_review' || unresolvedBlockers.length > 0}
+                    disabled={isPending || publishState === 'validating' || hasIncompleteSource || workspace.run.status !== 'needs_review' || unresolvedBlockers.length > 0}
                     className="inline-flex h-10 items-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    <Upload className="h-4 w-4" />
-                    Publicar BOM
+                    {publishState === 'validating' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                    {publishState === 'validating' ? 'Publicando BOM…' : 'Publicar BOM'}
                   </button>
                 </div>
               </section>
@@ -3416,9 +3478,22 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                 <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
                   <div>
                     <h2 className="font-semibold text-slate-950">Revisiones de negocio</h2>
-                    <p className="mt-1 text-sm text-slate-600">{reviewTopicCount} temas de negocio; las decisiones por color se agrupan dentro de cada tema.</p>
+                    <p className="mt-1 text-sm text-slate-600">{reviewTopicCount} temas de negocio; las decisiones por color se agrupan dentro de cada tema.{technicalReviewFindings.length > 0 ? ` Además, hay ${technicalReviewFindings.length} validación técnica pendiente que bloquea la publicación.` : ''}</p>
                   </div>
-                  {unresolvedBlockers.length > 0 ? <AlertTriangle className="h-5 w-5 text-rose-700" /> : <CheckCircle2 className="h-5 w-5 text-emerald-700" />}
+                  <div className="flex items-center gap-3">
+                    {canRefreshOnlyComponentMetadata ? (
+                      <button
+                        type="button"
+                        onClick={refreshOnlyComponentMetadata}
+                        disabled={isPending || Boolean(analysisProgress)}
+                        className="inline-flex h-9 items-center gap-2 rounded-md border border-sky-300 bg-white px-3 text-sm font-semibold text-sky-800 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+                        Releer componentes
+                      </button>
+                    ) : null}
+                    {unresolvedBlockers.length > 0 ? <AlertTriangle className="h-5 w-5 text-rose-700" /> : <CheckCircle2 className="h-5 w-5 text-emerald-700" />}
+                  </div>
                 </div>
                 <div className="divide-y divide-slate-200">
                   {reviewFindings.map(finding => {
@@ -3447,6 +3522,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                               <h3 className="text-sm font-semibold text-slate-950">{findingTitle(finding)}</h3>
                               <span className={`rounded-md border px-2 py-0.5 text-xs font-semibold ${severityClass(finding.severity)}`}>{severityLabel(finding.severity)}</span>
                               <span className={`rounded-md px-2 py-0.5 text-xs font-semibold ${statusClass(finding.status)}`}>{statusLabel(finding.status)}</span>
+                              {isTechnicalReviewFinding(finding) ? <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">Validación técnica</span> : null}
                             </div>
                             {findingDescription(finding) ? <p className="mt-1 text-sm text-slate-600">{findingDescription(finding)}</p> : null}
                             {finding.baseItemCode ? (

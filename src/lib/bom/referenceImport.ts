@@ -73,6 +73,7 @@ const COMPONENT_TREE_MAX_NODES = 150
 const COMPONENT_METADATA_BATCH_SIZE = 24
 const COMPONENT_METADATA_CONCURRENCY = 3
 const COMPONENT_METADATA_TIMEOUT_MS = 8_000
+const COMPONENT_METADATA_RETRY_BATCH_SIZE = 6
 
 const COMPONENT_ITEM_SELECT = [
   'ItemCode',
@@ -1119,9 +1120,30 @@ async function getComponentMetadata(itemCodes: string[]): Promise<{
       const items = await getSapItemsByCodes(batch, COMPONENT_ITEM_SELECT, {
         timeoutMs: COMPONENT_METADATA_TIMEOUT_MS,
       })
-      return { batch, items, error: null as string | null }
-    } catch (error) {
-      return { batch, items: new Map<string, SapEntityPayload>(), error: getErrorMessage(error) }
+      return { batch, failedItemCodes: [] as string[], items, error: null as string | null }
+    } catch {
+      const items = new Map<string, SapEntityPayload>()
+      const failures: Array<{ itemCodes: string[]; error: string }> = []
+      for (let index = 0; index < batch.length; index += COMPONENT_METADATA_RETRY_BATCH_SIZE) {
+        const retryBatch = batch.slice(index, index + COMPONENT_METADATA_RETRY_BATCH_SIZE)
+        try {
+          const retryItems = await getSapItemsByCodes(retryBatch, COMPONENT_ITEM_SELECT, {
+            timeoutMs: COMPONENT_METADATA_TIMEOUT_MS,
+          })
+          for (const [itemCode, item] of retryItems) items.set(itemCode, item)
+        } catch (retryError) {
+          failures.push({ itemCodes: retryBatch, error: getErrorMessage(retryError) })
+        }
+      }
+      const failedItemCodes = failures.flatMap(failure => failure.itemCodes)
+      return {
+        batch,
+        failedItemCodes,
+        items,
+        error: failures.length > 0
+          ? failures.map(failure => `${failure.itemCodes.join(', ')}: ${failure.error}`).join(' | ')
+          : null,
+      }
     }
   })
 
@@ -1133,11 +1155,11 @@ async function getComponentMetadata(itemCodes: string[]): Promise<{
     }
     if (outcome.error) {
       findings.push(errorFinding({
-        key: `component-metadata:batch:${outcome.batch[0] ?? 'empty'}`,
+        key: `component-metadata:batch:${outcome.failedItemCodes[0] ?? outcome.batch[0] ?? 'empty'}`,
         type: 'component_metadata_batch_failed',
-        severity: 'warning',
+        severity: 'blocker',
         details: {
-          item_codes: outcome.batch,
+          item_codes: outcome.failedItemCodes,
           error: outcome.error,
         },
       }))
@@ -1224,6 +1246,47 @@ export async function upsertExpandedComponents(traversal: ComponentTraversal): P
     uomFindings,
     metadataFindings: metadata.findings,
   }
+}
+
+export async function refreshComponentMetadata(itemCodes: string[]): Promise<string[]> {
+  const uniqueItemCodes = [...new Set(itemCodes.map(itemCode => itemCode.trim().toUpperCase()).filter(Boolean))]
+  if (uniqueItemCodes.length === 0) return []
+
+  const [existingByItemCode, metadata] = await Promise.all([
+    getExistingComponentItems(uniqueItemCodes),
+    getComponentMetadata(uniqueItemCodes),
+  ])
+  if (metadata.findings.length > 0) {
+    throw new Error(metadata.findings.map(finding => readString(finding.detailsJson.error) ?? 'SAP no devolvió la metadata solicitada.').join(' | '))
+  }
+
+  const missingCodes = uniqueItemCodes.filter(itemCode => !existingByItemCode.has(itemCode) || !metadata.itemsByCode.get(itemCode))
+  if (missingCodes.length > 0) {
+    throw new Error(`No se pudo completar la metadata de: ${missingCodes.join(', ')}.`)
+  }
+
+  const rows = uniqueItemCodes.map(itemCode => {
+    const existing = existingByItemCode.get(itemCode)
+    const sapItem = metadata.itemsByCode.get(itemCode)
+    if (!existing || !sapItem) throw new Error(`Falta la evidencia técnica de ${itemCode}.`)
+    const itemName = readSapItemName(sapItem, existing.itemName)
+    return {
+      item_code: itemCode,
+      base_item_name: existing.baseItemName,
+      item_name: itemName,
+      uom: readSapUom(sapItem, existing.uom),
+      component_category: existing.componentCategory,
+      default_issue_method: existing.defaultIssueMethod,
+      sap_valid: readSapValid(sapItem),
+      sap_frozen: readSapFrozen(sapItem),
+      is_inventory_item: readSapInventoryItem(sapItem),
+      item_bom_structure: existing.itemBomStructure,
+      technical_metadata: buildComponentTechnicalMetadata(sapItem, itemName),
+    }
+  })
+  const { error } = await supabaseTable('component_items').upsert(rows, { onConflict: 'item_code' })
+  if (error) throw new Error(`No se pudo actualizar la metadata de componentes: ${error.message}`)
+  return uniqueItemCodes
 }
 
 async function enrichDirectComponents(snapshots: DirectBomSnapshot[]): Promise<{
@@ -1655,8 +1718,8 @@ export async function analyzeReferenceBomImport(input: {
       sap_missing_sku_colors: reconciliation.notFoundInSapSkuCodes.map(skuColorCode).filter((color): color is string => color !== null),
       sap_only_sku_codes: reconciliation.onlyInSapSkuCodes,
       sap_only_sku_colors: reconciliation.onlyInSapSkuCodes.map(skuColorCode).filter((color): color is string => color !== null),
-      component_item_count: componentResult.count + expandedComponentResult.count,
-      component_tree_count: componentTraversal.treesByItemCode.size,
+      component_item_count: componentTraversal.sourceLinesByItemCode.size,
+      component_tree_count: [...componentTraversal.treesByItemCode.values()].filter(tree => !tree.readError && tree.lines.length > 0).length,
       component_tree_observed_max_depth: componentTraversal.maxDepth,
       open_blocker_count: blockerCount,
       open_warning_count: findings.filter(finding => finding.severity === 'warning' && finding.status === 'open').length,
@@ -1846,7 +1909,7 @@ export async function analyzeReferenceBomImportTransient(input: {
       .map(skuComplete => skuComplete.trim().toUpperCase())
       .filter(Boolean)
   )
-  const isSelectiveRetry = retrySkuCodes.size > 0
+  const isSelectiveRetry = input.retry !== undefined
   const cachedSnapshots = isSelectiveRetry
     ? cachedDirectSnapshots(input.retry?.cachedSnapshots ?? [], source.skus)
     : new Map<string, DirectBomSnapshot>()
@@ -1964,8 +2027,8 @@ export async function analyzeReferenceBomImportTransient(input: {
     sap_missing_sku_colors: reconciliation.notFoundInSapSkuCodes.map(skuColorCode).filter((color): color is string => color !== null),
     sap_only_sku_codes: reconciliation.onlyInSapSkuCodes,
     sap_only_sku_colors: reconciliation.onlyInSapSkuCodes.map(skuColorCode).filter((color): color is string => color !== null),
-    component_item_count: componentResult.count + expandedComponentResult.count,
-    component_tree_count: componentTraversal.treesByItemCode.size,
+    component_item_count: componentTraversal.sourceLinesByItemCode.size,
+    component_tree_count: [...componentTraversal.treesByItemCode.values()].filter(tree => !tree.readError && tree.lines.length > 0).length,
     component_tree_observed_max_depth: componentTraversal.maxDepth,
     open_blocker_count: blockerCount,
     open_warning_count: findings.filter(finding => finding.severity === 'warning' && finding.status === 'open').length,

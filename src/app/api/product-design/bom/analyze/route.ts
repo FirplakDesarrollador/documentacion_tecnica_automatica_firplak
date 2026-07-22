@@ -28,7 +28,6 @@ function parseRetryRequest(record: Record<string, unknown>): RetryRequest | null
     (Array.isArray(retryRecord.skuCompletes) ? retryRecord.skuCompletes : [])
       .flatMap(value => typeof value === 'string' && value.trim() ? [value.trim().toUpperCase()] : [])
   )]
-  if (skuCompletes.length === 0) return null
   return {
     skuCompletes: skuCompletes.slice(0, 500),
     cachedSnapshots: Array.isArray(retryRecord.cachedSnapshots) ? retryRecord.cachedSnapshots.slice(0, 500) : [],
@@ -79,7 +78,9 @@ export async function POST(request: NextRequest): Promise<Response> {
           })
           const capturedCount = workspace.snapshots.filter(snapshot => snapshot.status === 'captured').length
           const retryMessage = retry
-            ? `SAP reintentó ${retry.skuCompletes.length} LdM pendiente(s) y reutilizó las ya capturadas.`
+            ? retry.skuCompletes.length > 0
+              ? `SAP leyó solo ${retry.skuCompletes.length} LdM nueva(s) o modificada(s) y reutilizó las ya capturadas.`
+              : 'SAP actualizó la conciliación sin releer LdM ya capturadas.'
             : `SAP leyó ${capturedCount} de ${workspace.run.sourceSkuCount} LdM.`
           send({
             type: 'complete',

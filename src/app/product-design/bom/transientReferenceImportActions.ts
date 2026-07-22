@@ -8,6 +8,7 @@ import {
   analyzeReferenceBomImportTransient,
   analyzeReferenceImportBoardMatrix,
   listReferenceImportCandidates,
+  refreshComponentMetadata,
   type DirectColorRuleMatrixSelection,
   verifyReferenceImportColorRulesMatrixDirect,
   type ColorRuleCoverageResult,
@@ -16,7 +17,7 @@ import type { ReferenceBomStructure, ReferenceImportWorkspace } from '@/lib/bom/
 import { isReferenceProductApplicationScope, type ReferenceProductApplicationScope } from '@/lib/bom/referenceImportScopes'
 import type { BoardProfileConditionalRule, HybridColorCase } from '@/lib/bom/types'
 import { normalizeBomStructure } from '@/lib/bom/resolve'
-import { deleteSapItem, deleteSapProductTree, getSapItem, getSapItemBom, getSapProductTreeUsages, productTreeStructureMatches, updateSapItem, updateSapProductTreeIssueMethod, type SapEntityPayload } from '@/lib/sap/serviceLayer'
+import { deleteSapItem, deleteSapProductTree, getSapItem, getSapItemBom, getSapProductTreeUsages, productTreeStructureMatches, SapServiceLayerError, updateSapItem, updateSapProductTreeIssueMethod, type SapEntityPayload } from '@/lib/sap/serviceLayer'
 import { parseSapItemCode, readSapFrozen, readSapValid } from '@/lib/bom/sapMapping'
 import { syncMissingSapComponentsToCatalog } from '@/lib/sap/componentCatalogSync'
 import { getColorsAction, upsertColorAction, type ColorEntry } from '@/app/rules/colors/actions'
@@ -26,6 +27,12 @@ type ActionResult = {
   success: boolean
   message: string
   workspace: ReferenceImportWorkspace | null
+}
+
+export type ComponentMetadataRefreshResult = {
+  success: boolean
+  message: string
+  refreshedItemCodes: string[]
 }
 
 type MatrixSelection = DirectColorRuleMatrixSelection
@@ -88,6 +95,26 @@ const MATRIX_ABSENCE_VALIDATION_CONCURRENCY = 3
 
 function failure(error: unknown, fallback: string): ActionResult {
   return { success: false, message: error instanceof Error ? error.message : fallback, workspace: null }
+}
+
+export async function refreshTransientComponentMetadataAction(input: {
+  itemCodes: string[]
+}): Promise<ComponentMetadataRefreshResult> {
+  await assertPermission('module:product-design')
+  try {
+    const refreshedItemCodes = await refreshComponentMetadata(input.itemCodes)
+    return {
+      success: true,
+      message: `Se validó la metadata de ${refreshedItemCodes.length} componente(s) sin releer LdM ni subestructuras.`,
+      refreshedItemCodes,
+    }
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : 'No se pudo releer la metadata de componentes.',
+      refreshedItemCodes: [],
+    }
+  }
 }
 
 function readString(value: unknown): string | null {
@@ -1404,6 +1431,15 @@ export async function deleteTransientSapOnlySkuAction(input: {
       throw new Error(`SAP todavía devuelve ${skuComplete}; la eliminación no quedó verificada.`)
     } catch (error) {
       if (error instanceof Error && error.message.includes('todavía devuelve')) throw error
+      if (error instanceof SapServiceLayerError && error.statusCode === 404) {
+        return {
+          success: true,
+          dryRun: false,
+          treeDeleted,
+          treeCode,
+          message: `${skuComplete} fue eliminado y verificado en SAP${treeDeleted ? `; la LdM ${treeCode} fue desasociada previamente y sus componentes internos se conservaron.` : '.'}`,
+        }
+      }
       throw new Error(`No se pudo verificar la eliminación de ${skuComplete} en SAP: ${error instanceof Error ? error.message : 'error desconocido'}`)
     }
     return {
@@ -1522,6 +1558,14 @@ export async function publishTransientReferenceBomAction(input: {
       `UPDATE public.product_references SET product_bom_structure = $1::jsonb WHERE id = $2`,
       [JSON.stringify(proposedBomStructure), referenceId]
     )
+    const persistedRows: Record<string, unknown>[] = await dbQuery(
+      `SELECT product_bom_structure FROM public.product_references WHERE id = $1 LIMIT 1`,
+      [referenceId]
+    )
+    const persistedBomStructure = normalizeBomStructure(persistedRows[0]?.product_bom_structure)
+    if (JSON.stringify(persistedBomStructure) !== JSON.stringify(proposedBomStructure)) {
+      throw new Error('La BOM se guardó, pero la lectura posterior no coincide con la estructura que se intentó publicar.')
+    }
     revalidatePath('/product-design')
     return {
       success: true,
