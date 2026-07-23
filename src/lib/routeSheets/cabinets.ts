@@ -201,6 +201,15 @@ export type CabinetPackingLevel = {
   edited_fields: string[]
 }
 
+export type CabinetDecisionEntry = {
+  timestamp: string
+  section: CabinetDecisionSection
+  row_id: string
+  decision: CabinetRouteDecision
+  previous_decision: CabinetRouteDecision
+  item_label: string
+}
+
 export type CabinetRouteData = {
   schema_version: typeof CABINET_ROUTE_SCHEMA_VERSION
   source: CabinetRouteSourceState
@@ -238,6 +247,7 @@ export type CabinetRouteData = {
       design_notes: string
     }
   }
+  decision_history: CabinetDecisionEntry[]
 }
 
 export type CabinetRouteImportDraft = {
@@ -363,6 +373,7 @@ export function createEmptyCabinetRouteData(): CabinetRouteData {
       packing: { notes: '', rows: [], levels: [] },
       observations: { general_notes: '', design_notes: '' },
     },
+    decision_history: [],
   }
 }
 
@@ -467,6 +478,8 @@ export function normalizeCabinetRouteData(value: unknown): CabinetRouteData {
     general_notes: readString(asRecord(sections.observations).general_notes) || readString(record.general_notes) || '',
     design_notes: readString(asRecord(sections.observations).design_notes) || '',
   }
+
+  normalized.decision_history = readArray(record.decision_history).map(normalizeDecisionEntry)
 
   return normalized
 }
@@ -837,6 +850,33 @@ export function applyCabinetMatchDecision(
   const updatePiece = (row: CabinetPieceRow): CabinetPieceRow => applyDecisionToPiece(row, input.decision)
   const updateMaterial = (row: CabinetRouteMaterialRow): CabinetRouteMaterialRow => applyDecisionToMaterial(row, input.decision)
 
+  const findRowLabel = (): string => {
+    if (input.section === 'pieces') {
+      const row = current.sections.pieces.rows.find(r => r.id === input.rowId)
+      return row?.piece_name || row?.sap_item_name || row?.sap_item_code || input.rowId
+    }
+    const rows = current.sections[input.section].rows
+    const row = rows.find(r => r.id === input.rowId)
+    return row?.item_name || row?.item_code || row?.sap_item_name || row?.sap_item_code || input.rowId
+  }
+
+  const findPrevDecision = (): CabinetRouteDecision => {
+    if (input.section === 'pieces') {
+      return current.sections.pieces.rows.find(r => r.id === input.rowId)?.decision ?? 'pending'
+    }
+    const rows = current.sections[input.section].rows
+    return rows.find(r => r.id === input.rowId)?.decision ?? 'pending'
+  }
+
+  const entry: CabinetDecisionEntry = {
+    timestamp: new Date().toISOString(),
+    section: input.section,
+    row_id: input.rowId,
+    decision: input.decision,
+    previous_decision: findPrevDecision(),
+    item_label: findRowLabel(),
+  }
+
   if (input.section === 'pieces') {
     return {
       ...current,
@@ -847,6 +887,7 @@ export function applyCabinetMatchDecision(
           rows: current.sections.pieces.rows.map(row => row.id === input.rowId ? updatePiece(row) : row),
         },
       },
+      decision_history: [...current.decision_history, entry],
     }
   }
 
@@ -859,6 +900,7 @@ export function applyCabinetMatchDecision(
         rows: current.sections[input.section].rows.map(row => row.id === input.rowId ? updateMaterial(row) : row),
       },
     },
+    decision_history: [...current.decision_history, entry],
   }
 }
 
@@ -1677,6 +1719,20 @@ function normalizeSource(value: unknown): CabinetRouteSource {
 
 function normalizeBomSourceMode(value: unknown): CabinetBomSourceMode | null {
   return value === 'expanded' || value === 'direct' ? value : null
+}
+
+function normalizeDecisionEntry(value: unknown, index: number): CabinetDecisionEntry {
+  const record = asRecord(value)
+  const section = readString(record.section)
+  const decision = readString(record.decision)
+  return {
+    timestamp: readString(record.timestamp) || new Date().toISOString(),
+    section: section === 'pieces' || section === 'hardware' || section === 'packing' ? section : 'hardware',
+    row_id: readString(record.row_id) || `entry_${index}`,
+    decision: decision === 'use_sap' || decision === 'use_sheet' || decision === 'use_custom' || decision === 'ignore' || decision === 'pending' ? decision : 'pending',
+    previous_decision: readString(record.previous_decision) as CabinetRouteDecision || 'pending',
+    item_label: readString(record.item_label) || '-',
+  }
 }
 
 function normalizeCandidateKind(value: unknown): CabinetBomCandidateKind {

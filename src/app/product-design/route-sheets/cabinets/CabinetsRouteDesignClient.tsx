@@ -26,6 +26,7 @@ import {
   type CabinetAssemblyStep,
   type CabinetBoardConsumption,
   type CabinetBomCandidate,
+  type CabinetDecisionEntry,
   type CabinetDecisionSection,
   type CabinetDrillingRow,
   type CabinetMatchIssue,
@@ -226,6 +227,7 @@ export function CabinetsRouteDesignClient({ initialReferences }: { initialRefere
   const [bomWarning, setBomWarning] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const isReadOnly = status === 'approved'
 
   const filteredReferences = useMemo(
     () => {
@@ -511,6 +513,19 @@ export function CabinetsRouteDesignClient({ initialReferences }: { initialRefere
         ...current.source,
         profiles: {
           ...current.source.profiles,
+          [role]: value || null,
+        },
+      },
+    }))
+  }
+
+  function updateEdgeType(role: MaterialRole, value: string) {
+    setDraft(current => ({
+      ...current,
+      source: {
+        ...current.source,
+        edge_types: {
+          ...current.source.edge_types,
           [role]: value || null,
         },
       },
@@ -810,13 +825,18 @@ export function CabinetsRouteDesignClient({ initialReferences }: { initialRefere
                 <button
                   type="button"
                   onClick={saveRoute}
-                  disabled={isPending}
+                  disabled={isPending || isReadOnly}
                   className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
                 >
                   Guardar ruta
                 </button>
               </div>
             </div>
+            {isReadOnly ? (
+              <p className="mt-3 rounded-md bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">
+                Documento aprobado — solo lectura. Cambia el estado a &quot;Borrador&quot; para editar.
+              </p>
+            ) : null}
             {message ? <p className="mt-3 rounded-md bg-slate-100 px-3 py-2 text-sm text-slate-700">{message}</p> : null}
           </div>
 
@@ -846,12 +866,16 @@ export function CabinetsRouteDesignClient({ initialReferences }: { initialRefere
             areaByRole={areaByRole}
             edgeByRole={edgeByRole}
             profiles={draft.source.profiles ?? { structure: null, inner_structure: null, front: null, drawer_bottom: null }}
+            edgeTypes={draft.source.edge_types ?? { structure: null, inner_structure: null, front: null, drawer_bottom: null }}
+            hasSheet={!!draft.source.original_sheet}
             notes={draft.sections.pieces.notes}
             onNotesChange={(value) => updateNotes('pieces', value)}
             onAdd={addManualPiece}
             onRemove={removePiece}
             onUpdate={updatePiece}
             onUpdateProfile={updateProfile}
+            onUpdateEdgeType={updateEdgeType}
+            onDecide={(rowId, decision) => decide('pieces', rowId, decision)}
           />
 
           <CuttingEditor
@@ -910,6 +934,10 @@ export function CabinetsRouteDesignClient({ initialReferences }: { initialRefere
               </label>
             </div>
           </SectionCard>
+
+          {draft.decision_history.length > 0 ? (
+            <DecisionHistoryPanel history={draft.decision_history} />
+          ) : null}
 
           <CandidatesPanel candidates={candidates} onAddCandidate={addCandidate} />
         </div>
@@ -1004,31 +1032,81 @@ function getDecisionSection(issue: CabinetMatchIssue): CabinetDecisionSection | 
   return null
 }
 
+function DecisionHistoryPanel({ history }: { history: CabinetDecisionEntry[] }) {
+  const SECTION_LABELS: Record<string, string> = { pieces: 'Piezas', hardware: 'Herrajes', packing: 'Empaque' }
+  const DECISION_LABELS: Record<string, string> = {
+    use_sap: 'Usar SAP',
+    use_sheet: 'Usar hoja',
+    use_custom: 'Custom',
+    ignore: 'Ignorar',
+    pending: 'Pendiente',
+  }
+  return (
+    <SectionCard title="Historial de decisiones" description="Trazabilidad de cada decision tomada en la conciliacion.">
+      <div className="max-h-48 overflow-auto rounded-md border border-slate-200">
+        <table className="min-w-full text-left text-xs">
+          <thead className="sticky top-0 bg-slate-100 text-slate-600">
+            <tr>
+              <th className="px-3 py-2">Fecha</th>
+              <th className="px-3 py-2">Seccion</th>
+              <th className="px-3 py-2">Item</th>
+              <th className="px-3 py-2">Decision</th>
+              <th className="px-3 py-2">Anterior</th>
+            </tr>
+          </thead>
+          <tbody>
+            {history.map((entry, index) => (
+              <tr key={`${entry.timestamp}-${index}`} className="border-t border-slate-100">
+                <td className="px-3 py-2 text-slate-500">{new Date(entry.timestamp).toLocaleString('es-CO')}</td>
+                <td className="px-3 py-2">{SECTION_LABELS[entry.section] ?? entry.section}</td>
+                <td className="px-3 py-2 max-w-[200px] truncate">{entry.item_label}</td>
+                <td className="px-3 py-2 font-semibold">{DECISION_LABELS[entry.decision] ?? entry.decision}</td>
+                <td className="px-3 py-2 text-slate-500">{DECISION_LABELS[entry.previous_decision] ?? entry.previous_decision}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </SectionCard>
+  )
+}
+
+const EDGE_TYPE_OPTIONS = ['2 mm', '0.45 mm', '1 mm', '3 mm'] as const
+
 function PiecesByRoleEditor({
   piecesByRole,
   areaByRole,
   edgeByRole,
   profiles,
+  edgeTypes,
+  hasSheet,
   notes,
   onNotesChange,
   onAdd,
   onRemove,
   onUpdate,
   onUpdateProfile,
+  onUpdateEdgeType,
+  onDecide,
 }: {
   piecesByRole: Partial<Record<MaterialRole, CabinetPieceRow[]>>
   areaByRole: Partial<Record<MaterialRole, number>>
   edgeByRole: Partial<Record<MaterialRole, number>>
   profiles: CabinetProfilesByRole
+  edgeTypes: CabinetProfilesByRole
+  hasSheet: boolean
   notes: string
   onNotesChange: (value: string) => void
   onAdd: () => void
   onRemove: (id: string) => void
   onUpdate: (id: string, patch: Partial<CabinetPieceRow>) => void
   onUpdateProfile: (role: MaterialRole, value: string) => void
+  onUpdateEdgeType?: (role: MaterialRole, value: string) => void
+  onDecide?: (rowId: string, decision: 'use_sap' | 'use_sheet' | 'use_custom' | 'ignore') => void
 }) {
+  const hasAnyDecisions = hasSheet
   return (
-    <SectionCard title="Piezas / despiece" description="Piezas CMPD09 agrupadas por rol de material. Las piezas BOM se muestran sin decisiones de conciliacion (Fase 4).">
+    <SectionCard title="Piezas / despiece" description="Piezas CMPD09 agrupadas por rol de material.">
       <TextArea value={notes} placeholder="Notas de despiece" onChange={onNotesChange} />
       {MATERIAL_ROLES.map(role => {
         const rows = piecesByRole[role] ?? []
@@ -1043,21 +1121,33 @@ function PiecesByRoleEditor({
           <div key={role} className="mt-4 first:mt-0">
             <div className="mb-2 flex flex-wrap items-center gap-3">
               <h3 className="text-sm font-semibold text-slate-900">{MATERIAL_ROLE_LABELS[role]}</h3>
-              <div className="flex items-center gap-1">
+              <select
+                value={direct ?? ''}
+                onChange={(e) => onUpdateProfile(role, e.target.value)}
+                className="rounded-md border border-slate-300 px-2 py-1 text-[11px] outline-none focus:border-indigo-400"
+                title="Perfil de material"
+              >
+                <option value="">Perfil...</option>
+                {PROFILE_OPTIONS.map(p => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+              {isFallback ? (
+                <span className="text-[10px] text-slate-400">({resolved})</span>
+              ) : null}
+              {onUpdateEdgeType ? (
                 <select
-                  value={direct ?? ''}
-                  onChange={(e) => onUpdateProfile(role, e.target.value)}
+                  value={edgeTypes[role] ?? ''}
+                  onChange={(e) => onUpdateEdgeType(role, e.target.value)}
                   className="rounded-md border border-slate-300 px-2 py-1 text-[11px] outline-none focus:border-indigo-400"
+                  title="Tipo de canto"
                 >
-                  <option value="">----</option>
-                  {PROFILE_OPTIONS.map(p => (
-                    <option key={p} value={p}>{p}</option>
+                  <option value="">Canto...</option>
+                  {EDGE_TYPE_OPTIONS.map(et => (
+                    <option key={et} value={et}>{et}</option>
                   ))}
                 </select>
-                {isFallback ? (
-                  <span className="text-[10px] text-slate-400">({resolved})</span>
-                ) : null}
-              </div>
+              ) : null}
               <span className="text-[11px] text-slate-500">
                 Area: <strong>{formatNumber(area)} m²</strong>
               </span>
@@ -1069,9 +1159,10 @@ function PiecesByRoleEditor({
               </span>
             </div>
             <div className="overflow-auto rounded-md border border-slate-200">
-              <table className="min-w-[960px] w-full text-left text-xs">
+              <table className="min-w-[1040px] w-full text-left text-xs">
                 <thead className="bg-slate-100 text-slate-600">
                   <tr>
+                    {hasAnyDecisions ? <th className="px-2 py-2">Match</th> : null}
                     <th className="px-2 py-2">Letra</th>
                     <th className="px-2 py-2">Pieza</th>
                     <th className="px-2 py-2">Material</th>
@@ -1081,31 +1172,62 @@ function PiecesByRoleEditor({
                     <th className="px-2 py-2">Canto L/A</th>
                     <th className="px-2 py-2">m canto</th>
                     <th className="px-2 py-2">Obs.</th>
+                    {hasAnyDecisions ? <th className="px-2 py-2">Decision</th> : null}
                     <th className="px-2 py-2"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.id} className="border-t border-slate-100 align-top">
-                      <td className="px-2 py-2"><TextInput value={row.letter} onChange={(value) => onUpdate(row.id, { letter: value })} /></td>
-                      <td className="px-2 py-2"><TextInput value={row.piece_name} onChange={(value) => onUpdate(row.id, { piece_name: value })} /></td>
-                      <td className="px-2 py-2"><TextInput value={row.material_label} onChange={(value) => onUpdate(row.id, { material_label: value })} /></td>
-                      <td className="px-2 py-2"><NumberInput value={row.length_mm} min={0} onChange={(value) => onUpdate(row.id, { length_mm: value })} /></td>
-                      <td className="px-2 py-2"><NumberInput value={row.width_mm} min={0} onChange={(value) => onUpdate(row.id, { width_mm: value })} /></td>
-                      <td className="px-2 py-2"><NumberInput value={row.quantity} min={0} onChange={(value) => onUpdate(row.id, { quantity: value ?? 0 })} /></td>
-                      <td className="px-2 py-2">
-                        <div className="flex gap-1">
-                          <NumberInput value={row.edge_long_sides} min={0} onChange={(value) => onUpdate(row.id, { edge_long_sides: value ?? 0 })} />
-                          <NumberInput value={row.edge_short_sides} min={0} onChange={(value) => onUpdate(row.id, { edge_short_sides: value ?? 0 })} />
-                        </div>
-                      </td>
-                      <td className="px-2 py-2 font-mono">{formatNumber(calculatePieceEdgeMeters(row))}</td>
-                      <td className="px-2 py-2"><TextInput value={row.observation} onChange={(value) => onUpdate(row.id, { observation: value })} /></td>
-                      <td className="px-2 py-2">
-                        <button type="button" onClick={() => onRemove(row.id)} className="text-xs font-semibold text-rose-600">Quitar</button>
-                      </td>
-                    </tr>
-                  ))}
+                  {rows.map((row) => {
+                    const showBadge = hasSheet || (row.match_status !== 'sap_only' && row.match_status !== 'manual')
+                    const needsDecision = showBadge && row.decision === 'pending'
+                    return (
+                      <tr key={row.id} className={`border-t border-slate-100 align-top ${needsDecision ? 'bg-amber-50/40' : ''}`}>
+                        {hasAnyDecisions ? (
+                          <td className="px-2 py-2">
+                            {showBadge ? <MatchBadge status={row.match_status} /> : null}
+                          </td>
+                        ) : null}
+                        <td className="px-2 py-2"><TextInput value={row.letter} onChange={(value) => onUpdate(row.id, { letter: value })} /></td>
+                        <td className="px-2 py-2"><TextInput value={row.piece_name} onChange={(value) => onUpdate(row.id, { piece_name: value })} /></td>
+                        <td className="px-2 py-2"><TextInput value={row.material_label} onChange={(value) => onUpdate(row.id, { material_label: value })} /></td>
+                        <td className="px-2 py-2"><NumberInput value={row.length_mm} min={0} onChange={(value) => onUpdate(row.id, { length_mm: value })} /></td>
+                        <td className="px-2 py-2"><NumberInput value={row.width_mm} min={0} onChange={(value) => onUpdate(row.id, { width_mm: value })} /></td>
+                        <td className="px-2 py-2"><NumberInput value={row.quantity} min={0} onChange={(value) => onUpdate(row.id, { quantity: value ?? 0 })} /></td>
+                        <td className="px-2 py-2">
+                          <div className="flex gap-1">
+                            <NumberInput value={row.edge_long_sides} min={0} onChange={(value) => onUpdate(row.id, { edge_long_sides: value ?? 0 })} />
+                            <NumberInput value={row.edge_short_sides} min={0} onChange={(value) => onUpdate(row.id, { edge_short_sides: value ?? 0 })} />
+                          </div>
+                        </td>
+                        <td className="px-2 py-2 font-mono">{formatNumber(calculatePieceEdgeMeters(row))}</td>
+                        <td className="px-2 py-2"><TextInput value={row.observation} onChange={(value) => onUpdate(row.id, { observation: value })} /></td>
+                        {hasAnyDecisions ? (
+                          <td className="px-2 py-2">
+                            {needsDecision ? (
+                              <div className="flex flex-wrap gap-1">
+                                {onDecide ? (
+                                  <>
+                                    <SmallActionButton onClick={() => onDecide(row.id, 'use_sap')}>SAP</SmallActionButton>
+                                    <SmallActionButton onClick={() => onDecide(row.id, 'use_sheet')}>Hoja</SmallActionButton>
+                                    <SmallActionButton tone="danger" onClick={() => onDecide(row.id, 'ignore')}>Ign</SmallActionButton>
+                                  </>
+                                ) : (
+                                  <>
+                                    <SmallActionButton onClick={() => onUpdate(row.id, { decision: 'use_sap', match_status: row.sap_item_code ? 'matched' : row.match_status })}>SAP</SmallActionButton>
+                                    <SmallActionButton onClick={() => onUpdate(row.id, { decision: 'use_sheet', match_status: 'matched' })}>Hoja</SmallActionButton>
+                                    <SmallActionButton tone="danger" onClick={() => onUpdate(row.id, { decision: 'ignore', match_status: 'ignored' })}>Ign</SmallActionButton>
+                                  </>
+                                )}
+                              </div>
+                            ) : <span className="text-[10px] text-slate-400">{row.decision === 'use_sap' ? 'Usa SAP' : row.decision === 'use_sheet' ? 'Usa hoja' : row.decision === 'ignore' ? 'Ignorado' : row.decision === 'use_custom' ? 'Custom' : '-'}</span>}
+                          </td>
+                        ) : null}
+                        <td className="px-2 py-2">
+                          <button type="button" onClick={() => onRemove(row.id)} className="text-xs font-semibold text-rose-600">Quitar</button>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
