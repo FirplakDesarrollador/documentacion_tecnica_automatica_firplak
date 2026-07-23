@@ -1,4 +1,4 @@
-import type { ComponentCategory, ResolvedBomLine } from '@/lib/bom/types'
+import type { BomStructureLine, ComponentCategory, ResolvedBomLine } from '@/lib/bom/types'
 
 export const CABINET_ROUTE_SCHEMA_VERSION = 3
 export const CABINET_ROUTE_PARSER_VERSION = 2
@@ -102,6 +102,10 @@ export type CabinetRouteSourceState = {
   original_sheet: CabinetRouteSourceDocument | null
 }
 
+export type MaterialRole = 'structure' | 'inner_structure' | 'front' | 'drawer_bottom'
+
+export const MATERIAL_ROLES: MaterialRole[] = ['structure', 'inner_structure', 'front', 'drawer_bottom']
+
 export type CabinetPieceRow = CabinetMatchFields & {
   id: string
   source: CabinetRouteSource
@@ -110,6 +114,7 @@ export type CabinetPieceRow = CabinetMatchFields & {
   letter: string
   piece_name: string
   material_label: string
+  material_role: MaterialRole | null
   length_mm: number | null
   width_mm: number | null
   quantity: number
@@ -598,6 +603,93 @@ export function classifyCabinetItem(
   return 'other'
 }
 
+export function classifyDirectBomLine(
+  code: string | null,
+  scope: string
+): CabinetBomCandidateKind {
+  const c = (code ?? '').toUpperCase()
+  const s = scope.toLowerCase()
+  if (s.startsWith('edge_band_')) return 'other'
+  if (c.startsWith('CMPD09')) return 'material'
+  if (c.startsWith('PZCO')) return 'other'
+  if (c.startsWith('CMPD07')) return 'hardware'
+  if (c.startsWith('CEMP')) return 'packaging'
+  return classifyCabinetItem(code, null, null)
+}
+
+export function deriveCabinetCandidatesFromStructure(
+  lines: BomStructureLine[]
+): CabinetBomCandidate[] {
+  return lines.map((line, index) => ({
+    line_id: line.line_id,
+    parent_line_id: null,
+    root_line_id: null,
+    sort_order: line.sort_order ?? index,
+    sort_path: null,
+    level: 1,
+    kind: classifyDirectBomLine(line.base_item_code, line.product_application_scope),
+    item_code: line.base_item_code ?? '',
+    item_name: line.base_item_code ?? null,
+    qty: line.qty ?? 0,
+    direct_qty: line.qty ?? 0,
+    effective_qty: line.qty ?? 0,
+    uom: line.uom ?? null,
+    scope: line.product_application_scope ?? 'NA',
+    category: null,
+    resolution_status: 'resolved',
+    parent_item_code: null,
+    source_mode: 'direct',
+  }))
+}
+
+export function derivePieceRowsFromCandidates(
+  candidates: CabinetBomCandidate[],
+  existingPieces: CabinetPieceRow[]
+): CabinetPieceRow[] {
+  const existingLineIds = new Set(existingPieces.map(p => p.bom_line_id).filter(Boolean))
+  const boardCandidates = candidates.filter(
+    c =>
+      c.item_code.startsWith('CMPD09')
+      && !c.scope.startsWith('edge_band_')
+      && !existingLineIds.has(c.line_id)
+  )
+  return boardCandidates.map((c) => ({
+    ...createManualMatchState(),
+    match_status: 'sap_only' as CabinetMatchStatus,
+    decision: 'pending' as CabinetRouteDecision,
+    sap_line_id: c.line_id,
+    sap_item_code: c.item_code,
+    sap_item_name: c.item_name,
+    sap_qty: c.qty,
+    sap_level: c.level,
+    id: newCabinetRouteId('bom_piece'),
+    source: 'bom' as CabinetRouteSource,
+    original_ref: null,
+    bom_line_id: c.line_id,
+    letter: '',
+    piece_name: c.item_name ?? c.item_code,
+    material_label: '',
+    material_role: classifyScopeToRole(c.scope),
+    length_mm: null,
+    width_mm: null,
+    quantity: c.qty,
+    edge_long_sides: 0,
+    edge_short_sides: 0,
+    edge_type: '',
+    observation: '',
+    edited_fields: [],
+  }))
+}
+
+function classifyScopeToRole(scope: string): MaterialRole | null {
+  const s = scope.toLowerCase().replace(/^edge_band_/, '')
+  if (s === 'full_product' || s === 'structure') return 'structure'
+  if (s === 'front') return 'front'
+  if (s === 'inner_structure') return 'inner_structure'
+  if (s === 'drawer_bottom') return 'drawer_bottom'
+  return null
+}
+
 export function cleanCabinetRoutePieceName(value: string): { pieceName: string; extractedObservation: string } {
   const trimmed = value.trim()
   if (!trimmed) return { pieceName: '', extractedObservation: '' }
@@ -691,6 +783,29 @@ export function getOperationalPieceRows(rows: CabinetPieceRow[]): CabinetPieceRo
 
 export function getOperationalMaterialRows(rows: CabinetRouteMaterialRow[]): CabinetRouteMaterialRow[] {
   return rows.filter(row => row.included && isAcceptedRouteRow(row))
+}
+
+export function suggestMaterialRole(pieceName: string, sectionLabel: string): MaterialRole | null {
+  const normalizedName = normalizeText(pieceName)
+  const normalizedSection = normalizeText(sectionLabel)
+
+  const isDrawer = /\bFONDO\b/.test(normalizedName)
+
+  if (isDrawer) return 'drawer_bottom'
+
+  if (/\bPUERTA\b/.test(normalizedName) || /\bPARCHE\b/.test(normalizedName)) return 'front'
+
+  if (/\bENTREPANO\b|\bENTREPAÑO\b|\bDIVISION\b/.test(normalizedName)) return 'inner_structure'
+
+  if (/\bCAJON\b/.test(normalizedName) && /(LATERAL|TRASERO|GOLA)/.test(normalizedName)) {
+    return 'inner_structure'
+  }
+
+  if (/\bGOLA\b/.test(normalizedName)) return 'inner_structure'
+
+  if (/\bFONDO\b/.test(normalizedSection)) return 'drawer_bottom'
+
+  return 'structure'
 }
 
 export function isAcceptedRouteRow(row: CabinetMatchFields): boolean {
@@ -945,6 +1060,7 @@ function createSapOnlyPieceRow(candidate: CabinetBomCandidate, previous?: Cabine
     letter: previous?.letter || '',
     piece_name: previous?.piece_name || candidate.item_name || candidate.item_code,
     material_label: previous?.material_label || candidate.item_name || '',
+    material_role: previous?.material_role ?? null,
     length_mm: previous?.length_mm ?? null,
     width_mm: previous?.width_mm ?? null,
     quantity: previous?.quantity ?? candidate.qty,
@@ -1272,6 +1388,10 @@ function normalizePieceRow(value: unknown, index: number): CabinetPieceRow {
   const observation = readString(record.observation) || ''
   const quantity = readNumber(record.quantity) ?? 1
 
+  const materialLabel = readString(record.material_label) || ''
+  const materialRole = readString(record.material_role) as MaterialRole | null
+  const suggestedRole = materialRole || suggestMaterialRole(pieceName, materialLabel)
+
   return {
     ...normalizeMatchState(record, source, {
       sheetItemCode: null,
@@ -1286,7 +1406,8 @@ function normalizePieceRow(value: unknown, index: number): CabinetPieceRow {
     bom_line_id: readString(record.bom_line_id),
     letter: readString(record.letter) || '',
     piece_name: pieceName,
-    material_label: readString(record.material_label) || '',
+    material_label: materialLabel,
+    material_role: suggestedRole,
     length_mm: readNumber(record.length_mm),
     width_mm: readNumber(record.width_mm),
     quantity,

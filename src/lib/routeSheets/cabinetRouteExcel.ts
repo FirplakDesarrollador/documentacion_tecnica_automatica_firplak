@@ -10,6 +10,7 @@ import {
   classifyCabinetItem,
   cleanCabinetRoutePieceName,
   createSheetMatchState,
+  suggestMaterialRole,
 } from './cabinets'
 
 type HeaderMap = Map<string, number>
@@ -117,11 +118,13 @@ function parsePieceBlock(
       observationCol ? readCellText(row.getCell(observationCol)) : ''
     )
     const quantity = readCellNumber(row.getCell(quantityCol)) ?? 1
+    const cleanedName = cleanedPiece.pieceName
+    const suggestedRole = suggestMaterialRole(cleanedName, materialLabel)
 
     rows.push({
       ...createSheetMatchState({
         itemCode: null,
-        itemName: cleanedPiece.pieceName,
+        itemName: cleanedName,
         quantity,
         observation: sheetObservation,
       }),
@@ -130,8 +133,9 @@ function parsePieceBlock(
       original_ref: `${worksheet.name}!${rowNumber}`,
       bom_line_id: null,
       letter: firstText,
-      piece_name: cleanedPiece.pieceName,
+      piece_name: cleanedName,
       material_label: materialLabel,
+      material_role: suggestedRole,
       length_mm: readCellNumber(row.getCell(lengthCol)),
       width_mm: readCellNumber(row.getCell(widthCol)),
       quantity,
@@ -178,14 +182,70 @@ function parsePackingLevels(worksheet: ExcelJS.Worksheet): CabinetPackingLevel[]
 
 function parseOptimizationSheet(worksheet: ExcelJS.Worksheet): CabinetBoardConsumption[] {
   const rows: CabinetBoardConsumption[] = []
-  const material15 = readCellText(worksheet.getCell('A2')) || 'Material 15mm'
-  const material6 = readCellText(worksheet.getCell('A24')) || 'Material 6mm'
+  const seenBlocks = new Set<string>()
 
-  rows.push(
-    createBoardConsumption(worksheet, 'cut_t1', 'A3', material15, 'C3', 'B3', 'B4', 'C4'),
-    createBoardConsumption(worksheet, 'cut_t2', 'A5', material15, 'D3', 'B5', 'B6', 'D4'),
-    createBoardConsumption(worksheet, 'cut_6mm', 'A25', material6, 'C25', 'B25', 'B26', 'C26')
-  )
+  for (let rowNumber = 1; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+    const headerText = normalizeText(readCellText(worksheet.getCell(rowNumber, 1)))
+    if (!headerText.startsWith('OPTIMIZACION')) continue
+    const blockLabel = headerText
+
+    const materialLabel = readCellText(worksheet.getCell(rowNumber + 1, 1))
+    const materialNorm = normalizeText(materialLabel)
+
+    const unitsPrefix = normalizeText(readCellText(worksheet.getCell(rowNumber + 2, 1)))
+    const isT1 = unitsPrefix.includes('T1') || unitsPrefix.includes('UNIDADES')
+    const isUnits = unitsPrefix.includes('UNIDADES')
+
+    if (isT1 || isUnits) {
+      const boardSizeCell1 = readCellText(worksheet.getCell(rowNumber + 2, 3))
+      const units1 = readCellNumber(worksheet.getCell(rowNumber + 2, 2))
+      const sheets1 = readCellNumber(worksheet.getCell(rowNumber + 3, 2))
+      const m2_1 = readCellNumber(worksheet.getCell(rowNumber + 3, 3))
+
+      const blockKey1 = `${materialNorm}_T1_${units1}`
+      if (!seenBlocks.has(blockKey1)) {
+        seenBlocks.add(blockKey1)
+        rows.push({
+          id: `cut_${sanitizeId(blockLabel)}_t1`,
+          source: 'original_sheet',
+          original_ref: `${worksheet.name}!${rowNumber + 2}`,
+          material_label: materialLabel,
+          thickness_mm: readThicknessMm(materialLabel),
+          board_size_label: boardSizeCell1,
+          units_per_board: units1,
+          board_count: sheets1,
+          consumption_m2: m2_1,
+          observation: `${blockLabel} - ${readCellText(worksheet.getCell(rowNumber + 2, 1))}`,
+          edited_fields: [],
+        })
+      }
+
+      const units2 = readCellNumber(worksheet.getCell(rowNumber + 4, 2))
+      const sheets2 = readCellNumber(worksheet.getCell(rowNumber + 5, 2))
+      const boardSizeCell2 = readCellText(worksheet.getCell(rowNumber + 2, 4))
+      const m2_2 = readCellNumber(worksheet.getCell(rowNumber + 5, 4))
+
+      if (boardSizeCell2 || units2) {
+        const blockKey2 = `${materialNorm}_T2_${units2}`
+        if (!seenBlocks.has(blockKey2)) {
+          seenBlocks.add(blockKey2)
+          rows.push({
+            id: `cut_${sanitizeId(blockLabel)}_t2`,
+            source: 'original_sheet',
+            original_ref: `${worksheet.name}!${rowNumber + 4}`,
+            material_label: materialLabel,
+            thickness_mm: readThicknessMm(materialLabel),
+            board_size_label: boardSizeCell2,
+            units_per_board: units2,
+            board_count: sheets2,
+            consumption_m2: m2_2,
+            observation: `${blockLabel} - ${readCellText(worksheet.getCell(rowNumber + 4, 1))}`,
+            edited_fields: [],
+          })
+        }
+      }
+    }
+  }
 
   return rows.filter(row => row.board_size_label || row.units_per_board || row.board_count)
 }

@@ -3,10 +3,10 @@
 import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from 'react'
 
 import {
-  getCabinetRouteWorkspaceAction,
+  getCabinetRouteWorkspaceByRefAction,
   parseOriginalCabinetRouteSheetAction,
   saveRouteDocumentAction,
-  type PilotBomSummary,
+  type CabinetBomReferenceSummary,
 } from '../../actions'
 import {
   CABINET_ROUTE_STATUSES,
@@ -34,6 +34,13 @@ import {
   type CabinetRouteMaterialRow,
   type CabinetRouteStatus,
 } from '@/lib/routeSheets/cabinets'
+
+const REFERENCE_STATUS_LABELS: Record<string, string> = {
+  draft: 'Borrador',
+  review: 'En revision',
+  approved: 'Aprobada',
+  archived: 'Obsoleta',
+}
 
 const STATUS_LABELS: Record<CabinetRouteStatus, string> = {
   draft: 'Borrador',
@@ -70,11 +77,25 @@ function MatchBadge({ status }: { status: CabinetMatchStatus }) {
   )
 }
 
-function ImportStatusBadge({ lineCount }: { lineCount: number }) {
-  const imported = lineCount > 0
+function RouteStatusBadge({ status }: { status: string | null }) {
+  if (!status) {
+    return (
+      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">
+        Sin hoja de ruta
+      </span>
+    )
+  }
+  const colorMap: Record<string, string> = {
+    draft: 'bg-amber-100 text-amber-700',
+    review: 'bg-sky-100 text-sky-700',
+    approved: 'bg-emerald-100 text-emerald-700',
+    archived: 'bg-rose-100 text-rose-700',
+  }
+  const cls = colorMap[status] ?? 'bg-slate-100 text-slate-500'
+  const label = REFERENCE_STATUS_LABELS[status] ?? status
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${imported ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-      {imported ? 'LdM importada' : 'Sin LdM'}
+    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${cls}`}>
+      {label}
     </span>
   )
 }
@@ -183,8 +204,13 @@ function formatNumber(value: number, decimals = 2): string {
   })
 }
 
-export function CabinetsRouteDesignClient({ initialSummaries }: { initialSummaries: PilotBomSummary[] }) {
-  const [selectedSku, setSelectedSku] = useState(initialSummaries[0]?.sku_complete ?? 'VBAN12-0081-000-0437')
+export function CabinetsRouteDesignClient({ initialReferences }: { initialReferences: CabinetBomReferenceSummary[] }) {
+  const [selectedReferenceId, setSelectedReferenceId] = useState('')
+  const [establishedRefId, setEstablishedRefId] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [showDropdown, setShowDropdown] = useState(false)
+  const workspaceRef = useRef<HTMLDivElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const [draft, setDraft] = useState<CabinetRouteData>(() => createEmptyCabinetRouteData())
   const [status, setStatus] = useState<CabinetRouteStatus>('draft')
   const [candidates, setCandidates] = useState<CabinetBomCandidate[]>([])
@@ -193,11 +219,22 @@ export function CabinetsRouteDesignClient({ initialSummaries }: { initialSummari
   const [isPending, startTransition] = useTransition()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const selectedSummary = useMemo(
-    () => initialSummaries.find(summary => summary.sku_complete === selectedSku) ?? initialSummaries[0] ?? null,
-    [selectedSku, initialSummaries]
+  const filteredReferences = useMemo(
+    () => {
+      const q = searchQuery.trim().toLowerCase().replace(/[áéíóúüñ]/g, c => 'aeiouun'['áéíóúüñ'.indexOf(c)])
+      if (!q) return initialReferences
+      return initialReferences.filter(ref => {
+        const text = `${ref.display_code} ${ref.product_name ?? ''} ${ref.designation ?? ''}`.toLowerCase()
+        return text.includes(q)
+      })
+    },
+    [searchQuery, initialReferences]
   )
-  const hasImportedBom = (selectedSummary?.line_count ?? 0) > 0
+
+  const selectedReference = useMemo(
+    () => initialReferences.find(ref => ref.reference_id === selectedReferenceId) ?? null,
+    [selectedReferenceId, initialReferences]
+  )
   const matchReport = useMemo(() => buildCabinetRouteMatchReport(draft, candidates), [draft, candidates])
   const totalEdgeMeters = useMemo(
     () => draft.sections.pieces.rows.reduce((sum, row) => sum + calculatePieceEdgeMeters(row), 0),
@@ -217,8 +254,9 @@ export function CabinetsRouteDesignClient({ initialSummaries }: { initialSummari
   )
 
   useEffect(() => {
+    if (!establishedRefId) return
     startTransition(async () => {
-      const result = await getCabinetRouteWorkspaceAction(selectedSku)
+      const result = await getCabinetRouteWorkspaceByRefAction(establishedRefId)
       if (result.error) {
         setMessage(result.error)
         setDraft(createEmptyCabinetRouteData())
@@ -232,18 +270,34 @@ export function CabinetsRouteDesignClient({ initialSummaries }: { initialSummari
       setBomWarning(result.bomWarning)
       setMessage(null)
     })
-  }, [selectedSku])
+  }, [establishedRefId])
+
+  function establishRoute() {
+    if (!selectedReference) return
+    setEstablishedRefId(selectedReference.reference_id)
+    setShowDropdown(false)
+  }
+
+  function closeWorkspace() {
+    setEstablishedRefId(null)
+    setDraft(createEmptyCabinetRouteData())
+    setCandidates([])
+    setMessage(null)
+    setBomWarning(null)
+  }
 
   function saveRoute() {
+    if (!selectedReference || !establishedRefId) return
     startTransition(async () => {
       const result = await saveRouteDocumentAction({
-        skuComplete: selectedSku,
+        skuComplete: selectedReference.display_code,
+        referenceId: establishedRefId,
         routeData: draft,
         status,
       })
       setMessage(result.message)
       if (result.success) {
-        const workspace = await getCabinetRouteWorkspaceAction(selectedSku)
+        const workspace = await getCabinetRouteWorkspaceByRefAction(establishedRefId)
         if (workspace.document) setDraft(workspace.document.route_data_json)
         setCandidates(workspace.candidates)
         setBomWarning(workspace.bomWarning)
@@ -256,7 +310,7 @@ export function CabinetsRouteDesignClient({ initialSummaries }: { initialSummari
     const formData = new FormData()
     formData.append('file', file)
     formData.append('routeData', JSON.stringify(draft))
-    formData.append('skuComplete', selectedSku)
+    formData.append('skuComplete', selectedReference?.display_code ?? '')
 
     startTransition(async () => {
       const result = await parseOriginalCabinetRouteSheetAction(formData)
@@ -316,6 +370,7 @@ export function CabinetsRouteDesignClient({ initialSummaries }: { initialSummari
       letter: '',
       piece_name: '',
       material_label: '',
+      material_role: null,
       length_mm: null,
       width_mm: null,
       quantity: 1,
@@ -573,39 +628,137 @@ export function CabinetsRouteDesignClient({ initialSummaries }: { initialSummari
   }
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
-      <aside className="flex flex-col gap-4">
-        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="font-semibold text-slate-900">Codigos piloto</h2>
-          <div className="mt-4 flex flex-col gap-2">
-            {initialSummaries.map((summary) => (
-              <button
-                key={summary.sku_complete}
-                type="button"
-                onClick={() => setSelectedSku(summary.sku_complete)}
-                className={`rounded-md border p-3 text-left text-sm transition ${selectedSku === summary.sku_complete ? 'border-indigo-400 bg-indigo-50' : 'border-slate-200 bg-white hover:bg-slate-50'}`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold text-slate-900">{summary.sku_complete}</span>
-                  <ImportStatusBadge lineCount={summary.line_count} />
-                </div>
-                <p className="mt-1 text-xs text-slate-500">{summary.label}</p>
-                <p className="mt-2 text-xs text-slate-600">
-                  Ref: {summary.reference_code || '-'} | Lineas: {summary.line_count} | faltantes: {summary.missing_count}
-                </p>
-              </button>
-            ))}
+    <div className="flex flex-col gap-6">
+      <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="relative min-w-0 flex-1">
+            <label htmlFor="ref-search" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Buscar referencia
+            </label>
+            <input
+              ref={searchInputRef}
+              id="ref-search"
+              type="text"
+              placeholder="VBAN05-0001, nombre de producto..."
+              value={searchQuery}
+              onChange={(event) => {
+                setSearchQuery(event.target.value)
+                setShowDropdown(true)
+                if (!event.target.value) setSelectedReferenceId('')
+              }}
+              onFocus={() => setShowDropdown(true)}
+              onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+            />
+            {showDropdown && filteredReferences.length > 0 ? (
+              <div className="absolute left-0 right-0 z-20 mt-1 max-h-72 overflow-auto rounded-md border border-slate-200 bg-white shadow-lg">
+                {filteredReferences.map((ref) => {
+                  const isSelected = selectedReferenceId === ref.reference_id
+                  return (
+                    <button
+                      key={ref.reference_id}
+                      type="button"
+                      onMouseDown={() => {
+                        setSelectedReferenceId(ref.reference_id)
+                        setSearchQuery(ref.display_code)
+                        setShowDropdown(false)
+                      }}
+                      className={`flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left text-sm transition hover:bg-indigo-50 ${isSelected ? 'bg-indigo-50' : ''}`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <span className="font-semibold text-slate-900">{ref.display_code}</span>
+                        <p className="truncate text-xs text-slate-500">{ref.product_name ?? ref.designation ?? '-'}</p>
+                      </div>
+                      <RouteStatusBadge status={ref.route_status} />
+                    </button>
+                  )
+                })}
+              </div>
+            ) : showDropdown && searchQuery.trim() ? (
+              <div className="absolute left-0 right-0 z-20 mt-1 rounded-md border border-slate-200 bg-white p-3 text-center text-sm text-slate-500 shadow-lg">
+                Sin resultados
+              </div>
+            ) : null}
           </div>
+          <button
+            type="button"
+            onClick={establishRoute}
+            disabled={!selectedReference || isPending}
+            className="h-fit shrink-0 rounded-md bg-indigo-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            Establecer hoja de ruta
+          </button>
+          {establishedRefId ? (
+            <button
+              type="button"
+              onClick={closeWorkspace}
+              className="h-fit shrink-0 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-600"
+            >
+              Cerrar
+            </button>
+          ) : null}
         </div>
+        {!establishedRefId ? (
+          <p className="mt-3 text-xs text-slate-500">
+            {initialReferences.length} referencia(s) con LdM publicada. Selecciona una y presiona &quot;Establecer hoja de ruta&quot; para empezar.
+          </p>
+        ) : null}
+      </div>
 
-        <SectionCard title="Fuentes" description="El documento se guarda por referencia; el SKU solo resuelve color/BOM para analizar.">
-          <div className="grid grid-cols-2 gap-2">
-            <Metric label="Referencia" value={draft.source.reference_code || selectedSummary?.reference_code || '-'} />
-            <Metric label="BOM" value={String(candidates.length)} />
-            <Metric label="Canto m" value={formatNumber(totalEdgeMeters)} />
-            <Metric label="Area m2" value={formatNumber(totalAreaM2)} />
+      {establishedRefId && selectedReference ? (
+        <div ref={workspaceRef} className="flex flex-col gap-4">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <SectionCard title="Fuentes" description="BOM leida directamente de product_bom_structure.">
+              <Metric label="Referencia" value={draft.source.reference_code || selectedReference.display_code} />
+              <div className="mt-2">
+                <Metric label="Estado hoja de ruta" value={REFERENCE_STATUS_LABELS[status] ?? status} />
+              </div>
+            </SectionCard>
+            <SectionCard title="BOM" description="Candidatos disponibles desde la estructura publicada.">
+              <Metric label="Lineas en BOM" value={String(selectedReference.bom_line_count)} />
+              <div className="mt-2">
+                <Metric label="Candidatos activos" value={String(candidates.length)} />
+              </div>
+            </SectionCard>
+            <SectionCard title="Canto" description="Acumulado de cantos en piezas cargadas.">
+              <Metric label="Metros canto" value={formatNumber(totalEdgeMeters)} />
+            </SectionCard>
+            <SectionCard title="Area" description="Suma de areas en piezas cargadas.">
+              <Metric label="Area m2" value={formatNumber(totalAreaM2)} />
+            </SectionCard>
           </div>
-          <label className="mt-4 block">
+
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Documento por referencia</p>
+                <h2 className="text-lg font-semibold text-slate-900">{draft.source.reference_code || selectedReference.display_code}</h2>
+                <p className="text-xs text-slate-500">Referencia base | BOM schema V2</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  value={status}
+                  onChange={(event) => setStatus(event.target.value as CabinetRouteStatus)}
+                  className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+                >
+                  {CABINET_ROUTE_STATUSES.map(routeStatus => (
+                    <option key={routeStatus} value={routeStatus}>{STATUS_LABELS[routeStatus]}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={saveRoute}
+                  disabled={isPending}
+                  className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  Guardar ruta
+                </button>
+              </div>
+            </div>
+            {message ? <p className="mt-3 rounded-md bg-slate-100 px-3 py-2 text-sm text-slate-700">{message}</p> : null}
+          </div>
+
+          <label className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
             <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Hoja original Excel</span>
             <input
               ref={fileInputRef}
@@ -614,124 +767,87 @@ export function CabinetsRouteDesignClient({ initialSummaries }: { initialSummari
               onChange={(event) => importOriginalSheet(event.target.files?.[0] ?? null)}
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-xs"
             />
+            {draft.source.original_sheet ? (
+              <p className="mt-2 text-xs text-slate-600">
+                Ultima hoja: <span className="font-semibold">{draft.source.original_sheet.file_name}</span>
+              </p>
+            ) : null}
+            {bomWarning ? (
+              <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">{bomWarning}</p>
+            ) : null}
           </label>
-          {draft.source.original_sheet ? (
-            <p className="mt-2 text-xs text-slate-600">
-              Ultima hoja: <span className="font-semibold">{draft.source.original_sheet.file_name}</span>
-            </p>
-          ) : null}
-          {bomWarning ? (
-            <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">{bomWarning}</p>
-          ) : null}
-          {!hasImportedBom ? (
-            <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              Este SKU no tiene LdM importada. Puedes cargar la hoja original, pero el match BOM queda pendiente.
-            </p>
-          ) : null}
-        </SectionCard>
 
-        <ReconciliationPanel issues={matchReport.issues} summary={matchReport.summary} onDecide={decide} />
-      </aside>
+          <ReconciliationPanel issues={matchReport.issues} summary={matchReport.summary} onDecide={decide} />
 
-      <section className="flex flex-col gap-4">
-        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Documento por referencia</p>
-              <h2 className="text-lg font-semibold text-slate-900">{draft.source.reference_code || selectedSummary?.reference_code || selectedSku}</h2>
-              <p className="text-xs text-slate-500">SKU de analisis: {draft.source.analysis_sku_complete || selectedSku}</p>
+          <PiecesEditor
+            rows={draft.sections.pieces.rows}
+            notes={draft.sections.pieces.notes}
+            onNotesChange={(value) => updateNotes('pieces', value)}
+            onAdd={addManualPiece}
+            onRemove={removePiece}
+            onUpdate={updatePiece}
+          />
+
+          <CuttingEditor
+            rows={draft.sections.cutting.board_consumptions}
+            notes={draft.sections.cutting.notes}
+            edgingNotes={draft.sections.edging.notes}
+            onNotesChange={(value) => updateNotes('cutting', value)}
+            onEdgingNotesChange={(value) => updateNotes('edging', value)}
+            onAdd={addManualBoard}
+            onUpdate={updateBoard}
+          />
+
+          <MaterialEditor
+            title="Herrajes"
+            description="Solo filas aceptadas por conciliacion o agregadas manualmente. Pendientes quedan en el panel SAP vs hoja."
+            rows={operationalHardwareRows}
+            notes={draft.sections.hardware.notes}
+            onNotesChange={(value) => updateNotes('hardware', value)}
+            onAdd={() => addManualMaterial('hardware')}
+            onUpdate={(id, patch) => updateMaterialRow('hardware', id, patch)}
+          />
+
+          <ProcessEditor
+            drillingRows={draft.sections.drilling.rows}
+            drillingNotes={draft.sections.drilling.notes}
+            assemblySteps={draft.sections.assembly.steps}
+            assemblyNotes={draft.sections.assembly.notes}
+            onDrillingNotesChange={(value) => updateNotes('drilling', value)}
+            onAssemblyNotesChange={(value) => updateNotes('assembly', value)}
+            onAddDrilling={addDrillingRow}
+            onUpdateDrilling={updateDrilling}
+            onAddAssembly={addAssemblyStep}
+            onUpdateAssembly={updateAssemblyStep}
+          />
+
+          <PackingEditor
+            rows={operationalPackingRows}
+            levels={draft.sections.packing.levels}
+            notes={draft.sections.packing.notes}
+            onNotesChange={(value) => updateNotes('packing', value)}
+            onAddMaterial={() => addManualMaterial('packing')}
+            onUpdateMaterial={(id, patch) => updateMaterialRow('packing', id, patch)}
+            onAddLevel={addPackingLevel}
+            onUpdateLevel={updatePackingLevel}
+          />
+
+          <SectionCard title="Observaciones" description="Notas generales visibles para diseno y produccion.">
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Notas generales</span>
+                <TextArea value={draft.sections.observations.general_notes} onChange={(value) => updateObservations('general_notes', value)} />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Notas de diseno / importacion</span>
+                <TextArea value={draft.sections.observations.design_notes} onChange={(value) => updateObservations('design_notes', value)} />
+              </label>
             </div>
-            <div className="flex items-center gap-2">
-              <select
-                value={status}
-                onChange={(event) => setStatus(event.target.value as CabinetRouteStatus)}
-                className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-              >
-                {CABINET_ROUTE_STATUSES.map(routeStatus => (
-                  <option key={routeStatus} value={routeStatus}>{STATUS_LABELS[routeStatus]}</option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={saveRoute}
-                disabled={isPending}
-                className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-              >
-                Guardar ruta
-              </button>
-            </div>
-          </div>
-          {message ? <p className="mt-3 rounded-md bg-slate-100 px-3 py-2 text-sm text-slate-700">{message}</p> : null}
+          </SectionCard>
+
+          <CandidatesPanel candidates={candidates} onAddCandidate={addCandidate} />
         </div>
-
-        <PiecesEditor
-          rows={draft.sections.pieces.rows}
-          notes={draft.sections.pieces.notes}
-          onNotesChange={(value) => updateNotes('pieces', value)}
-          onAdd={addManualPiece}
-          onRemove={removePiece}
-          onUpdate={updatePiece}
-        />
-
-        <CuttingEditor
-          rows={draft.sections.cutting.board_consumptions}
-          notes={draft.sections.cutting.notes}
-          edgingNotes={draft.sections.edging.notes}
-          onNotesChange={(value) => updateNotes('cutting', value)}
-          onEdgingNotesChange={(value) => updateNotes('edging', value)}
-          onAdd={addManualBoard}
-          onUpdate={updateBoard}
-        />
-
-        <MaterialEditor
-          title="Herrajes"
-          description="Solo filas aceptadas por conciliacion o agregadas manualmente. Pendientes quedan en el panel SAP vs hoja."
-          rows={operationalHardwareRows}
-          notes={draft.sections.hardware.notes}
-          onNotesChange={(value) => updateNotes('hardware', value)}
-          onAdd={() => addManualMaterial('hardware')}
-          onUpdate={(id, patch) => updateMaterialRow('hardware', id, patch)}
-        />
-
-        <ProcessEditor
-          drillingRows={draft.sections.drilling.rows}
-          drillingNotes={draft.sections.drilling.notes}
-          assemblySteps={draft.sections.assembly.steps}
-          assemblyNotes={draft.sections.assembly.notes}
-          onDrillingNotesChange={(value) => updateNotes('drilling', value)}
-          onAssemblyNotesChange={(value) => updateNotes('assembly', value)}
-          onAddDrilling={addDrillingRow}
-          onUpdateDrilling={updateDrilling}
-          onAddAssembly={addAssemblyStep}
-          onUpdateAssembly={updateAssemblyStep}
-        />
-
-        <PackingEditor
-          rows={operationalPackingRows}
-          levels={draft.sections.packing.levels}
-          notes={draft.sections.packing.notes}
-          onNotesChange={(value) => updateNotes('packing', value)}
-          onAddMaterial={() => addManualMaterial('packing')}
-          onUpdateMaterial={(id, patch) => updateMaterialRow('packing', id, patch)}
-          onAddLevel={addPackingLevel}
-          onUpdateLevel={updatePackingLevel}
-        />
-
-        <SectionCard title="Observaciones" description="Notas generales visibles para diseno y produccion.">
-          <div className="grid gap-4 md:grid-cols-2">
-            <label className="flex flex-col gap-1">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Notas generales</span>
-              <TextArea value={draft.sections.observations.general_notes} onChange={(value) => updateObservations('general_notes', value)} />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Notas de diseno / importacion</span>
-              <TextArea value={draft.sections.observations.design_notes} onChange={(value) => updateObservations('design_notes', value)} />
-            </label>
-          </div>
-        </SectionCard>
-
-        <CandidatesPanel candidates={candidates} onAddCandidate={addCandidate} />
-      </section>
+      ) : null}
     </div>
   )
 }
@@ -1150,18 +1266,21 @@ function CandidatesPanel({
   candidates: CabinetBomCandidate[]
   onAddCandidate: (candidate: CabinetBomCandidate) => void
 }) {
+  const descriptionText = (c: CabinetBomCandidate): string => {
+    if (c.item_name && c.item_name !== c.item_code) return c.item_name
+    return c.item_code || '-'
+  }
   return (
-    <SectionCard title="Candidatos desde BOM SAP" description="Lectura preferida desde BOM expandida; no se edita la LdM aqui.">
+    <SectionCard title="Candidatos desde BOM SAP" description="Lineas leidas directamente de product_bom_structure; los nombres se resuelven desde component_items.">
       <div className="max-h-80 overflow-auto rounded-md border border-slate-200">
         <table className="min-w-full text-left text-xs">
           <thead className="sticky top-0 bg-slate-100 text-slate-600">
             <tr>
               <th className="px-3 py-2">Tipo</th>
-              <th className="px-3 py-2">Nivel</th>
               <th className="px-3 py-2">Codigo</th>
               <th className="px-3 py-2">Descripcion</th>
               <th className="px-3 py-2">Cant.</th>
-              <th className="px-3 py-2">Padre</th>
+              <th className="px-3 py-2">Alcance</th>
               <th className="px-3 py-2"></th>
             </tr>
           </thead>
@@ -1169,11 +1288,12 @@ function CandidatesPanel({
             {candidates.map((candidate) => (
               <tr key={candidate.line_id} className="border-t border-slate-100">
                 <td className="px-3 py-2 capitalize">{candidate.kind}</td>
-                <td className="px-3 py-2">{candidate.level}</td>
                 <td className="px-3 py-2 font-mono">{candidate.item_code}</td>
-                <td className="px-3 py-2">{candidate.item_name || 'No encontrado'}</td>
+                <td className="px-3 py-2 max-w-[260px] truncate" title={descriptionText(candidate)}>
+                  {descriptionText(candidate)}
+                </td>
                 <td className="px-3 py-2">{candidate.qty} {candidate.uom || ''}</td>
-                <td className="px-3 py-2 font-mono text-[11px]">{candidate.parent_item_code || '-'}</td>
+                <td className="px-3 py-2 text-slate-500">{candidate.scope}</td>
                 <td className="px-3 py-2">
                   {candidate.kind === 'hardware' || candidate.kind === 'packaging' ? (
                     <button type="button" onClick={() => onAddCandidate(candidate)} className="text-xs font-semibold text-indigo-700">

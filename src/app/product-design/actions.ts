@@ -7,7 +7,6 @@ import { dbQuery } from '@/lib/supabase'
 import { supabaseTable } from '@/lib/supabaseDynamic'
 import { assertPermission } from '@/utils/auth/access'
 import { getSapItem, updateSapItem, type SapEntityPayload } from '@/lib/sap/serviceLayer'
-import { PILOT_SKUS, type ResolvedBomLine } from '@/lib/bom/types'
 import {
   isSapLifecycleState,
   readSapItemLifecycleState,
@@ -21,6 +20,8 @@ import {
   CABINET_ROUTE_SCHEMA_VERSION,
   buildCabinetRouteMatchReport,
   deriveCabinetBomCandidates,
+  deriveCabinetCandidatesFromStructure,
+  derivePieceRowsFromCandidates,
   applyOriginalRouteImport,
   isCabinetRouteStatus,
   normalizeCabinetRouteData,
@@ -33,6 +34,18 @@ import {
   type CabinetRouteMatchReport,
   type CabinetRouteStatus,
 } from '@/lib/routeSheets/cabinets'
+
+export type CabinetBomReferenceSummary = {
+  reference_id: string
+  family_code: string | null
+  reference_code: string | null
+  display_code: string
+  product_name: string | null
+  designation: string | null
+  bom_line_count: number
+  active_sku_count: number
+  route_status: string | null
+}
 
 export type PilotBomSummary = {
   sku_complete: string
@@ -80,19 +93,6 @@ export type SapStatusUpdateInput = {
   confirmationText: string
 }
 
-type PilotBomRow = {
-  sku_complete: string
-  status: string | null
-  color_code: string | null
-  sap_description_original: string | null
-  version_id: string | null
-  reference_id: string | null
-  family_code: string | null
-  reference_code: string | null
-  product_name: string | null
-  line_count: number | string | null
-}
-
 type SkuScope = {
   referenceId: string
   referenceCode: string | null
@@ -103,10 +103,6 @@ type CabinetBomReadResult = {
   lines: CabinetBomLine[]
   sourceMode: CabinetBomSourceMode
   warning: string | null
-}
-
-function quoteSql(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -125,17 +121,6 @@ function normalizeSkuInput(value: string): string {
 
 function confirmationFor(input: SapStatusUpdateInput): string {
   return statusConfirmation(input.itemCode, input.targetStatus)
-}
-
-async function getResolvedLines(skuComplete: string): Promise<ResolvedBomLine[]> {
-  const rows = await dbQuery(
-    `SELECT *
-     FROM public.resolved_bom_for_sku($1)
-     ORDER BY sort_order, line_id`,
-    [skuComplete]
-  )
-
-  return rows as ResolvedBomLine[]
 }
 
 async function getCabinetRouteBomLines(skuComplete: string): Promise<CabinetBomReadResult> {
@@ -175,60 +160,259 @@ async function getCabinetRouteBomLines(skuComplete: string): Promise<CabinetBomR
   }
 }
 
-export async function getPilotBomSummariesAction(): Promise<{ summaries: PilotBomSummary[]; error: string | null }> {
+export async function listCabinetBomReferencesAction(search?: string): Promise<{
+  references: CabinetBomReferenceSummary[]
+  error: string | null
+}> {
   await assertPermission('module:product-design')
 
   try {
-    const skuList = PILOT_SKUS.map(pilot => quoteSql(pilot.sku)).join(',')
-    const rows = await dbQuery(`
-      SELECT
-        s.sku_complete,
-        s.status,
-        s.color_code,
-        s.sap_description_original,
-        v.id AS version_id,
+    const searchableText = search?.trim()
+      ? `AND translate(lower(concat_ws(' ', concat_ws('-', 'V' || r.family_code, r.reference_code), r.product_name, r.designation)), 'áéíóúüñ', 'aeiouun') LIKE $1`
+      : ''
+    const params: (string | number)[] = search?.trim() ? [`%${search.trim().toLowerCase().replace(/[áéíóúüñ]/g, c => 'aeiouun'['áéíóúüñ'.indexOf(c)])}%`] : []
+
+    const rows = await dbQuery(
+      `SELECT
         r.id AS reference_id,
         r.family_code,
         r.reference_code,
         r.product_name,
-        COALESCE(jsonb_array_length(r.product_bom_structure -> 'lines'), 0) AS line_count
-      FROM public.product_skus s
-      LEFT JOIN public.product_versions v ON v.id = s.version_id
-      LEFT JOIN public.product_references r ON r.id = v.reference_id
-      WHERE s.sku_complete IN (${skuList})
-    `)
+        r.designation,
+        CASE
+          WHEN jsonb_typeof(r.product_bom_structure -> 'lines') = 'array'
+          THEN jsonb_array_length(r.product_bom_structure -> 'lines')
+          ELSE 0
+        END AS bom_line_count,
+        COUNT(s.id) FILTER (
+          WHERE v.version_code = '000'
+            AND COALESCE(s.status, 'ACTIVO') = 'ACTIVO'
+        ) AS active_sku_count,
+        d.status AS route_status
+      FROM public.product_references r
+      LEFT JOIN public.product_versions v ON v.reference_id = r.id
+      LEFT JOIN public.product_skus s ON s.version_id = v.id
+      LEFT JOIN LATERAL (
+        SELECT status
+        FROM public.product_route_documents d
+        WHERE d.reference_id = r.id
+          AND d.route_type = 'cabinet'
+          AND d.version_id IS NULL
+        LIMIT 1
+      ) d ON TRUE
+      WHERE COALESCE(r.status, 'ACTIVO') = 'ACTIVO'
+        AND jsonb_typeof(r.product_bom_structure -> 'lines') = 'array'
+        AND jsonb_array_length(r.product_bom_structure -> 'lines') > 0
+        AND jsonb_typeof(r.product_bom_structure -> 'schema_version') = 'number'
+        AND (r.product_bom_structure ->> 'schema_version')::int >= 2
+        ${searchableText}
+        AND EXISTS (
+          SELECT 1 FROM public.product_versions v2
+          WHERE v2.reference_id = r.id
+            AND v2.version_code = '000'
+            AND COALESCE(v2.status, 'ACTIVO') = 'ACTIVO'
+        )
+      GROUP BY
+        r.id, r.family_code, r.reference_code, r.product_name, r.designation,
+        r.product_bom_structure,
+        d.status
+      HAVING COUNT(s.id) FILTER (
+        WHERE v.version_code = '000'
+          AND COALESCE(s.status, 'ACTIVO') = 'ACTIVO'
+      ) > 0
+      ORDER BY r.family_code, r.reference_code`,
+      params.length > 0 ? params : []
+    )
 
-    const typedRows = rows as PilotBomRow[]
-    const rowMap = new Map(typedRows.map(row => [String(row.sku_complete), row]))
-    const summaries: PilotBomSummary[] = []
+    const typed = rows as Array<Record<string, unknown>>
 
-    for (const pilot of PILOT_SKUS) {
-      const row = rowMap.get(pilot.sku)
-      const resolvedLines = row ? await getResolvedLines(pilot.sku) : []
-      const missingCount = resolvedLines.filter(line => line.resolution_status !== 'resolved').length
+    const references: CabinetBomReferenceSummary[] = typed.map(row => {
+      const familyCode = readString(row.family_code) ?? ''
+      const referenceCode = readString(row.reference_code) ?? ''
+      return {
+        reference_id: String(row.reference_id ?? ''),
+        family_code: familyCode || null,
+        reference_code: referenceCode || null,
+        display_code: familyCode && referenceCode ? `V${familyCode}-${referenceCode}` : '-',
+        product_name: readString(row.product_name),
+        designation: readString(row.designation),
+        bom_line_count: Number(row.bom_line_count ?? 0),
+        active_sku_count: Number(row.active_sku_count ?? 0),
+        route_status: readString(row.route_status),
+      }
+    })
 
-      summaries.push({
-        sku_complete: pilot.sku,
-        label: pilot.label,
-        kind: pilot.kind,
-        status: readString(row?.status),
-        color_code: readString(row?.color_code),
-        sap_description_original: readString(row?.sap_description_original),
-        reference_id: readString(row?.reference_id),
-        version_id: readString(row?.version_id),
-        family_code: readString(row?.family_code),
-        reference_code: readString(row?.reference_code),
-        product_name: readString(row?.product_name),
-        line_count: typeof row?.line_count === 'number' ? row.line_count : Number(row?.line_count ?? 0),
-        resolved_count: resolvedLines.length - missingCount,
-        missing_count: missingCount,
-      })
+    return { references, error: null }
+  } catch (error) {
+    return { references: [], error: error instanceof Error ? error.message : 'No se pudo listar referencias con BOM publicado' }
+  }
+}
+
+export async function getCabinetRouteWorkspaceByRefAction(referenceId: string): Promise<CabinetRouteWorkspace> {
+  await assertPermission('module:product-design')
+
+  try {
+    const refRows = await dbQuery(
+      `SELECT
+        r.id AS reference_id,
+        r.family_code,
+        r.reference_code,
+        r.product_name,
+        r.product_bom_structure
+      FROM public.product_references r
+      WHERE r.id = $1
+        AND COALESCE(r.status, 'ACTIVO') = 'ACTIVO'
+      LIMIT 1`,
+      [referenceId]
+    )
+
+    const refRow = refRows[0] as Record<string, unknown> | undefined
+    if (!refRow) {
+      return {
+        document: null, lines: [], candidates: [],
+        matchReport: buildCabinetRouteMatchReport(normalizeCabinetRouteData(null), []),
+        bomSourceMode: 'direct', bomWarning: null,
+        error: `No existe la referencia ${referenceId}`,
+      }
     }
 
-    return { summaries, error: null }
+    const fisicalFamilyCode = readString(refRow.family_code) ?? ''
+    const fisicalReferenceCode = readString(refRow.reference_code) ?? ''
+    const displayCode = fisicalFamilyCode && fisicalReferenceCode
+      ? `V${fisicalFamilyCode}-${fisicalReferenceCode}`
+      : referenceId
+
+    const bomJson = refRow.product_bom_structure as { lines: Array<Record<string, unknown>> } | null
+    const rawLines = bomJson?.lines ?? []
+    const bomLineCount = rawLines.length
+
+    const bomStructure = bomJson as unknown as import('@/lib/bom/types').BomStructure | null
+    const candidates = bomStructure
+      ? deriveCabinetCandidatesFromStructure(bomStructure.lines)
+      : []
+
+    const itemCodes = [...new Set(candidates.map(c => c.item_code).filter(Boolean))]
+    if (itemCodes.length > 0) {
+      const codes = itemCodes.map(c => `'${c.replace(/'/g, "''")}'`).join(',')
+      const exactRows = await dbQuery(
+        `SELECT item_code, item_name
+         FROM public.component_items
+         WHERE item_code IN (${codes})`
+      )
+      const nameMap = new Map<string, string>()
+      for (const row of (exactRows as Array<Record<string, unknown>>)) {
+        const code = readString(row.item_code) ?? ''
+        const name = readString(row.item_name) ?? ''
+        if (code && name) nameMap.set(code, name)
+      }
+      const unmatched = itemCodes.filter(c => !nameMap.has(c))
+      if (unmatched.length > 0) {
+        const baseCodes = unmatched.map(c => `'${c.replace(/'/g, "''")}'`).join(',')
+        const baseRows = await dbQuery(
+          `SELECT DISTINCT ON (base_item_code)
+             item_code, base_item_code, base_item_name, item_name
+           FROM public.component_items
+           WHERE base_item_code IN (${baseCodes})
+           ORDER BY base_item_code,
+             CASE WHEN item_code = base_item_code THEN 0 ELSE 1 END`
+        )
+        for (const row of (baseRows as Array<Record<string, unknown>>)) {
+          const baseCode = readString(row.base_item_code) ?? ''
+          if (!baseCode || nameMap.has(baseCode)) continue
+          const genericName = readString(row.base_item_name)
+          const variantName = readString(row.item_name)
+          nameMap.set(baseCode, genericName ?? variantName ?? baseCode)
+        }
+      }
+      for (const c of candidates) {
+        if (c.item_name === c.item_code || !c.item_name) {
+          const resolved = nameMap.get(c.item_code)
+          if (resolved) c.item_name = resolved
+        }
+      }
+    }
+
+    const docRows = await dbQuery(
+      `SELECT id, reference_id, version_id, route_type, schema_version, route_data_json, status
+       FROM public.product_route_documents
+       WHERE reference_id = $1
+         AND route_type = 'cabinet'
+         AND version_id IS NULL
+       LIMIT 1`,
+      [referenceId]
+    )
+
+    const docRow = docRows[0] as Record<string, unknown> | undefined
+    const document: RouteDocumentState | null = docRow
+      ? {
+          id: readString(docRow.id),
+          reference_id: referenceId,
+          reference_code: displayCode,
+          version_id: null,
+          sku_complete: displayCode,
+          route_type: 'cabinet',
+          schema_version: typeof docRow.schema_version === 'number' ? docRow.schema_version : CABINET_ROUTE_SCHEMA_VERSION,
+          route_data_json: normalizeCabinetRouteData(docRow.route_data_json),
+          status: toRouteStatus(readString(docRow.status)),
+        }
+      : {
+          id: null,
+          reference_id: referenceId,
+          reference_code: displayCode,
+          version_id: null,
+          sku_complete: displayCode,
+          route_type: 'cabinet',
+          schema_version: CABINET_ROUTE_SCHEMA_VERSION,
+          route_data_json: normalizeCabinetRouteData(null),
+          status: 'draft' as CabinetRouteStatus,
+        }
+
+    const bomPieces = derivePieceRowsFromCandidates(
+      candidates,
+      document.route_data_json.sections.pieces.rows
+    )
+    if (bomPieces.length > 0) {
+      document.route_data_json.sections.pieces.rows = [
+        ...bomPieces,
+        ...document.route_data_json.sections.pieces.rows,
+      ]
+    }
+
+    const enriched = withCabinetRouteSource(document.route_data_json, {
+      analysisSkuComplete: displayCode,
+      referenceId,
+      referenceCode: displayCode,
+      bomLineCount,
+      missingBomCount: 0,
+      bomSourceMode: 'direct',
+      bomWarning: null,
+    })
+
+    return {
+      document: {
+        ...document,
+        route_data_json: enriched,
+      },
+      lines: [],
+      candidates,
+      matchReport: buildCabinetRouteMatchReport(enriched, candidates),
+      bomSourceMode: 'direct',
+      bomWarning: null,
+      error: null,
+    }
   } catch (error) {
-    return { summaries: [], error: error instanceof Error ? error.message : 'No se pudo leer el piloto BOM' }
+    return {
+      document: null, lines: [], candidates: [],
+      matchReport: buildCabinetRouteMatchReport(normalizeCabinetRouteData(null), []),
+      bomSourceMode: 'direct', bomWarning: null,
+      error: error instanceof Error ? error.message : 'No se pudo preparar hoja de ruta desde referencia',
+    }
   }
+}
+
+export async function getPilotBomSummariesAction(): Promise<{ summaries: PilotBomSummary[]; error: string | null }> {
+  await assertPermission('module:product-design')
+  return { summaries: [], error: null }
 }
 
 async function getSkuScope(skuComplete: string): Promise<SkuScope> {
@@ -405,26 +589,48 @@ export async function parseOriginalCabinetRouteSheetAction(formData: FormData): 
 
 export async function saveRouteDocumentAction(input: {
   skuComplete: string
+  referenceId?: string
   routeData: CabinetRouteData
   status: string
 }): Promise<{ success: boolean; message: string }> {
   await assertPermission('module:product-design')
 
   try {
-    const sku = normalizeSkuInput(input.skuComplete)
-    const scope = await getSkuScope(sku)
-    const bomResult = await getCabinetRouteBomLines(sku)
-    const candidates = deriveCabinetBomCandidates(bomResult.lines, bomResult.sourceMode)
-    const routeData = reconcileCabinetRouteData(withCabinetRouteSource(normalizeCabinetRouteData(input.routeData), {
-      analysisSkuComplete: sku,
-      referenceId: scope.referenceId,
-      referenceCode: scope.referenceCode,
-      bomLineCount: bomResult.lines.length,
-      missingBomCount: bomResult.lines.filter(line => line.resolution_status !== 'resolved').length,
-      bomSourceMode: bomResult.sourceMode,
-      bomWarning: bomResult.warning,
-    }), candidates)
+    let referenceId: string
+    let referenceCode: string | null = null
+
+    if (input.referenceId) {
+      referenceId = input.referenceId
+      const refRows = await dbQuery(
+        `SELECT id, family_code, reference_code
+         FROM public.product_references
+         WHERE id = $1 AND COALESCE(status, 'ACTIVO') = 'ACTIVO'
+         LIMIT 1`,
+        [input.referenceId]
+      )
+      const refRow = refRows[0] as Record<string, unknown> | undefined
+      if (!refRow) throw new Error(`No existe la referencia ${input.referenceId}`)
+      const familyCode = readString(refRow.family_code) ?? ''
+      const rawRefCode = readString(refRow.reference_code) ?? ''
+      referenceCode = familyCode && rawRefCode ? `V${familyCode}-${rawRefCode}` : null
+    } else {
+      const sku = normalizeSkuInput(input.skuComplete)
+      const scope = await getSkuScope(sku)
+      referenceId = scope.referenceId
+      referenceCode = scope.referenceCode
+    }
+
     const status = toRouteStatus(input.status)
+    const routeData = withCabinetRouteSource(normalizeCabinetRouteData(input.routeData), {
+      analysisSkuComplete: referenceCode ?? input.skuComplete,
+      referenceId,
+      referenceCode,
+      bomLineCount: 0,
+      missingBomCount: 0,
+      bomSourceMode: 'direct',
+      bomWarning: null,
+    })
+
     const existing = await dbQuery(
       `SELECT id
        FROM public.product_route_documents
@@ -432,7 +638,7 @@ export async function saveRouteDocumentAction(input: {
          AND route_type = 'cabinet'
          AND version_id IS NULL
        LIMIT 1`,
-      [scope.referenceId]
+      [referenceId]
     )
 
     const existingId = readString(existing[0]?.id)
@@ -449,7 +655,7 @@ export async function saveRouteDocumentAction(input: {
     } else {
       const { error } = await supabaseTable('product_route_documents')
         .insert({
-          reference_id: scope.referenceId,
+          reference_id: referenceId,
           version_id: null,
           route_type: 'cabinet',
           schema_version: CABINET_ROUTE_SCHEMA_VERSION,

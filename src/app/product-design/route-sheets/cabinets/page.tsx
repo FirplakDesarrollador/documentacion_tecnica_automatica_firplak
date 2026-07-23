@@ -1,10 +1,10 @@
 import { requirePagePermission } from '@/utils/auth/access'
-import { getPilotBomSummariesAction } from '../../actions'
+import { listCabinetBomReferencesAction } from '../../actions'
 import { CabinetsRouteDesignClient } from './CabinetsRouteDesignClient'
 
 export default async function CabinetsRouteDesignPage() {
   await requirePagePermission('module:product-design')
-  const { summaries } = await getPilotBomSummariesAction()
+  const { references } = await listCabinetBomReferencesAction()
 
   return (
     <main className="min-h-screen bg-slate-50 p-6">
@@ -16,7 +16,7 @@ export default async function CabinetsRouteDesignPage() {
             Carga la hoja original, cruza herrajes y materiales contra la LdM resuelta y guarda ajustes de diseno sin modificar la BOM SAP.
           </p>
         </div>
-        <CabinetsRouteDesignClient initialSummaries={summaries} />
+        <CabinetsRouteDesignClient initialReferences={references} />
       </div>
     </main>
   )
