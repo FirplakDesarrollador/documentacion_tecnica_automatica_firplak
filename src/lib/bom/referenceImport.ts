@@ -2224,7 +2224,15 @@ export async function getReferenceImportWorkspace(runId: string): Promise<Refere
 }
 
 export async function listReferenceImportCandidates(search = ''): Promise<ReferenceImportCandidate[]> {
-  const normalizedSearch = search.trim()
+  const normalizedSearchTerms = [...new Set(
+    search
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean)
+  )].slice(0, 8)
   const salesReferenceCode = `concat_ws(
     '-',
     CASE
@@ -2233,14 +2241,18 @@ export async function listReferenceImportCandidates(search = ''): Promise<Refere
     END,
     r.reference_code
   )`
-  const searchClause = normalizedSearch
-    ? `WHERE ${salesReferenceCode} ILIKE $1
-       OR r.product_name ILIKE $1
-       OR r.designation ILIKE $1
-       OR r.commercial_measure ILIKE $1
-       OR r.special_label ILIKE $1
-       OR r.ref_attrs ->> 'accessory_text' ILIKE $1
-       OR f.product_type ILIKE $1`
+  const searchableReferenceText = `translate(lower(concat_ws(
+    ' ',
+    ${salesReferenceCode},
+    r.product_name,
+    r.designation,
+    r.commercial_measure,
+    r.special_label,
+    r.ref_attrs ->> 'accessory_text',
+    f.product_type
+  )), 'áéíóúüñ', 'aeiouun')`
+  const searchClause = normalizedSearchTerms.length > 0
+    ? `WHERE ${normalizedSearchTerms.map((_, index) => `${searchableReferenceText} LIKE $${index + 1}`).join('\n       AND ')}`
     : ''
   const rows: Record<string, unknown>[] = await dbQuery(
     `SELECT
@@ -2283,9 +2295,8 @@ export async function listReferenceImportCandidates(search = ''): Promise<Refere
       WHERE v.version_code = '000'
         AND COALESCE(s.status, 'ACTIVO') = 'ACTIVO'
     ) > 0
-    ORDER BY r.family_code, r.reference_code
-    LIMIT 100`,
-    normalizedSearch ? [`%${normalizedSearch}%`] : []
+    ORDER BY r.family_code, r.reference_code`,
+    normalizedSearchTerms.map(term => `%${term}%`)
   )
 
   return rows.flatMap((row) => {
