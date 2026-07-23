@@ -23,6 +23,7 @@ import {
   deriveCabinetCandidatesFromStructure,
   derivePieceRowsFromCandidates,
   applyOriginalRouteImport,
+  extractCabinetProfilesFromBom,
   isCabinetRouteStatus,
   normalizeCabinetRouteData,
   reconcileCabinetRouteData,
@@ -378,6 +379,8 @@ export async function getCabinetRouteWorkspaceByRefAction(referenceId: string): 
       ]
     }
 
+    const profiles = extractCabinetProfilesFromBom(rawLines)
+
     const enriched = withCabinetRouteSource(document.route_data_json, {
       analysisSkuComplete: displayCode,
       referenceId,
@@ -386,6 +389,7 @@ export async function getCabinetRouteWorkspaceByRefAction(referenceId: string): 
       missingBomCount: 0,
       bomSourceMode: 'direct',
       bomWarning: null,
+      profiles,
     })
 
     return {

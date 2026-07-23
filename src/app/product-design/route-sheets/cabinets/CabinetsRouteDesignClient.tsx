@@ -14,12 +14,15 @@ import {
   buildCabinetRouteMatchReport,
   calculatePieceAreaM2,
   calculatePieceEdgeMeters,
+  calculateAreaByRole,
+  calculateEdgeByRole,
   createCandidateMatchState,
   createEmptyCabinetRouteData,
   createManualMatchState,
   getOperationalMaterialRows,
   newCabinetRouteId,
   reconcileCabinetRouteData,
+  resolveProfileForRole,
   type CabinetAssemblyStep,
   type CabinetBoardConsumption,
   type CabinetBomCandidate,
@@ -29,10 +32,15 @@ import {
   type CabinetMatchStatus,
   type CabinetPackingLevel,
   type CabinetPieceRow,
+  type CabinetProfilesByRole,
   type CabinetRouteData,
   type CabinetRouteDecision,
   type CabinetRouteMaterialRow,
   type CabinetRouteStatus,
+  type MaterialRole,
+  MATERIAL_ROLES,
+  MATERIAL_ROLE_LABELS,
+  PROFILE_OPTIONS,
 } from '@/lib/routeSheets/cabinets'
 
 const REFERENCE_STATUS_LABELS: Record<string, string> = {
@@ -244,6 +252,18 @@ export function CabinetsRouteDesignClient({ initialReferences }: { initialRefere
     () => draft.sections.pieces.rows.reduce((sum, row) => sum + calculatePieceAreaM2(row), 0),
     [draft.sections.pieces.rows]
   )
+  const areaByRole = useMemo(() => calculateAreaByRole(draft.sections.pieces.rows), [draft.sections.pieces.rows])
+  const edgeByRole = useMemo(() => calculateEdgeByRole(draft.sections.pieces.rows), [draft.sections.pieces.rows])
+  const piecesByRole = useMemo(() => {
+    const grouped: Partial<Record<MaterialRole, CabinetPieceRow[]>> = {}
+    for (const role of MATERIAL_ROLES) grouped[role] = []
+    for (const row of draft.sections.pieces.rows) {
+      const role = row.material_role ?? 'structure'
+      if (!grouped[role]) grouped[role] = []
+      grouped[role].push(row)
+    }
+    return grouped
+  }, [draft.sections.pieces.rows])
   const operationalHardwareRows = useMemo(
     () => getOperationalMaterialRows(draft.sections.hardware.rows),
     [draft.sections.hardware.rows]
@@ -479,6 +499,19 @@ export function CabinetsRouteDesignClient({ initialReferences }: { initialRefere
         [section]: {
           ...current.sections[section],
           rows: [...current.sections[section].rows, row],
+        },
+      },
+    }))
+  }
+
+  function updateProfile(role: MaterialRole, value: string) {
+    setDraft(current => ({
+      ...current,
+      source: {
+        ...current.source,
+        profiles: {
+          ...current.source.profiles,
+          [role]: value || null,
         },
       },
     }))
@@ -720,11 +753,40 @@ export function CabinetsRouteDesignClient({ initialReferences }: { initialRefere
                 <Metric label="Candidatos activos" value={String(candidates.length)} />
               </div>
             </SectionCard>
-            <SectionCard title="Canto" description="Acumulado de cantos en piezas cargadas.">
-              <Metric label="Metros canto" value={formatNumber(totalEdgeMeters)} />
+            <SectionCard title="Perfiles" description="Perfil de material por rol (con fallback a Structure).">
+              {MATERIAL_ROLES.map(role => {
+                const direct = draft.source.profiles?.[role]
+                const resolved = resolveProfileForRole(role, draft.source.profiles ?? { structure: null, inner_structure: null, front: null, drawer_bottom: null })
+                const isFallback = !direct && !!resolved
+                return (
+                  <div key={role} className="mt-2 first:mt-0">
+                    <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{MATERIAL_ROLE_LABELS[role]}</label>
+                    <div className="flex items-center gap-1">
+                      <select
+                        value={direct ?? ''}
+                        onChange={(e) => updateProfile(role, e.target.value)}
+                        className="w-full rounded-md border border-slate-300 px-2 py-1 text-xs outline-none focus:border-indigo-400"
+                      >
+                        <option value="">----</option>
+                        {PROFILE_OPTIONS.map(p => (
+                          <option key={p} value={p}>{p}</option>
+                        ))}
+                      </select>
+                      {isFallback ? (
+                        <span className="shrink-0 text-[10px] text-slate-400" title={`Heredado de Structure: ${resolved}`}>
+                          ({resolved})
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                )
+              })}
             </SectionCard>
-            <SectionCard title="Area" description="Suma de areas en piezas cargadas.">
-              <Metric label="Area m2" value={formatNumber(totalAreaM2)} />
+            <SectionCard title="Area & Canto" description="Por rol y total acumulado.">
+              <Metric label="Area m2 total" value={formatNumber(totalAreaM2)} />
+              <div className="mt-2">
+                <Metric label="Canto m total" value={formatNumber(totalEdgeMeters)} />
+              </div>
             </SectionCard>
           </div>
 
@@ -779,13 +841,17 @@ export function CabinetsRouteDesignClient({ initialReferences }: { initialRefere
 
           <ReconciliationPanel issues={matchReport.issues} summary={matchReport.summary} onDecide={decide} />
 
-          <PiecesEditor
-            rows={draft.sections.pieces.rows}
+          <PiecesByRoleEditor
+            piecesByRole={piecesByRole}
+            areaByRole={areaByRole}
+            edgeByRole={edgeByRole}
+            profiles={draft.source.profiles ?? { structure: null, inner_structure: null, front: null, drawer_bottom: null }}
             notes={draft.sections.pieces.notes}
             onNotesChange={(value) => updateNotes('pieces', value)}
             onAdd={addManualPiece}
             onRemove={removePiece}
             onUpdate={updatePiece}
+            onUpdateProfile={updateProfile}
           />
 
           <CuttingEditor
@@ -861,8 +927,9 @@ function ReconciliationPanel({
   summary: ReturnType<typeof buildCabinetRouteMatchReport>['summary']
   onDecide: (section: CabinetDecisionSection, rowId: string, decision: CabinetRouteDecision) => void
 }) {
+  const materialIssues = useMemo(() => issues.filter(i => i.section !== 'pieces'), [issues])
   return (
-    <SectionCard title="Conciliacion SAP vs hoja" description="Las diferencias no quedan operativas hasta que alguien decida.">
+    <SectionCard title="Conciliacion SAP vs hoja" description="Diferencias en herrajes y empaque. Piezas CMPD09 se gestionan por rol (sin conciliacion).">
       <div className="grid grid-cols-2 gap-2">
         <Metric label="Coincide" value={String(summary.matched)} />
         <Metric label="Posibles" value={String(summary.possible_match)} />
@@ -870,11 +937,11 @@ function ReconciliationPanel({
         <Metric label="Pendientes" value={String(summary.pending_decisions)} />
       </div>
       <div className="mt-3 max-h-[520px] overflow-auto rounded-md border border-slate-200">
-        {issues.length === 0 ? (
-          <p className="p-3 text-xs text-slate-500">Sin diferencias detectadas con los datos actuales.</p>
+        {materialIssues.length === 0 ? (
+          <p className="p-3 text-xs text-slate-500">Sin diferencias en herrajes o empaque. Las piezas se gestionan por rol de material.</p>
         ) : (
           <ul className="divide-y divide-slate-100 text-xs">
-            {issues.map((issue, index) => {
+            {materialIssues.map((issue, index) => {
               const decisionSection = getDecisionSection(issue)
               return (
                 <li key={`${issue.type}-${issue.row_id ?? index}`} className="p-3">
@@ -937,72 +1004,119 @@ function getDecisionSection(issue: CabinetMatchIssue): CabinetDecisionSection | 
   return null
 }
 
-function PiecesEditor({
-  rows,
+function PiecesByRoleEditor({
+  piecesByRole,
+  areaByRole,
+  edgeByRole,
+  profiles,
   notes,
   onNotesChange,
   onAdd,
   onRemove,
   onUpdate,
+  onUpdateProfile,
 }: {
-  rows: CabinetPieceRow[]
+  piecesByRole: Partial<Record<MaterialRole, CabinetPieceRow[]>>
+  areaByRole: Partial<Record<MaterialRole, number>>
+  edgeByRole: Partial<Record<MaterialRole, number>>
+  profiles: CabinetProfilesByRole
   notes: string
   onNotesChange: (value: string) => void
   onAdd: () => void
   onRemove: (id: string) => void
   onUpdate: (id: string, patch: Partial<CabinetPieceRow>) => void
+  onUpdateProfile: (role: MaterialRole, value: string) => void
 }) {
   return (
-    <SectionCard title="Piezas / despiece" description="SAP propone piezas base; la hoja original completa letras, medidas, cantos y observaciones.">
+    <SectionCard title="Piezas / despiece" description="Piezas CMPD09 agrupadas por rol de material. Las piezas BOM se muestran sin decisiones de conciliacion (Fase 4).">
       <TextArea value={notes} placeholder="Notas de despiece" onChange={onNotesChange} />
-      <div className="mt-3 overflow-auto rounded-md border border-slate-200">
-        <table className="min-w-[1120px] w-full text-left text-xs">
-          <thead className="bg-slate-100 text-slate-600">
-            <tr>
-              <th className="px-2 py-2">Coincidencia</th>
-              <th className="px-2 py-2">Letra</th>
-              <th className="px-2 py-2">Pieza</th>
-              <th className="px-2 py-2">SAP</th>
-              <th className="px-2 py-2">Material</th>
-              <th className="px-2 py-2">Largo</th>
-              <th className="px-2 py-2">Ancho</th>
-              <th className="px-2 py-2">Cant.</th>
-              <th className="px-2 py-2">Canto L/A</th>
-              <th className="px-2 py-2">m canto</th>
-              <th className="px-2 py-2">Obs.</th>
-              <th className="px-2 py-2"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.id} className={`border-t border-slate-100 align-top ${row.decision === 'pending' ? 'bg-amber-50/40' : ''}`}>
-                <td className="px-2 py-2"><MatchBadge status={row.match_status} /></td>
-                <td className="px-2 py-2"><TextInput value={row.letter} onChange={(value) => onUpdate(row.id, { letter: value })} /></td>
-                <td className="px-2 py-2"><TextInput value={row.piece_name} onChange={(value) => onUpdate(row.id, { piece_name: value })} /></td>
-                <td className="px-2 py-2">
-                  <p className="font-mono text-[11px] text-slate-600">{row.sap_item_code || '-'}</p>
-                  <p className="text-[11px] text-slate-500">{row.sap_item_name || '-'}</p>
-                </td>
-                <td className="px-2 py-2"><TextInput value={row.material_label} onChange={(value) => onUpdate(row.id, { material_label: value })} /></td>
-                <td className="px-2 py-2"><NumberInput value={row.length_mm} min={0} onChange={(value) => onUpdate(row.id, { length_mm: value })} /></td>
-                <td className="px-2 py-2"><NumberInput value={row.width_mm} min={0} onChange={(value) => onUpdate(row.id, { width_mm: value })} /></td>
-                <td className="px-2 py-2"><NumberInput value={row.quantity} min={0} onChange={(value) => onUpdate(row.id, { quantity: value ?? 0 })} /></td>
-                <td className="px-2 py-2">
-                  <div className="flex gap-1">
-                    <NumberInput value={row.edge_long_sides} min={0} onChange={(value) => onUpdate(row.id, { edge_long_sides: value ?? 0 })} />
-                    <NumberInput value={row.edge_short_sides} min={0} onChange={(value) => onUpdate(row.id, { edge_short_sides: value ?? 0 })} />
-                  </div>
-                </td>
-                <td className="px-2 py-2 font-mono">{formatNumber(calculatePieceEdgeMeters(row))}</td>
-                <td className="px-2 py-2"><TextInput value={row.observation} onChange={(value) => onUpdate(row.id, { observation: value })} /></td>
-                <td className="px-2 py-2">
-                  <button type="button" onClick={() => onRemove(row.id)} className="text-xs font-semibold text-rose-600">Quitar</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {MATERIAL_ROLES.map(role => {
+        const rows = piecesByRole[role] ?? []
+        const area = areaByRole[role] ?? 0
+        const edge = edgeByRole[role] ?? 0
+        const direct = profiles[role]
+        const resolved = resolveProfileForRole(role, profiles)
+        const isFallback = !direct && !!resolved
+        if (rows.length === 0) return null
+
+        return (
+          <div key={role} className="mt-4 first:mt-0">
+            <div className="mb-2 flex flex-wrap items-center gap-3">
+              <h3 className="text-sm font-semibold text-slate-900">{MATERIAL_ROLE_LABELS[role]}</h3>
+              <div className="flex items-center gap-1">
+                <select
+                  value={direct ?? ''}
+                  onChange={(e) => onUpdateProfile(role, e.target.value)}
+                  className="rounded-md border border-slate-300 px-2 py-1 text-[11px] outline-none focus:border-indigo-400"
+                >
+                  <option value="">----</option>
+                  {PROFILE_OPTIONS.map(p => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+                {isFallback ? (
+                  <span className="text-[10px] text-slate-400">({resolved})</span>
+                ) : null}
+              </div>
+              <span className="text-[11px] text-slate-500">
+                Area: <strong>{formatNumber(area)} m²</strong>
+              </span>
+              <span className="text-[11px] text-slate-500">
+                Canto: <strong>{formatNumber(edge)} m</strong>
+              </span>
+              <span className="text-[11px] text-slate-500">
+                Piezas: <strong>{rows.length}</strong>
+              </span>
+            </div>
+            <div className="overflow-auto rounded-md border border-slate-200">
+              <table className="min-w-[960px] w-full text-left text-xs">
+                <thead className="bg-slate-100 text-slate-600">
+                  <tr>
+                    <th className="px-2 py-2">Letra</th>
+                    <th className="px-2 py-2">Pieza</th>
+                    <th className="px-2 py-2">Material</th>
+                    <th className="px-2 py-2">Largo</th>
+                    <th className="px-2 py-2">Ancho</th>
+                    <th className="px-2 py-2">Cant.</th>
+                    <th className="px-2 py-2">Canto L/A</th>
+                    <th className="px-2 py-2">m canto</th>
+                    <th className="px-2 py-2">Obs.</th>
+                    <th className="px-2 py-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <tr key={row.id} className="border-t border-slate-100 align-top">
+                      <td className="px-2 py-2"><TextInput value={row.letter} onChange={(value) => onUpdate(row.id, { letter: value })} /></td>
+                      <td className="px-2 py-2"><TextInput value={row.piece_name} onChange={(value) => onUpdate(row.id, { piece_name: value })} /></td>
+                      <td className="px-2 py-2"><TextInput value={row.material_label} onChange={(value) => onUpdate(row.id, { material_label: value })} /></td>
+                      <td className="px-2 py-2"><NumberInput value={row.length_mm} min={0} onChange={(value) => onUpdate(row.id, { length_mm: value })} /></td>
+                      <td className="px-2 py-2"><NumberInput value={row.width_mm} min={0} onChange={(value) => onUpdate(row.id, { width_mm: value })} /></td>
+                      <td className="px-2 py-2"><NumberInput value={row.quantity} min={0} onChange={(value) => onUpdate(row.id, { quantity: value ?? 0 })} /></td>
+                      <td className="px-2 py-2">
+                        <div className="flex gap-1">
+                          <NumberInput value={row.edge_long_sides} min={0} onChange={(value) => onUpdate(row.id, { edge_long_sides: value ?? 0 })} />
+                          <NumberInput value={row.edge_short_sides} min={0} onChange={(value) => onUpdate(row.id, { edge_short_sides: value ?? 0 })} />
+                        </div>
+                      </td>
+                      <td className="px-2 py-2 font-mono">{formatNumber(calculatePieceEdgeMeters(row))}</td>
+                      <td className="px-2 py-2"><TextInput value={row.observation} onChange={(value) => onUpdate(row.id, { observation: value })} /></td>
+                      <td className="px-2 py-2">
+                        <button type="button" onClick={() => onRemove(row.id)} className="text-xs font-semibold text-rose-600">Quitar</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      })}
+      {MATERIAL_ROLES.every(role => (piecesByRole[role] ?? []).length === 0) ? (
+        <div className="mt-3 rounded-md border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+          Sin piezas CMPD09 en la BOM de esta referencia.
+        </div>
+      ) : null}
       <button type="button" onClick={onAdd} className="mt-3 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700">
         Agregar pieza manual
       </button>

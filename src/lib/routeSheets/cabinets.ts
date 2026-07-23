@@ -100,11 +100,28 @@ export type CabinetRouteSourceState = {
   bom_source_mode: CabinetBomSourceMode | null
   bom_warning: string | null
   original_sheet: CabinetRouteSourceDocument | null
+  profiles: CabinetProfilesByRole
 }
 
 export type MaterialRole = 'structure' | 'inner_structure' | 'front' | 'drawer_bottom'
 
 export const MATERIAL_ROLES: MaterialRole[] = ['structure', 'inner_structure', 'front', 'drawer_bottom']
+
+export type CabinetProfilesByRole = {
+  structure: string | null
+  inner_structure: string | null
+  front: string | null
+  drawer_bottom: string | null
+}
+
+export const MATERIAL_ROLE_LABELS: Record<MaterialRole, string> = {
+  structure: 'Structure',
+  inner_structure: 'Inner structure',
+  front: 'Front',
+  drawer_bottom: 'Drawer bottom',
+}
+
+export const PROFILE_OPTIONS = ['ST', 'RH', 'CARB2', 'CARB2 RH'] as const
 
 export type CabinetPieceRow = CabinetMatchFields & {
   id: string
@@ -281,6 +298,7 @@ const EMPTY_SOURCE_STATE: CabinetRouteSourceState = {
   bom_source_mode: null,
   bom_warning: null,
   original_sheet: null,
+  profiles: { structure: null, inner_structure: null, front: null, drawer_bottom: null },
 }
 
 const LOW_SIGNAL_TOKENS = new Set([
@@ -463,6 +481,7 @@ export function withCabinetRouteSource(
     missingBomCount: number
     bomSourceMode: CabinetBomSourceMode
     bomWarning: string | null
+    profiles?: CabinetProfilesByRole | null
   }
 ): CabinetRouteData {
   return {
@@ -480,6 +499,7 @@ export function withCabinetRouteSource(
       missing_bom_count: input.missingBomCount,
       bom_source_mode: input.bomSourceMode,
       bom_warning: input.bomWarning,
+      profiles: input.profiles ?? routeData.source.profiles,
     },
   }
 }
@@ -719,6 +739,71 @@ export function calculatePieceAreaM2(row: CabinetPieceRow): number {
   const width = row.width_mm ?? 0
   const quantity = Number.isFinite(row.quantity) ? row.quantity : 0
   return (length / 1000) * (width / 1000) * quantity
+}
+
+export function calculateAreaByRole(rows: CabinetPieceRow[]): Partial<Record<MaterialRole, number>> {
+  const result: Partial<Record<MaterialRole, number>> = {}
+  for (const row of rows) {
+    if (!row.material_role) continue
+    const area = calculatePieceAreaM2(row)
+    result[row.material_role] = (result[row.material_role] ?? 0) + area
+  }
+  return result
+}
+
+export function calculateEdgeByRole(rows: CabinetPieceRow[]): Partial<Record<MaterialRole, number>> {
+  const result: Partial<Record<MaterialRole, number>> = {}
+  for (const row of rows) {
+    if (!row.material_role) continue
+    const edge = calculatePieceEdgeMeters(row)
+    result[row.material_role] = (result[row.material_role] ?? 0) + edge
+  }
+  return result
+}
+
+export function extractCabinetProfilesFromBom(
+  lines: ReadonlyArray<{
+    line_kind?: string | null
+    product_application_scope?: string | null
+    consumptions?: ReadonlyArray<{ status?: string | null; material_profile?: string | null }> | null
+  }>
+): CabinetProfilesByRole {
+  const profiles: CabinetProfilesByRole = { structure: null, inner_structure: null, front: null, drawer_bottom: null }
+
+  for (const line of lines) {
+    if (line.line_kind !== 'material_group') continue
+    const scope = (line.product_application_scope ?? '').toLowerCase()
+    const consumptions = line.consumptions ?? []
+    const defaultConsumption = [...consumptions].find(c => c.status === 'confirmed' || c.status === 'observed')
+    const profile = defaultConsumption?.material_profile ?? (consumptions[0]?.material_profile ?? null)
+    if (!profile) continue
+
+    if (scope === 'full_product') {
+      if (!profiles.structure) profiles.structure = profile
+      if (!profiles.front) profiles.front = profile
+      if (!profiles.inner_structure) profiles.inner_structure = profile
+      if (!profiles.drawer_bottom) profiles.drawer_bottom = profile
+    }
+    if (scope === 'structure' && !profiles.structure) profiles.structure = profile
+    if (scope === 'front' && !profiles.front) profiles.front = profile
+    if (scope === 'inner_structure' && !profiles.inner_structure) profiles.inner_structure = profile
+    if (scope === 'drawer_bottom' && !profiles.drawer_bottom) profiles.drawer_bottom = profile
+  }
+
+  if (profiles.structure && !profiles.inner_structure) profiles.inner_structure = profiles.structure
+  if (profiles.structure && !profiles.drawer_bottom) profiles.drawer_bottom = profiles.structure
+
+  return profiles
+}
+
+export function resolveProfileForRole(
+  role: MaterialRole,
+  profiles: CabinetProfilesByRole
+): string | null {
+  const direct = profiles[role]
+  if (direct) return direct
+  if (role === 'inner_structure' || role === 'drawer_bottom') return profiles.structure
+  return null
 }
 
 export function reconcileCabinetRouteData(routeData: CabinetRouteData, candidates: CabinetBomCandidate[]): CabinetRouteData {
@@ -1358,6 +1443,7 @@ function normalizeSourceState(value: unknown): CabinetRouteSourceState {
     .map(readString)
     .filter((warning): warning is string => Boolean(warning))
   const analysisSku = readString(record.analysis_sku_complete) || readString(record.sku_complete)
+  const rawProfiles = asRecord(record.profiles)
 
   return {
     sku_complete: analysisSku,
@@ -1378,6 +1464,12 @@ function normalizeSourceState(value: unknown): CabinetRouteSourceState {
           warnings,
         }
       : null,
+    profiles: {
+      structure: readString(rawProfiles.structure) || null,
+      inner_structure: readString(rawProfiles.inner_structure) || null,
+      front: readString(rawProfiles.front) || null,
+      drawer_bottom: readString(rawProfiles.drawer_bottom) || null,
+    },
   }
 }
 
