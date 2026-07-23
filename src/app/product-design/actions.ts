@@ -369,6 +369,9 @@ export async function getCabinetRouteWorkspaceByRefAction(referenceId: string): 
           status: 'draft' as CabinetRouteStatus,
         }
 
+    const profiles = extractCabinetProfilesFromBom(rawLines)
+    const edgeTypes = extractCabinetEdgeTypesFromBom(rawLines, nameMap)
+
     const bomPieces = derivePieceRowsFromCandidates(
       candidates,
       document.route_data_json.sections.pieces.rows,
@@ -380,9 +383,6 @@ export async function getCabinetRouteWorkspaceByRefAction(referenceId: string): 
         ...document.route_data_json.sections.pieces.rows,
       ]
     }
-
-    const profiles = extractCabinetProfilesFromBom(rawLines)
-    const edgeTypes = extractCabinetEdgeTypesFromBom(rawLines, nameMap)
 
     const enriched = withCabinetRouteSource(document.route_data_json, {
       analysisSkuComplete: displayCode,
@@ -629,7 +629,7 @@ export async function saveRouteDocumentAction(input: {
     }
 
     const status = toRouteStatus(input.status)
-    const routeData = withCabinetRouteSource(normalizeCabinetRouteData(input.routeData), {
+    let routeData = withCabinetRouteSource(normalizeCabinetRouteData(input.routeData), {
       analysisSkuComplete: referenceCode ?? input.skuComplete,
       referenceId,
       referenceCode,
@@ -638,6 +638,16 @@ export async function saveRouteDocumentAction(input: {
       bomSourceMode: 'direct',
       bomWarning: null,
     })
+
+    if (status === 'approved') {
+      routeData = {
+        ...routeData,
+        source: {
+          ...routeData.source,
+          snapshot_taken_at: new Date().toISOString(),
+        },
+      }
+    }
 
     const existing = await dbQuery(
       `SELECT id

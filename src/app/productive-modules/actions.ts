@@ -20,6 +20,7 @@ export type ProductiveRouteSheet = {
   sku_complete: string
   status: string | null
   color_code: string | null
+  color_name: string | null
   sap_description_original: string | null
   reference_id: string | null
   version_id: string | null
@@ -101,6 +102,7 @@ export async function getProductiveRouteSheetAction(skuComplete: string): Promis
         s.sku_complete,
         s.status,
         s.color_code,
+        c.name_color_sap AS color_name,
         s.sap_description_original,
         v.id AS version_id,
         r.id AS reference_id,
@@ -112,6 +114,7 @@ export async function getProductiveRouteSheetAction(skuComplete: string): Promis
        FROM public.product_skus s
        JOIN public.product_versions v ON v.id = s.version_id
        JOIN public.product_references r ON r.id = v.reference_id
+       LEFT JOIN public.colors c ON c.code_4dig = s.color_code
        LEFT JOIN LATERAL (
          SELECT route_data_json, status
          FROM public.product_route_documents d
@@ -145,6 +148,7 @@ export async function getProductiveRouteSheetAction(skuComplete: string): Promis
         sku_complete: sku,
         status: readString(row.status),
         color_code: readString(row.color_code),
+        color_name: readString(row.color_name),
         sap_description_original: readString(row.sap_description_original),
         reference_id: readString(row.reference_id),
         version_id: readString(row.version_id),

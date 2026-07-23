@@ -15,6 +15,8 @@ import {
   getOperationalPieceRows,
   type CabinetMatchStatus,
   type CabinetRouteMaterialRow,
+  MATERIAL_ROLES,
+  MATERIAL_ROLE_LABELS,
 } from '@/lib/routeSheets/cabinets'
 
 const EMPTY_ROUTE_DATA = createEmptyCabinetRouteData()
@@ -161,13 +163,14 @@ export function CabinetsRouteViewClient({ pilotSkus }: { pilotSkus: PilotSku[] }
             <p className="text-sm text-slate-600">{sheet?.sap_description_original || 'Sin descripcion SAP cargada.'}</p>
             <p className="mt-1 text-xs text-slate-500">
               Referencia: <strong>{sheet?.reference_code || '-'}</strong> | Estado ruta: <strong>{routeStatus}</strong>
+              {routeData.source?.snapshot_taken_at ? <><br />Instantanea: <strong>{new Date(routeData.source.snapshot_taken_at).toLocaleString('es-CO')}</strong></> : null}
             </p>
           </div>
           <div className="text-right text-sm">
             <p><strong>SKU analisis:</strong> {selectedSku}</p>
             <p><strong>Orden:</strong> {orderNumber || 'POR DEFINIR'}</p>
             <p><strong>Cantidad:</strong> {quantity || '1'}</p>
-            <p><strong>Color:</strong> {sheet?.color_code || '-'}</p>
+            <p><strong>Color:</strong> {sheet?.color_code || '-'}{sheet?.color_name ? ` (${sheet.color_name})` : ''}</p>
           </div>
         </div>
 
@@ -175,6 +178,27 @@ export function CabinetsRouteViewClient({ pilotSkus }: { pilotSkus: PilotSku[] }
           <p className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
             Esta hoja no esta aprobada todavia. Produccion puede verla, pero debe validarla con diseno antes de uso operativo.
           </p>
+        ) : null}
+
+        {routeData.source ? (
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <Section title="Perfiles por rol">
+              {MATERIAL_ROLES.map((role) => {
+                const profile = routeData.source!.profiles?.[role]
+                return profile ? (
+                  <p key={role} className="text-sm"><strong>{MATERIAL_ROLE_LABELS[role]}:</strong> {profile}</p>
+                ) : null
+              })}
+            </Section>
+            <Section title="Tipos de canto por rol">
+              {MATERIAL_ROLES.map((role) => {
+                const edge = routeData.source!.edge_types?.[role]
+                return edge ? (
+                  <p key={role} className="text-sm"><strong>{MATERIAL_ROLE_LABELS[role]}:</strong> {edge}</p>
+                ) : null
+              })}
+            </Section>
+          </div>
         ) : null}
 
         <div className="mt-4 grid gap-3 md:grid-cols-3">

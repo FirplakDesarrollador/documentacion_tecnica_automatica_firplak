@@ -137,3 +137,44 @@ Este repositorio sigue estrictamente el modelo definido en `AGENTS.md`:
 
 ---
 *Este archivo es mantenido autonomamente por los agentes de IA que colaboran en el proyecto.*
+
+## Session Anchored Summary (2026-07-23)
+
+### Objective
+Complete all remaining Fases (3–7) for the cabinet route-sheets module: roles, profiles, edge types, decision history, productive snapshot, and SAP dry-run.
+
+### Important Details
+- Phase 3: group pieces by `material_role`, add per-role profile selectors (ST/RH/CARB2/CARB2 RH) with fallback to Structure, calculate area m² per role, clean CMPD09 display (no match badges/decision buttons)
+- Phase 4: add `decision_history` to `CabinetRouteData` with `applyCabinetMatchDecision` logging, show match badges on pieces when Excel imported, lock editing when status `approved`
+- Phase 5: add `edge_types` per role (2mm/0.45mm/1mm/3mm) extracted from CMPD06 BOM lines via `extractCabinetEdgeTypesFromBom`, auto-apply to new piece rows via `derivePieceRowsFromCandidates`
+- Phase 6: resolve `color_code` → `color_name` via `JOIN public.colors` in productive-modules query, add `color_name` to `ProductiveRouteSheet` type, set `snapshot_taken_at` on save with `approved` status, show profiles/edge types in productive view
+- `nameMap` hoisted in `getCabinetRouteWorkspaceByRefAction` so available for edge type name inference
+- Commit made on `Oswaldo_cambios` for Phase 3 only; Phase 4–6 not yet committed
+- PILOT_SKUS removed from route-sheets module (Phase 2), still in types.ts for productive-modules
+
+### Work State
+**Completed:**
+- Phase 1 (parser, BOM reader, 51 + 11 tests)
+- Phase 2 (reference selector, workspace, candidate derivation, item names from component_items)
+- Phase 3: `CabinetProfilesByRole`, profiles in `CabinetRouteSourceState`, `extractCabinetProfilesFromBom`, `calculateAreaByRole`, `calculateEdgeByRole`, `resolveProfileForRole`, `PiecesByRoleEditor` component, profile selectors in UI, area/edge per role, clean piece display
+- Phase 4: `CabinetDecisionEntry` type, `decision_history` in `CabinetRouteData`, logging in `applyCabinetMatchDecision`, `normalizeDecisionEntry`, piece match badges when `hasSheet=true`, inline decision buttons (SAP/Hoja/Ign), read-only guard when `status===approved`, `DecisionHistoryPanel`
+- Phase 5: `edge_types` in `CabinetRouteSourceState`, `extractCabinetEdgeTypesFromBom` (reads CMPD06 lines, infers thickness from item name), `resolveEdgeTypeForRole`, `derivePieceRowsFromCandidates` accepts and applies edge types by role, edge type selectors in UI
+- Phase 6: `color_name` added to `ProductiveRouteSheet` type, SQL query JOINs `public.colors`, `snapshot_taken_at` field in `CabinetRouteSourceState`, set on save with `approved` status, productive view shows color_name, snapshot timestamp, profiles and edge types per role
+
+**Active:**
+- Phase 7: SAP dry-run proposals without mutations — not started
+
+**Blocked:** (none)
+
+### Next Move
+1. Implement Phase 7 (SAP dry-run proposals without mutations)
+2. Commit Phase 4–7 changes on `Oswaldo_cambios`
+
+### Relevant Files
+- `src/lib/routeSheets/cabinets.ts`: all domain types (`CabinetProfilesByRole`, `CabinetDecisionEntry`, `CabinetRouteData`), functions (`extractCabinetProfilesFromBom`, `extractCabinetEdgeTypesFromBom`, `calculateAreaByRole`, `applyCabinetMatchDecision`, `derivePieceRowsFromCandidates`), normalize/empty helpers
+- `src/app/product-design/actions.ts`: `getCabinetRouteWorkspaceByRefAction` (profiles, edgeTypes, nameMap extraction), `saveRouteDocumentAction` (snapshot_taken_at on approved)
+- `src/app/product-design/route-sheets/cabinets/CabinetsRouteDesignClient.tsx`: `PiecesByRoleEditor`, `DecisionHistoryPanel`, profile/edge type selectors, match badges, read-only guard
+- `src/app/product-design/route-sheets/cabinets/page.tsx`: calls `listCabinetBomReferencesAction`
+- `src/app/productive-modules/actions.ts`: `getProductiveRouteSheetAction` (color JOIN), `ProductiveRouteSheet` type with `color_name`
+- `src/app/productive-modules/route-sheets/cabinets/CabinetsRouteViewClient.tsx`: productive read-only UI showing color_name, snapshot, profiles, edge types per role
+- `src/lib/bom/types.ts`: `PILOT_SKUS` (kept for productive-modules)

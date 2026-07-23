@@ -95,6 +95,7 @@ export type CabinetRouteSourceState = {
   reference_id: string | null
   version_id: string | null
   updated_at: string | null
+  snapshot_taken_at: string | null
   bom_line_count: number
   missing_bom_count: number
   bom_source_mode: CabinetBomSourceMode | null
@@ -304,6 +305,7 @@ const EMPTY_SOURCE_STATE: CabinetRouteSourceState = {
   reference_id: null,
   version_id: null,
   updated_at: null,
+  snapshot_taken_at: null,
   bom_line_count: 0,
   missing_bom_count: 0,
   bom_source_mode: null,
@@ -1567,6 +1569,7 @@ function normalizeSourceState(value: unknown): CabinetRouteSourceState {
     reference_id: readString(record.reference_id),
     version_id: null,
     updated_at: readString(record.updated_at),
+    snapshot_taken_at: readString(record.snapshot_taken_at),
     bom_line_count: readNumber(record.bom_line_count) ?? 0,
     missing_bom_count: readNumber(record.missing_bom_count) ?? 0,
     bom_source_mode: normalizeBomSourceMode(record.bom_source_mode),
