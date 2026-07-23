@@ -25,7 +25,7 @@ export const BOARD_MATERIAL_PROFILE_SCOPE_KEYS = [
 
 export type BoardMaterialProfileScope = (typeof BOARD_MATERIAL_PROFILE_SCOPE_KEYS)[number]
 
-export const MATERIAL_PROFILE_OPTIONS = ['ST', 'RH', 'CARB2'] as const
+export const MATERIAL_PROFILE_OPTIONS = ['ST', 'RH', 'CARB2', 'CARB2 RH'] as const
 
 export type MaterialProfile = (typeof MATERIAL_PROFILE_OPTIONS)[number]
 
@@ -35,6 +35,7 @@ export const MATERIAL_PROFILE_LABELS: Record<MaterialProfile, string> = {
   ST: 'ST',
   RH: 'RH',
   CARB2: 'CARB2',
+  'CARB2 RH': 'CARB2 RH',
 }
 
 export const COLOR_MODE_OPTIONS = ['full', 'dual', 'balance', 'equivalent'] as const

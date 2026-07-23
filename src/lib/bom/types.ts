@@ -14,7 +14,7 @@ export const PRODUCT_APPLICATION_SCOPES = [
 
 export type ProductApplicationScope = (typeof PRODUCT_APPLICATION_SCOPES)[number]
 
-export const MATERIAL_PROFILES = ['ST', 'RH', 'CARB2'] as const
+export const MATERIAL_PROFILES = ['ST', 'RH', 'CARB2', 'CARB2 RH'] as const
 export type MaterialProfile = (typeof MATERIAL_PROFILES)[number] | string
 
 export type BomColorMode = 'full' | 'dual' | 'balance'

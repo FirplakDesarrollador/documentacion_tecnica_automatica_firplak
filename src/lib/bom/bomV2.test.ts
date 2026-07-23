@@ -136,6 +136,16 @@ test('normalizes SAP purchase dimensions and CARB profiles', () => {
   assert.equal(result.material_profile, 'CARB2')
 })
 
+test('infers CARB2 RH profile from "FONDO CARB RH" descriptions', () => {
+  assert.deepEqual(inferMaterialProfile('FONDO CARB RH 4MM CINZA/GRIS CLARO'), { normalized: 'CARB2 RH', source: 'CARB2 RH' })
+  assert.deepEqual(inferMaterialProfile('TABLERO CARB2 RH 15MM'), { normalized: 'CARB2 RH', source: 'CARB2 RH' })
+  assert.deepEqual(inferMaterialProfile('TABLERO CARB 15MM'), { normalized: 'CARB2', source: 'CARB' })
+  assert.deepEqual(inferMaterialProfile('TABLERO RH 15MM'), { normalized: 'RH', source: 'RH' })
+  assert.deepEqual(inferMaterialProfile('TABLERO ST 15MM'), { normalized: 'ST', source: 'ST' })
+  assert.deepEqual(inferMaterialProfile('TABLERO CARB2 18MM'), { normalized: 'CARB2', source: 'CARB2' })
+  assert.deepEqual(inferMaterialProfile('TABLERO 15MM'), { normalized: null, source: null })
+})
+
 test('groups mutually exclusive ST and CARB2 boards into one logical position', () => {
   const sharedLines = Array.from({ length: 16 }, (_, index) => line({
     baseItemCode: `CEMP03-${String(index + 1).padStart(4, '0')}-000`,

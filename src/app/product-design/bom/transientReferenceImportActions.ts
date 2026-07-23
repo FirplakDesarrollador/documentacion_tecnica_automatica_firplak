@@ -145,7 +145,7 @@ function isColorCode(value: string): boolean {
 }
 
 function isBoardMaterialProfile(value: string): boolean {
-  return value === 'ST' || value === 'RH' || value === 'CARB2'
+  return value === 'ST' || value === 'RH' || value === 'CARB2' || value === 'CARB2 RH'
 }
 
 function normalizeSkuCompletes(value: string[]): string[] {
