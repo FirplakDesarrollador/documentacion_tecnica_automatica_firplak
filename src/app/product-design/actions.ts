@@ -23,6 +23,7 @@ import {
   deriveCabinetCandidatesFromStructure,
   derivePieceRowsFromCandidates,
   applyOriginalRouteImport,
+  extractCabinetEdgeTypesFromBom,
   extractCabinetProfilesFromBom,
   isCabinetRouteStatus,
   normalizeCabinetRouteData,
@@ -292,6 +293,7 @@ export async function getCabinetRouteWorkspaceByRefAction(referenceId: string): 
       ? deriveCabinetCandidatesFromStructure(bomStructure.lines)
       : []
 
+    const nameMap = new Map<string, string>()
     const itemCodes = [...new Set(candidates.map(c => c.item_code).filter(Boolean))]
     if (itemCodes.length > 0) {
       const codes = itemCodes.map(c => `'${c.replace(/'/g, "''")}'`).join(',')
@@ -300,7 +302,6 @@ export async function getCabinetRouteWorkspaceByRefAction(referenceId: string): 
          FROM public.component_items
          WHERE item_code IN (${codes})`
       )
-      const nameMap = new Map<string, string>()
       for (const row of (exactRows as Array<Record<string, unknown>>)) {
         const code = readString(row.item_code) ?? ''
         const name = readString(row.item_name) ?? ''
@@ -370,7 +371,8 @@ export async function getCabinetRouteWorkspaceByRefAction(referenceId: string): 
 
     const bomPieces = derivePieceRowsFromCandidates(
       candidates,
-      document.route_data_json.sections.pieces.rows
+      document.route_data_json.sections.pieces.rows,
+      edgeTypes
     )
     if (bomPieces.length > 0) {
       document.route_data_json.sections.pieces.rows = [
@@ -380,6 +382,7 @@ export async function getCabinetRouteWorkspaceByRefAction(referenceId: string): 
     }
 
     const profiles = extractCabinetProfilesFromBom(rawLines)
+    const edgeTypes = extractCabinetEdgeTypesFromBom(rawLines, nameMap)
 
     const enriched = withCabinetRouteSource(document.route_data_json, {
       analysisSkuComplete: displayCode,
@@ -390,6 +393,7 @@ export async function getCabinetRouteWorkspaceByRefAction(referenceId: string): 
       bomSourceMode: 'direct',
       bomWarning: null,
       profiles,
+      edgeTypes,
     })
 
     return {

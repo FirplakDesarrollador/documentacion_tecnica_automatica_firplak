@@ -101,6 +101,7 @@ export type CabinetRouteSourceState = {
   bom_warning: string | null
   original_sheet: CabinetRouteSourceDocument | null
   profiles: CabinetProfilesByRole
+  edge_types: CabinetProfilesByRole
 }
 
 export type MaterialRole = 'structure' | 'inner_structure' | 'front' | 'drawer_bottom'
@@ -309,6 +310,7 @@ const EMPTY_SOURCE_STATE: CabinetRouteSourceState = {
   bom_warning: null,
   original_sheet: null,
   profiles: { structure: null, inner_structure: null, front: null, drawer_bottom: null },
+  edge_types: { structure: null, inner_structure: null, front: null, drawer_bottom: null },
 }
 
 const LOW_SIGNAL_TOKENS = new Set([
@@ -495,6 +497,7 @@ export function withCabinetRouteSource(
     bomSourceMode: CabinetBomSourceMode
     bomWarning: string | null
     profiles?: CabinetProfilesByRole | null
+    edgeTypes?: CabinetProfilesByRole | null
   }
 ): CabinetRouteData {
   return {
@@ -513,6 +516,7 @@ export function withCabinetRouteSource(
       bom_source_mode: input.bomSourceMode,
       bom_warning: input.bomWarning,
       profiles: input.profiles ?? routeData.source.profiles,
+      edge_types: input.edgeTypes ?? routeData.source.edge_types,
     },
   }
 }
@@ -677,7 +681,8 @@ export function deriveCabinetCandidatesFromStructure(
 
 export function derivePieceRowsFromCandidates(
   candidates: CabinetBomCandidate[],
-  existingPieces: CabinetPieceRow[]
+  existingPieces: CabinetPieceRow[],
+  edgeTypes?: CabinetProfilesByRole | null
 ): CabinetPieceRow[] {
   const existingLineIds = new Set(existingPieces.map(p => p.bom_line_id).filter(Boolean))
   const boardCandidates = candidates.filter(
@@ -686,32 +691,36 @@ export function derivePieceRowsFromCandidates(
       && !c.scope.startsWith('edge_band_')
       && !existingLineIds.has(c.line_id)
   )
-  return boardCandidates.map((c) => ({
-    ...createManualMatchState(),
-    match_status: 'sap_only' as CabinetMatchStatus,
-    decision: 'pending' as CabinetRouteDecision,
-    sap_line_id: c.line_id,
-    sap_item_code: c.item_code,
-    sap_item_name: c.item_name,
-    sap_qty: c.qty,
-    sap_level: c.level,
-    id: newCabinetRouteId('bom_piece'),
-    source: 'bom' as CabinetRouteSource,
-    original_ref: null,
-    bom_line_id: c.line_id,
-    letter: '',
-    piece_name: c.item_name ?? c.item_code,
-    material_label: '',
-    material_role: classifyScopeToRole(c.scope),
-    length_mm: null,
-    width_mm: null,
-    quantity: c.qty,
-    edge_long_sides: 0,
-    edge_short_sides: 0,
-    edge_type: '',
-    observation: '',
-    edited_fields: [],
-  }))
+  return boardCandidates.map((c) => {
+    const role = classifyScopeToRole(c.scope)
+    const edgeType = role && edgeTypes ? resolveEdgeTypeForRole(role, edgeTypes) : null
+    return {
+      ...createManualMatchState(),
+      match_status: 'sap_only' as CabinetMatchStatus,
+      decision: 'pending' as CabinetRouteDecision,
+      sap_line_id: c.line_id,
+      sap_item_code: c.item_code,
+      sap_item_name: c.item_name,
+      sap_qty: c.qty,
+      sap_level: c.level,
+      id: newCabinetRouteId('bom_piece'),
+      source: 'bom' as CabinetRouteSource,
+      original_ref: null,
+      bom_line_id: c.line_id,
+      letter: '',
+      piece_name: c.item_name ?? c.item_code,
+      material_label: '',
+      material_role: role,
+      length_mm: null,
+      width_mm: null,
+      quantity: c.qty,
+      edge_long_sides: 0,
+      edge_short_sides: 0,
+      edge_type: edgeType ?? '',
+      observation: '',
+      edited_fields: [],
+    }
+  })
 }
 
 function classifyScopeToRole(scope: string): MaterialRole | null {
@@ -817,6 +826,69 @@ export function resolveProfileForRole(
   if (direct) return direct
   if (role === 'inner_structure' || role === 'drawer_bottom') return profiles.structure
   return null
+}
+
+export function resolveEdgeTypeForRole(
+  role: MaterialRole,
+  edgeTypes: CabinetProfilesByRole
+): string | null {
+  const direct = edgeTypes[role]
+  if (direct) return direct
+  if (role === 'inner_structure' || role === 'drawer_bottom') return edgeTypes.structure
+  return null
+}
+
+const EDGE_TYPE_PATTERNS = [
+  { pattern: /(?:^|[^\d])2\s*MM/i, value: '2 mm' },
+  { pattern: /(?:^|[^\d])0\.?45/i, value: '0.45 mm' },
+  { pattern: /(?:^|[^\d])1\s*MM/i, value: '1 mm' },
+  { pattern: /(?:^|[^\d])3\s*MM/i, value: '3 mm' },
+]
+
+function inferEdgeTypeFromName(name: string): string | null {
+  for (const entry of EDGE_TYPE_PATTERNS) {
+    if (entry.pattern.test(name)) return entry.value
+  }
+  return null
+}
+
+export function extractCabinetEdgeTypesFromBom(
+  lines: ReadonlyArray<{
+    base_item_code?: string | null
+    product_application_scope?: string | null
+  }>,
+  nameMap?: ReadonlyMap<string, string>
+): CabinetProfilesByRole {
+  const edgeTypes: CabinetProfilesByRole = { structure: null, inner_structure: null, front: null, drawer_bottom: null }
+
+  for (const line of lines) {
+    const code = (line.base_item_code ?? '').toUpperCase()
+    if (!code.startsWith('CMPD06')) continue
+    const scope = (line.product_application_scope ?? '').toLowerCase()
+    if (!scope.startsWith('edge_band_')) continue
+
+    const name = nameMap?.get(code) ?? code
+    const thickness = inferEdgeTypeFromName(name)
+    if (!thickness) continue
+
+    const roleSuffix = scope.replace('edge_band_', '')
+    const isMultiRole = roleSuffix === 'full_product' || roleSuffix === 'body'
+    if (isMultiRole) {
+      if (!edgeTypes.structure) edgeTypes.structure = thickness
+      if (!edgeTypes.front) edgeTypes.front = thickness
+      if (!edgeTypes.inner_structure) edgeTypes.inner_structure = thickness
+      if (!edgeTypes.drawer_bottom) edgeTypes.drawer_bottom = thickness
+    }
+    if (roleSuffix === 'structure' && !edgeTypes.structure) edgeTypes.structure = thickness
+    if (roleSuffix === 'front' && !edgeTypes.front) edgeTypes.front = thickness
+    if (roleSuffix === 'inner' && !edgeTypes.inner_structure) edgeTypes.inner_structure = thickness
+    if (roleSuffix === 'drawer_bottom' && !edgeTypes.drawer_bottom) edgeTypes.drawer_bottom = thickness
+  }
+
+  if (edgeTypes.structure && !edgeTypes.inner_structure) edgeTypes.inner_structure = edgeTypes.structure
+  if (edgeTypes.structure && !edgeTypes.drawer_bottom) edgeTypes.drawer_bottom = edgeTypes.structure
+
+  return edgeTypes
 }
 
 export function reconcileCabinetRouteData(routeData: CabinetRouteData, candidates: CabinetBomCandidate[]): CabinetRouteData {
@@ -1486,6 +1558,7 @@ function normalizeSourceState(value: unknown): CabinetRouteSourceState {
     .filter((warning): warning is string => Boolean(warning))
   const analysisSku = readString(record.analysis_sku_complete) || readString(record.sku_complete)
   const rawProfiles = asRecord(record.profiles)
+  const rawEdgeTypes = asRecord(record.edge_types)
 
   return {
     sku_complete: analysisSku,
@@ -1511,6 +1584,12 @@ function normalizeSourceState(value: unknown): CabinetRouteSourceState {
       inner_structure: readString(rawProfiles.inner_structure) || null,
       front: readString(rawProfiles.front) || null,
       drawer_bottom: readString(rawProfiles.drawer_bottom) || null,
+    },
+    edge_types: {
+      structure: readString(rawEdgeTypes.structure) || null,
+      inner_structure: readString(rawEdgeTypes.inner_structure) || null,
+      front: readString(rawEdgeTypes.front) || null,
+      drawer_bottom: readString(rawEdgeTypes.drawer_bottom) || null,
     },
   }
 }
