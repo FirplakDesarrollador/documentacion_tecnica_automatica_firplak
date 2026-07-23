@@ -6,7 +6,7 @@ import { revalidatePath } from 'next/cache'
 import { dbQuery } from '@/lib/supabase'
 import { supabaseTable } from '@/lib/supabaseDynamic'
 import { assertPermission } from '@/utils/auth/access'
-import { getSapItem, updateSapItem, type SapEntityPayload } from '@/lib/sap/serviceLayer'
+import { getSapItem, getSapItemBom, updateSapItem, type SapEntityPayload } from '@/lib/sap/serviceLayer'
 import {
   isSapLifecycleState,
   readSapItemLifecycleState,
@@ -16,6 +16,7 @@ import {
 } from '@/lib/sap/itemLifecycle'
 import { SAP_CODE_MANAGEMENT_PERMISSION } from '@/types/auth'
 import { parseCabinetRouteWorkbook } from '@/lib/routeSheets/cabinetRouteExcel'
+import { contrastSapVsApp, type ContrastReport, type SkuCoverageIssue } from '@/lib/routeSheets/cabinetContrastSap'
 import {
   CABINET_ROUTE_SCHEMA_VERSION,
   buildCabinetRouteMatchReport,
@@ -782,6 +783,111 @@ export async function updateSapItemStatusAction(input: SapStatusUpdateInput): Pr
         error_message: errorMessage,
         created_by: access.user?.id ?? null,
       })
+  }
+}
+
+export async function contrastVsSapAction(referenceId: string): Promise<{
+  report: ContrastReport | null
+  error: string | null
+}> {
+  await assertPermission('module:product-design')
+
+  try {
+    const skuRows = await dbQuery(
+      `SELECT s.sku_complete, s.status
+       FROM public.product_skus s
+       JOIN public.product_versions v ON v.id = s.version_id
+       WHERE v.reference_id = $1
+         AND s.sku_complete LIKE 'V%-%-000-%'
+       ORDER BY s.sku_complete`,
+      [referenceId]
+    )
+
+    if (skuRows.length === 0) {
+      return { report: null, error: 'No se encontraron SKU piloto para esta referencia.' }
+    }
+
+    const skuCompletes = skuRows.map((r: Record<string, unknown>) => readString(r.sku_complete)).filter(Boolean) as string[]
+
+    const refRows = await dbQuery(
+      `SELECT family_code, reference_code FROM public.product_references WHERE id = $1 LIMIT 1`,
+      [referenceId]
+    )
+    const refRow = refRows[0] as Record<string, unknown> | undefined
+    const referenceCode = refRow
+      ? `V${readString(refRow.family_code) ?? ''}-${readString(refRow.reference_code) ?? ''}`
+      : null
+
+    const skuResults: import('@/lib/routeSheets/cabinetContrastSap').ContrastSkuResult[] = []
+    let fullMatchCount = 0
+    let differenceCount = 0
+    let errorCount = 0
+
+    for (const sku of skuCompletes) {
+      try {
+          const [sapBom, appResult] = await Promise.all([
+            getSapItemBom(sku).catch(() => null),
+            getCabinetRouteBomLines(sku).catch(() => null),
+          ])
+
+        const appLines = appResult?.lines ?? []
+        const sapLines = sapBom?.lines ?? []
+
+        const { sap_contrast_lines, app_contrast_lines, differences } = contrastSapVsApp(
+          sapLines.map(l => ({ item_code: l.ItemCode, item_name: l.ItemName, quantity: l.Quantity })),
+          appLines.map(l => ({
+            item_code: l.resolved_item_code,
+            item_name: l.resolved_item_name,
+            qty: l.qty,
+            scope: l.product_application_scope,
+          }))
+        )
+
+        const isFull = differences.length === 0 && !(!sapBom && appLines.length > 0)
+        if (isFull) fullMatchCount++
+        else differenceCount++
+
+        skuResults.push({
+          sku_complete: sku,
+          match: isFull ? 'full' : sapBom === null ? 'sap_missing' : 'differences',
+          error: null,
+          sap_lines: sap_contrast_lines,
+          app_lines: app_contrast_lines,
+          differences,
+        })
+      } catch (err) {
+        errorCount++
+        skuResults.push({
+          sku_complete: sku,
+          match: 'error',
+          error: err instanceof Error ? err.message : 'Error desconocido',
+          sap_lines: [],
+          app_lines: [],
+          differences: [],
+        })
+      }
+    }
+
+    const coverageIssues: SkuCoverageIssue[] = []
+
+    return {
+      report: {
+        reference_id: referenceId,
+        reference_code: referenceCode,
+        total_skus: skuCompletes.length,
+        full_match_count: fullMatchCount,
+        difference_count: differenceCount,
+        error_count: errorCount,
+        sku_results: skuResults,
+        coverage_issues: coverageIssues,
+      },
+      error: null,
+    }
+  } catch (err) {
+    return {
+      report: null,
+      error: err instanceof Error ? err.message : 'Error al contrastar con SAP',
+    }
   }
 }
 
