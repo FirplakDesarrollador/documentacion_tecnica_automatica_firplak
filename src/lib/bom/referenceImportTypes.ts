@@ -19,12 +19,6 @@ export type ReferenceImportContext = {
   productDescription?: string | null
   manufacturingProcess: string | null
   productType: string | null
-  /**
-   * Explicit roles belong to a reference BOM, never to a physical component
-   * code globally. This lets the same edge format mean front in one reference
-   * and structure in another.
-   */
-  existingBomStructure?: ReferenceBomStructure | null
   skuColorOverrides?: Map<string, BomColorOverride[]>
 }
 

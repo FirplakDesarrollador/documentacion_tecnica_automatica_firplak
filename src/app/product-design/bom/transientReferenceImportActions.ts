@@ -661,7 +661,7 @@ export async function saveTransientBoardConditionalProfileRuleAction(input: {
       (defaultMaterialProfile !== null && !isBoardMaterialProfile(defaultMaterialProfile))
       || conditions.some(condition => !isBoardMaterialProfile(condition.sourceMaterialProfile) || !isBoardMaterialProfile(condition.targetMaterialProfile))
     ) {
-      throw new Error('Los perfiles de tablero deben ser ST, RH o CARB2.')
+      throw new Error('Los perfiles de tablero deben ser ST, RH, CARB2 o CARB2 RH.')
     }
 
     const colorRows: Record<string, unknown>[] = await dbQuery(
@@ -808,7 +808,7 @@ export async function saveTransientBoardDualSkuOverridesAction(input: {
     }
     if (structureColorCode === frontColorCode) throw new Error('Un caso Dual necesita un tablero de estructura distinto al de frentes.')
     if (!isBoardMaterialProfile(structureMaterialProfile) || !isBoardMaterialProfile(frontMaterialProfile)) {
-      throw new Error('Los perfiles de tablero deben ser ST, RH o CARB2.')
+      throw new Error('Los perfiles de tablero deben ser ST, RH, CARB2 o CARB2 RH.')
     }
 
     const skuRows: Record<string, unknown>[] = await dbQuery(
@@ -973,7 +973,7 @@ export async function saveTransientBoardDualColorCaseAction(input: {
     }
     if (structureColorCode === frontColorCode) throw new Error('Un caso Dual necesita tableros distintos para estructura y frente.')
     if (!isBoardMaterialProfile(structureMaterialProfile) || !isBoardMaterialProfile(frontMaterialProfile)) {
-      throw new Error('Los perfiles de tablero deben ser ST, RH o CARB2.')
+      throw new Error('Los perfiles de tablero deben ser ST, RH, CARB2 o CARB2 RH.')
     }
 
     const colorRows: Record<string, unknown>[] = await dbQuery(
@@ -1625,8 +1625,8 @@ export async function applyTransientBoardFullProductColorRuleAction(input: {
     if (!isColorCode(colorCode) || !isColorCode(boardColorCode)) {
       throw new Error('El color de producto y el color de tablero deben tener cuatro caracteres.')
     }
-    if (materialProfile !== 'ST' && materialProfile !== 'RH' && materialProfile !== 'CARB2') {
-      throw new Error('El perfil de tablero debe ser ST, RH o CARB2.')
+    if (!isBoardMaterialProfile(materialProfile)) {
+      throw new Error('El perfil de tablero debe ser ST, RH, CARB2 o CARB2 RH.')
     }
 
     const [coverage] = await analyzeReferenceImportBoardMatrix({ colorCodes: [colorCode] })

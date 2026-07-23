@@ -243,7 +243,7 @@ function normalizeApplicationMaterialProfilePatch(input: unknown) {
     const profile = typeof rawValue === 'string' ? rawValue.trim().toUpperCase() : ''
     if (!profile) continue
     if (!MATERIAL_PROFILE_OPTIONS.includes(profile as (typeof MATERIAL_PROFILE_OPTIONS)[number])) {
-      throw new Error(`El perfil de material "${scope}" debe ser ST, RH o CARB2`)
+      throw new Error(`El perfil de material "${scope}" debe ser ST, RH, CARB2 o CARB2 RH`)
     }
     patch[scope] = profile as (typeof MATERIAL_PROFILE_OPTIONS)[number]
   }

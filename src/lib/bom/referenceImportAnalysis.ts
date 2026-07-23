@@ -16,6 +16,7 @@ import {
   type ReferenceImportFindingDraft,
 } from './referenceImportTypes'
 import type { ReferenceProductApplicationScope } from './referenceImportScopes'
+import { inferBoardApplicationScope } from './sapMapping'
 
 type LineEvidence = {
   snapshot: DirectBomSnapshot
@@ -169,22 +170,6 @@ function explicitSemanticScope(
   return null
 }
 
-function persistedSemanticScope(
-  context: ReferenceImportContext,
-  line: NormalizedSapBomLine
-): ReferenceProductApplicationScope | null {
-  const matchingLines = context.existingBomStructure?.lines
-    .filter(candidate => candidate.line_kind === 'fixed' && candidate.base_item_code === line.baseItemCode)
-    ?? []
-  const fixedLineScope = explicitSemanticScope(matchingLines[line.occurrence - 1]?.product_application_scope)
-  if (fixedLineScope) return fixedLineScope
-  const materialGroup = context.existingBomStructure?.lines.find(candidate =>
-    candidate.line_kind === 'material_group'
-    && candidate.alternatives.some(alternative => alternative.base_item_code === line.baseItemCode)
-  )
-  return explicitSemanticScope(materialGroup?.product_application_scope)
-}
-
 function pendingEdgeScopeFromSkuOverrides(
   line: NormalizedSapBomLine,
   evidence: LineEvidence[],
@@ -222,8 +207,12 @@ function scopeFromSemantics(
   // application role. A word in its name must not turn it into a board front.
   if (line.baseItemCode.trim().toUpperCase().startsWith('CMPD09')) return 'NA'
 
-  const fromPublishedReference = persistedSemanticScope(context, line)
-  if (fromPublishedReference) return fromPublishedReference
+  const boardNameScope = inferBoardApplicationScope({
+    itemName: line.itemName,
+    baseItemCode: line.baseItemCode,
+    materialKind: line.technicalMetadata?.material_kind,
+  })
+  if (boardNameScope) return boardNameScope
 
   const fromPendingSkuOverride = pendingEdgeScopeFromSkuOverrides(line, evidence, context)
   if (fromPendingSkuOverride) return fromPendingSkuOverride

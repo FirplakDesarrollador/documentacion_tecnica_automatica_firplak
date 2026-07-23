@@ -1146,6 +1146,8 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const [boardMatrixMessage, setBoardMatrixMessage] = useState<string | null>(null)
   const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null)
   const [analysisStartedAt, setAnalysisStartedAt] = useState<number | null>(null)
+  const [analysisCancellationRequested, setAnalysisCancellationRequested] = useState(false)
+  const analysisAbortControllerRef = useRef<AbortController | null>(null)
   const [lastAnalysisDurationSeconds, setLastAnalysisDurationSeconds] = useState<number | null>(null)
   const [publishState, setPublishState] = useState<'idle' | 'validating' | 'published' | 'failed'>('idle')
   const [isPending, startTransition] = useTransition()
@@ -1342,7 +1344,10 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     referenceId: string,
     retry?: { skuCompletes: string[]; cachedSnapshots: ReferenceImportWorkspace['snapshots'] }
   ): Promise<void> {
+    const abortController = new AbortController()
+    analysisAbortControllerRef.current = abortController
     const startedAt = Date.now()
+    setAnalysisCancellationRequested(false)
     setPublishState('idle')
     clearTransientMatrixAbsenceApprovals()
     setSelectedMatrixHybridCases({})
@@ -1386,6 +1391,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ referenceId, ...(retry ? { retry } : {}) }),
+        signal: abortController.signal,
       })
       if (!response.ok || !response.body) throw new Error('No se pudo iniciar el análisis SAP.')
 
@@ -1420,10 +1426,25 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
         reader.releaseLock()
       }
       if (!completed) throw new Error('El análisis SAP terminó sin devolver un resultado.')
+    } catch (error) {
+      if (abortController.signal.aborted) {
+        setMessage('Consulta SAP detenida. No se enviarán más consultas; una que ya estuviera en curso puede finalizar en SAP.')
+        return
+      }
+      throw error
     } finally {
+      if (analysisAbortControllerRef.current === abortController) analysisAbortControllerRef.current = null
+      setAnalysisCancellationRequested(false)
       setAnalysisProgress(null)
       setAnalysisStartedAt(null)
     }
+  }
+
+  function cancelReferenceAnalysis(): void {
+    const abortController = analysisAbortControllerRef.current
+    if (!abortController || abortController.signal.aborted) return
+    setAnalysisCancellationRequested(true)
+    abortController.abort()
   }
 
   async function verifyColorMatrixWithProgress(selections: Array<{
@@ -2709,10 +2730,16 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
           ) : null}
 
           {analysisProgress ? <section aria-live="polite" className="border border-sky-200 bg-sky-50 px-5 py-4 text-sm text-sky-950">
-            <div className="flex items-center gap-2 font-semibold"><LoaderCircle className="h-4 w-4 animate-spin" />Análisis SAP en curso</div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 font-semibold"><LoaderCircle className="h-4 w-4 animate-spin" />Análisis SAP en curso</div>
+              <button type="button" onClick={cancelReferenceAnalysis} disabled={analysisCancellationRequested} className="h-8 rounded-md border border-sky-400 bg-white px-3 text-xs font-semibold text-sky-950 disabled:cursor-not-allowed disabled:opacity-50">
+                {analysisCancellationRequested ? 'Deteniendo consulta…' : 'Detener consulta'}
+              </button>
+            </div>
             <p className="mt-1">Tiempo transcurrido: {formatElapsedSeconds(analysisElapsedSeconds)}</p>
             <p className="mt-1">{analysisProgress.message}{analysisProgress.current !== null && analysisProgress.total !== null ? ` (${analysisProgress.current} de ${analysisProgress.total})` : ''}</p>
             {analysisProgress.total !== null && analysisProgress.total > 0 ? <progress className="mt-3 h-2 w-full accent-sky-700" value={analysisProgress.current ?? 0} max={analysisProgress.total} /> : <div className="mt-3 h-2 w-full animate-pulse bg-sky-200" />}
+            <p className="mt-3 text-xs text-sky-900">Detiene las siguientes consultas SAP; una consulta ya iniciada puede terminar.</p>
           </section> : null}
 
           {workspace ? (

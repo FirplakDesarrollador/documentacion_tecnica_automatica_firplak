@@ -5,7 +5,7 @@ import { analyzeReferenceBom } from './referenceImportAnalysis'
 import { assessBoardFullProductRuleCandidate, buildBoardMatrixRows, deriveBoardConditionalRuleStrategies, detectBoardDualCandidates, evaluateGlobalBoardDualCandidate, summarizeBoardEvidenceExamples, summarizeBoardProfileEvidence } from './boardMatrix'
 import { resolveBomForSku } from './resolve'
 import { isBoardMaterialApplicationScope } from './referenceImportScopes'
-import { buildComponentTechnicalMetadata, inferMaterialProfile, normalizeSapLengthToMm } from './sapMapping'
+import { buildComponentTechnicalMetadata, inferBoardApplicationScope, inferMaterialProfile, normalizeSapLengthToMm } from './sapMapping'
 import type {
   BomOverrides,
   BomStructure,
@@ -145,6 +145,91 @@ test('infers CARB2 RH profile from "FONDO CARB RH" descriptions', () => {
   assert.deepEqual(inferMaterialProfile('TABLERO CARB2 18MM'), { normalized: 'CARB2', source: 'CARB2' })
   assert.deepEqual(inferMaterialProfile('TABLERO 15MM'), { normalized: null, source: null })
 })
+
+test('classifies only board fondo materials as drawer bottoms', () => {
+  assert.equal(inferBoardApplicationScope({
+    itemName: 'FONDO CARB RH 4MM CINZA/GRIS CLARO',
+    baseItemCode: 'CMPD06-0030-000',
+    materialKind: 'board',
+  }), 'drawer_bottom')
+  assert.equal(inferBoardApplicationScope({
+    itemName: 'TABLERO ST 15MM',
+    baseItemCode: 'CMPD06-0001-000',
+    materialKind: 'board',
+  }), null)
+  assert.equal(inferBoardApplicationScope({
+    itemName: 'FONDO CAJON SUP',
+    baseItemCode: 'CMPD09-0015-000',
+    materialKind: 'board',
+  }), null)
+  assert.equal(inferBoardApplicationScope({
+    itemName: 'FONDO CARB RH 4MM',
+    baseItemCode: 'CMPD06-0030-000',
+    materialKind: 'other',
+  }), null)
+})
+
+test('keeps the main board and drawer bottom in separate matrix roles', () => {
+  const configuration: ColorConfiguration = {
+    code4dig: '0437',
+    colorMode: 'full',
+    applicationColors: { full_product: '0437', drawer_bottom: '0467' },
+    applicationMaterialProfiles: { full_product: 'ST', drawer_bottom: 'CARB2 RH' },
+    allowedProductTypes: [],
+    allowedManufacturingProcesses: [],
+  }
+  const rows = buildBoardMatrixRows({
+    colorConfigurations: new Map([['0437', configuration]]),
+    evidence: [
+      { sourceColorCode: '0437', item: boardEvidence({ skuComplete: 'VBAN12-0081-000-0437', boardColorCode: '0437', materialProfile: 'ST', role: 'full_product' }) },
+      { sourceColorCode: '0437', item: boardEvidence({ skuComplete: 'VBAN12-0081-000-0437', boardColorCode: '0467', materialProfile: 'CARB2 RH', role: 'drawer_bottom', baseItemCode: 'CMPD06-0030-000' }) },
+    ],
+  })
+
+  assert.deepEqual(rows.map(row => [row.role, row.proposedColorCode, row.status]).sort((left, right) => String(left[0]).localeCompare(String(right[0]))), [
+    ['drawer_bottom', '0467', 'matches'],
+    ['full_product', '0437', 'matches'],
+  ])
+  assert.equal(rows.some(row => row.status === 'variation_by_design'), false)
+})
+
+test('fresh SAP import classifies a fondo board as drawer bottom', () => {
+  const analysis = analyzeReferenceBom({
+    context: {
+      referenceId: 'reference', familyCode: 'BAN12', referenceCode: '0081', productName: 'Macao',
+      manufacturingProcess: 'MUEBLES NACIONAL', productType: 'MUEBLE',
+    },
+    snapshots: [snapshot('VBAN12-0081-000-0437', '0437', [line({
+      baseItemCode: 'CMPD06-0030-000', variantCode4: '0467', sourceOrder: 1, qty: 0.16,
+      itemName: 'FONDO CARB RH 4MM CINZA/GRIS CLARO',
+      technicalMetadata: metadata({ material_kind: 'board', material_profile: 'CARB2 RH', material_profile_source: 'CARB2 RH', thickness_mm: 4, format_key: '2440x1220x4', metadata_source: 'sap_and_name' }),
+    })])],
+    colorConfigurations: new Map([['0437', {
+      code4dig: '0437', colorMode: 'full',
+      applicationColors: { full_product: '0437', drawer_bottom: '0467' },
+      applicationMaterialProfiles: { full_product: 'ST', drawer_bottom: 'CARB2 RH' },
+      allowedProductTypes: [], allowedManufacturingProcesses: [],
+    }]]),
+  })
+
+  assert.equal(analysis.proposedBomStructure.lines[0]?.product_application_scope, 'drawer_bottom')
+  const fondo = component('CMPD06-0030-000-0467', 'FONDO CARB RH 4MM', metadata({ material_kind: 'board', material_profile: 'CARB2 RH' }))
+  const resolved = resolveBomForSku({
+    skuComplete: 'VBAN12-0081-000-0437', skuColorCode: '0437', structure: analysis.proposedBomStructure,
+    globalOverrides: emptyOverrides, versionOverrides: emptyOverrides,
+    colorway: {
+      code_4dig: '0437', name_color_sap: 'BLANCO', color_mode: 'full',
+      application_colors_json: { full_product: '0437', drawer_bottom: '0467' },
+      application_material_profiles_json: { full_product: 'ST', drawer_bottom: 'CARB2 RH' },
+      allowed_product_types: [], is_active: true,
+    },
+    componentItems: new Map([[fondo.item_code, fondo]]),
+  })
+  assert.deepEqual(resolved.map(item => `${item.product_application_scope}:${item.resolved_item_code}`), [
+    'drawer_bottom:CMPD06-0030-000-0467',
+  ])
+})
+
 
 test('groups mutually exclusive ST and CARB2 boards into one logical position', () => {
   const sharedLines = Array.from({ length: 16 }, (_, index) => line({
@@ -746,21 +831,11 @@ test('uses pending semantic SKU edge overrides before the reference BOM is publi
   assert.equal(analysis.findings.some(finding => finding.findingType === 'bom_line_review'), false)
 })
 
-test('reuses published reference roles and SKU color overrides during reanalysis', () => {
+test('uses current SKU color overrides during reanalysis', () => {
   const analysis = analyzeReferenceBom({
     context: {
       referenceId: 'reference', familyCode: 'BAN12', referenceCode: '0022', productName: 'Prueba canto 1,5 mm',
       manufacturingProcess: 'MUEBLES NACIONAL', productType: 'MUEBLE',
-      existingBomStructure: {
-        schema_version: 2,
-        structure_type: 'production',
-        input_warehouse_code: '01',
-        output_warehouse_code: null,
-        lines: [
-          { line_id: 'ln_000001', sort_order: 1, line_kind: 'fixed', base_item_code: 'CMPD06-0003-000', product_application_scope: 'edge_band_body', qty: 7.2, input_warehouse_code: null, issue_method_override: null, alternatives: [], consumptions: [] },
-          { line_id: 'ln_000002', sort_order: 2, line_kind: 'fixed', base_item_code: 'CMPD06-0014-000', product_application_scope: 'edge_band_front', qty: 2.4, input_warehouse_code: null, issue_method_override: null, alternatives: [], consumptions: [] },
-        ],
-      },
       skuColorOverrides: new Map([['VBAN12-0022-000-0493', [{
         override_id: 'greco-front-edge', color_code: '0493', product_application_scope: 'edge_band_front',
         base_item_code: null, target_color_code: '0493', material_profile: null,
@@ -779,7 +854,7 @@ test('reuses published reference roles and SKU color overrides during reanalysis
   })
 
   assert.deepEqual(analysis.proposedBomStructure.lines.map(line => line.product_application_scope), [
-    'edge_band_body',
+    'edge_band_full_product',
     'edge_band_front',
   ])
   assert.equal(analysis.findings.some(finding => finding.findingType === 'bom_line_review'), false)
@@ -818,23 +893,11 @@ test('uses an explicit material-group role instead of expanding it to every Dual
   assert.equal(resolved[0]?.resolution_status, 'resolved')
 })
 
-test('reuses a published material-group role during reference reanalysis', () => {
+test('classifies a single current board as full product during reference reanalysis', () => {
   const analysis = analyzeReferenceBom({
     context: {
       referenceId: 'reference', familyCode: 'BAN05', referenceCode: '0122', productName: 'Prueba grupo frontal',
       manufacturingProcess: 'MUEBLES NACIONAL', productType: 'MUEBLE',
-      existingBomStructure: {
-        schema_version: 2,
-        structure_type: 'production',
-        input_warehouse_code: '01',
-        output_warehouse_code: null,
-        lines: [{
-          line_id: 'ln_000001', sort_order: 1, line_kind: 'material_group', base_item_code: null,
-          product_application_scope: 'front', qty: null, input_warehouse_code: null, issue_method_override: null,
-          alternatives: [{ alternative_id: 'alt_01', base_item_code: 'CMPD06-0004-000', material_profile: 'RH', is_default: true }],
-          consumptions: [],
-        }],
-      },
     },
     snapshots: [snapshot('VBAN05-0122-000-0493', '0493', [line({
       baseItemCode: 'CMPD06-0004-000', variantCode4: '0467', sourceOrder: 1,
@@ -844,7 +907,7 @@ test('reuses a published material-group role during reference reanalysis', () =>
     colorConfigurations: new Map(),
   })
 
-  assert.equal(analysis.proposedBomStructure.lines[0]?.product_application_scope, 'front')
+  assert.equal(analysis.proposedBomStructure.lines[0]?.product_application_scope, 'full_product')
 })
 
 test('keeps 0439 as an internal-color candidate and bases a 0494 profile candidate on SAP evidence', () => {

@@ -56,9 +56,12 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (!referenceId) return Response.json({ success: false, message: 'Selecciona una referencia válida.' }, { status: 400 })
 
   const encoder = new TextEncoder()
+  let cancelled = request.signal.aborted
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       let closed = false
+      const markCancelled = (): void => { cancelled = true }
+      request.signal.addEventListener('abort', markCancelled, { once: true })
       const send = (event: AnalysisEvent): void => {
         if (closed) return
         controller.enqueue(streamEvent(encoder, event))
@@ -75,6 +78,7 @@ export async function POST(request: NextRequest): Promise<Response> {
             referenceId,
             ...(retry ? { retry } : {}),
             onProgress: progress => send({ type: 'progress', progress }),
+            isCancelled: () => cancelled,
           })
           const capturedCount = workspace.snapshots.filter(snapshot => snapshot.status === 'captured').length
           const retryMessage = retry
@@ -88,11 +92,16 @@ export async function POST(request: NextRequest): Promise<Response> {
             workspace,
           })
         } catch (error) {
-          send({ type: 'error', message: error instanceof Error ? error.message : 'No se pudo analizar la referencia desde SAP.' })
+          if (!cancelled) send({ type: 'error', message: error instanceof Error ? error.message : 'No se pudo analizar la referencia desde SAP.' })
         } finally {
+          request.signal.removeEventListener('abort', markCancelled)
           close()
         }
       })()
+    },
+    cancel() {
+      // Stop scheduling further SAP reads; a request already in flight may finish at SAP.
+      cancelled = true
     },
   })
 

@@ -19,9 +19,7 @@ function proposalForRole(configuration: ColorConfiguration | undefined, role: Bo
   materialProfile: string | null
 } {
   if (!configuration || role === 'role_pending') return { colorCode: null, materialProfile: null }
-  const key = configuration.colorMode === 'full' || configuration.colorMode === 'equivalent'
-    ? 'full_product'
-    : role
+  const key = role
   return {
     colorCode: configuration.applicationColors[key] ?? null,
     materialProfile: configuration.applicationMaterialProfiles[key] ?? null,

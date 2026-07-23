@@ -1,5 +1,6 @@
 import type { SapEntityPayload } from '@/lib/sap/serviceLayer'
 import type { ComponentCategory, ComponentTechnicalMetadata, MaterialProfile } from './types'
+import type { BoardMaterialApplicationScope } from './referenceImportScopes'
 
 export type ParsedSapCode = {
   itemCode: string
@@ -53,6 +54,16 @@ export function inferMaterialProfile(itemName: string): {
   const stMatch = normalizedName.match(/\bST\b/)
   if (stMatch) return { normalized: 'ST', source: stMatch[0] }
   return { normalized: null, source: null }
+}
+
+export function inferBoardApplicationScope(input: {
+  itemName: string
+  baseItemCode: string
+  materialKind: ComponentTechnicalMetadata['material_kind'] | undefined
+}): BoardMaterialApplicationScope | null {
+  if (input.materialKind !== 'board') return null
+  if (input.baseItemCode.trim().toUpperCase().startsWith('CMPD09')) return null
+  return input.itemName.trim().toUpperCase().includes('FONDO') ? 'drawer_bottom' : null
 }
 
 export function inferThicknessFromName(itemName: string): number | null {

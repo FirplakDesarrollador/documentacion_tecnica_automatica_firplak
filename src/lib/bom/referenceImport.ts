@@ -19,6 +19,7 @@ import {
 import {
   buildComponentTechnicalMetadata,
   inferBaseItemName,
+  inferBoardApplicationScope,
   inferComponentCategory,
   parseSapItemCode,
   readSapFrozen,
@@ -493,14 +494,15 @@ async function mapWithConcurrency<T, TResult>(
   values: T[],
   concurrency: number,
   mapper: (value: T) => Promise<TResult>,
-  shouldContinue?: () => boolean
+  shouldContinue?: () => boolean,
+  cancellationMessage = 'La consulta SAP fue cancelada.'
 ): Promise<TResult[]> {
   const results = new Array<TResult>(values.length)
   let cursor = 0
 
   async function worker(): Promise<void> {
     while (cursor < values.length) {
-      if (shouldContinue && !shouldContinue()) throw new Error('La revalidación de tableros fue cancelada.')
+      if (shouldContinue && !shouldContinue()) throw new Error(cancellationMessage)
       const index = cursor
       cursor += 1
       results[index] = await mapper(values[index])
@@ -509,6 +511,12 @@ async function mapWithConcurrency<T, TResult>(
 
   await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, () => worker()))
   return results
+}
+
+type ReferenceImportCancellation = (() => boolean) | undefined
+
+function throwIfReferenceImportCancelled(isCancelled: ReferenceImportCancellation): void {
+  if (isCancelled?.()) throw new Error('El análisis SAP fue detenido por el usuario.')
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
@@ -706,15 +714,13 @@ function boardRoleFromReferenceContext(input: {
   snapshot: DirectBomSnapshot
   line: DirectBomSnapshot['normalizedLines'][number]
 }): { role: BoardMatrixRole; roleSource: BoardMatrixRoleSource } {
-  const structure = input.context.existingBomStructure
-  const fixedLines = structure?.lines
-    .filter(referenceLine => referenceLine.line_kind === 'fixed' && referenceLine.base_item_code === input.line.baseItemCode) ?? []
-  const published = fixedLines[input.line.occurrence - 1]
-    ?? structure?.lines.find(referenceLine => referenceLine.line_kind === 'material_group'
-      && referenceLine.alternatives.some(alternative => alternative.base_item_code === input.line.baseItemCode))
-  if (published?.product_application_scope && published.product_application_scope !== 'NA') {
-    return { role: published.product_application_scope, roleSource: 'published_bom' }
-  }
+  const boardNameScope = inferBoardApplicationScope({
+    itemName: input.line.itemName,
+    baseItemCode: input.line.baseItemCode,
+    materialKind: input.line.technicalMetadata?.material_kind,
+  })
+  if (boardNameScope) return { role: boardNameScope, roleSource: 'evidence' }
+
   const sourceColorCode = input.snapshot.skuColorCode?.trim().toUpperCase()
   const override = sourceColorCode
     ? input.context.skuColorOverrides?.get(input.snapshot.skuComplete)?.filter(candidate =>
@@ -946,7 +952,10 @@ function mostCommonLineWarehouse(lines: ComponentBomLine[]): string | null {
   return [...counts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0] ?? null
 }
 
-export async function expandComponentTrees(snapshots: DirectBomSnapshot[]): Promise<ComponentTraversal> {
+export async function expandComponentTrees(
+  snapshots: DirectBomSnapshot[],
+  isCancelled?: ReferenceImportCancellation
+): Promise<ComponentTraversal> {
   const treesByItemCode = new Map<string, ComponentTreeSnapshot>()
   const sourceLinesByItemCode = new Map<string, ComponentBomLine>()
   const findings: ReferenceImportFindingDraft[] = []
@@ -968,6 +977,7 @@ export async function expandComponentTrees(snapshots: DirectBomSnapshot[]): Prom
   }
 
   while (pending.length > 0) {
+    throwIfReferenceImportCancelled(isCancelled)
     const batch: Array<{ itemCode: string; depth: number; ancestors: string[] }> = []
     while (batch.length < COMPONENT_TREE_CONCURRENCY && pending.length > 0) {
       const candidate = pending.shift()
@@ -992,7 +1002,7 @@ export async function expandComponentTrees(snapshots: DirectBomSnapshot[]): Prom
     const trees = await mapWithConcurrency(batch, COMPONENT_TREE_CONCURRENCY, async candidate => ({
       candidate,
       tree: await readComponentTree(candidate.itemCode),
-    }))
+    }), () => !isCancelled?.(), 'El análisis SAP fue detenido por el usuario.')
 
     for (const { candidate, tree } of trees) {
       maxDepth = Math.max(maxDepth, candidate.depth)
@@ -1106,7 +1116,7 @@ async function getExistingComponentItems(itemCodes: string[]): Promise<Map<strin
   return result
 }
 
-async function getComponentMetadata(itemCodes: string[]): Promise<{
+async function getComponentMetadata(itemCodes: string[], isCancelled?: ReferenceImportCancellation): Promise<{
   itemsByCode: Map<string, SapEntityPayload | null>
   findings: ReferenceImportFindingDraft[]
 }> {
@@ -1125,6 +1135,7 @@ async function getComponentMetadata(itemCodes: string[]): Promise<{
       const items = new Map<string, SapEntityPayload>()
       const failures: Array<{ itemCodes: string[]; error: string }> = []
       for (let index = 0; index < batch.length; index += COMPONENT_METADATA_RETRY_BATCH_SIZE) {
+        throwIfReferenceImportCancelled(isCancelled)
         const retryBatch = batch.slice(index, index + COMPONENT_METADATA_RETRY_BATCH_SIZE)
         try {
           const retryItems = await getSapItemsByCodes(retryBatch, COMPONENT_ITEM_SELECT, {
@@ -1145,7 +1156,7 @@ async function getComponentMetadata(itemCodes: string[]): Promise<{
           : null,
       }
     }
-  })
+  }, () => !isCancelled?.(), 'El análisis SAP fue detenido por el usuario.')
 
   const itemsByCode = new Map<string, SapEntityPayload | null>()
   const findings: ReferenceImportFindingDraft[] = []
@@ -1169,7 +1180,10 @@ async function getComponentMetadata(itemCodes: string[]): Promise<{
   return { itemsByCode, findings }
 }
 
-export async function upsertExpandedComponents(traversal: ComponentTraversal): Promise<ComponentUpsertResult> {
+export async function upsertExpandedComponents(
+  traversal: ComponentTraversal,
+  isCancelled?: ReferenceImportCancellation
+): Promise<ComponentUpsertResult> {
   const itemCodes = [...traversal.sourceLinesByItemCode.keys()].sort()
   if (itemCodes.length === 0) {
     return { count: 0, uomFindings: [], metadataFindings: [] }
@@ -1177,7 +1191,7 @@ export async function upsertExpandedComponents(traversal: ComponentTraversal): P
 
   const [existingByItemCode, metadata] = await Promise.all([
     getExistingComponentItems(itemCodes),
-    getComponentMetadata(itemCodes),
+    getComponentMetadata(itemCodes, isCancelled),
   ])
   const uomFindings: ReferenceImportFindingDraft[] = []
   const rows = itemCodes.map((itemCode) => {
@@ -1289,7 +1303,10 @@ export async function refreshComponentMetadata(itemCodes: string[]): Promise<str
   return uniqueItemCodes
 }
 
-async function enrichDirectComponents(snapshots: DirectBomSnapshot[]): Promise<{
+async function enrichDirectComponents(
+  snapshots: DirectBomSnapshot[],
+  isCancelled?: ReferenceImportCancellation
+): Promise<{
   snapshots: DirectBomSnapshot[]
   componentResult: ComponentUpsertResult
 }> {
@@ -1311,7 +1328,7 @@ async function enrichDirectComponents(snapshots: DirectBomSnapshot[]): Promise<{
 
   const [existingByItemCode, metadata] = await Promise.all([
     getExistingComponentItems(itemCodes),
-    getComponentMetadata(itemCodes),
+    getComponentMetadata(itemCodes, isCancelled),
   ])
   const uomFindings: ReferenceImportFindingDraft[] = []
   const metadataFindings = [...metadata.findings]
@@ -1440,7 +1457,6 @@ async function getReferenceImportSource(referenceId: string): Promise<{
        r.family_code,
        r.reference_code,
        r.product_name,
-       r.product_bom_structure,
        f.manufacturing_process,
       f.product_type
     FROM public.product_references r
@@ -1453,7 +1469,6 @@ async function getReferenceImportSource(referenceId: string): Promise<{
   const resolvedReferenceId = readString(reference?.reference_id)
   const referenceCode = readString(reference?.reference_code)
   const productName = readString(reference?.product_name)
-  const existingBomStructure = cleanBomStructure(reference?.product_bom_structure)
   if (!resolvedReferenceId || !referenceCode || !productName) {
     throw new Error('La referencia seleccionada no existe o está incompleta.')
   }
@@ -1484,7 +1499,6 @@ async function getReferenceImportSource(referenceId: string): Promise<{
       productName,
       manufacturingProcess: readString(reference?.manufacturing_process),
       productType: readString(reference?.product_type),
-      existingBomStructure: existingBomStructure.lines.length > 0 ? existingBomStructure : null,
       skuColorOverrides,
     },
     skus: skuRows.flatMap((row) => {
@@ -1898,11 +1912,14 @@ export async function analyzeReferenceBomImportTransient(input: {
   referenceId: string
   retry?: TransientReferenceImportRetry
   onProgress?: (progress: ReferenceImportAnalysisProgress) => void | Promise<void>
+  isCancelled?: ReferenceImportCancellation
 }): Promise<ReferenceImportWorkspace> {
+  throwIfReferenceImportCancelled(input.isCancelled)
   await reportReferenceImportAnalysisProgress(input.onProgress, {
     stage: 'source', message: 'Preparando los SKU activos de versión 000.', current: null, total: null,
   })
   const source = await getReferenceImportSource(input.referenceId)
+  throwIfReferenceImportCancelled(input.isCancelled)
   if (source.skus.length === 0) throw new Error('Esta referencia no tiene SKU activos de versión 000 para analizar.')
   const retrySkuCodes = new Set(
     (input.retry?.skuCompletes ?? [])
@@ -1918,6 +1935,7 @@ export async function analyzeReferenceBomImportTransient(input: {
     stage: 'reconciliation', message: 'Comparando el catálogo de la referencia con SAP.', current: 0, total: source.skus.length,
   })
   const reconciliation = await reconcileReferenceSkusWithSap(source.context, source.skus)
+  throwIfReferenceImportCancelled(input.isCancelled)
   await reportReferenceImportAnalysisProgress(input.onProgress, {
     stage: 'reconciliation', message: 'Catálogo comparado con SAP.', current: source.skus.length, total: source.skus.length,
   })
@@ -1939,7 +1957,9 @@ export async function analyzeReferenceBomImportTransient(input: {
   })
   const directSnapshots = await readReferenceDirectSnapshots(source.context, skusToRead, {
     preferIndividualReads: isSelectiveRetry,
+    isCancelled: input.isCancelled,
   })
+  throwIfReferenceImportCancelled(input.isCancelled)
   await reportReferenceImportAnalysisProgress(input.onProgress, {
     stage: 'bom_read',
     message: isSelectiveRetry
@@ -1971,11 +1991,12 @@ export async function analyzeReferenceBomImportTransient(input: {
     current: 0,
     total: metadataSkuCount,
   })
-  const { snapshots: enrichedSnapshots, componentResult } = await enrichDirectComponents(snapshotsToEnrich)
+  const { snapshots: enrichedSnapshots, componentResult } = await enrichDirectComponents(snapshotsToEnrich, input.isCancelled)
   const enrichedSnapshotsBySku = new Map(enrichedSnapshots.map(snapshot => [snapshot.skuComplete.toUpperCase(), snapshot]))
   const snapshots = rawSnapshots.map(snapshot => enrichedSnapshotsBySku.get(snapshot.skuComplete.toUpperCase()) ?? snapshot)
-  const componentTraversal = await expandComponentTrees(snapshots)
-  const expandedComponentResult = await upsertExpandedComponents(componentTraversal)
+  const componentTraversal = await expandComponentTrees(snapshots, input.isCancelled)
+  const expandedComponentResult = await upsertExpandedComponents(componentTraversal, input.isCancelled)
+  throwIfReferenceImportCancelled(input.isCancelled)
   await reportReferenceImportAnalysisProgress(input.onProgress, {
     stage: 'component_metadata',
     message: isSelectiveRetry
@@ -2393,7 +2414,6 @@ export type ColorRuleCoverageResult = {
 type CatalogColorSku = Omit<ReferenceImportSku, 'colorCode'> & {
   colorCode: string
   prefix: string
-  referenceBomStructure: ReferenceBomStructure
   skuColorOverrides: BomColorOverride[]
 }
 
@@ -2551,10 +2571,11 @@ function catalogSapBomFromTree(tree: SapEntityPayload): CatalogSapBom | null {
 async function readReferenceDirectSnapshots(
   context: ReferenceImportContext,
   skus: ReferenceImportSku[],
-  options?: { preferIndividualReads?: boolean }
+  options?: { preferIndividualReads?: boolean; isCancelled?: ReferenceImportCancellation }
 ): Promise<Map<string, DirectBomSnapshot>> {
   const snapshots = new Map<string, DirectBomSnapshot>()
   if (skus.length === 0) return snapshots
+  throwIfReferenceImportCancelled(options?.isCancelled)
 
   if (!options?.preferIndividualReads) {
     try {
@@ -2568,6 +2589,7 @@ async function readReferenceDirectSnapshots(
       DIRECT_BOM_TIMEOUT_MS,
       `SAP tardÃ³ demasiado consultando las LdM de ${salesSkuPrefix(context)}.`
     )
+    throwIfReferenceImportCancelled(options?.isCancelled)
     const treesByCode = new Map(trees.flatMap(tree => {
       const bom = sapBomFromProductTree(tree)
       return bom ? [[bom.treeCode.toUpperCase(), bom] as const] : []
@@ -2582,7 +2604,13 @@ async function readReferenceDirectSnapshots(
   }
 
   const missingSkus = skus.filter(sku => !snapshots.has(sku.skuComplete.toUpperCase()))
-  const fallbackSnapshots = await mapWithConcurrency(missingSkus, DIRECT_BOM_CONCURRENCY, readDirectSnapshot)
+  const fallbackSnapshots = await mapWithConcurrency(
+    missingSkus,
+    DIRECT_BOM_CONCURRENCY,
+    readDirectSnapshot,
+    () => !options?.isCancelled?.(),
+    'El análisis SAP fue detenido por el usuario.'
+  )
   for (const snapshot of fallbackSnapshots) snapshots.set(snapshot.skuComplete.toUpperCase(), snapshot)
   return snapshots
 }
@@ -2603,8 +2631,7 @@ async function getCatalogColorSkus(colorCodes: string[]): Promise<CatalogColorSk
   if (normalizedColors.length === 0) return []
   const rows: Record<string, unknown>[] = await dbQuery(
     `SELECT s.sku_complete, s.color_code, s.sap_description_original,
-            s.bom_overrides AS sku_bom_overrides,
-            r.product_bom_structure
+            s.bom_overrides AS sku_bom_overrides
      FROM public.product_skus s
      JOIN public.product_versions v ON v.id = s.version_id
      JOIN public.product_references r ON r.id = v.reference_id
@@ -2626,7 +2653,6 @@ async function getCatalogColorSkus(colorCodes: string[]): Promise<CatalogColorSk
         colorCode,
         sapDescriptionOriginal: readString(row.sap_description_original),
         prefix,
-        referenceBomStructure: cleanBomStructure(row.product_bom_structure),
         skuColorOverrides: normalizeBomOverrides(row.sku_bom_overrides).color_overrides ?? [],
       }] : []
   })
@@ -2643,23 +2669,12 @@ function boardMatrixColorFromSku(skuComplete: string, selectedColors: Set<string
     : null
 }
 
-function emptyReferenceBomStructure(): ReferenceBomStructure {
-  return {
-    schema_version: 2,
-    structure_type: 'production',
-    input_warehouse_code: null,
-    output_warehouse_code: null,
-    lines: [],
-  }
-}
-
 async function getBoardMatrixCatalogSkus(colorCodes: string[]): Promise<BoardCatalogColorSku[]> {
   const normalizedColors = [...new Set(colorCodes.map(color => color.trim().toUpperCase()).filter(Boolean))]
   if (normalizedColors.length === 0) return []
   const rows: Record<string, unknown>[] = await dbQuery(
     `SELECT s.sku_complete, s.color_code, s.sap_description_original,
             s.bom_overrides AS sku_bom_overrides,
-            r.product_bom_structure,
             COALESCE(s.status, 'ACTIVO') AS app_status,
             upper(COALESCE(f.product_type, '')) LIKE 'KIT%' AS is_catalog_kit
      FROM public.product_skus s
@@ -2682,7 +2697,6 @@ async function getBoardMatrixCatalogSkus(colorCodes: string[]): Promise<BoardCat
       colorCode,
       sapDescriptionOriginal: readString(row.sap_description_original),
       prefix,
-      referenceBomStructure: cleanBomStructure(row.product_bom_structure),
       skuColorOverrides: normalizeBomOverrides(row.sku_bom_overrides).color_overrides ?? [],
       appStatus: readString(row.app_status)?.toUpperCase() === 'ACTIVO' ? 'active' as const : 'inactive' as const,
       isCatalogKit: row.is_catalog_kit === true,
@@ -3192,7 +3206,8 @@ function isCatalogEdgeBandLine(line: CatalogSapBom['lines'][number]): boolean {
 }
 
 function isCatalogBoardLine(line: CatalogSapBom['lines'][number]): boolean {
-  return line.itemName?.toUpperCase().includes('TABLERO') === true
+  const itemName = line.itemName?.toUpperCase() ?? ''
+  return itemName.includes('TABLERO') || itemName.includes('FONDO CARB')
 }
 
 function pendingCatalogEdgeScope(input: {
@@ -3219,26 +3234,9 @@ function pendingCatalogEdgeScope(input: {
 
 function catalogLineSemanticScope(input: {
   sku: CatalogColorSku
-  bom: CatalogSapBom
   line: CatalogSapBom['lines'][number]
   sourceColorCode?: string
 }): ReferenceProductApplicationScope | null {
-  const baseItemCode = parseSapItemCode(input.line.itemCode).baseItemCode
-  let occurrence = 0
-  for (const candidate of input.bom.lines) {
-    if (parseSapItemCode(candidate.itemCode).baseItemCode !== baseItemCode) continue
-    occurrence += 1
-    if (candidate !== input.line) continue
-    const persistedLine = input.sku.referenceBomStructure.lines
-      .filter(referenceLine => referenceLine.line_kind === 'fixed' && referenceLine.base_item_code === baseItemCode)[occurrence - 1]
-    if (persistedLine?.product_application_scope) return persistedLine.product_application_scope
-    break
-  }
-  const materialGroup = input.sku.referenceBomStructure.lines.find(referenceLine =>
-    referenceLine.line_kind === 'material_group'
-    && referenceLine.alternatives.some(alternative => alternative.base_item_code === baseItemCode)
-  )
-  if (materialGroup?.product_application_scope) return materialGroup.product_application_scope
   return input.sourceColorCode
     ? pendingCatalogEdgeScope({ sku: input.sku, sourceColorCode: input.sourceColorCode, line: input.line })
     : null
@@ -3362,11 +3360,11 @@ export async function verifyReferenceImportColorRulesMatrixDirect(input: {
       if (ruleUsesSemanticLineComparison(rule)) {
         const semanticLines = catalogLinesForSemanticRule({ rule, bom })
         const applicableLines = rule.scope === 'edge_band_body' || rule.scope === 'edge_band_front'
-          ? semanticLines.filter(line => catalogLineSemanticScope({ sku, bom, line, sourceColorCode: rule.sourceColorCode }) === rule.scope)
+          ? semanticLines.filter(line => catalogLineSemanticScope({ sku, line, sourceColorCode: rule.sourceColorCode }) === rule.scope)
           : semanticLines
         for (const line of applicableLines) {
           const parsed = parseSapItemCode(line.itemCode)
-          const semanticScope = catalogLineSemanticScope({ sku, bom, line, sourceColorCode: rule.sourceColorCode })
+          const semanticScope = catalogLineSemanticScope({ sku, line, sourceColorCode: rule.sourceColorCode })
           const targetColorCode = skuOverrideTargetForCatalogLine({
             sku,
             sourceColorCode: rule.sourceColorCode,
@@ -3452,10 +3450,16 @@ function boardRoleFromCatalogLine(input: {
   sku: CatalogColorSku
   bom: CatalogSapBom
   line: CatalogSapBom['lines'][number]
+  itemName: string
+  materialKind: ReturnType<typeof buildComponentTechnicalMetadata>['material_kind']
 }): { role: BoardMatrixRole; roleSource: BoardMatrixRoleSource } {
-  const publishedRole = catalogLineSemanticScope({ sku: input.sku, bom: input.bom, line: input.line })
-  if (isBoardMaterialApplicationScope(publishedRole)) return { role: publishedRole, roleSource: 'published_bom' }
   const baseItemCode = parseSapItemCode(input.line.itemCode).baseItemCode
+  const boardNameScope = inferBoardApplicationScope({
+    itemName: input.itemName,
+    baseItemCode,
+    materialKind: input.materialKind,
+  })
+  if (boardNameScope) return { role: boardNameScope, roleSource: 'evidence' }
   const override = input.sku.skuColorOverrides.filter(candidate =>
     candidate.color_code.trim().toUpperCase() === input.sku.colorCode
     && (!candidate.base_item_code || candidate.base_item_code === baseItemCode)
@@ -3471,18 +3475,6 @@ function boardRoleFromCatalogLine(input: {
     ).size === 1
       ? { role: 'full_product', roleSource: 'evidence' }
       : { role: 'role_pending', roleSource: 'pending' }
-}
-
-function referenceBoardProfileForCatalogLine(input: {
-  sku: CatalogColorSku
-  line: CatalogSapBom['lines'][number]
-}): string | null {
-  const baseItemCode = parseSapItemCode(input.line.itemCode).baseItemCode
-  const materialGroup = input.sku.referenceBomStructure.lines.find(referenceLine =>
-    referenceLine.line_kind === 'material_group'
-    && referenceLine.alternatives.some(alternative => alternative.base_item_code === baseItemCode)
-  )
-  return materialGroup?.alternatives.find(alternative => alternative.is_default)?.material_profile ?? null
 }
 
 export async function analyzeReferenceImportBoardMatrix(input: {
@@ -3519,7 +3511,6 @@ export async function analyzeReferenceImportBoardMatrix(input: {
       colorCode,
       sapDescriptionOriginal: catalogSku?.sapDescriptionOriginal ?? readString(sapItem.ItemName),
       prefix,
-      referenceBomStructure: catalogSku?.referenceBomStructure ?? emptyReferenceBomStructure(),
       skuColorOverrides: catalogSku?.skuColorOverrides ?? [],
       appStatus: catalogSku?.appStatus ?? 'missing',
       isCatalogKit: catalogSku?.isCatalogKit ?? false,
@@ -3613,8 +3604,7 @@ export async function analyzeReferenceImportBoardMatrix(input: {
         const sapItem = itemsByCode.get(parsed.itemCode) ?? null
         const itemName = sapItem ? readSapItemName(sapItem, line.itemName ?? parsed.itemCode) : line.itemName ?? parsed.itemCode
         const metadata = buildComponentTechnicalMetadata(sapItem ?? {}, itemName)
-        const role = boardRoleFromCatalogLine({ sku, bom, line })
-        const referenceMaterialProfile = referenceBoardProfileForCatalogLine({ sku, line })
+        const role = boardRoleFromCatalogLine({ sku, bom, line, itemName, materialKind: metadata.material_kind })
         evidence.push({
           sourceColorCode,
           item: {
@@ -3626,7 +3616,7 @@ export async function analyzeReferenceImportBoardMatrix(input: {
             itemName,
             boardColorCode: parsed.variantCode4,
             materialProfile: metadata.material_profile,
-            referenceMaterialProfile,
+            referenceMaterialProfile: null,
             formatKey: metadata.format_key,
             qty: line.qty ?? 0,
             ...role,
