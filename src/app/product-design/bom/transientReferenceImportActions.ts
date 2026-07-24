@@ -16,7 +16,7 @@ import {
 import type { ReferenceBomStructure, ReferenceImportWorkspace } from '@/lib/bom/referenceImportTypes'
 import { isBoardMaterialApplicationScope, isReferenceProductApplicationScope, type ReferenceProductApplicationScope } from '@/lib/bom/referenceImportScopes'
 import type { BoardProfileConditionalRule, HybridColorCase } from '@/lib/bom/types'
-import { normalizeBomStructure } from '@/lib/bom/resolve'
+import { canonicalBomStructureJson, normalizeBomStructure } from '@/lib/bom/resolve'
 import { deleteSapItem, deleteSapProductTree, getSapItem, getSapItemBom, getSapProductTreeUsages, productTreeQuantityMatches, productTreeStructureMatches, SapServiceLayerError, updateSapItem, updateSapProductTreeIssueMethod, updateSapProductTreeLineQuantity, type SapEntityPayload } from '@/lib/sap/serviceLayer'
 import { parseSapItemCode, readSapFrozen, readSapValid } from '@/lib/bom/sapMapping'
 import { syncMissingSapComponentsToCatalog } from '@/lib/sap/componentCatalogSync'
@@ -27,6 +27,10 @@ type ActionResult = {
   success: boolean
   message: string
   workspace: ReferenceImportWorkspace | null
+}
+
+type PublishActionResult = ActionResult & {
+  publishedBomStructure?: ReferenceBomStructure
 }
 
 export type ComponentMetadataRefreshResult = {
@@ -152,8 +156,7 @@ function isBoardMaterialProfile(value: string): boolean {
 type ReferenceQuantityResolution = {
   baseItemCode: string
   scope: ReferenceProductApplicationScope
-  strategy: 'repetition' | 'maximum' | 'custom'
-  customQty?: number | null
+  qty: number
 }
 
 function readBoardProfileConditions(value: Record<string, unknown>): BoardProfileConditionalRule[] {
@@ -1639,35 +1642,33 @@ function applyReferenceSemanticScopeAssignments(
   }
 }
 
+function canonicalReferenceBomStructure(value: unknown): ReferenceBomStructure {
+  const normalized = normalizeBomStructure(value)
+  if (normalized.structure_type === 'component') {
+    throw new Error('La BOM de una referencia no puede usar estructura de componente.')
+  }
+  return {
+    ...normalized,
+    structure_type: normalized.structure_type === 'sales_kit' ? 'sales_kit' : 'production',
+  }
+}
+
 export async function publishTransientReferenceBomAction(input: {
   referenceId: string
+  proposedBomStructure: ReferenceBomStructure
   semanticScopeAssignments?: ReferenceSemanticScopeAssignment[]
   quantityResolutions?: ReferenceQuantityResolution[]
-}): Promise<ActionResult> {
+}): Promise<PublishActionResult> {
   await assertPermission('module:product-design')
   try {
     const referenceId = input.referenceId.trim()
-    const workspace = await analyzeReferenceBomImportTransient({ referenceId })
     const validQuantityResolutions = (input.quantityResolutions ?? []).flatMap(resolution => {
       const baseItemCode = resolution.baseItemCode.trim().toUpperCase()
-      const finding = workspace.findings.find(candidate =>
-        candidate.findingType === 'line_quantity_conflict'
-        && candidate.status === 'open'
-        && candidate.baseItemCode === baseItemCode
-        && candidate.proposedScope === resolution.scope
-      )
-      if (!finding || !isReferenceProductApplicationScope(resolution.scope) || !['repetition', 'maximum', 'custom'].includes(resolution.strategy)) return []
-      const qty = resolution.strategy === 'repetition'
-        ? Number(finding.detailsJson.repeated_qty)
-        : resolution.strategy === 'maximum'
-          ? Number(finding.detailsJson.proposed_qty)
-          : Number(resolution.customQty)
-      return Number.isFinite(qty) && qty > 0 ? [{ baseItemCode, scope: resolution.scope, qty }] : []
+      const qty = Number(resolution.qty)
+      return baseItemCode && isReferenceProductApplicationScope(resolution.scope) && Number.isFinite(qty) && qty > 0
+        ? [{ baseItemCode, scope: resolution.scope, qty }]
+        : []
     })
-    const resolvedQuantityKeys = new Set(validQuantityResolutions.map(item => `${item.baseItemCode}:${item.scope}`))
-    const blockers = workspace.findings.filter(finding => finding.severity === 'blocker' && finding.status === 'open'
-      && !(finding.findingType === 'line_quantity_conflict' && finding.baseItemCode && finding.proposedScope && resolvedQuantityKeys.has(`${finding.baseItemCode}:${finding.proposedScope}`)))
-    if (blockers.length > 0) throw new Error(`SAP aún tiene ${blockers.length} bloqueo(s) pendientes; no se publica una propuesta vieja.`)
     const validAssignments = (input.semanticScopeAssignments ?? []).flatMap((assignment) => {
       const lineId = assignment.lineId.trim()
       const lineKind = assignment.lineKind
@@ -1680,43 +1681,40 @@ export async function publishTransientReferenceBomAction(input: {
         : []
     })
     const scopedBomStructure = applyReferenceSemanticScopeAssignments(
-      workspace.run.proposedBomStructure,
+      input.proposedBomStructure,
       validAssignments
     )
-    const proposedBomStructure = {
+    const proposedBomStructure = canonicalReferenceBomStructure({
       ...scopedBomStructure,
       lines: scopedBomStructure.lines.map(line => {
         const resolution = validQuantityResolutions.find(item => item.baseItemCode === line.base_item_code && item.scope === line.product_application_scope)
         return resolution ? { ...line, qty: resolution.qty } : line
       }),
-    }
-    await dbQuery(
-      `UPDATE public.product_references SET product_bom_structure = $1::jsonb WHERE id = $2`,
+    })
+    const updatedRows: Record<string, unknown>[] = await dbQuery(
+      `UPDATE public.product_references
+       SET product_bom_structure = $1::jsonb
+       WHERE id = $2
+       RETURNING id`,
       [JSON.stringify(proposedBomStructure), referenceId]
     )
+    if (updatedRows.length === 0) throw new Error('La referencia ya no existe o no pudo actualizarse.')
     const persistedRows: Record<string, unknown>[] = await dbQuery(
       `SELECT product_bom_structure FROM public.product_references WHERE id = $1 LIMIT 1`,
       [referenceId]
     )
-    const persistedBomStructure = normalizeBomStructure(persistedRows[0]?.product_bom_structure)
-    if (JSON.stringify(persistedBomStructure) !== JSON.stringify(proposedBomStructure)) {
-      throw new Error('La BOM se guardó, pero la lectura posterior no coincide con la estructura que se intentó publicar.')
+    const persistedBomStructure = canonicalReferenceBomStructure(persistedRows[0]?.product_bom_structure)
+    if (canonicalBomStructureJson(persistedBomStructure) !== canonicalBomStructureJson(proposedBomStructure)) {
+      throw new Error('La BOM se guardó, pero la lectura posterior contiene una diferencia estructural real. No se sobrescribió el resultado; vuelve a abrir el análisis para revisar la estructura guardada.')
     }
     revalidatePath('/product-design')
     return {
       success: true,
       message: validAssignments.length > 0
-        ? 'BOM base publicada con roles lógicos de la referencia y una validación SAP fresca.'
-        : 'BOM base publicada con una validación SAP fresca.',
-      workspace: {
-        ...workspace,
-        run: {
-          ...workspace.run,
-          status: 'published',
-          proposedBomStructure,
-          publishedBomStructure: proposedBomStructure,
-        },
-      },
+        ? 'BOM base publicada desde la evidencia SAP ya analizada y verificada en Supabase.'
+        : 'BOM base publicada desde la evidencia SAP ya analizada y verificada en Supabase.',
+      workspace: null,
+      publishedBomStructure: proposedBomStructure,
     }
   } catch (error) {
     return failure(error, 'No se pudo publicar la BOM.')

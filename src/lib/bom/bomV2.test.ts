@@ -4,7 +4,7 @@ import test from 'node:test'
 import { analyzeReferenceBom } from './referenceImportAnalysis'
 import { boardRoleFromReferenceContext } from './boardRoleInference'
 import { assessBoardFullProductRuleCandidate, buildBoardMatrixRows, deriveBoardConditionalRuleStrategies, detectBoardDualCandidates, evaluateGlobalBoardDualCandidate, summarizeBoardEvidenceExamples, summarizeBoardProfileEvidence } from './boardMatrix'
-import { resolveBomForSku } from './resolve'
+import { canonicalBomStructureJson, resolveBomForSku } from './resolve'
 import { isBoardMaterialApplicationScope } from './referenceImportScopes'
 import { buildComponentTechnicalMetadata, inferBoardApplicationScope, inferMaterialProfile, normalizeSapLengthToMm } from './sapMapping'
 import type {
@@ -1399,6 +1399,34 @@ test('separates quantity and warehouse findings and proposes the highest fixed c
   const warehouseFinding = analysis.findings.find(finding => finding.findingType === 'line_warehouse_conflict')
   assert.equal(warehouseFinding?.detailsJson.recommended_warehouse, 'MP-01')
   assert.equal(analysis.findings.some(finding => finding.findingType === 'bom_line_review'), false)
+})
+
+test('compares a persisted JSONB BOM semantically instead of by object-key order', () => {
+  const proposed = {
+    schema_version: 2,
+    structure_type: 'production',
+    input_warehouse_code: 'MP-04',
+    output_warehouse_code: null,
+    lines: [{
+      line_id: 'ln_000001', sort_order: 1, line_kind: 'fixed', base_item_code: 'CMPD06-0003-000',
+      product_application_scope: 'edge_band_body', qty: 11.41, uom: 'MT', input_warehouse_code: 'MP-04',
+      issue_method_override: 'im_Manual', alternatives: [], consumptions: [],
+    }],
+  }
+  const persistedWithDifferentKeyOrder = {
+    lines: [{
+      consumptions: [], alternatives: [], issue_method_override: 'im_Manual', input_warehouse_code: 'MP-04',
+      uom: 'MT', qty: 11.41, product_application_scope: 'edge_band_body', base_item_code: 'CMPD06-0003-000',
+      line_kind: 'fixed', sort_order: 1, line_id: 'ln_000001',
+    }],
+    output_warehouse_code: null,
+    input_warehouse_code: 'MP-04',
+    structure_type: 'production',
+    schema_version: 2,
+  }
+
+  assert.notEqual(JSON.stringify(proposed), JSON.stringify(persistedWithDifferentKeyOrder))
+  assert.equal(canonicalBomStructureJson(proposed), canonicalBomStructureJson(persistedWithDifferentKeyOrder))
 })
 
 test('resolves CARB2 equivalents by profile and thickness, not by the board base code or purchase format', () => {

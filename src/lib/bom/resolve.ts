@@ -402,6 +402,23 @@ function boardAlternativeFromComponents(input: {
   }
 }
 
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJsonValue)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, child]) => [key, sortJsonValue(child)])
+    )
+  }
+  return value
+}
+
+/** Canonical semantic representation for JSONB persistence verification. */
+export function canonicalBomStructureJson(value: unknown): string {
+  return JSON.stringify(sortJsonValue(normalizeBomStructure(value)))
+}
+
 function materialGroupIsBoard(
   line: BomStructureLine,
   componentItems: Map<string, ComponentItem>

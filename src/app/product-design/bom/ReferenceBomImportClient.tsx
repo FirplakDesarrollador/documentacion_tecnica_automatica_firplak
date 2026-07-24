@@ -1220,6 +1220,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const analysisAbortControllerRef = useRef<AbortController | null>(null)
   const [lastAnalysisDurationSeconds, setLastAnalysisDurationSeconds] = useState<number | null>(null)
   const [publishState, setPublishState] = useState<'idle' | 'validating' | 'published' | 'failed'>('idle')
+  const [publishProgress, setPublishProgress] = useState<string | null>(null)
   const [quantityResolutionStrategies, setQuantityResolutionStrategies] = useState<Record<string, QuantityResolutionStrategy>>({})
   const [quantityCustomValues, setQuantityCustomValues] = useState<Record<string, string>>({})
   const [quantitySapDrafts, setQuantitySapDrafts] = useState<Record<string, QuantitySapDraft>>({})
@@ -2703,32 +2704,49 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     if (!workspace) return
     runTask(async () => {
       setPublishState('validating')
+      setPublishProgress('Preparando la BOM validada; no se volverá a consultar SAP.')
       try {
         const result = await publishTransientReferenceBomAction({
           referenceId: workspace.run.referenceId,
+          proposedBomStructure: workspace.run.proposedBomStructure,
           semanticScopeAssignments: Object.values(referenceScopeAssignments),
           quantityResolutions: visibleFindings.flatMap(finding => {
             const strategy = quantityResolutionStrategies[finding.id]
+            const qty = finding.findingType === 'line_quantity_conflict'
+              ? quantityTargetForFinding(finding)
+              : null
             return finding.findingType === 'line_quantity_conflict' && strategy && finding.baseItemCode && finding.proposedScope
+              && qty !== null && qty > 0
               ? [{
                   baseItemCode: finding.baseItemCode,
                   scope: finding.proposedScope,
-                  strategy,
-                  customQty: strategy === 'custom' ? asNumber(quantityCustomValues[finding.id]) : null,
+                  qty,
                 }]
               : []
           }),
         })
         setMessage(result.message)
-        if (result.success && result.workspace) {
-          setWorkspace(result.workspace)
+        const publishedBomStructure = result.publishedBomStructure
+        if (result.success && publishedBomStructure) {
+          setWorkspace(current => current ? {
+            ...current,
+            run: {
+              ...current.run,
+              status: 'published',
+              proposedBomStructure: publishedBomStructure,
+              publishedBomStructure,
+            },
+          } : current)
           setReferenceScopeAssignments({})
+          setPublishProgress('BOM guardada y verificada en Supabase.')
           setPublishState('published')
           return
         }
+        setPublishProgress(null)
         setPublishState('failed')
       } catch (error) {
         setMessage(error instanceof Error ? error.message : 'No se pudo publicar la BOM.')
+        setPublishProgress(null)
         setPublishState('failed')
       }
     })
@@ -3611,19 +3629,27 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                     <p className="text-sm font-semibold text-slate-900">Publicar la BOM base recomendada</p>
                     <p className="mt-1 text-xs text-slate-600">Solo se habilita cuando la lectura SAP está completa y no quedan bloqueadores sin resolver.</p>
                     {unresolvedBlockers.length > 0 ? <p className="mt-1 text-xs font-semibold text-rose-700">No disponible: hay {unresolvedBlockers.length} pendiente{unresolvedBlockers.length === 1 ? '' : 's'} bloqueante{unresolvedBlockers.length === 1 ? '' : 's'}.</p> : null}
-                    {publishState === 'validating' ? <p className="mt-1 text-xs font-semibold text-sky-800" aria-live="polite">Verificando la evidencia SAP antes de publicar. No recargues la página.</p> : null}
+                    {publishState === 'validating' ? <p className="mt-1 text-xs font-semibold text-sky-800" aria-live="polite">{publishProgress ?? 'Guardando y verificando la BOM en Supabase. No recargues la página.'}</p> : null}
                     {publishState === 'published' ? <p className="mt-1 text-xs font-semibold text-emerald-800">La BOM quedó publicada y verificada.</p> : null}
                     {publishState === 'failed' ? <p className="mt-1 text-xs font-semibold text-rose-700">La publicación no se completó; revisa el mensaje mostrado arriba.</p> : null}
                   </div>
-                  <button
-                    type="button"
-                    onClick={publishRun}
-                    disabled={isPending || publishState === 'validating' || hasIncompleteSource || workspace.run.status !== 'needs_review' || unresolvedBlockers.length > 0}
-                    className="inline-flex h-10 items-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {publishState === 'validating' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                    {publishState === 'validating' ? 'Publicando BOM…' : 'Publicar BOM'}
-                  </button>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    {publishState === 'validating' ? (
+                      <span className="inline-flex h-10 items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 text-xs font-semibold text-sky-900" aria-live="polite">
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                        Validando estructura → guardando → verificando Supabase
+                      </span>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={publishRun}
+                      disabled={isPending || publishState === 'validating' || hasIncompleteSource || workspace.run.status !== 'needs_review' || unresolvedBlockers.length > 0}
+                      className="inline-flex h-10 items-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {publishState === 'validating' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                      {publishState === 'validating' ? 'Publicando BOM…' : 'Publicar BOM'}
+                    </button>
+                  </div>
                 </div>
               </section>
 
