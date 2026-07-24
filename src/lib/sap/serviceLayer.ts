@@ -1017,6 +1017,30 @@ export async function updateSapProductTreeIssueMethod(input: {
   })
 }
 
+export type SapProductTreeLineInput = {
+  ChildNum: number
+  ItemCode: string
+  Quantity?: number
+  Warehouse?: string | null
+  IssueMethod?: string | null
+  Comment?: string | null
+}
+
+export async function updateSapProductTreeLines(
+  treeCode: string,
+  lines: SapProductTreeLineInput[]
+): Promise<unknown> {
+  const normalizedCode = normalizeRequiredCode(treeCode, 'treeCode')
+  for (const line of lines) {
+    const normalizedItem = normalizeRequiredCode(line.ItemCode, 'ItemCode')
+    if (line.ItemCode !== normalizedItem) line.ItemCode = normalizedItem
+  }
+  return sapServiceLayerRequest(`/ProductTrees(${encodeODataString(normalizedCode)})`, {
+    method: 'PATCH',
+    body: { ProductTreeLines: lines },
+  })
+}
+
 export async function getSapItemBomTree(
   itemCode: string
 ): Promise<{ tree: BomNode | null; error: string | null }> {

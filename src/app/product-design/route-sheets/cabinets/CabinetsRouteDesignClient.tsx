@@ -3,6 +3,10 @@
 import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from 'react'
 
 import {
+  contrastDeleteFromBomAction,
+  contrastDeleteFromSapAction,
+  contrastSyncLineToSapAction,
+  contrastSyncToBomAction,
   contrastVsSapAction,
   getCabinetRouteWorkspaceByRefAction,
   parseOriginalCabinetRouteSheetAction,
@@ -1573,6 +1577,33 @@ function ContrastPanel({ referenceId, isApproved }: { referenceId: string | null
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expandedSku, setExpandedSku] = useState<string | null>(null)
+  const [mutationMsg, setMutationMsg] = useState<{ sku: string; msg: string; ok: boolean } | null>(null)
+
+  async function handleSyncToSap(skuComplete: string, itemCode: string, itemName: string, qty: number) {
+    setMutationMsg(null)
+    const r = await contrastSyncLineToSapAction({ skuComplete, itemCode, itemName, qty })
+    setMutationMsg({ sku: skuComplete, msg: r.message, ok: r.success })
+  }
+
+  async function handleDeleteFromSap(skuComplete: string, itemCode: string) {
+    setMutationMsg(null)
+    const r = await contrastDeleteFromSapAction({ skuComplete, itemCode })
+    setMutationMsg({ sku: skuComplete, msg: r.message, ok: r.success })
+  }
+
+  async function handleSyncToBom(itemCode: string, itemName: string, qty: number, scope: string | null) {
+    if (!referenceId) return
+    setMutationMsg(null)
+    const r = await contrastSyncToBomAction({ referenceId, itemCode, itemName, qty, scope })
+    setMutationMsg({ sku: '', msg: r.message, ok: r.success })
+  }
+
+  async function handleDeleteFromBom(itemCode: string) {
+    if (!referenceId) return
+    setMutationMsg(null)
+    const r = await contrastDeleteFromBomAction({ referenceId, itemCode })
+    setMutationMsg({ sku: '', msg: r.message, ok: r.success })
+  }
 
   async function handleContrast() {
     if (!referenceId) return
@@ -1665,34 +1696,102 @@ function ContrastPanel({ referenceId, isApproved }: { referenceId: string | null
                     ) : sku.differences.length === 0 ? (
                       <p className="text-xs text-emerald-600">Sin diferencias. Coincide 100% con SAP.</p>
                     ) : (
-                      <table className="w-full text-left text-xs">
-                        <thead>
-                          <tr className="text-slate-500">
-                            <th className="px-2 py-1">Match</th>
-                            <th className="px-2 py-1">Codigo</th>
-                            <th className="px-2 py-1">Item</th>
-                            <th className="px-2 py-1 text-right">App qty</th>
-                            <th className="px-2 py-1 text-right">SAP qty</th>
-                            <th className="px-2 py-1">Alcance</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {sku.differences.map((line, idx) => (
-                            <tr key={`${line.item_code}-${idx}`} className="border-t border-slate-100">
-                              <td className="px-2 py-1">
-                                <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${lineBadgeClass(line.match)}`}>
-                                  {lineLabel(line.match)}
-                                </span>
-                              </td>
-                              <td className="px-2 py-1 font-mono">{line.item_code}</td>
-                              <td className="px-2 py-1 max-w-[200px] truncate">{line.item_name}</td>
-                              <td className="px-2 py-1 text-right">{line.app_qty ?? '-'}</td>
-                              <td className="px-2 py-1 text-right">{line.sap_qty ?? '-'}</td>
-                              <td className="px-2 py-1">{line.scope ?? '-'}</td>
+                      <>
+                        <table className="w-full text-left text-xs">
+                          <thead>
+                            <tr className="text-slate-500">
+                              <th className="px-2 py-1">Match</th>
+                              <th className="px-2 py-1">Codigo</th>
+                              <th className="px-2 py-1">Item</th>
+                              <th className="px-2 py-1 text-right">App qty</th>
+                              <th className="px-2 py-1 text-right">SAP qty</th>
+                              <th className="px-2 py-1">Alcance</th>
+                              <th className="px-2 py-1">Accion</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody>
+                            {sku.differences.map((line, idx) => (
+                              <tr key={`${line.item_code}-${idx}`} className="border-t border-slate-100">
+                                <td className="px-2 py-1">
+                                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${lineBadgeClass(line.match)}`}>
+                                    {lineLabel(line.match)}
+                                  </span>
+                                </td>
+                                <td className="px-2 py-1 font-mono">{line.item_code}</td>
+                                <td className="px-2 py-1 max-w-[200px] truncate">{line.item_name}</td>
+                                <td className="px-2 py-1 text-right">{line.app_qty ?? '-'}</td>
+                                <td className="px-2 py-1 text-right">{line.sap_qty ?? '-'}</td>
+                                <td className="px-2 py-1">{line.scope ?? '-'}</td>
+                                <td className="px-2 py-1">
+                                  {line.match === 'qty_mismatch' ? (
+                                    <div className="flex gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSyncToBom(line.item_code, line.item_name, line.sap_qty!, line.scope)}
+                                        className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 hover:bg-blue-200"
+                                        title="Usar la cantidad de SAP en la BOM base"
+                                      >
+                                        Usar qty SAP
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSyncToSap(sku.sku_complete, line.item_code, line.item_name, line.app_qty!)}
+                                        className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-700 hover:bg-slate-200"
+                                        title="Usar la cantidad de la App en SAP"
+                                      >
+                                        Usar qty App
+                                      </button>
+                                    </div>
+                                  ) : line.match === 'sap_only' ? (
+                                    <div className="flex gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSyncToBom(line.item_code, line.item_name, line.sap_qty!, null)}
+                                        className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-700 hover:bg-purple-200"
+                                        title="Agregar esta linea a la BOM base de la referencia"
+                                      >
+                                        Agregar a BOM
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteFromSap(sku.sku_complete, line.item_code)}
+                                        className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 hover:bg-rose-200"
+                                        title="Eliminar esta linea del ProductTree de SAP"
+                                      >
+                                        Eliminar de SAP
+                                      </button>
+                                    </div>
+                                  ) : line.match === 'app_only' ? (
+                                    <div className="flex gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSyncToSap(sku.sku_complete, line.item_code, line.item_name, line.app_qty!)}
+                                        className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 hover:bg-emerald-200"
+                                        title="Agregar esta linea al ProductTree de SAP"
+                                      >
+                                        Agregar a SAP
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteFromBom(line.item_code)}
+                                        className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 hover:bg-rose-200"
+                                        title="Eliminar esta linea de la BOM base de la referencia"
+                                      >
+                                        Eliminar de BOM
+                                      </button>
+                                    </div>
+                                  ) : null}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {mutationMsg ? (
+                          <p className={`mt-2 rounded-md px-2 py-1 text-[11px] ${mutationMsg.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                            {mutationMsg.msg}
+                          </p>
+                        ) : null}
+                      </>
                     )}
                   </div>
                 ) : null}

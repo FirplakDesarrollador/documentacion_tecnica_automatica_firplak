@@ -6,7 +6,7 @@ import { revalidatePath } from 'next/cache'
 import { dbQuery } from '@/lib/supabase'
 import { supabaseTable } from '@/lib/supabaseDynamic'
 import { assertPermission } from '@/utils/auth/access'
-import { getSapItem, getSapItemBom, updateSapItem, type SapEntityPayload } from '@/lib/sap/serviceLayer'
+import { getSapItem, getSapItemBom, updateSapProductTreeLines, updateSapItem, type SapEntityPayload, type SapProductTreeLineInput } from '@/lib/sap/serviceLayer'
 import {
   isSapLifecycleState,
   readSapItemLifecycleState,
@@ -888,6 +888,170 @@ export async function contrastVsSapAction(referenceId: string): Promise<{
       report: null,
       error: err instanceof Error ? err.message : 'Error al contrastar con SAP',
     }
+  }
+}
+
+export async function contrastSyncLineToSapAction(input: {
+  skuComplete: string
+  itemCode: string
+  itemName: string
+  qty: number
+}): Promise<{ success: boolean; message: string }> {
+  await assertPermission('module:product-design')
+  try {
+    const tree = await getSapItemBom(input.skuComplete)
+    if (!tree) {
+      return { success: false, message: `No se encontro ProductTree en SAP para ${input.skuComplete}` }
+    }
+    const existingIndex = tree.lines.findIndex(l => l.ItemCode.toUpperCase() === input.itemCode.toUpperCase())
+    const sapLines: SapProductTreeLineInput[] = tree.lines.map(l => ({
+      ChildNum: l.ChildNum,
+      ItemCode: l.ItemCode,
+      Quantity: l.Quantity,
+      Warehouse: l.Warehouse,
+      IssueMethod: l.IssueMethod,
+      Comment: l.Comment,
+    }))
+    if (existingIndex >= 0) {
+      sapLines[existingIndex] = { ...sapLines[existingIndex], Quantity: input.qty }
+    } else {
+      const maxChild = Math.max(...tree.lines.map(l => l.ChildNum), -1)
+      sapLines.push({
+        ChildNum: maxChild + 1,
+        ItemCode: input.itemCode,
+        Quantity: input.qty,
+        Warehouse: null,
+        IssueMethod: null,
+        Comment: input.itemName,
+      })
+    }
+    await updateSapProductTreeLines(input.skuComplete, sapLines)
+    return { success: true, message: `Linea ${existingIndex >= 0 ? 'actualizada' : 'agregada'} en SAP para ${input.skuComplete}` }
+  } catch (err) {
+    return { success: false, message: err instanceof Error ? err.message : 'Error al sincronizar con SAP' }
+  }
+}
+
+export async function contrastDeleteFromSapAction(input: {
+  skuComplete: string
+  itemCode: string
+}): Promise<{ success: boolean; message: string }> {
+  await assertPermission('module:product-design')
+  try {
+    const tree = await getSapItemBom(input.skuComplete)
+    if (!tree) {
+      return { success: false, message: `No se encontro ProductTree en SAP para ${input.skuComplete}` }
+    }
+    const remaining = tree.lines.filter(l => l.ItemCode.toUpperCase() !== input.itemCode.toUpperCase())
+    if (remaining.length === tree.lines.length) {
+      return { success: false, message: `Linea ${input.itemCode} no encontrada en SAP` }
+    }
+    const sapLines: SapProductTreeLineInput[] = remaining.map(l => ({
+      ChildNum: l.ChildNum,
+      ItemCode: l.ItemCode,
+      Quantity: l.Quantity,
+      Warehouse: l.Warehouse,
+      IssueMethod: l.IssueMethod,
+      Comment: l.Comment,
+    }))
+    await updateSapProductTreeLines(input.skuComplete, sapLines)
+    return { success: true, message: `Linea ${input.itemCode} eliminada de SAP para ${input.skuComplete}` }
+  } catch (err) {
+    return { success: false, message: err instanceof Error ? err.message : 'Error al eliminar de SAP' }
+  }
+}
+
+export async function contrastSyncToBomAction(input: {
+  referenceId: string
+  itemCode: string
+  itemName: string
+  qty: number
+  scope: string | null
+}): Promise<{ success: boolean; message: string }> {
+  await assertPermission('module:product-design')
+  try {
+    const refRows = await dbQuery(
+      `SELECT product_bom_structure FROM public.product_references WHERE id = $1 LIMIT 1`,
+      [input.referenceId]
+    )
+    const refRow = refRows[0] as Record<string, unknown> | undefined
+    if (!refRow) return { success: false, message: 'Referencia no encontrada' }
+
+    const structure = refRow.product_bom_structure as { lines: Array<Record<string, unknown>> } | null
+    const lines = structure?.lines ?? []
+
+    const existingIndex = lines.findIndex(
+      (l: Record<string, unknown>) => readString(l.base_item_code)?.toUpperCase() === input.itemCode.toUpperCase()
+    )
+
+    if (existingIndex >= 0) {
+      lines[existingIndex] = { ...lines[existingIndex], qty: input.qty }
+    } else {
+      const sortOrder = lines.length > 0 ? Math.max(...lines.map((l: Record<string, unknown>) => (l.sort_order as number) ?? 0)) + 1 : 1
+      lines.push({
+        line_id: `contrast_${Date.now().toString(36)}`,
+        sort_order: sortOrder,
+        line_kind: 'fixed',
+        base_item_code: input.itemCode,
+        product_application_scope: input.scope ?? 'full_product',
+        qty: input.qty,
+        uom: null,
+        input_warehouse_code: null,
+        issue_method_override: null,
+        alternatives: [],
+        consumptions: [],
+      })
+    }
+
+    await dbQuery(
+      `UPDATE public.product_references
+       SET product_bom_structure = jsonb_set(
+         COALESCE(product_bom_structure, '{}'::jsonb),
+         '{lines}',
+         $1::jsonb
+       )
+       WHERE id = $2`,
+      [JSON.stringify(lines), input.referenceId]
+    )
+
+    return { success: true, message: `Linea ${existingIndex >= 0 ? 'actualizada' : 'agregada'} en BOM base` }
+  } catch (err) {
+    return { success: false, message: err instanceof Error ? err.message : 'Error al sincronizar con BOM base' }
+  }
+}
+
+export async function contrastDeleteFromBomAction(input: {
+  referenceId: string
+  itemCode: string
+}): Promise<{ success: boolean; message: string }> {
+  await assertPermission('module:product-design')
+  try {
+    const refRows = await dbQuery(
+      `SELECT product_bom_structure FROM public.product_references WHERE id = $1 LIMIT 1`,
+      [input.referenceId]
+    )
+    const refRow = refRows[0] as Record<string, unknown> | undefined
+    if (!refRow) return { success: false, message: 'Referencia no encontrada' }
+
+    const structure = refRow.product_bom_structure as { lines: Array<Record<string, unknown>> } | null
+    const lines = (structure?.lines ?? []).filter(
+      (l: Record<string, unknown>) => readString(l.base_item_code)?.toUpperCase() !== input.itemCode.toUpperCase()
+    )
+
+    await dbQuery(
+      `UPDATE public.product_references
+       SET product_bom_structure = jsonb_set(
+         COALESCE(product_bom_structure, '{}'::jsonb),
+         '{lines}',
+         $1::jsonb
+       )
+       WHERE id = $2`,
+      [JSON.stringify(lines), input.referenceId]
+    )
+
+    return { success: true, message: `Linea ${input.itemCode} eliminada de BOM base` }
+  } catch (err) {
+    return { success: false, message: err instanceof Error ? err.message : 'Error al eliminar de BOM base' }
   }
 }
 
