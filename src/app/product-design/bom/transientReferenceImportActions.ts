@@ -1349,33 +1349,41 @@ export async function applyTransientQuantitiesBatchAction(input: {
 export async function syncTransientSapInactiveSkusInSupabaseAction(input: { skuCompletes: string[] }): Promise<{
   success: boolean
   message: string
-  results: Array<{ skuComplete: string; success: boolean; changed: boolean; message: string }>
+  results: Array<{ skuComplete: string; success: boolean; changed: boolean; persistedStatus: string | null; message: string }>
 }> {
   await assertPermission('module:product-design')
   const skuCompletes = [...new Set(input.skuCompletes.map(value => value.trim().toUpperCase()).filter(Boolean))]
   if (skuCompletes.length === 0) return { success: false, message: 'Selecciona al menos un SKU para sincronizar.', results: [] }
-  const results: Array<{ skuComplete: string; success: boolean; changed: boolean; message: string }> = []
+  const results: Array<{ skuComplete: string; success: boolean; changed: boolean; persistedStatus: string | null; message: string }> = []
   for (const skuComplete of skuCompletes) {
     try {
-      // These SKU come from the board matrix that just read their SAP status.
-      // This is a Supabase-only reconciliation, so it must mutate precisely the
-      // selected evidence set instead of triggering another broad SAP scan.
       const rows: Record<string, unknown>[] = await dbQuery(
-        `UPDATE public.product_skus sku
-         SET status = 'INACTIVO', updated_at = now()
-         FROM public.product_versions version
-         WHERE sku.version_id = version.id
-           AND version.version_code = '000'
+        `WITH updated AS (
+           UPDATE public.product_skus sku
+           SET status = 'INACTIVO', updated_at = now()
+           FROM public.product_versions version
+           WHERE sku.version_id = version.id
+             AND version.version_code = '000'
+             AND sku.sku_complete = $1
+             AND COALESCE(sku.status, 'ACTIVO') = 'ACTIVO'
+           RETURNING sku.id
+         )
+         SELECT sku.id, sku.status, EXISTS(SELECT 1 FROM updated) AS changed
+         FROM public.product_skus sku
+         JOIN public.product_versions version ON version.id = sku.version_id
+         WHERE version.version_code = '000'
            AND sku.sku_complete = $1
-           AND COALESCE(sku.status, 'ACTIVO') = 'ACTIVO'
-         RETURNING sku.id`,
+         LIMIT 1`,
         [skuComplete]
       )
-      const changed = readString(rows[0]?.id) !== null
+      const persistedStatus = readString(rows[0]?.status)?.toUpperCase() ?? null
+      if (persistedStatus !== 'INACTIVO') throw new Error('La lectura posterior no confirma el estado INACTIVO en Supabase.')
+      const changed = rows[0]?.changed === true
       results.push({
         skuComplete,
         success: true,
         changed,
+        persistedStatus,
         message: changed ? 'Supabase quedó inactivo según la evidencia SAP recién analizada.' : 'Ya estaba inactivo en Supabase.',
       })
     } catch (error) {
@@ -1383,6 +1391,7 @@ export async function syncTransientSapInactiveSkusInSupabaseAction(input: { skuC
         skuComplete,
         success: false,
         changed: false,
+        persistedStatus: null,
         message: error instanceof Error ? error.message : 'No se pudo sincronizar el estado en Supabase.',
       })
     }

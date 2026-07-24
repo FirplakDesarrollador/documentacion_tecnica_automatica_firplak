@@ -242,6 +242,43 @@ function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.flatMap(item => asString(item) ?? []) : []
 }
 
+function skuColorCode(skuComplete: string): string | null {
+  const colorCode = skuComplete.trim().toUpperCase().split('-').at(-1) ?? ''
+  return /^[A-Z0-9]{4}$/.test(colorCode) ? colorCode : null
+}
+
+function removeSyncedInactiveSkuFromWorkspace(workspace: ReferenceImportWorkspace, skuComplete: string): ReferenceImportWorkspace {
+  const normalizedSku = skuComplete.trim().toUpperCase()
+  const colorCode = skuColorCode(normalizedSku)
+  const remainingInactiveSkuCodes = asStringArray(workspace.run.summaryJson.sap_inactive_sku_codes)
+    .filter(code => code !== normalizedSku)
+  const remainingSnapshots = workspace.snapshots.filter(snapshot => snapshot.skuComplete !== normalizedSku)
+  const remainingFindings = workspace.findings.filter(finding => asString(finding.detailsJson.sku_complete) !== normalizedSku)
+  const sourceSkuCount = Math.max(0, workspace.run.sourceSkuCount - 1)
+  const confirmedSkuCount = asNumber(workspace.run.summaryJson.sap_confirmed_sku_count)
+  const removeColor = (value: unknown): string[] => asStringArray(value)
+    .filter(code => code !== colorCode)
+
+  return {
+    ...workspace,
+    snapshots: remainingSnapshots,
+    findings: remainingFindings,
+    run: {
+      ...workspace.run,
+      sourceSkuCount,
+      summaryJson: {
+        ...workspace.run.summaryJson,
+        source_sku_count: sourceSkuCount,
+        sap_confirmed_sku_count: confirmedSkuCount === null ? remainingSnapshots.length : Math.max(0, confirmedSkuCount - 1),
+        sap_inactive_sku_count: remainingInactiveSkuCodes.length,
+        sap_inactive_sku_codes: remainingInactiveSkuCodes,
+        sap_inactive_sku_colors: removeColor(workspace.run.summaryJson.sap_inactive_sku_colors),
+        supabase_only_sku_colors: removeColor(workspace.run.summaryJson.supabase_only_sku_colors),
+      },
+    },
+  }
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -2385,11 +2422,11 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     if (!workspace) return
     if (!preparedSupabaseSyncSkus[skuComplete]) {
       setPreparedSupabaseSyncSkus(current => ({ ...current, [skuComplete]: true }))
-      setSkuActionMessages(current => ({ ...current, [skuComplete]: 'SAP se volverá a consultar antes de sincronizar este estado en Supabase.' }))
+      setSkuActionMessages(current => ({ ...current, [skuComplete]: 'La evidencia SAP recién analizada se conservará; solo se inactivará este SKU en Supabase.' }))
       return
     }
     runTask(async () => {
-      setSkuActionMessages(current => ({ ...current, [skuComplete]: 'Comprobando el estado en SAP...' }))
+      setSkuActionMessages(current => ({ ...current, [skuComplete]: 'Inactivando este SKU en Supabase...' }))
       try {
         const result = await syncTransientSapInactiveSkusInSupabaseAction({ skuCompletes: [skuComplete] })
         setMessage(result.message)
@@ -2398,11 +2435,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
           Object.entries(current).filter(([code]) => code !== skuComplete)
         ))
         if (!result.success) return
-
-        await analyzeReferenceWithProgress(workspace.run.referenceId, {
-          skuCompletes: [],
-          cachedSnapshots: workspace.snapshots.filter(snapshot => snapshot.status === 'captured'),
-        })
+        setWorkspace(current => current ? removeSyncedInactiveSkuFromWorkspace(current, skuComplete) : current)
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'No se pudo inactivar el SKU en Supabase.'
         setMessage(errorMessage)
@@ -2728,6 +2761,16 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
         setMessage(result.message)
         const publishedBomStructure = result.publishedBomStructure
         if (result.success && publishedBomStructure) {
+          setCandidates(current => current.map(candidate =>
+            candidate.referenceId === workspace.run.referenceId
+              ? { ...candidate, hasBom: true }
+              : candidate
+          ))
+          setSelectedCandidate(current =>
+            current?.referenceId === workspace.run.referenceId
+              ? { ...current, hasBom: true }
+              : current
+          )
           setWorkspace(current => current ? {
             ...current,
             run: {
@@ -3406,7 +3449,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                             {sapInactiveSkuCodes.length} {sapInactiveSkuCodes.length === 1 ? 'código inactivo' : 'códigos inactivos'} en SAP
                           </h2>
                           <p className="mt-1 text-sm text-rose-900">
-                            La aplicación puede sincronizar su estado con SAP. Antes de cambiar Supabase, volverá a confirmar cada código en SAP; esta acción no modifica SAP.
+                            La evidencia SAP de este análisis ya confirma esos códigos como inactivos o congelados. La acción solo actualiza Supabase y conserva el resto del informe.
                           </p>
                           <div className="mt-3 space-y-3">
                             {sapInactiveSkuCodes.map(skuComplete => {
@@ -3427,7 +3470,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                                       {isPrepared ? 'Confirmar sincronización en Supabase' : 'Preparar sincronización'}
                                     </button>
                                   </div>
-                                  {isPrepared ? <p className="mt-2 text-xs font-medium text-rose-800">La confirmación vuelve a consultar SAP antes de modificar solo Supabase.</p> : null}
+                                  {isPrepared ? <p className="mt-2 text-xs font-medium text-rose-800">Confirma la inactivación en Supabase; no se volverá a consultar SAP ni se repetirá el análisis.</p> : null}
                                   {skuActionMessages[skuComplete] ? (
                                     <p className="mt-2 text-sm font-semibold text-rose-950" aria-live="polite">
                                       {skuActionMessages[skuComplete]}
