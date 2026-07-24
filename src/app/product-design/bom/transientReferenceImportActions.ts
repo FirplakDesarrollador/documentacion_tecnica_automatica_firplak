@@ -14,7 +14,7 @@ import {
   type ColorRuleCoverageResult,
 } from '@/lib/bom/referenceImport'
 import type { ReferenceBomStructure, ReferenceImportWorkspace } from '@/lib/bom/referenceImportTypes'
-import { isReferenceProductApplicationScope, type ReferenceProductApplicationScope } from '@/lib/bom/referenceImportScopes'
+import { isBoardMaterialApplicationScope, isReferenceProductApplicationScope, type ReferenceProductApplicationScope } from '@/lib/bom/referenceImportScopes'
 import type { BoardProfileConditionalRule, HybridColorCase } from '@/lib/bom/types'
 import { normalizeBomStructure } from '@/lib/bom/resolve'
 import { deleteSapItem, deleteSapProductTree, getSapItem, getSapItemBom, getSapProductTreeUsages, productTreeStructureMatches, SapServiceLayerError, updateSapItem, updateSapProductTreeIssueMethod, type SapEntityPayload } from '@/lib/sap/serviceLayer'
@@ -146,6 +146,32 @@ function isColorCode(value: string): boolean {
 
 function isBoardMaterialProfile(value: string): boolean {
   return value === 'ST' || value === 'RH' || value === 'CARB2' || value === 'CARB2 RH'
+}
+
+type ReferenceQuantityResolution = {
+  baseItemCode: string
+  scope: ReferenceProductApplicationScope
+  strategy: 'repetition' | 'maximum'
+}
+
+function readBoardProfileConditions(value: Record<string, unknown>): BoardProfileConditionalRule[] {
+  const rawRules = value.board_profile_conditions
+  if (!Array.isArray(rawRules)) return []
+  return rawRules.flatMap((rawRule, index) => {
+    const rule = jsonRecord(rawRule)
+    const scope = readString(rule.product_application_scope)
+    const sourceMaterialProfile = readString(rule.source_material_profile)?.toUpperCase()
+    const targetColorCode = readString(rule.target_color_code)?.toUpperCase()
+    const targetMaterialProfile = readString(rule.target_material_profile)?.toUpperCase()
+    if (!isBoardMaterialApplicationScope(scope) || !sourceMaterialProfile || !targetColorCode || !targetMaterialProfile || !isColorCode(targetColorCode) || !isBoardMaterialProfile(sourceMaterialProfile) || !isBoardMaterialProfile(targetMaterialProfile)) return []
+    return [{
+      rule_id: readString(rule.rule_id) ?? `board_profile_${index + 1}`,
+      product_application_scope: scope,
+      source_material_profile: sourceMaterialProfile,
+      target_color_code: targetColorCode,
+      target_material_profile: targetMaterialProfile,
+    }]
+  })
 }
 
 function normalizeSkuCompletes(value: string[]): string[] {
@@ -635,6 +661,7 @@ export async function saveTransientMatrixDualCandidateSkuOverridesAction(input: 
 /** Saves a complete, SAP-derived unicolor board strategy for one color. */
 export async function saveTransientBoardConditionalProfileRuleAction(input: {
   sourceColorCode: string
+  scope?: string
   defaultBoardColorCode: string
   defaultMaterialProfile: string | null
   conditions: Array<{
@@ -646,6 +673,7 @@ export async function saveTransientBoardConditionalProfileRuleAction(input: {
   await assertPermission('module:product-design')
   try {
     const sourceColorCode = normalizedColorCode(input.sourceColorCode)
+    const scope = input.scope?.trim() || 'full_product'
     const defaultBoardColorCode = normalizedColorCode(input.defaultBoardColorCode)
     const defaultMaterialProfile = input.defaultMaterialProfile?.trim().toUpperCase() || null
     const conditions = input.conditions.map(condition => ({
@@ -653,6 +681,7 @@ export async function saveTransientBoardConditionalProfileRuleAction(input: {
       targetBoardColorCode: normalizedColorCode(condition.targetBoardColorCode),
       targetMaterialProfile: condition.targetMaterialProfile.trim().toUpperCase(),
     }))
+    if (!isBoardMaterialApplicationScope(scope)) throw new Error('La regla condicional requiere un rol de tablero válido.')
     if (![sourceColorCode, defaultBoardColorCode, ...conditions.map(condition => condition.targetBoardColorCode)].every(isColorCode)) {
       throw new Error('Los colores de producto y tablero deben tener cuatro caracteres.')
     }
@@ -684,18 +713,19 @@ export async function saveTransientBoardConditionalProfileRuleAction(input: {
     if (!readString(materialProfiles.edge_band_full_product) && readString(materialProfiles.full_product)) {
       materialProfiles.edge_band_full_product = readString(materialProfiles.full_product)!
     }
-    const boardProfileConditions: BoardProfileConditionalRule[] = conditions.map(condition => ({
+    const existingConditions = readBoardProfileConditions(applicationColors).filter(condition => condition.product_application_scope !== scope)
+    const boardProfileConditions: BoardProfileConditionalRule[] = [...existingConditions, ...conditions.map(condition => ({
       rule_id: `board_profile_${condition.sourceMaterialProfile.toLowerCase()}_${condition.targetBoardColorCode.toLowerCase()}_${condition.targetMaterialProfile.toLowerCase()}`,
-      product_application_scope: 'full_product',
+      product_application_scope: scope,
       source_material_profile: condition.sourceMaterialProfile,
       target_color_code: condition.targetBoardColorCode,
       target_material_profile: condition.targetMaterialProfile,
-    }))
-    applicationColors.full_product = defaultBoardColorCode
+    }))]
+    applicationColors[scope] = defaultBoardColorCode
     applicationColors.board_profile_conditions = boardProfileConditions
     delete applicationColors.board_matrix_resolution
-    if (defaultMaterialProfile === null) delete materialProfiles.full_product
-    else materialProfiles.full_product = defaultMaterialProfile
+    if (defaultMaterialProfile === null) delete materialProfiles[scope]
+    else materialProfiles[scope] = defaultMaterialProfile
 
     const savedRows: Record<string, unknown>[] = await dbQuery(
       `UPDATE public.colors
@@ -1532,12 +1562,29 @@ function applyReferenceSemanticScopeAssignments(
 export async function publishTransientReferenceBomAction(input: {
   referenceId: string
   semanticScopeAssignments?: ReferenceSemanticScopeAssignment[]
+  quantityResolutions?: ReferenceQuantityResolution[]
 }): Promise<ActionResult> {
   await assertPermission('module:product-design')
   try {
     const referenceId = input.referenceId.trim()
     const workspace = await analyzeReferenceBomImportTransient({ referenceId })
-    const blockers = workspace.findings.filter(finding => finding.severity === 'blocker' && finding.status === 'open')
+    const validQuantityResolutions = (input.quantityResolutions ?? []).flatMap(resolution => {
+      const baseItemCode = resolution.baseItemCode.trim().toUpperCase()
+      const finding = workspace.findings.find(candidate =>
+        candidate.findingType === 'line_quantity_conflict'
+        && candidate.status === 'open'
+        && candidate.baseItemCode === baseItemCode
+        && candidate.proposedScope === resolution.scope
+      )
+      if (!finding || !isReferenceProductApplicationScope(resolution.scope) || (resolution.strategy !== 'repetition' && resolution.strategy !== 'maximum')) return []
+      const qty = resolution.strategy === 'repetition'
+        ? Number(finding.detailsJson.repeated_qty)
+        : Number(finding.detailsJson.proposed_qty)
+      return Number.isFinite(qty) && qty > 0 ? [{ baseItemCode, scope: resolution.scope, qty }] : []
+    })
+    const resolvedQuantityKeys = new Set(validQuantityResolutions.map(item => `${item.baseItemCode}:${item.scope}`))
+    const blockers = workspace.findings.filter(finding => finding.severity === 'blocker' && finding.status === 'open'
+      && !(finding.findingType === 'line_quantity_conflict' && finding.baseItemCode && finding.proposedScope && resolvedQuantityKeys.has(`${finding.baseItemCode}:${finding.proposedScope}`)))
     if (blockers.length > 0) throw new Error(`SAP aún tiene ${blockers.length} bloqueo(s) pendientes; no se publica una propuesta vieja.`)
     const validAssignments = (input.semanticScopeAssignments ?? []).flatMap((assignment) => {
       const lineId = assignment.lineId.trim()
@@ -1550,10 +1597,17 @@ export async function publishTransientReferenceBomAction(input: {
         ? [{ lineId, lineKind, baseItemCode, scope: assignment.scope }]
         : []
     })
-    const proposedBomStructure = applyReferenceSemanticScopeAssignments(
+    const scopedBomStructure = applyReferenceSemanticScopeAssignments(
       workspace.run.proposedBomStructure,
       validAssignments
     )
+    const proposedBomStructure = {
+      ...scopedBomStructure,
+      lines: scopedBomStructure.lines.map(line => {
+        const resolution = validQuantityResolutions.find(item => item.baseItemCode === line.base_item_code && item.scope === line.product_application_scope)
+        return resolution ? { ...line, qty: resolution.qty } : line
+      }),
+    }
     await dbQuery(
       `UPDATE public.product_references SET product_bom_structure = $1::jsonb WHERE id = $2`,
       [JSON.stringify(proposedBomStructure), referenceId]

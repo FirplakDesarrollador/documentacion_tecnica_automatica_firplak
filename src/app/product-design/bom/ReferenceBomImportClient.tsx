@@ -468,6 +468,26 @@ function findingDescription(finding: ReferenceImportFinding): string | null {
     return 'SAP muestra una diferencia de cantidad o bodega que la BOM base no puede asumir automáticamente. Define la excepción o corrige SAP.'
   }
 
+  if (finding.findingType === 'line_presence_conflict') {
+    const absentSkus = asStringArray(finding.detailsJson.absent_skus)
+    return `SAP incluye la pieza en algunos SKU y falta en ${absentSkus.join(', ') || 'otros SKU'}. Revisa si debe agregarse allí o retirarse de los SKU donde sobra.`
+  }
+
+  if (finding.findingType === 'line_quantity_conflict') {
+    const quantities = Array.isArray(finding.detailsJson.observed_quantities)
+      ? finding.detailsJson.observed_quantities.flatMap(asNumber)
+      : []
+    const proposed = asNumber(finding.detailsJson.proposed_qty)
+    return `SAP reporta ${quantities.join(', ')}. La BOM base propone ${proposed ?? '-'}, la mayor cantidad observada; confírmala o déjala pendiente para revisión posterior.`
+  }
+
+  if (finding.findingType === 'line_warehouse_conflict') {
+    const recommended = asString(finding.detailsJson.recommended_warehouse)
+    return recommended
+      ? `SAP usa más de una bodega. Se recomienda homologar en SAP a ${recommended}, que es la más repetida; primero revisa la evidencia por SKU.`
+      : 'SAP usa más de una bodega y no hay una mayoría; elige explícitamente cuál debe homologarse antes de modificar SAP.'
+  }
+
   if (finding.findingType === 'issue_method_review') {
     const proposed = asString(finding.detailsJson.proposed_issue_method)
     return proposed
@@ -1023,6 +1043,28 @@ function matrixFindingEvidence(finding: ReferenceImportFinding): Array<{
   })
 }
 
+function lineFindingEvidence(finding: ReferenceImportFinding): Array<{
+  skuComplete: string
+  productColor: string | null
+  materialColor: string | null
+  qty: number | null
+  warehouse: string | null
+}> {
+  const bySku = Array.isArray(finding.detailsJson.by_sku) ? finding.detailsJson.by_sku : []
+  return bySku.flatMap(item => {
+    const row = asRecord(item)
+    const skuComplete = asString(row.sku_complete)
+    if (!skuComplete) return []
+    return [{
+      skuComplete,
+      productColor: asString(row.sku_color_code),
+      materialColor: asString(row.material_color),
+      qty: asNumber(row.qty),
+      warehouse: asString(row.warehouse),
+    }]
+  })
+}
+
 function isMatrixColorConfigured(input: {
   config: AppliedMatrixColorConfig
   skuComplete: string
@@ -1150,6 +1192,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const analysisAbortControllerRef = useRef<AbortController | null>(null)
   const [lastAnalysisDurationSeconds, setLastAnalysisDurationSeconds] = useState<number | null>(null)
   const [publishState, setPublishState] = useState<'idle' | 'validating' | 'published' | 'failed'>('idle')
+  const [quantityResolutionStrategies, setQuantityResolutionStrategies] = useState<Record<string, 'repetition' | 'maximum'>>({})
   const [isPending, startTransition] = useTransition()
   const analysisElapsedSeconds = useElapsedSeconds(analysisStartedAt)
   const matrixVerificationElapsedSeconds = useElapsedSeconds(matrixVerificationStartedAt)
@@ -1169,7 +1212,8 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     )
   )
   const unresolvedBlockers = visibleFindings.filter(finding => finding.status === 'open'
-    && (finding.severity === 'blocker' || finding.findingType === 'component_metadata_batch_failed'))
+    && (finding.severity === 'blocker' || finding.findingType === 'component_metadata_batch_failed')
+    && !(finding.findingType === 'line_quantity_conflict' && quantityResolutionStrategies[finding.id]))
   const capturedSnapshots = workspace?.snapshots.filter(snapshot => snapshot.status === 'captured') ?? []
   const failedSnapshots = workspace?.snapshots.filter(snapshot => snapshot.status === 'failed') ?? []
   const sapActiveSkuCount = asNumber(workspace?.run.summaryJson.sap_active_sku_count)
@@ -1304,8 +1348,6 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const technicalReviewFindings = reviewFindings.filter(isTechnicalReviewFinding)
   const metadataRefreshItemCodes = [...new Set(technicalReviewFindings.flatMap(finding => asStringArray(finding.detailsJson.item_codes)))].sort()
   const canRefreshOnlyComponentMetadata = metadataRefreshItemCodes.length > 0
-    && unresolvedBlockers.length > 0
-    && unresolvedBlockers.every(isTechnicalReviewFinding)
   const issueMethodFindings = visibleFindings.filter(finding => finding.status === 'open' && finding.findingType === 'issue_method_review')
   const reviewTopicCount = new Set(businessReviewFindings.map(finding => {
     if (finding.findingType === 'material_profile_proposal') return `material-profile:${finding.lineIdentity}`
@@ -2564,6 +2606,12 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
         const result = await publishTransientReferenceBomAction({
           referenceId: workspace.run.referenceId,
           semanticScopeAssignments: Object.values(referenceScopeAssignments),
+          quantityResolutions: visibleFindings.flatMap(finding => {
+            const strategy = quantityResolutionStrategies[finding.id]
+            return finding.findingType === 'line_quantity_conflict' && strategy && finding.baseItemCode && finding.proposedScope
+              ? [{ baseItemCode: finding.baseItemCode, scope: finding.proposedScope, strategy }]
+              : []
+          }),
         })
         setMessage(result.message)
         if (result.success && result.workspace) {
@@ -2580,10 +2628,11 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
     })
   }
 
-  function refreshOnlyComponentMetadata(): void {
-    if (!canRefreshOnlyComponentMetadata) return
+  function refreshOnlyComponentMetadata(itemCodes = metadataRefreshItemCodes): void {
+    const requestedItemCodes = [...new Set(itemCodes.map(itemCode => itemCode.trim().toUpperCase()).filter(Boolean))]
+    if (requestedItemCodes.length === 0) return
     runTask(async () => {
-      const result = await refreshTransientComponentMetadataAction({ itemCodes: metadataRefreshItemCodes })
+      const result = await refreshTransientComponentMetadataAction({ itemCodes: requestedItemCodes })
       setMessage(result.message)
       if (!result.success) return
       const refreshedItemCodes = new Set(result.refreshedItemCodes)
@@ -3390,9 +3439,10 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                                 <div className="space-y-2">
                                   {line.alternatives.map((alternative, index) => (
                                     <div key={alternative.alternative_id} className="border-l-2 border-sky-200 pl-2">
-                                      <span className="mr-2 font-semibold text-slate-500">{line.sort_order}.{index + 1}</span>
+                                      {line.alternatives.length > 1 ? <span className="mr-2 font-semibold text-slate-500">{line.sort_order}.{index + 1}</span> : null}
                                       <span className="font-mono">{alternative.base_item_code}</span>
                                       <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 font-semibold text-slate-600">{alternative.material_profile}</span>
+                                      {line.board_physical_specification ? <span className="ml-2 text-slate-500">{line.board_physical_specification.thickness_mm} mm</span> : null}
                                       <span className="mt-1 block font-sans text-sm text-slate-600">
                                         {workspace.proposalItemNames[alternative.base_item_code] ?? 'Nombre base no disponible'}
                                       </span>
@@ -3511,7 +3561,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                     {canRefreshOnlyComponentMetadata ? (
                       <button
                         type="button"
-                        onClick={refreshOnlyComponentMetadata}
+                        onClick={() => refreshOnlyComponentMetadata()}
                         disabled={isPending || Boolean(analysisProgress)}
                         className="inline-flex h-9 items-center gap-2 rounded-md border border-sky-300 bg-white px-3 text-sm font-semibold text-sky-800 disabled:cursor-not-allowed disabled:opacity-50"
                       >
@@ -3529,6 +3579,10 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                     const profileConfirmation = requiresMaterialProfileConfirmation(finding)
                     const confirmation = colorConfirmation || groupConfirmation || profileConfirmation
                     const assignments = colorAssignmentEvidence(finding)
+                    const lineEvidence = lineFindingEvidence(finding)
+                    const isLineDifference = finding.findingType === 'line_presence_conflict'
+                      || finding.findingType === 'line_quantity_conflict'
+                      || finding.findingType === 'line_warehouse_conflict'
                     const affectedCodes = affectedBaseItemCodes(finding)
                     const baseItemName = finding.baseItemCode ? workspace.proposalItemNames[finding.baseItemCode] : null
                     const overrideDraft = overrideDrafts[finding.id] ?? {
@@ -3557,7 +3611,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                                 <span className="font-semibold">Pieza:</span> <span className="font-mono text-xs">{finding.baseItemCode}</span>{baseItemName ? ` - ${baseItemName}` : ''}
                               </p>
                             ) : null}
-                            {assignments.length > 0 ? (
+                            {finding.findingType === 'bom_line_review' && assignments.length > 0 ? (
                               <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-700">
                                 {assignments.map(assignment => (
                                   <span key={`${assignment.productColor}:${assignment.materialColor}`} className="inline-flex items-center gap-2 border border-slate-200 bg-slate-50 px-2 py-1">
@@ -3568,6 +3622,42 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                                   </span>
                                 ))}
                               </div>
+                            ) : null}
+                            {isLineDifference && lineEvidence.length > 0 ? (
+                              <div className="mt-3 overflow-x-auto border border-slate-200">
+                                <table className="min-w-full text-left text-xs text-slate-700">
+                                  <thead className="bg-slate-50 text-slate-600">
+                                    <tr>
+                                      <th className="px-3 py-2 font-semibold">SKU</th>
+                                      <th className="px-3 py-2 font-semibold">Color producto</th>
+                                      <th className="px-3 py-2 font-semibold">Color material</th>
+                                      <th className="px-3 py-2 font-semibold">Cantidad SAP</th>
+                                      <th className="px-3 py-2 font-semibold">Bodega SAP</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {lineEvidence.map(item => (
+                                      <tr key={item.skuComplete} className="border-t border-slate-100">
+                                        <td className="px-3 py-2 font-mono">{item.skuComplete}</td>
+                                        <td className="px-3 py-2">{item.productColor ?? '-'}</td>
+                                        <td className="px-3 py-2">{item.materialColor ?? '-'}</td>
+                                        <td className="px-3 py-2">{item.qty ?? '-'}</td>
+                                        <td className="px-3 py-2">{item.warehouse ?? 'Sin bodega'}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            ) : null}
+                            {finding.findingType === 'line_quantity_conflict' ? (
+                              <fieldset className="mt-3 border border-slate-200 bg-slate-50 p-3">
+                                <legend className="px-1 text-sm font-semibold text-slate-950">Decisión para la BOM base</legend>
+                                <div className="mt-2 flex flex-wrap gap-3 text-sm text-slate-800">
+                                  <label className="inline-flex items-center gap-2"><input type="radio" name={`quantity-${finding.id}`} checked={quantityResolutionStrategies[finding.id] === 'repetition'} onChange={() => setQuantityResolutionStrategies(current => ({ ...current, [finding.id]: 'repetition' }))} />Normalizar repetición ({asNumber(finding.detailsJson.repeated_qty) ?? '-'})</label>
+                                  <label className="inline-flex items-center gap-2"><input type="radio" name={`quantity-${finding.id}`} checked={quantityResolutionStrategies[finding.id] === 'maximum'} onChange={() => setQuantityResolutionStrategies(current => ({ ...current, [finding.id]: 'maximum' }))} />Usar mayor ({asNumber(finding.detailsJson.proposed_qty) ?? '-'})</label>
+                                </div>
+                                <p className="mt-2 text-xs text-slate-600">La decisión se incorpora al publicar la BOM. SAP no se modifica desde esta elección; la homogenización de sus LdM requiere una acción confirmada aparte.</p>
+                              </fieldset>
                             ) : null}
                             {affectedCodes.length > 0 && !(finding.baseItemCode && affectedCodes.length === 1 && affectedCodes[0] === finding.baseItemCode) ? (
                               <p className="mt-2 text-sm text-slate-700">
@@ -3704,6 +3794,20 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                               Guardar override en Supabase
                             </button>
                             </> : null}
+                          </div>
+                        ) : null}
+                        {finding.findingType === 'component_metadata_batch_failed' ? (
+                          <div className="mt-3 flex flex-wrap items-center gap-3 border border-sky-200 bg-sky-50 p-3">
+                            <p className="text-sm text-sky-950">Relee únicamente la ficha técnica de los componentes indicados; no vuelve a consultar las LdM ni sus subestructuras.</p>
+                            <button
+                              type="button"
+                              onClick={() => refreshOnlyComponentMetadata(asStringArray(finding.detailsJson.item_codes))}
+                              disabled={isPending || Boolean(analysisProgress) || asStringArray(finding.detailsJson.item_codes).length === 0}
+                              className="inline-flex h-9 items-center gap-2 rounded-md border border-sky-300 bg-white px-3 text-sm font-semibold text-sky-800 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+                              Releer metadata componentes
+                            </button>
                           </div>
                         ) : null}
                       </article>
