@@ -17,7 +17,7 @@ import type { ReferenceBomStructure, ReferenceImportWorkspace } from '@/lib/bom/
 import { isBoardMaterialApplicationScope, isReferenceProductApplicationScope, type ReferenceProductApplicationScope } from '@/lib/bom/referenceImportScopes'
 import type { BoardProfileConditionalRule, HybridColorCase } from '@/lib/bom/types'
 import { normalizeBomStructure } from '@/lib/bom/resolve'
-import { deleteSapItem, deleteSapProductTree, getSapItem, getSapItemBom, getSapProductTreeUsages, productTreeStructureMatches, SapServiceLayerError, updateSapItem, updateSapProductTreeIssueMethod, type SapEntityPayload } from '@/lib/sap/serviceLayer'
+import { deleteSapItem, deleteSapProductTree, getSapItem, getSapItemBom, getSapProductTreeUsages, productTreeQuantityMatches, productTreeStructureMatches, SapServiceLayerError, updateSapItem, updateSapProductTreeIssueMethod, updateSapProductTreeLineQuantity, type SapEntityPayload } from '@/lib/sap/serviceLayer'
 import { parseSapItemCode, readSapFrozen, readSapValid } from '@/lib/bom/sapMapping'
 import { syncMissingSapComponentsToCatalog } from '@/lib/sap/componentCatalogSync'
 import { getColorsAction, upsertColorAction, type ColorEntry } from '@/app/rules/colors/actions'
@@ -37,6 +37,7 @@ export type ComponentMetadataRefreshResult = {
 
 type MatrixSelection = DirectColorRuleMatrixSelection
 type IssueMethodItem = { skuComplete: string; childNum: number; itemCode: string }
+type QuantityItem = { skuComplete: string; childNum: number; itemCode: string; expectedQty: number }
 type MatrixAbsence = { skuComplete: string; baseItemCode: string }
 type MatrixHybridColorCase = {
   sourceColorCode: string
@@ -151,7 +152,8 @@ function isBoardMaterialProfile(value: string): boolean {
 type ReferenceQuantityResolution = {
   baseItemCode: string
   scope: ReferenceProductApplicationScope
-  strategy: 'repetition' | 'maximum'
+  strategy: 'repetition' | 'maximum' | 'custom'
+  customQty?: number | null
 }
 
 function readBoardProfileConditions(value: Record<string, unknown>): BoardProfileConditionalRule[] {
@@ -1263,6 +1265,84 @@ export async function applyTransientIssueMethodsBatchAction(input: {
   }
 }
 
+export async function applyTransientQuantitiesBatchAction(input: {
+  referenceId: string
+  targetQty: number
+  dryRun: boolean
+  confirmed: boolean
+  items: QuantityItem[]
+}): Promise<ActionResult & { quantityResult?: { dryRun: boolean; results: Array<{ skuComplete: string; childNum: number; itemCode: string; previousQty: number; success: boolean; changed: boolean; message: string }> } }> {
+  const access = await assertPermission('module:product-design')
+  const items = [...new Map(input.items.map(item => [`${item.skuComplete}:${item.childNum}:${item.itemCode}`, item])).values()]
+  try {
+    if (!Number.isFinite(input.targetQty) || input.targetQty <= 0) throw new Error('Indica una cantidad mayor que cero para homologar en SAP.')
+    if (!input.dryRun && !input.confirmed) throw new Error('Confirma la acción con la casilla antes de modificar cantidades en SAP.')
+    const results: Array<{ skuComplete: string; childNum: number; itemCode: string; previousQty: number; success: boolean; changed: boolean; message: string }> = []
+    for (const item of items) {
+      let success = false
+      let changed = false
+      let message = ''
+      let response: Record<string, unknown> = {}
+      try {
+        if (!Number.isFinite(item.expectedQty) || item.expectedQty <= 0) throw new Error(`La evidencia de ${item.skuComplete} no tiene una cantidad válida.`)
+        const beforeTree = await getSapItemBom(item.skuComplete)
+        if (!beforeTree) throw new Error(`SAP no devolvió ProductTree para ${item.skuComplete}.`)
+        const beforeLine = beforeTree.lines.find(line => line.ChildNum === item.childNum && line.ItemCode === item.itemCode)
+        if (!beforeLine) throw new Error(`SAP no encontró la línea ${item.childNum}/${item.itemCode}.`)
+        if (beforeLine.Quantity !== item.expectedQty) {
+          throw new Error(`SAP ya cambió esta línea (${beforeLine.Quantity}); vuelve a analizar antes de homologarla.`)
+        }
+        if (beforeLine.Quantity === input.targetQty) {
+          success = true
+          message = 'SAP ya tenía la cantidad solicitada.'
+        } else if (input.dryRun) {
+          success = true
+          message = `Dry-run listo: ${beforeLine.Quantity} cambiaría a ${input.targetQty}.`
+        } else {
+          response = (await updateSapProductTreeLineQuantity({
+            treeCode: beforeTree.treeCode,
+            childNum: item.childNum,
+            itemCode: item.itemCode,
+            quantity: input.targetQty,
+          })) as Record<string, unknown>
+          const afterTree = await getSapItemBom(item.skuComplete)
+          if (!afterTree || !productTreeQuantityMatches(beforeTree.lines, afterTree.lines, {
+            childNum: item.childNum,
+            itemCode: item.itemCode,
+            quantity: input.targetQty,
+          })) {
+            throw new Error('La verificación posterior no confirma la cantidad solicitada.')
+          }
+          success = true
+          changed = true
+          message = 'Cantidad actualizada y verificada en SAP.'
+        }
+      } catch (error) {
+        message = error instanceof Error ? error.message : 'No se pudo actualizar SAP.'
+      } finally {
+        await supabaseTable('sap_operation_logs').insert({
+          operation_type: 'product_tree_quantity_update', item_code: item.skuComplete, requested_status: String(input.targetQty),
+          dry_run: input.dryRun, confirmation_text: input.confirmed ? 'CHECKED' : '',
+          sap_payload: { child_num: item.childNum, item_code: item.itemCode, expected_qty: item.expectedQty, target_qty: input.targetQty },
+          sap_response: response, success, error_message: success ? null : message, created_by: access.user?.id ?? null,
+        })
+      }
+      results.push({ ...item, previousQty: item.expectedQty, success, changed, message })
+    }
+    const failedCount = results.filter(result => !result.success).length
+    return {
+      success: failedCount === 0,
+      message: input.dryRun
+        ? `Dry-run de ${results.length} línea(s): ${failedCount} con error.`
+        : `${results.filter(result => result.success).length} línea(s) verificadas en SAP; ${failedCount} con error.`,
+      workspace: null,
+      quantityResult: { dryRun: input.dryRun, results },
+    }
+  } catch (error) {
+    return { ...failure(error, 'No se pudieron homologar las cantidades en SAP.'), quantityResult: undefined }
+  }
+}
+
 export async function syncTransientSapInactiveSkusInSupabaseAction(input: { skuCompletes: string[] }): Promise<{
   success: boolean
   message: string
@@ -1576,10 +1656,12 @@ export async function publishTransientReferenceBomAction(input: {
         && candidate.baseItemCode === baseItemCode
         && candidate.proposedScope === resolution.scope
       )
-      if (!finding || !isReferenceProductApplicationScope(resolution.scope) || (resolution.strategy !== 'repetition' && resolution.strategy !== 'maximum')) return []
+      if (!finding || !isReferenceProductApplicationScope(resolution.scope) || !['repetition', 'maximum', 'custom'].includes(resolution.strategy)) return []
       const qty = resolution.strategy === 'repetition'
         ? Number(finding.detailsJson.repeated_qty)
-        : Number(finding.detailsJson.proposed_qty)
+        : resolution.strategy === 'maximum'
+          ? Number(finding.detailsJson.proposed_qty)
+          : Number(resolution.customQty)
       return Number.isFinite(qty) && qty > 0 ? [{ baseItemCode, scope: resolution.scope, qty }] : []
     })
     const resolvedQuantityKeys = new Set(validQuantityResolutions.map(item => `${item.baseItemCode}:${item.scope}`))

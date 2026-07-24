@@ -1017,6 +1017,63 @@ export async function updateSapProductTreeIssueMethod(input: {
   })
 }
 
+export function productTreeQuantityMatches(
+  before: BomLine[],
+  after: BomLine[],
+  target: { childNum: number; itemCode: string; quantity: number }
+): boolean {
+  if (before.length !== after.length) return false
+  const afterByIdentity = new Map(after.map(line => [`${line.ChildNum}:${line.ItemCode}`, line]))
+  return before.every((line) => {
+    const afterLine = afterByIdentity.get(`${line.ChildNum}:${line.ItemCode}`)
+    if (!afterLine || afterLine.Warehouse !== line.Warehouse || afterLine.IssueMethod !== line.IssueMethod) return false
+    return line.ChildNum === target.childNum && line.ItemCode === target.itemCode
+      ? afterLine.Quantity === target.quantity
+      : afterLine.Quantity === line.Quantity
+  })
+}
+
+export async function updateSapProductTreeLineQuantity(input: {
+  treeCode: string
+  childNum: number
+  itemCode: string
+  quantity: number
+}): Promise<unknown> {
+  await assertSapWritesEnabled()
+  const treeCode = normalizeRequiredCode(input.treeCode, 'treeCode')
+  const itemCode = normalizeRequiredCode(input.itemCode, 'itemCode')
+  if (!Number.isInteger(input.childNum) || input.childNum < 0 || !Number.isFinite(input.quantity) || input.quantity <= 0) {
+    throw new SapServiceLayerError('Invalid ProductTree quantity update', {
+      statusCode: 400,
+      sapCode: 'SAP_VALIDATION_ERROR',
+    })
+  }
+  const currentTree = await getSapItemBom(treeCode)
+  if (!currentTree) {
+    throw new SapServiceLayerError(`ProductTree not found for ${treeCode}`, {
+      statusCode: 404,
+      sapCode: 'SAP_PRODUCT_TREE_NOT_FOUND',
+    })
+  }
+  const targetMatches = currentTree.lines.filter(line => line.ChildNum === input.childNum && line.ItemCode === itemCode)
+  if (targetMatches.length !== 1) {
+    throw new SapServiceLayerError(`The requested ProductTree line was not found uniquely for ${treeCode}`, {
+      statusCode: 409,
+      sapCode: 'SAP_PRODUCT_TREE_LINE_MISMATCH',
+    })
+  }
+  return sapServiceLayerRequest(`/ProductTrees(${encodeODataString(treeCode)})`, {
+    method: 'PATCH',
+    body: {
+      ProductTreeLines: [{
+        ChildNum: input.childNum,
+        ItemCode: itemCode,
+        Quantity: input.quantity,
+      }],
+    },
+  })
+}
+
 export type SapProductTreeLineInput = {
   ChildNum: number
   ItemCode: string

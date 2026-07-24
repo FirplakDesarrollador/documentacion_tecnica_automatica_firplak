@@ -1254,28 +1254,49 @@ export async function refreshComponentMetadata(itemCodes: string[]): Promise<str
     throw new Error(`No se pudo completar la metadata de: ${missingCodes.join(', ')}.`)
   }
 
-  const rows = uniqueItemCodes.map(itemCode => {
+  const updates = uniqueItemCodes.map(itemCode => {
     const existing = existingByItemCode.get(itemCode)
     const sapItem = metadata.itemsByCode.get(itemCode)
     if (!existing || !sapItem) throw new Error(`Falta la evidencia técnica de ${itemCode}.`)
     const itemName = readSapItemName(sapItem, existing.itemName)
     return {
-      item_code: itemCode,
-      base_item_name: existing.baseItemName,
       item_name: itemName,
       uom: readSapUom(sapItem, existing.uom),
-      component_category: existing.componentCategory,
-      default_issue_method: existing.defaultIssueMethod,
       sap_valid: readSapValid(sapItem),
       sap_frozen: readSapFrozen(sapItem),
       is_inventory_item: readSapInventoryItem(sapItem),
-      item_bom_structure: existing.itemBomStructure,
       technical_metadata: buildComponentTechnicalMetadata(sapItem, itemName),
+      itemCode,
     }
   })
-  const { error } = await supabaseTable('component_items').upsert(rows, { onConflict: 'item_code' })
-  if (error) throw new Error(`No se pudo actualizar la metadata de componentes: ${error.message}`)
-  return uniqueItemCodes
+  const refreshedItemCodes: string[] = []
+  for (const update of updates) {
+    const rows = await dbQuery(
+      `UPDATE public.component_items
+       SET item_name = $1,
+           uom = $2,
+           sap_valid = $3,
+           sap_frozen = $4,
+           is_inventory_item = $5,
+           technical_metadata = $6::jsonb
+       WHERE item_code = $7
+       RETURNING item_code`,
+      [
+        update.item_name,
+        update.uom,
+        update.sap_valid,
+        update.sap_frozen,
+        update.is_inventory_item,
+        JSON.stringify(update.technical_metadata),
+        update.itemCode,
+      ]
+    )
+    if (readString(rows[0]?.item_code) !== update.itemCode) {
+      throw new Error(`El componente ${update.itemCode} ya no existe en component_items; impórtalo antes de releer su metadata.`)
+    }
+    refreshedItemCodes.push(update.itemCode)
+  }
+  return refreshedItemCodes
 }
 
 async function enrichDirectComponents(

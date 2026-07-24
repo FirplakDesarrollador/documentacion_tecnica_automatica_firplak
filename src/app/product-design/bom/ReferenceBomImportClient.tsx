@@ -15,6 +15,7 @@ import {
 
 import {
   applyTransientIssueMethodsBatchAction,
+  applyTransientQuantitiesBatchAction,
   applyTransientBoardFullProductColorRuleAction,
   confirmTransientBoardMatrixResolutionAction,
   confirmTransientColorMatrixAction,
@@ -1043,6 +1044,14 @@ function matrixFindingEvidence(finding: ReferenceImportFinding): Array<{
   })
 }
 
+type QuantityResolutionStrategy = 'repetition' | 'maximum' | 'custom'
+
+type QuantitySapDraft = {
+  confirmed: boolean
+  dryRunTargetQty: number | null
+  result: string | null
+}
+
 function lineFindingEvidence(finding: ReferenceImportFinding): Array<{
   skuComplete: string
   productColor: string | null
@@ -1062,6 +1071,25 @@ function lineFindingEvidence(finding: ReferenceImportFinding): Array<{
       qty: asNumber(row.qty),
       warehouse: asString(row.warehouse),
     }]
+  })
+}
+
+function quantityFindingItems(finding: ReferenceImportFinding): Array<{
+  skuComplete: string
+  childNum: number
+  itemCode: string
+  expectedQty: number
+}> {
+  const bySku = Array.isArray(finding.detailsJson.by_sku) ? finding.detailsJson.by_sku : []
+  return bySku.flatMap(item => {
+    const row = asRecord(item)
+    const skuComplete = asString(row.sku_complete)
+    const childNum = asNumber(row.sap_child_num)
+    const itemCode = asString(row.item_code)
+    const expectedQty = asNumber(row.qty)
+    return skuComplete && itemCode && childNum !== null && Number.isInteger(childNum) && expectedQty !== null && expectedQty > 0
+      ? [{ skuComplete, childNum, itemCode, expectedQty }]
+      : []
   })
 }
 
@@ -1192,7 +1220,10 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const analysisAbortControllerRef = useRef<AbortController | null>(null)
   const [lastAnalysisDurationSeconds, setLastAnalysisDurationSeconds] = useState<number | null>(null)
   const [publishState, setPublishState] = useState<'idle' | 'validating' | 'published' | 'failed'>('idle')
-  const [quantityResolutionStrategies, setQuantityResolutionStrategies] = useState<Record<string, 'repetition' | 'maximum'>>({})
+  const [quantityResolutionStrategies, setQuantityResolutionStrategies] = useState<Record<string, QuantityResolutionStrategy>>({})
+  const [quantityCustomValues, setQuantityCustomValues] = useState<Record<string, string>>({})
+  const [quantitySapDrafts, setQuantitySapDrafts] = useState<Record<string, QuantitySapDraft>>({})
+  const [locallyAppliedQuantityFindings, setLocallyAppliedQuantityFindings] = useState<Record<string, boolean>>({})
   const [isPending, startTransition] = useTransition()
   const analysisElapsedSeconds = useElapsedSeconds(analysisStartedAt)
   const matrixVerificationElapsedSeconds = useElapsedSeconds(matrixVerificationStartedAt)
@@ -1205,6 +1236,7 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   const boardMatrixBaseItemCodes = new Set(boardMatrixRows.flatMap(row => row.baseItemCodes))
   const visibleFindings = (workspace?.findings ?? []).filter(finding =>
     !findingIsLocallyResolvedByMatrix(finding, locallyAppliedMatrixConfigs)
+    && !(finding.findingType === 'line_quantity_conflict' && locallyAppliedQuantityFindings[finding.id])
     && !(
       (finding.findingType === 'material_profile_proposal' || finding.findingType === 'material_consumption_conflict')
       && finding.baseItemCode !== null
@@ -1213,7 +1245,10 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
   )
   const unresolvedBlockers = visibleFindings.filter(finding => finding.status === 'open'
     && (finding.severity === 'blocker' || finding.findingType === 'component_metadata_batch_failed')
-    && !(finding.findingType === 'line_quantity_conflict' && quantityResolutionStrategies[finding.id]))
+    && !(finding.findingType === 'line_quantity_conflict' && (
+      locallyAppliedQuantityFindings[finding.id]
+      || (quantityTargetForFinding(finding) ?? 0) > 0
+    )))
   const capturedSnapshots = workspace?.snapshots.filter(snapshot => snapshot.status === 'captured') ?? []
   const failedSnapshots = workspace?.snapshots.filter(snapshot => snapshot.status === 'failed') ?? []
   const sapActiveSkuCount = asNumber(workspace?.run.summaryJson.sap_active_sku_count)
@@ -1704,6 +1739,72 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
         confirmed: dryRun ? false : current.confirmed,
       }))
       if (result.workspace) setWorkspace(result.workspace)
+    })
+  }
+
+  function quantityTargetForFinding(finding: ReferenceImportFinding): number | null {
+    const strategy = quantityResolutionStrategies[finding.id]
+    if (strategy === 'repetition') return asNumber(finding.detailsJson.repeated_qty)
+    if (strategy === 'maximum') return asNumber(finding.detailsJson.proposed_qty)
+    if (strategy === 'custom') return asNumber(quantityCustomValues[finding.id])
+    return null
+  }
+
+  function selectQuantityStrategy(findingId: string, strategy: QuantityResolutionStrategy): void {
+    setQuantityResolutionStrategies(current => ({ ...current, [findingId]: strategy }))
+    setQuantitySapDrafts(current => ({
+      ...current,
+      [findingId]: { confirmed: false, dryRunTargetQty: null, result: null },
+    }))
+    setLocallyAppliedQuantityFindings(current => ({ ...current, [findingId]: false }))
+  }
+
+  function applyQuantitiesInSap(finding: ReferenceImportFinding, dryRun: boolean): void {
+    if (!workspace) return
+    const targetQty = quantityTargetForFinding(finding)
+    const items = quantityFindingItems(finding)
+    if (targetQty === null || targetQty <= 0 || items.length === 0) return
+    const draft = quantitySapDrafts[finding.id] ?? { confirmed: false, dryRunTargetQty: null, result: null }
+    runTask(async () => {
+      const result = await applyTransientQuantitiesBatchAction({
+        referenceId: workspace.run.referenceId,
+        targetQty,
+        dryRun,
+        confirmed: draft.confirmed,
+        items,
+      })
+      const detail = result.quantityResult?.results
+        .map(item => `${item.skuComplete} · línea ${item.childNum}: ${item.message}`)
+        .join(' ')
+        ?? result.message
+      setMessage(result.message)
+      setQuantitySapDrafts(current => ({
+        ...current,
+        [finding.id]: {
+          confirmed: dryRun ? false : current[finding.id]?.confirmed ?? false,
+          dryRunTargetQty: dryRun && result.success ? targetQty : current[finding.id]?.dryRunTargetQty ?? null,
+          result: detail,
+        },
+      }))
+      if (!dryRun && result.success) {
+        setLocallyAppliedQuantityFindings(current => ({ ...current, [finding.id]: true }))
+        setWorkspace(current => current ? {
+          ...current,
+          run: {
+            ...current.run,
+            proposedBomStructure: {
+              ...current.run.proposedBomStructure,
+              lines: current.run.proposedBomStructure.lines.map(line =>
+                line.line_kind === 'fixed'
+                && line.base_item_code === finding.baseItemCode
+                && line.product_application_scope === finding.proposedScope
+                  ? { ...line, qty: targetQty }
+                  : line
+              ),
+            },
+          },
+        } : current)
+      }
     })
   }
 
@@ -2609,7 +2710,12 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
           quantityResolutions: visibleFindings.flatMap(finding => {
             const strategy = quantityResolutionStrategies[finding.id]
             return finding.findingType === 'line_quantity_conflict' && strategy && finding.baseItemCode && finding.proposedScope
-              ? [{ baseItemCode: finding.baseItemCode, scope: finding.proposedScope, strategy }]
+              ? [{
+                  baseItemCode: finding.baseItemCode,
+                  scope: finding.proposedScope,
+                  strategy,
+                  customQty: strategy === 'custom' ? asNumber(quantityCustomValues[finding.id]) : null,
+                }]
               : []
           }),
         })
@@ -3653,10 +3759,49 @@ export function ReferenceBomImportClient({ initialCandidates }: Props) {
                               <fieldset className="mt-3 border border-slate-200 bg-slate-50 p-3">
                                 <legend className="px-1 text-sm font-semibold text-slate-950">Decisión para la BOM base</legend>
                                 <div className="mt-2 flex flex-wrap gap-3 text-sm text-slate-800">
-                                  <label className="inline-flex items-center gap-2"><input type="radio" name={`quantity-${finding.id}`} checked={quantityResolutionStrategies[finding.id] === 'repetition'} onChange={() => setQuantityResolutionStrategies(current => ({ ...current, [finding.id]: 'repetition' }))} />Normalizar repetición ({asNumber(finding.detailsJson.repeated_qty) ?? '-'})</label>
-                                  <label className="inline-flex items-center gap-2"><input type="radio" name={`quantity-${finding.id}`} checked={quantityResolutionStrategies[finding.id] === 'maximum'} onChange={() => setQuantityResolutionStrategies(current => ({ ...current, [finding.id]: 'maximum' }))} />Usar mayor ({asNumber(finding.detailsJson.proposed_qty) ?? '-'})</label>
+                                  <label className="inline-flex items-center gap-2"><input type="radio" name={`quantity-${finding.id}`} checked={quantityResolutionStrategies[finding.id] === 'repetition'} onChange={() => selectQuantityStrategy(finding.id, 'repetition')} />Normalizar repetición ({asNumber(finding.detailsJson.repeated_qty) ?? '-'})</label>
+                                  <label className="inline-flex items-center gap-2"><input type="radio" name={`quantity-${finding.id}`} checked={quantityResolutionStrategies[finding.id] === 'maximum'} onChange={() => selectQuantityStrategy(finding.id, 'maximum')} />Usar mayor ({asNumber(finding.detailsJson.proposed_qty) ?? '-'})</label>
+                                  <label className="inline-flex items-center gap-2"><input type="radio" name={`quantity-${finding.id}`} checked={quantityResolutionStrategies[finding.id] === 'custom'} onChange={() => selectQuantityStrategy(finding.id, 'custom')} />Definir personalizado:</label>
+                                  <input
+                                    type="number"
+                                    min="0.0001"
+                                    step="0.01"
+                                    inputMode="decimal"
+                                    value={quantityCustomValues[finding.id] ?? ''}
+                                    onChange={event => {
+                                      setQuantityCustomValues(current => ({ ...current, [finding.id]: event.target.value }))
+                                      setQuantitySapDrafts(current => ({ ...current, [finding.id]: { confirmed: false, dryRunTargetQty: null, result: null } }))
+                                      setLocallyAppliedQuantityFindings(current => ({ ...current, [finding.id]: false }))
+                                    }}
+                                    disabled={quantityResolutionStrategies[finding.id] !== 'custom'}
+                                    aria-label="Cantidad personalizada"
+                                    className="h-8 w-28 border border-slate-300 bg-white px-2 text-sm disabled:bg-slate-100"
+                                  />
                                 </div>
-                                <p className="mt-2 text-xs text-slate-600">La decisión se incorpora al publicar la BOM. SAP no se modifica desde esta elección; la homogenización de sus LdM requiere una acción confirmada aparte.</p>
+                                {(() => {
+                                  const targetQty = quantityTargetForFinding(finding)
+                                  const items = quantityFindingItems(finding)
+                                  const sapDraft = quantitySapDrafts[finding.id] ?? { confirmed: false, dryRunTargetQty: null, result: null }
+                                  const canApplyToSap = targetQty !== null && targetQty > 0 && items.length > 0
+                                  return (
+                                    <div className="mt-3 border border-violet-200 bg-violet-50 p-3">
+                                      <p className="text-sm font-semibold text-violet-950">Homogenizar estas LdM en SAP</p>
+                                      <p className="mt-1 text-xs text-violet-900">Solo modifica las {items.length} líneas evidenciadas arriba, con su misma pieza y número de línea. Primero compara la simulación; la aplicación exige la casilla de confirmación y relee cada LdM después.</p>
+                                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                                        <button type="button" onClick={() => applyQuantitiesInSap(finding, true)} disabled={isPending || !canApplyToSap} className="h-9 border border-violet-300 bg-white px-3 text-sm font-semibold text-violet-950 disabled:cursor-not-allowed disabled:opacity-50">
+                                          Probar sin escribir SAP
+                                        </button>
+                                        <label className="inline-flex h-9 items-center gap-2 border border-violet-300 bg-white px-3 text-xs font-semibold text-violet-950"><input type="checkbox" checked={sapDraft.confirmed} onChange={event => setQuantitySapDrafts(current => ({ ...current, [finding.id]: { ...sapDraft, confirmed: event.target.checked } }))} disabled={sapDraft.dryRunTargetQty !== targetQty} />Confirmo cambiar a {targetQty ?? '-'}</label>
+                                        <button type="button" onClick={() => applyQuantitiesInSap(finding, false)} disabled={isPending || !canApplyToSap || !sapDraft.confirmed || sapDraft.dryRunTargetQty !== targetQty} className="h-9 bg-violet-800 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+                                          Aplicar y verificar en SAP
+                                        </button>
+                                      </div>
+                                      {sapDraft.dryRunTargetQty !== targetQty && canApplyToSap ? <p className="mt-2 text-xs text-violet-900">Ejecuta el dry-run para la cantidad seleccionada antes de habilitar la confirmación.</p> : null}
+                                      {sapDraft.result ? <p className="mt-3 text-sm font-medium text-violet-950">{sapDraft.result}</p> : null}
+                                    </div>
+                                  )
+                                })()}
+                                <p className="mt-2 text-xs text-slate-600">La decisión seleccionada se incorpora al publicar la BOM base. Homogenizar SAP es opcional y queda como una acción separada, simulada y verificada.</p>
                               </fieldset>
                             ) : null}
                             {affectedCodes.length > 0 && !(finding.baseItemCode && affectedCodes.length === 1 && affectedCodes[0] === finding.baseItemCode) ? (
