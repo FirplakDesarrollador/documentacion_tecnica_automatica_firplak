@@ -3,6 +3,7 @@ import type {
   BomConsumption,
   BomMaterialAlternative,
   BomColorOverride,
+  BoardPhysicalSpecification,
   BoardProfileConditionalRule,
   ComponentTechnicalMetadata,
   HybridColorCase,
@@ -80,6 +81,7 @@ export type ReferenceBomLine = {
   issue_method_override: string | null
   alternatives: BomMaterialAlternative[]
   consumptions: BomConsumption[]
+  board_physical_specification?: BoardPhysicalSpecification | null
 }
 
 export type ReferenceBomStructure = {
@@ -236,6 +238,7 @@ export type BoardMatrixEvidence = {
   materialProfile: string | null
   /** Profile selected by the SKU reference before a color strategy applies. */
   referenceMaterialProfile?: string | null
+  thicknessMm: number | null
   formatKey: string | null
   qty: number
   /** Number of identical SAP rows represented by this observation. */

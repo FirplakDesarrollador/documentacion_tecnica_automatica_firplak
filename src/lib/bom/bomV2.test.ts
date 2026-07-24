@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { analyzeReferenceBom } from './referenceImportAnalysis'
+import { boardRoleFromReferenceContext } from './boardRoleInference'
 import { assessBoardFullProductRuleCandidate, buildBoardMatrixRows, deriveBoardConditionalRuleStrategies, detectBoardDualCandidates, evaluateGlobalBoardDualCandidate, summarizeBoardEvidenceExamples, summarizeBoardProfileEvidence } from './boardMatrix'
 import { resolveBomForSku } from './resolve'
 import { isBoardMaterialApplicationScope } from './referenceImportScopes'
@@ -44,6 +45,7 @@ function line(input: {
   occurrence?: number
   itemName?: string
   qty?: number
+  warehouse?: string | null
   technicalMetadata?: ReturnType<typeof metadata>
 }): NormalizedSapBomLine {
   const variantCode4 = input.variantCode4 ?? '0000'
@@ -58,7 +60,7 @@ function line(input: {
     sourceOrder: input.sourceOrder,
     sapChildNum: input.sourceOrder - 1,
     qty: input.qty ?? 1,
-    warehouse: '01',
+    warehouse: input.warehouse ?? '01',
     issueMethod: 'im_Manual',
     inventoryUom: 'UND',
     technicalMetadata: input.technicalMetadata ?? metadata(),
@@ -112,6 +114,7 @@ function boardEvidence(input: Partial<BoardMatrixEvidence> & Pick<BoardMatrixEvi
     baseItemCode: 'CMPD06-0001-000',
     itemCode: `CMPD06-0001-000-${input.boardColorCode}`,
     materialProfile: 'ST',
+    thicknessMm: 15,
     formatKey: '1830x2440x15',
     qty: 0.89,
     roleSource: input.role === 'role_pending' ? 'pending' : 'published_bom',
@@ -191,6 +194,31 @@ test('keeps the main board and drawer bottom in separate matrix roles', () => {
     ['full_product', '0437', 'matches'],
   ])
   assert.equal(rows.some(row => row.status === 'variation_by_design'), false)
+})
+
+test('classifies the sole body board as full product when the only companion is a drawer bottom', () => {
+  const mainBoard = line({
+    baseItemCode: 'CMPD06-0001-000', variantCode4: '0437', sourceOrder: 1, qty: 1.47,
+    itemName: 'TABLERO ST 15MM BLANCO',
+    technicalMetadata: metadata({ material_kind: 'board', material_profile: 'ST', material_profile_source: 'ST', thickness_mm: 15, format_key: '2440x1530x15', metadata_source: 'sap_and_name' }),
+  })
+  const drawerBottom = line({
+    baseItemCode: 'CMPD06-0030-000', variantCode4: '0467', sourceOrder: 2, qty: 0.16,
+    itemName: 'FONDO CARB RH 4MM CINZA/GRIS CLARO',
+    technicalMetadata: metadata({ material_kind: 'board', material_profile: 'CARB2 RH', material_profile_source: 'CARB2 RH', thickness_mm: 4, format_key: '2440x1220x4', metadata_source: 'sap_and_name' }),
+  })
+  const directSnapshot = snapshot('VBAN12-0081-000-0437', '0437', [mainBoard, drawerBottom])
+  const context = {
+    referenceId: 'reference', familyCode: 'BAN12', referenceCode: '0081', productName: 'Macao',
+    manufacturingProcess: 'MUEBLES NACIONAL', productType: 'MUEBLE',
+  }
+
+  assert.deepEqual(boardRoleFromReferenceContext({ context, snapshot: directSnapshot, line: mainBoard }), {
+    role: 'full_product', roleSource: 'evidence',
+  })
+  assert.deepEqual(boardRoleFromReferenceContext({ context, snapshot: directSnapshot, line: drawerBottom }), {
+    role: 'drawer_bottom', roleSource: 'evidence',
+  })
 })
 
 test('fresh SAP import classifies a fondo board as drawer bottom', () => {
@@ -301,16 +329,18 @@ test('groups mutually exclusive ST and CARB2 boards into one logical position', 
   assert.equal(analysis.proposedBomStructure.lines.length, 17)
   const materialGroup = analysis.proposedBomStructure.lines.find(item => item.line_kind === 'material_group')
   assert.ok(materialGroup)
-  assert.deepEqual(materialGroup.alternatives.map(item => item.material_profile).sort(), ['CARB2', 'ST'])
+  assert.deepEqual(materialGroup.alternatives.map(item => item.material_profile), ['CARB2'])
+  assert.equal(materialGroup.alternatives[0]?.is_default, false)
+  assert.deepEqual(materialGroup.board_physical_specification, { material_kind: 'board', thickness_mm: 15 })
   assert.deepEqual(materialGroup.consumptions
     .filter(item => item.color_mode === 'full' && item.product_application_scope === 'full_product')
     .map(item => [item.material_profile, item.format_key, item.qty, item.status])
     .sort((left, right) => String(left[0]).localeCompare(String(right[0]))), [
-      ['CARB2', null, 0.92, 'observed'],
-      ['ST', null, 0.92, 'observed'],
-    ])
+    ['CARB2', null, 0.92, 'observed'],
+  ])
   assert.equal(materialGroup.consumptions.some(item => item.status === 'needs_definition'), false)
   assert.equal(materialGroup.uom, 'UND')
+  assert.equal(analysis.findings.some(finding => finding.findingType === 'board_default_profile_tie' && finding.severity === 'blocker'), true)
 })
 
 test('normalizes one board consumption to the highest value across physical formats', () => {
@@ -492,8 +522,8 @@ test('uses the confirmed dual edge mapping to classify direct board colors', () 
     ]),
   })
   const boardScopes = analysis.proposedBomStructure.lines
-    .filter(line => line.base_item_code === 'CMPD06-0008-000' || line.base_item_code === 'CMPD06-0004-000')
-    .map(line => `${line.base_item_code}:${line.product_application_scope}`)
+    .filter(line => line.line_kind === 'material_group')
+    .map(line => `${line.alternatives[0]?.base_item_code}:${line.product_application_scope}`)
     .sort()
   assert.deepEqual(boardScopes, ['CMPD06-0004-000:front', 'CMPD06-0008-000:structure'])
 })
@@ -1215,7 +1245,9 @@ test('uses the consolidated board quantity in the proposed BOM base', () => {
     ])],
     colorConfigurations: new Map(),
   })
-  assert.equal(analysis.proposedBomStructure.lines[0]?.qty, 0.56)
+  const boardLine = analysis.proposedBomStructure.lines[0]
+  assert.equal(boardLine?.line_kind, 'material_group')
+  assert.equal(boardLine?.consumptions[0]?.qty, 0.56)
 })
 
 test('applies a 0493 board condition only when the reference profile is ST', () => {
@@ -1344,6 +1376,94 @@ test('derives a missing board base from the target profile when the reference ke
   }
   const resolved = resolveBomForSku({ skuComplete: 'VBAN05-0001-000-0493', skuColorCode: '0493', structure, globalOverrides: emptyOverrides, versionOverrides: emptyOverrides, colorway, componentItems: components })
   assert.deepEqual(resolved.map(item => item.resolved_item_code), ['CMPD06-0008-000-1371'])
+})
+
+test('separates quantity and warehouse findings and proposes the highest fixed consumption', () => {
+  const analysis = analyzeReferenceBom({
+    context: {
+      referenceId: 'reference', familyCode: 'BAN12', referenceCode: '0081', productName: 'Macao',
+      manufacturingProcess: 'MUEBLES NACIONAL', productType: 'MUEBLE',
+    },
+    snapshots: [
+      snapshot('VBAN12-0081-000-0439', '0439', [line({ baseItemCode: 'CEMP03-0001-000', sourceOrder: 1, qty: 0.42, warehouse: 'MP-04' })]),
+      snapshot('VBAN12-0081-000-0493', '0493', [line({ baseItemCode: 'CEMP03-0001-000', sourceOrder: 1, qty: 0.56, warehouse: 'MP-01' })]),
+      snapshot('VBAN12-0081-000-0494', '0494', [line({ baseItemCode: 'CEMP03-0001-000', sourceOrder: 1, qty: 0.56, warehouse: 'MP-01' })]),
+    ],
+    colorConfigurations: new Map(),
+  })
+
+  assert.equal(analysis.proposedBomStructure.lines[0]?.qty, 0.56)
+  const quantityFinding = analysis.findings.find(finding => finding.findingType === 'line_quantity_conflict')
+  assert.deepEqual(quantityFinding?.detailsJson.observed_quantities, [0.42, 0.56])
+  assert.equal(quantityFinding?.detailsJson.proposed_qty, 0.56)
+  const warehouseFinding = analysis.findings.find(finding => finding.findingType === 'line_warehouse_conflict')
+  assert.equal(warehouseFinding?.detailsJson.recommended_warehouse, 'MP-01')
+  assert.equal(analysis.findings.some(finding => finding.findingType === 'bom_line_review'), false)
+})
+
+test('resolves CARB2 equivalents by profile and thickness, not by the board base code or purchase format', () => {
+  const structure: BomStructure = {
+    schema_version: 2, structure_type: 'production', input_warehouse_code: '01', output_warehouse_code: null,
+    lines: [
+      {
+        line_id: 'board_15', sort_order: 1, line_kind: 'material_group', base_item_code: null, product_application_scope: 'full_product', qty: null,
+        input_warehouse_code: null, issue_method_override: null,
+        alternatives: [{ alternative_id: 'st_15', base_item_code: 'CMPD06-0001-000', material_profile: 'ST', is_default: true }],
+        consumptions: [{ color_mode: 'full', product_application_scope: 'full_product', material_profile: 'ST', format_key: null, qty: 0.92, status: 'confirmed' }],
+        board_physical_specification: { material_kind: 'board', thickness_mm: 15 },
+      },
+      {
+        line_id: 'board_18', sort_order: 2, line_kind: 'material_group', base_item_code: null, product_application_scope: 'inner_structure', qty: null,
+        input_warehouse_code: null, issue_method_override: null,
+        alternatives: [{ alternative_id: 'st_18', base_item_code: 'CMPD06-0011-000', material_profile: 'ST', is_default: true }],
+        consumptions: [{ color_mode: 'full', product_application_scope: 'inner_structure', material_profile: 'ST', format_key: null, qty: 0.54, status: 'confirmed' }],
+        board_physical_specification: { material_kind: 'board', thickness_mm: 18 },
+      },
+    ],
+  }
+  const components = new Map([
+    ['CMPD06-0001-000-0493', component('CMPD06-0001-000-0493', 'TABLERO ST 15MM AUSTRAL', metadata({ material_kind: 'board', material_profile: 'ST', thickness_mm: 15, format_key: '1830x2440x15' }))],
+    ['CMPD06-0011-000-0493', component('CMPD06-0011-000-0493', 'TABLERO ST 18MM AUSTRAL', metadata({ material_kind: 'board', material_profile: 'ST', thickness_mm: 18, format_key: '1830x2440x18' }))],
+    ['CMPD06-0008-000-1371', component('CMPD06-0008-000-1371', 'TABLERO CARB 15MM NARDO', metadata({ material_kind: 'board', material_profile: 'CARB2', thickness_mm: 15, format_key: '1530x2440x15' }))],
+    ['CMPD06-0018-000-1371', component('CMPD06-0018-000-1371', 'TABLERO CARB 18MM NARDO', metadata({ material_kind: 'board', material_profile: 'CARB2', thickness_mm: 18, format_key: '1220x2440x18' }))],
+  ])
+  const resolved = resolveBomForSku({
+    skuComplete: 'VBAN05-0001-000-0493', skuColorCode: '0493', structure,
+    globalOverrides: emptyOverrides, versionOverrides: emptyOverrides,
+    colorway: {
+      code_4dig: '0493', name_color_sap: 'AUSTRAL', color_mode: 'full',
+      application_colors_json: { full_product: '1371', inner_structure: '1371' },
+      application_material_profiles_json: { full_product: 'CARB2', inner_structure: 'CARB2' }, allowed_product_types: [], is_active: true,
+    }, componentItems: components,
+  })
+  assert.deepEqual(resolved.map(line => [line.product_application_scope, line.resolved_item_code, line.qty]), [
+    ['full_product', 'CMPD06-0008-000-1371', 0.92],
+    ['inner_structure', 'CMPD06-0018-000-1371', 0.54],
+  ])
+})
+
+test('blocks an ambiguous physical board equivalent instead of selecting one arbitrarily', () => {
+  const structure: BomStructure = {
+    schema_version: 2, structure_type: 'production', input_warehouse_code: '01', output_warehouse_code: null,
+    lines: [{
+      line_id: 'board', sort_order: 1, line_kind: 'material_group', base_item_code: null, product_application_scope: 'full_product', qty: null,
+      input_warehouse_code: null, issue_method_override: null,
+      alternatives: [{ alternative_id: 'st', base_item_code: 'CMPD06-0001-000', material_profile: 'ST', is_default: true }],
+      consumptions: [{ color_mode: 'full', product_application_scope: 'full_product', material_profile: 'ST', format_key: null, qty: 0.92, status: 'confirmed' }],
+      board_physical_specification: { material_kind: 'board', thickness_mm: 15 },
+    }],
+  }
+  const components = new Map([
+    ['CMPD06-0008-000-1371', component('CMPD06-0008-000-1371', 'TABLERO CARB 15MM NARDO', metadata({ material_kind: 'board', material_profile: 'CARB2', thickness_mm: 15 }))],
+    ['CMPD06-0038-000-1371', component('CMPD06-0038-000-1371', 'TABLERO CARB 15MM NARDO ALT', metadata({ material_kind: 'board', material_profile: 'CARB2', thickness_mm: 15 }))],
+  ])
+  const [resolved] = resolveBomForSku({
+    skuComplete: 'VBAN05-0001-000-0493', skuColorCode: '0493', structure,
+    globalOverrides: emptyOverrides, versionOverrides: emptyOverrides,
+    colorway: { code_4dig: '0493', name_color_sap: 'AUSTRAL', color_mode: 'full', application_colors_json: { full_product: '1371' }, application_material_profiles_json: { full_product: 'CARB2' }, allowed_product_types: [], is_active: true },
+    componentItems: components,
+  })
+  assert.equal(resolved?.resolution_status, 'ambiguous_board_equivalent')
 })
 
 test('derives reusable unicolor strategies from SAP board evidence and reference profiles', () => {

@@ -42,10 +42,25 @@ export type HybridColorCase = {
  */
 export type BoardProfileConditionalRule = {
   rule_id: string
-  product_application_scope: 'full_product'
+  product_application_scope: BoardMaterialScope
   source_material_profile: MaterialProfile
   target_color_code: string
   target_material_profile: MaterialProfile
+}
+
+export const BOARD_MATERIAL_SCOPES = [
+  'full_product',
+  'structure',
+  'front',
+  'inner_structure',
+  'drawer_bottom',
+] as const
+
+export type BoardMaterialScope = (typeof BOARD_MATERIAL_SCOPES)[number]
+
+export type BoardPhysicalSpecification = {
+  material_kind: 'board'
+  thickness_mm: number
 }
 
 export type ComponentTechnicalMetadata = {
@@ -98,6 +113,7 @@ export type BomStructureLine = {
   issue_method_override: string | null
   alternatives: BomMaterialAlternative[]
   consumptions: BomConsumption[]
+  board_physical_specification?: BoardPhysicalSpecification | null
 }
 
 export type BomStructure = {
@@ -191,10 +207,11 @@ export type ResolvedBomLine = {
   input_warehouse_code: string | null
   output_warehouse_code: string | null
   issue_method: string | null
-  resolution_status: 'resolved' | 'missing_component_item' | 'missing_material_profile' | 'missing_consumption' | 'override_conflict'
+  resolution_status: 'resolved' | 'missing_component_item' | 'missing_material_profile' | 'missing_consumption' | 'ambiguous_board_equivalent' | 'override_conflict'
   alternative_id?: string | null
   material_profile?: string | null
   format_key?: string | null
+  board_thickness_mm?: number | null
 }
 
 export type PilotSku = {

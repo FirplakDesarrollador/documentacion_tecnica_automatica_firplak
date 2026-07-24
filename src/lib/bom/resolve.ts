@@ -8,6 +8,7 @@ import type {
   BomOverrides,
   BomStructure,
   BomStructureLine,
+  BoardPhysicalSpecification,
   Colorway,
   ComponentItem,
   HybridColorCase,
@@ -15,6 +16,8 @@ import type {
   ProductApplicationScope,
   ResolvedBomLine,
 } from './types'
+
+const BOARD_THICKNESS_TOLERANCE_MM = 0.5
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -95,6 +98,15 @@ function normalizeConsumptions(value: unknown): BomConsumption[] {
   })
 }
 
+function normalizeBoardPhysicalSpecification(value: unknown): BomStructureLine['board_physical_specification'] {
+  const record = asRecord(value)
+  if (record.material_kind !== 'board') return null
+  const thicknessMm = numberValue(record.thickness_mm, Number.NaN)
+  return Number.isFinite(thicknessMm) && thicknessMm > 0
+    ? { material_kind: 'board', thickness_mm: thicknessMm }
+    : null
+}
+
 function normalizeLine(value: unknown, index: number): BomStructureLine | null {
   const record = asRecord(value)
   const lineKind = record.line_kind === 'material_group' ? 'material_group' : 'fixed'
@@ -114,6 +126,7 @@ function normalizeLine(value: unknown, index: number): BomStructureLine | null {
     issue_method_override: stringValue(record.issue_method_override),
     alternatives,
     consumptions: normalizeConsumptions(record.consumptions),
+    board_physical_specification: normalizeBoardPhysicalSpecification(record.board_physical_specification),
   }
 }
 
@@ -353,25 +366,39 @@ function selectedAlternative(
   return line.alternatives.find(alternative => alternative.is_default) ?? null
 }
 
+type BoardAlternativeResolution = {
+  alternative: BomMaterialAlternative | null
+  ambiguous: boolean
+}
+
 function boardAlternativeFromComponents(input: {
   materialProfile: MaterialProfile | null
   variantCode: string
   componentItems: Map<string, ComponentItem>
-}): BomMaterialAlternative | null {
-  if (!input.materialProfile) return null
+  physicalSpecification: BoardPhysicalSpecification | null | undefined
+}): BoardAlternativeResolution {
+  if (!input.materialProfile) return { alternative: null, ambiguous: false }
   const candidates = [...input.componentItems.values()]
     .filter(component =>
       component.technical_metadata?.material_kind === 'board'
       && component.technical_metadata.material_profile === input.materialProfile
       && (component.variant_code_4 === input.variantCode || component.variant_code_4 === '0000')
+      && component.sap_valid !== false
+      && component.sap_frozen !== true
+      && (!input.physicalSpecification
+        || (component.technical_metadata.thickness_mm !== null
+          && Math.abs(component.technical_metadata.thickness_mm - input.physicalSpecification.thickness_mm) <= BOARD_THICKNESS_TOLERANCE_MM))
     )
   const baseItemCodes = [...new Set(candidates.map(component => component.base_item_code))]
-  if (baseItemCodes.length !== 1) return null
+  if (baseItemCodes.length !== 1) return { alternative: null, ambiguous: baseItemCodes.length > 1 }
   return {
-    alternative_id: `derived_${input.materialProfile}`,
-    base_item_code: baseItemCodes[0] ?? '',
-    material_profile: input.materialProfile,
-    is_default: false,
+    alternative: {
+      alternative_id: `derived_${input.materialProfile}`,
+      base_item_code: baseItemCodes[0] ?? '',
+      material_profile: input.materialProfile,
+      is_default: false,
+    },
+    ambiguous: false,
   }
 }
 
@@ -379,6 +406,7 @@ function materialGroupIsBoard(
   line: BomStructureLine,
   componentItems: Map<string, ComponentItem>
 ): boolean {
+  if (line.board_physical_specification?.material_kind === 'board') return true
   const baseItemCodes = new Set(line.alternatives.map(alternative => alternative.base_item_code))
   return [...componentItems.values()].some(component =>
     baseItemCodes.has(component.base_item_code)
@@ -398,13 +426,12 @@ function matchingBoardProfileCondition(input: {
     !input.colorway
     || input.hybridColorCase
     || input.colorMode !== 'full'
-    || input.scope !== 'full_product'
     || !input.baselineProfile
     || !input.isBoardMaterial
   ) return null
   const baselineProfile = input.baselineProfile.trim().toUpperCase()
   return input.colorway.board_profile_conditions?.find(rule =>
-    rule.product_application_scope === 'full_product'
+    rule.product_application_scope === input.scope
     && rule.source_material_profile.trim().toUpperCase() === baselineProfile
   ) ?? null
 }
@@ -434,6 +461,19 @@ function selectedConsumption(input: {
   const exactMatch = matching.find(consumption => consumption.format_key === input.formatKey)
     ?? matching.find(consumption => consumption.format_key === null)
   if (exactMatch) return exactMatch
+  if (input.line.board_physical_specification) {
+    const defaultProfile = input.line.alternatives.find(alternative => alternative.is_default)?.material_profile
+    if (defaultProfile && defaultProfile !== input.profile) {
+      const defaultMatching = input.line.consumptions.filter(consumption =>
+        consumption.color_mode === input.colorMode
+        && consumption.product_application_scope === input.scope
+        && consumption.material_profile === defaultProfile
+      )
+      return defaultMatching.find(consumption => consumption.format_key === input.formatKey)
+        ?? defaultMatching.find(consumption => consumption.format_key === null)
+        ?? null
+    }
+  }
   if (input.colorMode !== 'full' || input.scope === 'full_product') return null
   const fullProductMatching = input.line.consumptions.filter(consumption =>
     consumption.color_mode === 'full'
@@ -517,6 +557,7 @@ export function resolveBomForSku(input: {
         alternative_id: null,
         material_profile: null,
         format_key: component?.technical_metadata?.format_key ?? null,
+        board_thickness_mm: null,
       }]
     }
 
@@ -559,17 +600,23 @@ export function resolveBomForSku(input: {
         baselineProfile: effectiveSourceProfile,
         isBoardMaterial,
       })
-      const profile = boardProfileCondition?.target_material_profile ?? configuredProfile
+      const defaultBoardProfile = isBoardMaterial
+        ? line.alternatives.find(alternative => alternative.is_default)?.material_profile ?? null
+        : null
+      const profile = boardProfileCondition?.target_material_profile
+        ?? configuredProfile
+        ?? defaultBoardProfile
       const proposedVariantCode = boardProfileCondition?.target_color_code
         ?? resolveVariant({ colorway: input.colorway, hybridColorCase: lineHybridColorCase, colorMode: lineColorMode, scope, skuColorCode: input.skuColorCode, colorOverride })
-      const alternative = selectedAlternative(line, profile)
-        ?? (isBoardMaterial
-          ? boardAlternativeFromComponents({
+      const derivedAlternative = isBoardMaterial
+        ? boardAlternativeFromComponents({
             materialProfile: profile,
             variantCode: proposedVariantCode,
             componentItems: input.componentItems,
+            physicalSpecification: line.board_physical_specification,
           })
-          : null)
+        : { alternative: null, ambiguous: false }
+      const alternative = selectedAlternative(line, profile) ?? derivedAlternative.alternative
       const resolvedProfile = profile ?? alternative?.material_profile ?? null
       const variantCode = alternative ? proposedVariantCode : '0000'
       const component = alternative
@@ -584,7 +631,9 @@ export function resolveBomForSku(input: {
             formatKey: component?.technical_metadata?.format_key ?? null,
           })
         : null
-      const status = !profile || !alternative
+      const status = derivedAlternative.ambiguous
+        ? 'ambiguous_board_equivalent'
+        : !profile || !alternative
         ? 'missing_material_profile'
         : !consumption || consumption.qty === null || consumption.status === 'needs_definition'
           ? 'missing_consumption'
@@ -610,6 +659,7 @@ export function resolveBomForSku(input: {
         alternative_id: alternative?.alternative_id ?? null,
         material_profile: resolvedProfile,
         format_key: component?.technical_metadata?.format_key ?? null,
+        board_thickness_mm: line.board_physical_specification?.thickness_mm ?? null,
       }
     })
   })

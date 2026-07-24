@@ -170,14 +170,14 @@ function normalizeBoardProfileConditions(value: unknown): BoardProfileConditiona
     const targetColorCode = typeof rule.target_color_code === 'string' ? rule.target_color_code.trim().toUpperCase() : ''
     const targetMaterialProfile = typeof rule.target_material_profile === 'string' ? rule.target_material_profile.trim().toUpperCase() : ''
     if (
-      rule.product_application_scope !== 'full_product'
+      !BOARD_MATERIAL_PROFILE_SCOPE_KEYS.includes(rule.product_application_scope as BoardMaterialProfileScope)
       || !MATERIAL_PROFILE_OPTIONS.includes(sourceMaterialProfile as (typeof MATERIAL_PROFILE_OPTIONS)[number])
       || !SAP_COLOR_CODE_PATTERN.test(targetColorCode)
       || !MATERIAL_PROFILE_OPTIONS.includes(targetMaterialProfile as (typeof MATERIAL_PROFILE_OPTIONS)[number])
     ) return []
     return [{
       rule_id: typeof rule.rule_id === 'string' && rule.rule_id.trim() ? rule.rule_id.trim() : `board_profile_${index + 1}`,
-      product_application_scope: 'full_product',
+      product_application_scope: rule.product_application_scope as BoardMaterialProfileScope,
       source_material_profile: sourceMaterialProfile,
       target_color_code: targetColorCode,
       target_material_profile: targetMaterialProfile,

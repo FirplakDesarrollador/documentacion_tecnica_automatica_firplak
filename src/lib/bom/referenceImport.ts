@@ -29,6 +29,7 @@ import {
   readSapValid,
 } from './sapMapping'
 import { analyzeReferenceBom } from './referenceImportAnalysis'
+import { boardRoleFromReferenceContext } from './boardRoleInference'
 import { assessBoardFullProductRuleCandidate, buildBoardMatrixRows, deriveBoardConditionalRuleStrategies, detectBoardDualCandidates, evaluateGlobalBoardDualCandidate } from './boardMatrix'
 import { normalizeBomOverrides } from './resolve'
 import {
@@ -259,7 +260,7 @@ function readBoardProfileConditions(value: JsonRecord): BoardProfileConditionalR
     const targetColorCode = readString(candidate.target_color_code)?.toUpperCase()
     const targetProfile = readString(candidate.target_material_profile)?.toUpperCase()
     if (
-      candidate.product_application_scope !== 'full_product'
+      !isBoardMaterialApplicationScope(candidate.product_application_scope)
       || !sourceProfile
       || !targetColorCode
       || !targetProfile
@@ -267,7 +268,7 @@ function readBoardProfileConditions(value: JsonRecord): BoardProfileConditionalR
     ) return []
     return [{
       rule_id: readString(candidate.rule_id) ?? `board_profile_${String(index + 1).padStart(3, '0')}`,
-      product_application_scope: 'full_product',
+      product_application_scope: candidate.product_application_scope,
       source_material_profile: sourceProfile,
       target_color_code: targetColorCode,
       target_material_profile: targetProfile,
@@ -336,6 +337,13 @@ function cleanBomLine(value: unknown, index: number): ReferenceBomLine | null {
   const scopeValue = record.product_application_scope
   const scope = isReferenceProductApplicationScope(scopeValue) ? scopeValue : 'NA'
   const lineId = readString(record.line_id) ?? `ln_${String(index + 1).padStart(6, '0')}`
+  const boardSpecification = isRecord(record.board_physical_specification)
+    && record.board_physical_specification.material_kind === 'board'
+    && typeof record.board_physical_specification.thickness_mm === 'number'
+    && Number.isFinite(record.board_physical_specification.thickness_mm)
+    && record.board_physical_specification.thickness_mm > 0
+    ? { material_kind: 'board' as const, thickness_mm: record.board_physical_specification.thickness_mm }
+    : null
   const consumptions = Array.isArray(record.consumptions)
     ? record.consumptions.flatMap((consumption) => {
         const candidate = isRecord(consumption) ? consumption : {}
@@ -374,6 +382,7 @@ function cleanBomLine(value: unknown, index: number): ReferenceBomLine | null {
     issue_method_override: readString(record.issue_method_override),
     alternatives,
     consumptions,
+    board_physical_specification: boardSpecification,
   }
 }
 
@@ -709,35 +718,6 @@ function directSnapshotFromBom(sku: ReferenceImportSku, bom: SapBom): DirectBomS
   }
 }
 
-function boardRoleFromReferenceContext(input: {
-  context: ReferenceImportContext
-  snapshot: DirectBomSnapshot
-  line: DirectBomSnapshot['normalizedLines'][number]
-}): { role: BoardMatrixRole; roleSource: BoardMatrixRoleSource } {
-  const boardNameScope = inferBoardApplicationScope({
-    itemName: input.line.itemName,
-    baseItemCode: input.line.baseItemCode,
-    materialKind: input.line.technicalMetadata?.material_kind,
-  })
-  if (boardNameScope) return { role: boardNameScope, roleSource: 'evidence' }
-
-  const sourceColorCode = input.snapshot.skuColorCode?.trim().toUpperCase()
-  const override = sourceColorCode
-    ? input.context.skuColorOverrides?.get(input.snapshot.skuComplete)?.filter(candidate =>
-        candidate.color_code.trim().toUpperCase() === sourceColorCode
-        && (!candidate.base_item_code || candidate.base_item_code === input.line.baseItemCode)
-        && isBoardMaterialApplicationScope(candidate.product_application_scope)
-        && (!candidate.target_color_code || candidate.target_color_code.trim().toUpperCase() === input.line.variantCode4)
-      ).at(-1)
-    : undefined
-  if (override) return { role: override.product_application_scope, roleSource: 'sku_override' }
-  const boardLineCount = input.snapshot.normalizedLines.filter(candidate =>
-    candidate.technicalMetadata?.material_kind === 'board' && candidate.variantCode4 !== '0000'
-  ).length
-  if (boardLineCount === 1) return { role: 'full_product', roleSource: 'evidence' }
-  return { role: 'role_pending', roleSource: 'pending' }
-}
-
 function boardMatrixFromSnapshots(input: {
   context: ReferenceImportContext
   snapshots: DirectBomSnapshot[]
@@ -757,6 +737,7 @@ function boardMatrixFromSnapshots(input: {
         itemCode: line.itemCode,
         boardColorCode: line.variantCode4,
         materialProfile: line.technicalMetadata.material_profile,
+        thicknessMm: line.technicalMetadata.thickness_mm,
         formatKey: line.technicalMetadata.format_key,
         qty: line.qty,
         ...role,
@@ -1008,17 +989,9 @@ export async function expandComponentTrees(
       maxDepth = Math.max(maxDepth, candidate.depth)
       treesByItemCode.set(candidate.itemCode, tree)
       if (tree.readError) {
-        findings.push(errorFinding({
-          key: `component-tree:read:${candidate.itemCode}`,
-          type: 'component_tree_read_failed',
-          severity: 'blocker',
-          baseItemCode: parseSapItemCode(candidate.itemCode).baseItemCode,
-          details: {
-            item_code: candidate.itemCode,
-            depth: candidate.depth,
-            error: tree.readError,
-          },
-        }))
+        // The direct component has already been captured and will still be
+        // upserted. A timeout only leaves this optional enrichment branch
+        // unverified; it must not block the reference BOM.
         continue
       }
 
@@ -1233,6 +1206,8 @@ export async function upsertExpandedComponents(
       }))
     }
 
+    const existingHasSubstructure = Array.isArray(existing?.itemBomStructure.lines)
+      && existing.itemBomStructure.lines.length > 0
     return {
       item_code: itemCode,
       base_item_code: source.baseItemCode,
@@ -1240,7 +1215,7 @@ export async function upsertExpandedComponents(
       item_name: itemName,
       base_item_name: inferBaseItemName(itemName, source.variantCode4),
       uom,
-      component_category: tree && tree.lines.length > 0
+      component_category: (tree && tree.lines.length > 0) || existingHasSubstructure
         ? 'substructure'
         : inferComponentCategory(itemCode, itemName),
       default_issue_method: source.issueMethod ?? existing?.defaultIssueMethod ?? null,
@@ -3617,6 +3592,7 @@ export async function analyzeReferenceImportBoardMatrix(input: {
             boardColorCode: parsed.variantCode4,
             materialProfile: metadata.material_profile,
             referenceMaterialProfile: null,
+            thicknessMm: metadata.thickness_mm,
             formatKey: metadata.format_key,
             qty: line.qty ?? 0,
             ...role,

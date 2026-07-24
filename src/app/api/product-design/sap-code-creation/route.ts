@@ -8,6 +8,7 @@ import type { BomOverrides, Colorway, ComponentItem } from '@/lib/bom/types'
 import { validateBarcodeValue } from '@/lib/export/barcodeUtils'
 import {
   syncMissingSapComponentsToCatalog,
+  syncPhysicalBoardCandidatesToCatalog,
   type SapComponentCatalogSyncResult,
 } from '@/lib/sap/componentCatalogSync'
 import {
@@ -120,23 +121,30 @@ function componentItemsFromRows(componentRows: Record<string, unknown>[]): Map<s
   }))
 }
 
-function referenceDefaultProfileForColor(structure: ReturnType<typeof normalizeBomStructure>, colorway: Colorway): string | null {
-  if (colorway.color_mode !== 'full' || colorway.application_material_profiles_json.full_product) return null
-  const profiles = structure.lines.flatMap(line => {
-    if (line.line_kind !== 'material_group' || line.product_application_scope !== 'full_product') return []
+function referenceDefaultProfilesForColor(structure: ReturnType<typeof normalizeBomStructure>, colorway: Colorway): Record<string, string> {
+  if (colorway.color_mode !== 'full') return {}
+  const profilesByScope = new Map<string, string[]>()
+  for (const line of structure.lines) {
+    if (line.line_kind !== 'material_group' || !line.board_physical_specification) continue
+    const scope = line.product_application_scope
+    if (colorway.application_material_profiles_json[scope]) continue
     const alternative = line.alternatives.find(candidate => candidate.is_default)
-    if (!alternative) return []
+    if (!alternative) continue
     const hasUsableConsumption = line.consumptions.some(consumption =>
       consumption.color_mode === 'full'
-      && consumption.product_application_scope === 'full_product'
+      && consumption.product_application_scope === scope
       && consumption.material_profile === alternative.material_profile
       && consumption.qty !== null
       && consumption.status !== 'needs_definition'
     )
-    return hasUsableConsumption ? [alternative.material_profile] : []
-  })
-  const uniqueProfiles = [...new Set(profiles)]
-  return uniqueProfiles.length === 1 ? uniqueProfiles[0] ?? null : null
+    if (hasUsableConsumption) {
+      profilesByScope.set(scope, [...(profilesByScope.get(scope) ?? []), alternative.material_profile])
+    }
+  }
+  return Object.fromEntries([...profilesByScope.entries()].flatMap(([scope, profiles]) => {
+    const uniqueProfiles = [...new Set(profiles)]
+    return uniqueProfiles.length === 1 ? [[scope, uniqueProfiles[0] ?? '']] : []
+  }))
 }
 
 async function loadComponentItemRows(): Promise<Record<string, unknown>[]> {
@@ -436,11 +444,11 @@ async function buildContext(input: CreationRequest): Promise<CreationContext> {
     allowed_product_types: jsonArray(row.allowed_product_types).map(text).filter(Boolean),
     is_active: row.is_active !== false,
   }
-  const defaultReferenceProfile = referenceDefaultProfileForColor(structure, colorway)
-  if (defaultReferenceProfile) {
+  const defaultReferenceProfiles = referenceDefaultProfilesForColor(structure, colorway)
+  if (Object.keys(defaultReferenceProfiles).length > 0) {
     colorway.application_material_profiles_json = {
       ...colorway.application_material_profiles_json,
-      full_product: defaultReferenceProfile,
+      ...defaultReferenceProfiles,
     }
   }
   const skuOverridesRows: Record<string, unknown>[] = await dbQuery(
@@ -465,18 +473,29 @@ async function buildContext(input: CreationRequest): Promise<CreationContext> {
       .filter(line => line.resolution_status === 'missing_component_item')
       .map(line => ({ itemCode: line.resolved_item_code, defaultIssueMethod: line.issue_method })),
   )
-  if (componentSync.importedItemCodes.length > 0) {
+  const physicalBoardSync = await syncPhysicalBoardCandidatesToCatalog(
+    resolvedLines
+      .filter(line => line.resolution_status === 'missing_material_profile' && line.material_profile && line.board_thickness_mm !== null && line.board_thickness_mm !== undefined)
+      .map(line => ({
+        baseItemCode: line.base_item_code,
+        variantCode: line.resolved_item_code.split('-').at(-1) ?? input.colorCode,
+        materialProfile: line.material_profile ?? '',
+        thicknessMm: line.board_thickness_mm ?? 0,
+        defaultIssueMethod: line.issue_method,
+      })),
+  )
+  if (componentSync.importedItemCodes.length > 0 || physicalBoardSync.importedItemCodes.length > 0) {
     componentItems = componentItemsFromRows(await loadComponentItemRows())
     resolvedLines = resolveLines()
   }
-  if (componentSync.importedItemCodes.length > 0 || componentSync.errors.length > 0) {
+  if (componentSync.importedItemCodes.length > 0 || componentSync.errors.length > 0 || physicalBoardSync.importedItemCodes.length > 0 || physicalBoardSync.errors.length > 0) {
     await logOperation(
       'component_catalog_sync',
       targetItemCode,
-        { imported_item_codes: componentSync.importedItemCodes, color_code: input.colorCode },
-      componentSync,
-      componentSync.errors.length === 0,
-      componentSync.errors[0] ?? null,
+        { imported_item_codes: [...componentSync.importedItemCodes, ...physicalBoardSync.importedItemCodes], color_code: input.colorCode },
+      { direct: componentSync, physical_board: physicalBoardSync },
+      componentSync.errors.length === 0 && physicalBoardSync.errors.length === 0,
+      componentSync.errors[0] ?? physicalBoardSync.errors[0] ?? null,
     )
   }
   const missing = resolvedLines.filter(line => line.resolution_status !== 'resolved').map(line => `${line.line_id}: ${line.resolution_status}`)
@@ -507,7 +526,9 @@ async function buildContext(input: CreationRequest): Promise<CreationContext> {
     itemPayload, treePayload, missing,
     warnings: [
       'El perfil técnico de SAP se tomó de un SKU existente de la referencia; identidad, color, tipo de orden y barcode se generaron explícitamente.',
-      ...(defaultReferenceProfile ? [`Se usó transitoriamente el perfil ${defaultReferenceProfile} de la alternativa predeterminada de la BOM; no se modificó la regla global del color.`] : []),
+      ...(Object.keys(defaultReferenceProfiles).length > 0
+        ? ['Se usaron transitoriamente los perfiles predeterminados de tablero que faltaban en el color; no se modificaron sus reglas guardadas.']
+        : []),
       ...(componentSync.importedItemCodes.length > 0 ? [`Se importaron desde SAP ${componentSync.importedItemCodes.length} componentes faltantes a Supabase.`] : []),
       ...(componentSync.unavailableItemCodes.length > 0 ? [`SAP reportó componentes inactivos o congelados: ${componentSync.unavailableItemCodes.join(', ')}.`] : []),
       ...(componentSync.missingInSapItemCodes.length > 0 ? [`SAP no encontró componentes: ${componentSync.missingInSapItemCodes.join(', ')}.`] : []),

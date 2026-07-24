@@ -314,7 +314,7 @@ export function buildBoardMatrixRows(input: {
   const byKey = new Map<string, Array<{ sourceColorCode: string; item: BoardMatrixEvidence }>>()
   for (const entry of consolidatedEvidence) {
     const sourceColorCode = entry.sourceColorCode.trim().toUpperCase()
-    const key = `${sourceColorCode}|${entry.item.role}`
+    const key = `${sourceColorCode}|${entry.item.role}|${entry.item.thicknessMm ?? 'unknown'}`
     byKey.set(key, [...(byKey.get(key) ?? []), { ...entry, sourceColorCode }])
   }
   const rows = [...byKey.entries()].map(([key, entries]) => {
@@ -362,21 +362,27 @@ export function buildBoardMatrixRows(input: {
       statusMessage: assessed.statusMessage,
     }
   })
-  const referenceProfileByRole = new Map<BoardMatrixRole, string | null>()
-  const referenceProfilesByRole = new Map<BoardMatrixRole, string[]>()
-  const normalizedConsumptionByRole = new Map<BoardMatrixRole, number | null>()
-  for (const role of [...new Set(rows.map(row => row.role))]) {
-    const evidence = rows.filter(row => row.role === role).flatMap(row => row.evidence)
+  const physicalRoleKey = (role: BoardMatrixRole, thicknessMm: number | null) => `${role}|${thicknessMm ?? 'unknown'}`
+  const referenceProfileByPhysicalRole = new Map<string, string | null>()
+  const referenceProfilesByPhysicalRole = new Map<string, string[]>()
+  const normalizedConsumptionByPhysicalRole = new Map<string, number | null>()
+  const evidenceByPhysicalRole = new Map<string, BoardMatrixEvidence[]>()
+  for (const row of rows) {
+    const key = physicalRoleKey(row.role, row.evidence[0]?.thicknessMm ?? null)
+    evidenceByPhysicalRole.set(key, [...(evidenceByPhysicalRole.get(key) ?? []), ...row.evidence])
+  }
+  for (const [key, evidence] of evidenceByPhysicalRole) {
     const referenceMaterialProfiles = uniqueSorted(evidence.map(item => item.materialProfile))
-    referenceProfilesByRole.set(role, referenceMaterialProfiles)
-    referenceProfileByRole.set(role, mostCommonValue(evidence.flatMap(item => item.materialProfile ? [item.materialProfile.trim().toUpperCase()] : [])))
-    normalizedConsumptionByRole.set(role, role === 'role_pending' || evidence.length === 0
+    referenceProfilesByPhysicalRole.set(key, referenceMaterialProfiles)
+    referenceProfileByPhysicalRole.set(key, mostCommonValue(evidence.flatMap(item => item.materialProfile ? [item.materialProfile.trim().toUpperCase()] : [])))
+    normalizedConsumptionByPhysicalRole.set(key, key.startsWith('role_pending|') || evidence.length === 0
       ? null
       : Math.max(...evidence.map(item => item.qty)))
   }
   return rows.map(row => {
-    const referenceMaterialProfile = referenceProfileByRole.get(row.role) ?? null
-    const referenceMaterialProfiles = referenceProfilesByRole.get(row.role) ?? []
+    const physicalKey = physicalRoleKey(row.role, row.evidence[0]?.thicknessMm ?? null)
+    const referenceMaterialProfile = referenceProfileByPhysicalRole.get(physicalKey) ?? null
+    const referenceMaterialProfiles = referenceProfilesByPhysicalRole.get(physicalKey) ?? []
     const isProductColorMatch = row.observedColorCodes.length === 1 && row.observedColorCodes[0] === row.sourceColorCode
     const profileIsReferenceException = referenceMaterialProfile !== null
       && row.observedMaterialProfiles.length === 1
@@ -387,8 +393,8 @@ export function buildBoardMatrixRows(input: {
     const configuredProfileMatchesSap = row.proposedMaterialProfile !== null
       && row.observedMaterialProfiles.length === 1
       && row.proposedMaterialProfile === row.observedMaterialProfiles[0]
-    const hasConditionalBoardRule = row.role === 'full_product'
-      && (input.colorConfigurations.get(row.sourceColorCode)?.boardProfileConditions?.length ?? 0) > 0
+    const hasConditionalBoardRule = input.colorConfigurations.get(row.sourceColorCode)?.boardProfileConditions
+      ?.some(rule => rule.product_application_scope === row.role) === true
     const hasPersistedBoardResolution = input.colorConfigurations.get(row.sourceColorCode)?.boardMatrixResolution?.status === 'configured'
     const hasSavedConditionalBoardRule = hasConditionalBoardRule
       && !sourceColorsWithPendingDual.has(row.sourceColorCode)
@@ -419,7 +425,7 @@ export function buildBoardMatrixRows(input: {
       referenceMaterialProfiles,
       recommendedColorCode: !isProductColorMatch && row.observedColorCodes.length === 1 ? row.observedColorCodes[0] : null,
       recommendedMaterialProfile,
-      normalizedConsumptionQty: normalizedConsumptionByRole.get(row.role) ?? null,
+      normalizedConsumptionQty: normalizedConsumptionByPhysicalRole.get(physicalKey) ?? null,
       isProductColorMatch,
       profileIsReferenceException,
       hasConditionalBoardRule,

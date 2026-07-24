@@ -2,6 +2,7 @@ import type {
   BomColorMode,
   BomConsumption,
   BomMaterialAlternative,
+  BoardPhysicalSpecification,
   ComponentTechnicalMetadata,
   MaterialProfile,
 } from './types'
@@ -28,6 +29,9 @@ type LogicalEvidence = {
   lines: Array<{ lineIdentity: string; evidence: LineEvidence[] }>
   isMaterialGroup: boolean
   alternatives: BomMaterialAlternative[]
+  boardPhysicalSpecification: BoardPhysicalSpecification | null
+  defaultBoardAlternative: BomMaterialAlternative | null
+  boardDefaultTie: boolean
   sortOrder: number
   scope: ReferenceProductApplicationScope
 }
@@ -448,6 +452,54 @@ function profileAlternatives(groups: Array<{ lineIdentity: string; evidence: Lin
     }))
 }
 
+function boardPhysicalSpecification(groups: Array<{ lineIdentity: string; evidence: LineEvidence[] }>): BoardPhysicalSpecification | null {
+  const metadata = groups.flatMap(group => group.evidence.map(item => item.line.technicalMetadata))
+  if (metadata.length === 0 || metadata.some(item => item?.material_kind !== 'board' || item.thickness_mm === null)) return null
+  const thicknessMm = metadata[0]?.thickness_mm
+  if (thicknessMm === null || thicknessMm === undefined) return null
+  return metadata.every(item => item?.thickness_mm !== null && item?.thickness_mm !== undefined && Math.abs(item.thickness_mm - thicknessMm) <= BOARD_THICKNESS_TOLERANCE_MM)
+    ? { material_kind: 'board', thickness_mm: thicknessMm }
+    : null
+}
+
+function defaultBoardAlternative(
+  alternatives: BomMaterialAlternative[],
+  groups: Array<{ lineIdentity: string; evidence: LineEvidence[] }>
+): { alternative: BomMaterialAlternative | null; isTie: boolean } {
+  const counts = new Map<string, number>()
+  for (const group of groups) {
+    const profile = group.evidence[0]?.line.technicalMetadata?.material_profile
+    if (!profile) continue
+    counts.set(profile, (counts.get(profile) ?? 0) + group.evidence.length)
+  }
+  const ranked = [...counts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+  const winner = ranked[0]
+  if (!winner) return { alternative: null, isTie: false }
+  const isTie = Boolean(ranked[1] && ranked[1][1] === winner[1])
+  const alternative = alternatives.find(candidate => candidate.material_profile === winner[0]) ?? null
+  return {
+    alternative: alternative ? { ...alternative, is_default: !isTie } : null,
+    isTie,
+  }
+}
+
+function compactBoardConsumptions(
+  consumptions: BomConsumption[],
+  defaultProfile: MaterialProfile | null
+): BomConsumption[] {
+  if (!defaultProfile) return consumptions
+  const baseByScope = new Map<string, BomConsumption>()
+  for (const consumption of consumptions) {
+    if (consumption.material_profile !== defaultProfile) continue
+    baseByScope.set([consumption.color_mode, consumption.product_application_scope].join('|'), consumption)
+  }
+  return consumptions.filter(consumption => {
+    if (consumption.material_profile === defaultProfile) return true
+    const base = baseByScope.get([consumption.color_mode, consumption.product_application_scope].join('|'))
+    return !base || base.qty !== consumption.qty || base.status !== consumption.status
+  })
+}
+
 function findLogicalEvidence(
   evidenceByIdentity: Map<string, LineEvidence[]>,
   snapshotCount: number,
@@ -469,14 +521,23 @@ function findLogicalEvidence(
     const firstLine = groups[0]?.evidence[0]?.line
     if (!firstLine) continue
     const joinedEvidence = groups.flatMap(group => group.evidence)
-    const isMaterialGroup = groups.length > 1
+    const physicalSpecification = boardPhysicalSpecification(groups)
+    // A board must remain a material group even when SAP currently exposes a
+    // single profile. Its physical specification lets a future color/SKU rule
+    // resolve another compatible profile without duplicating the base line.
+    const isMaterialGroup = groups.length > 1 || physicalSpecification !== null
+    const alternatives = isMaterialGroup ? profileAlternatives(groups) : []
+    const defaultBoard = physicalSpecification ? defaultBoardAlternative(alternatives, groups) : { alternative: null, isTie: false }
     result.push({
       key: isMaterialGroup
         ? `material-group:${groups.map(group => group.lineIdentity).sort().join('|')}`
         : `line:${current.lineIdentity}`,
       lines: groups,
       isMaterialGroup,
-      alternatives: isMaterialGroup ? profileAlternatives(groups) : [],
+      alternatives,
+      boardPhysicalSpecification: physicalSpecification,
+      defaultBoardAlternative: defaultBoard.alternative,
+      boardDefaultTie: defaultBoard.isTie,
       sortOrder: mostCommonNumber(joinedEvidence.map(item => item.line.sourceOrder)),
       scope: scopeFromSemantics(firstLine, joinedEvidence, colorConfigurations, context),
     })
@@ -614,6 +675,10 @@ function materialProposedLine(input: {
   issueMethod: string | null
   consumptions: BomConsumption[]
 }): ReferenceBomLine {
+  const isBoard = input.logical.boardPhysicalSpecification !== null
+  const selectedBoardAlternative = input.logical.defaultBoardAlternative
+    ?? input.logical.alternatives[0]
+    ?? null
   return {
     line_id: `ln_${String(input.logical.sortOrder).padStart(6, '0')}`,
     sort_order: input.logical.sortOrder,
@@ -624,8 +689,13 @@ function materialProposedLine(input: {
     uom: input.uom,
     input_warehouse_code: input.warehouse,
     issue_method_override: input.issueMethod,
-    alternatives: input.logical.alternatives,
-    consumptions: input.consumptions,
+    alternatives: isBoard && selectedBoardAlternative
+      ? [{ ...selectedBoardAlternative, is_default: !input.logical.boardDefaultTie }]
+      : input.logical.alternatives,
+    consumptions: isBoard
+      ? compactBoardConsumptions(input.consumptions, selectedBoardAlternative?.material_profile ?? null)
+      : input.consumptions,
+    board_physical_specification: input.logical.boardPhysicalSpecification,
   }
 }
 
@@ -726,6 +796,23 @@ export function analyzeReferenceBom(input: {
     if (logical.isMaterialGroup) {
       const { consumptions, contradictions } = buildConsumptions(logical, input.colorConfigurations)
       proposals.push(materialProposedLine({ logical, warehouse, uom, issueMethod: issueMethod.proposed, consumptions }))
+      if (logical.boardDefaultTie) {
+        findings.push(createFinding({
+          findingKey: `board-default-tie:${logical.key}`,
+          findingType: 'board_default_profile_tie',
+          severity: 'blocker',
+          lineIdentity: logical.key,
+          baseItemCode: logical.alternatives[0]?.base_item_code ?? null,
+          occurrence: null,
+          proposedScope: logical.scope,
+          proposedColorCode: null,
+          detailsJson: {
+            message: 'Los perfiles de tablero tienen la misma cobertura SAP; define el predeterminado antes de publicar.',
+            alternatives: logical.alternatives,
+            ...lineDetails(evidence),
+          },
+        }))
+      }
       findings.push(createFinding({
         findingKey: `material-group:${logical.key}`,
         findingType: 'material_group_confirmation',
@@ -736,7 +823,9 @@ export function analyzeReferenceBom(input: {
         proposedScope: logical.scope,
         proposedColorCode: null,
         detailsJson: {
-          message: 'Estas alternativas representan una sola posicion logica y deben confirmarse antes de publicar.',
+          message: logical.boardPhysicalSpecification
+            ? 'Una sola posición de tablero usa la base predeterminada y conserva su espesor para resolver perfiles por color o SKU.'
+            : 'Estas alternativas representan una sola posición lógica y deben confirmarse antes de publicar.',
           alternatives: logical.alternatives,
           ...lineDetails(evidence),
         },
@@ -787,7 +876,9 @@ export function analyzeReferenceBom(input: {
         line: primary,
         scope: lineScope,
         sortOrder: logical.sortOrder,
-        qty: mostCommonNumber(quantities),
+        // A fixed material must never understate a SAP consumption. The
+        // maximum is proposed for review; the conflict remains explicit.
+        qty: Math.max(...quantities),
         uom,
         warehouse,
         issueMethod: issueMethod.proposed,
@@ -799,9 +890,10 @@ export function analyzeReferenceBom(input: {
         const mappedScope = configuredScopeForColor(configuration, lineScope)
         return Boolean(configuration.applicationColors[mappedScope] ?? configuration.applicationColors.full_product)
       })
-      const hasStructuralVariation = (absentSkuCodes.length > 0 && !absentSkusHaveConfiguredColor)
-        || !allSameNumber(quantities)
-        || !allSameText(evidence.map(item => item.line.warehouse))
+      const hasPresenceConflict = absentSkuCodes.length > 0 && !absentSkusHaveConfiguredColor
+      const hasQuantityConflict = !allSameNumber(quantities)
+      const warehouses = evidence.map(item => item.line.warehouse)
+      const hasWarehouseConflict = !allSameText(warehouses)
       const configuredColor = lineUsesConfiguredColor(evidence, lineScope, input.colorConfigurations, input.context)
       const unresolvedColorEvidence = evidence.filter(item => !evidenceUsesConfiguredColor(
         item,
@@ -813,9 +905,72 @@ export function analyzeReferenceBom(input: {
         const skuColorCode = item.snapshot.skuColorCode
         return skuColorCode && item.line.variantCode4 !== '0000' && item.line.variantCode4 !== skuColorCode
       })
-      if (hasStructuralVariation || (hasColorVariation && !configuredColor)) {
+      if (hasPresenceConflict) {
         findings.push(createFinding({
-          findingKey: `business-review:${logical.key}`,
+          findingKey: `presence-review:${logical.key}`,
+          findingType: 'line_presence_conflict',
+          severity: 'blocker',
+          lineIdentity: logical.key,
+          baseItemCode: primary.baseItemCode,
+          occurrence: primary.occurrence,
+          proposedScope: lineScope,
+          proposedColorCode: null,
+          detailsJson: {
+            message: 'La pieza no está presente en todos los SKU activos.',
+            absent_skus: absentSkuCodes,
+            present_skus: evidence.map(item => item.snapshot.skuComplete),
+            ...lineDetails(evidence),
+          },
+        }))
+      }
+      if (hasQuantityConflict) {
+        findings.push(createFinding({
+          findingKey: `quantity-review:${logical.key}`,
+          findingType: 'line_quantity_conflict',
+          severity: 'blocker',
+          lineIdentity: logical.key,
+          baseItemCode: primary.baseItemCode,
+          occurrence: primary.occurrence,
+          proposedScope: lineScope,
+          proposedColorCode: null,
+          detailsJson: {
+            message: 'SAP informa cantidades distintas para esta pieza.',
+            proposed_qty: Math.max(...quantities),
+            repeated_qty: mostCommonNumber(quantities),
+            observed_quantities: [...new Set(quantities)].sort((left, right) => left - right),
+            ...lineDetails(evidence),
+          },
+        }))
+      }
+      if (hasWarehouseConflict) {
+        const warehouseCounts = new Map<string, number>()
+        for (const warehouseValue of warehouses) {
+          const key = warehouseValue ?? '(sin bodega)'
+          warehouseCounts.set(key, (warehouseCounts.get(key) ?? 0) + 1)
+        }
+        const rankedWarehouses = [...warehouseCounts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+        const winner = rankedWarehouses[0]
+        const hasWarehouseTie = Boolean(winner && rankedWarehouses[1] && rankedWarehouses[1][1] === winner[1])
+        findings.push(createFinding({
+          findingKey: `warehouse-review:${logical.key}`,
+          findingType: 'line_warehouse_conflict',
+          severity: 'blocker',
+          lineIdentity: logical.key,
+          baseItemCode: primary.baseItemCode,
+          occurrence: primary.occurrence,
+          proposedScope: lineScope,
+          proposedColorCode: null,
+          detailsJson: {
+            message: 'SAP informa bodegas de salida distintas para esta pieza.',
+            recommended_warehouse: hasWarehouseTie ? null : winner?.[0] ?? null,
+            warehouse_counts: Object.fromEntries(rankedWarehouses),
+            ...lineDetails(evidence),
+          },
+        }))
+      }
+      if (hasColorVariation && !configuredColor) {
+        findings.push(createFinding({
+          findingKey: `color-review:${logical.key}`,
           findingType: 'bom_line_review',
           severity: 'blocker',
           lineIdentity: logical.key,
@@ -824,10 +979,10 @@ export function analyzeReferenceBom(input: {
           proposedScope: lineScope,
           proposedColorCode: null,
           detailsJson: {
-            message: 'Esta pieza tiene una diferencia de color, presencia, cantidad o bodega que necesita una regla explicita o una correccion en SAP.',
-            absent_skus: absentSkuCodes,
-            configured_color_mapping_recognized: configuredColor,
-            ...lineDetails(hasStructuralVariation ? evidence : unresolvedColorEvidence),
+            message: 'SAP cambia el color de esta pieza sin una regla configurada.',
+            absent_skus: [],
+            configured_color_mapping_recognized: false,
+            ...lineDetails(unresolvedColorEvidence),
           },
         }))
       }
