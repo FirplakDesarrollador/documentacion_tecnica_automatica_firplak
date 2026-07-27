@@ -73,6 +73,14 @@ function recordValue(record: SapRecord, key: string): unknown {
   return record[key]
 }
 
+function firstStringValue(record: SapRecord, keys: string[]): string {
+  for (const key of keys) {
+    const value = stringValue(recordValue(record, key))
+    if (value) return value
+  }
+  return ''
+}
+
 function formatDate(value: string | null): string {
   const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})/)
   return match ? `${match[3]}/${match[2]}/${match[1]}` : value || '—'
@@ -158,7 +166,7 @@ function DetailPanel({
             <DetailField label="Estado" value={statusLabel(mode, rawStatus)} />
             {isProduction ? <>
               <DetailField label="Artículo fabricado" value={itemCode} />
-              <DetailField label="Descripción" value={stringValue(recordValue(order, 'ItemName'))} />
+              <DetailField label="Descripción del artículo" value={firstStringValue(order, ['ItemName', 'ItemDescription', 'ProductDescription'])} />
               <DetailField label="Cantidad planificada" value={formatNumber(numberValue(recordValue(order, 'PlannedQuantity')))} />
               <DetailField label="Cantidad completada" value={formatNumber(numberValue(recordValue(order, 'CompletedQuantity')))} />
               <DetailField label="Cantidad rechazada" value={formatNumber(numberValue(recordValue(order, 'RejectedQuantity')))} />
@@ -296,7 +304,12 @@ export function OrderConsultaPanel({ mode, onOpenItem }: { mode: OrderMode; onOp
     void search(false)
   }
 
-  if (selectedOrder) return <DetailPanel mode={mode} order={selectedOrder} onBack={() => setSelectedOrder(null)} onOpenItem={onOpenItem} />
+  function openLinkedItem(itemCode: string) {
+    setSelectedOrder(null)
+    onOpenItem(itemCode)
+  }
+
+  if (selectedOrder) return <DetailPanel mode={mode} order={selectedOrder} onBack={() => setSelectedOrder(null)} onOpenItem={openLinkedItem} />
 
   return (
     <>

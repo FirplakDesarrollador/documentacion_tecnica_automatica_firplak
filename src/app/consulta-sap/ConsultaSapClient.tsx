@@ -1401,16 +1401,25 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
             activeProperties={activeProperties}
           />
         )}
-        </> : (
+        </> : null}
+        <div className={consultaMode === 'production-orders' ? '' : 'hidden'}>
           <OrderConsultaPanel
-            key={consultaMode}
-            mode={consultaMode}
+            mode="production-orders"
             onOpenItem={itemCode => {
               setConsultaMode('items')
               void loadItem({ itemCode, itemName: '' }, false)
             }}
           />
-        )}
+        </div>
+        <div className={consultaMode === 'sales-orders' ? '' : 'hidden'}>
+          <OrderConsultaPanel
+            mode="sales-orders"
+            onOpenItem={itemCode => {
+              setConsultaMode('items')
+              void loadItem({ itemCode, itemName: '' }, false)
+            }}
+          />
+        </div>
       </div>
     </main>
   )
