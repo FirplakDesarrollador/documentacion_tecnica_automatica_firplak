@@ -1017,6 +1017,260 @@ export async function updateSapProductTreeIssueMethod(input: {
   })
 }
 
+export const SAP_ORDER_SEARCH_PAGE_SIZE = 20
+
+export type SapProductionOrderStatus = 'P' | 'R' | 'L' | 'C'
+
+export type SapProductionOrderSearchInput = {
+  documentNumber?: number
+  itemCode?: string
+  itemDescription?: string
+  status?: SapProductionOrderStatus
+  dateFrom?: string
+  dateTo?: string
+  overdue?: boolean
+}
+
+export type SapProductionOrderSearchRow = {
+  absoluteEntry: number | null
+  documentNumber: number | null
+  itemNo: string | null
+  itemName: string | null
+  plannedQuantity: number | null
+  completedQuantity: number | null
+  status: string | null
+  postingDate: string | null
+  dueDate: string | null
+}
+
+export type SapSalesOrderSearchInput = {
+  documentNumber?: number
+  cardCode?: string
+  cardName?: string
+  status?: 'O' | 'C'
+  dateFrom?: string
+  dateTo?: string
+}
+
+export type SapSalesOrderSearchRow = {
+  documentEntry: number | null
+  documentNumber: number | null
+  cardCode: string | null
+  cardName: string | null
+  docDate: string | null
+  docDueDate: string | null
+  status: string | null
+  total: number | null
+  currency: string | null
+  customerReference: string | null
+}
+
+export type SapOrderSearchResult<T> = {
+  items: T[]
+  hasMore: boolean
+  nextSkip: number | null
+}
+
+const PRODUCTION_ORDER_STATUS_VALUES: Record<SapProductionOrderStatus, string> = {
+  P: 'boposPlanned',
+  R: 'boposReleased',
+  L: 'boposClosed',
+  C: 'boposCancelled',
+}
+
+function normalizeOptionalDate(value: string | undefined, field: string): string | null {
+  const normalized = value?.trim() ?? ''
+  if (!normalized) return null
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    throw new SapServiceLayerError(`Invalid ${field} date`, {
+      statusCode: 400,
+      sapCode: 'SAP_INVALID_DATE',
+    })
+  }
+  return normalized
+}
+
+function normalizeOptionalDocumentNumber(value: number | undefined, field: string): number | null {
+  if (value === undefined) return null
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new SapServiceLayerError(`Invalid ${field}`, {
+      statusCode: 400,
+      sapCode: 'SAP_INVALID_DOCUMENT_NUMBER',
+    })
+  }
+  return value
+}
+
+function normalizeOptionalSearchText(value: string | undefined): string | null {
+  const normalized = value?.trim() ?? ''
+  return normalized || null
+}
+
+function odataDateTime(value: string): string {
+  return `datetime'${value}T00:00:00'`
+}
+
+function currentColombiaDate(): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Bogota',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]))
+  return `${values.year}-${values.month}-${values.day}`
+}
+
+function orderSearchPaging(options: { skip?: number; limit?: number }): { skip: number; limit: number; requestLimit: number } {
+  const skip = Number.isInteger(options.skip) && (options.skip ?? 0) >= 0 ? options.skip ?? 0 : 0
+  const requestedLimit = Number.isInteger(options.limit) && (options.limit ?? 0) > 0
+    ? options.limit ?? SAP_ORDER_SEARCH_PAGE_SIZE
+    : SAP_ORDER_SEARCH_PAGE_SIZE
+  const limit = Math.min(requestedLimit, SAP_ORDER_SEARCH_PAGE_SIZE)
+  return { skip, limit, requestLimit: limit + 1 }
+}
+
+function collectionSearchResult<T>(rows: T[], skip: number, limit: number): SapOrderSearchResult<T> {
+  const hasMore = rows.length > limit
+  return {
+    items: rows.slice(0, limit),
+    hasMore,
+    nextSkip: hasMore ? skip + limit : null,
+  }
+}
+
+function tokenizeOrderDescription(value: string): string[] {
+  return value.trim().toUpperCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean)
+}
+
+export async function searchSapProductionOrders(
+  input: SapProductionOrderSearchInput,
+  options: { skip?: number; limit?: number; timeoutMs?: number } = {},
+): Promise<SapOrderSearchResult<SapProductionOrderSearchRow>> {
+  const documentNumber = normalizeOptionalDocumentNumber(input.documentNumber, 'production order number')
+  const itemCode = normalizeOptionalSearchText(input.itemCode)?.toUpperCase() ?? null
+  const description = normalizeOptionalSearchText(input.itemDescription)
+  const dateFrom = normalizeOptionalDate(input.dateFrom, 'dateFrom')
+  const dateTo = normalizeOptionalDate(input.dateTo, 'dateTo')
+  const { skip, limit, requestLimit } = orderSearchPaging(options)
+  const filters = ['ProductionOrders/ItemNo eq Items/ItemCode']
+
+  if (documentNumber !== null) filters.push(`ProductionOrders/DocumentNumber eq ${documentNumber}`)
+  if (itemCode) filters.push(`startswith(ProductionOrders/ItemNo, ${encodeODataString(itemCode)})`)
+  if (description) filters.push(...tokenizeOrderDescription(description).map(token => `contains(Items/ItemName, ${encodeODataString(token)})`))
+  if (input.status) filters.push(`ProductionOrders/ProductionOrderStatus eq ${encodeODataString(PRODUCTION_ORDER_STATUS_VALUES[input.status])}`)
+  if (dateFrom) filters.push(`ProductionOrders/PostingDate ge ${odataDateTime(dateFrom)}`)
+  if (dateTo) filters.push(`ProductionOrders/PostingDate le ${odataDateTime(dateTo)}`)
+  if (input.overdue) {
+    const today = currentColombiaDate()
+    filters.push(`ProductionOrders/DueDate lt ${odataDateTime(today)}`)
+    filters.push(`ProductionOrders/ProductionOrderStatus ne ${encodeODataString(PRODUCTION_ORDER_STATUS_VALUES.L)}`)
+    filters.push(`ProductionOrders/ProductionOrderStatus ne ${encodeODataString(PRODUCTION_ORDER_STATUS_VALUES.C)}`)
+  }
+
+  if (filters.length === 1) {
+    throw new SapServiceLayerError('production order search query is required', {
+      statusCode: 400,
+      sapCode: 'SAP_SEARCH_QUERY_REQUIRED',
+    })
+  }
+
+  const response = await sapServiceLayerRequest<unknown>('/QueryService_PostQuery', {
+    method: 'POST',
+    body: {
+      QueryPath: '$crossjoin(ProductionOrders,Items)',
+      QueryOption: [
+        '$expand=ProductionOrders($select=AbsoluteEntry,DocumentNumber,ItemNo,PlannedQuantity,CompletedQuantity,ProductionOrderStatus,PostingDate,DueDate),Items($select=ItemCode,ItemName)',
+        `$filter=${filters.join(' and ')}`,
+        '$orderby=ProductionOrders/AbsoluteEntry desc',
+        `$top=${requestLimit}`,
+        `$skip=${skip}`,
+      ].join('&'),
+    },
+    timeoutMs: options.timeoutMs,
+  })
+
+  const rows = recordsFromCollectionResponse(response).map(row => {
+    const order = isRecord(row.ProductionOrders) ? row.ProductionOrders : null
+    const item = isRecord(row.Items) ? row.Items : null
+    return {
+      absoluteEntry: readNumberField(order, 'AbsoluteEntry'),
+      documentNumber: readNumberField(order, 'DocumentNumber'),
+      itemNo: readStringField(order, 'ItemNo'),
+      itemName: readStringField(item, 'ItemName'),
+      plannedQuantity: readNumberField(order, 'PlannedQuantity'),
+      completedQuantity: readNumberField(order, 'CompletedQuantity'),
+      status: readStringField(order, 'ProductionOrderStatus'),
+      postingDate: readStringField(order, 'PostingDate'),
+      dueDate: readStringField(order, 'DueDate'),
+    }
+  })
+
+  return collectionSearchResult(rows, skip, limit)
+}
+
+export async function getSapProductionOrder(absoluteEntry: number): Promise<SapEntityPayload> {
+  const normalizedEntry = normalizeOptionalDocumentNumber(absoluteEntry, 'production order entry')
+  if (normalizedEntry === null) throw new SapServiceLayerError('production order entry is required', { statusCode: 400 })
+  return sapServiceLayerRequest<SapEntityPayload>(`/ProductionOrders(${normalizedEntry})`)
+}
+
+export async function searchSapSalesOrders(
+  input: SapSalesOrderSearchInput,
+  options: { skip?: number; limit?: number; timeoutMs?: number } = {},
+): Promise<SapOrderSearchResult<SapSalesOrderSearchRow>> {
+  const documentNumber = normalizeOptionalDocumentNumber(input.documentNumber, 'sales order number')
+  const cardCode = normalizeOptionalSearchText(input.cardCode)?.toUpperCase() ?? null
+  const cardName = normalizeOptionalSearchText(input.cardName)
+  const dateFrom = normalizeOptionalDate(input.dateFrom, 'dateFrom')
+  const dateTo = normalizeOptionalDate(input.dateTo, 'dateTo')
+  const { skip, limit, requestLimit } = orderSearchPaging(options)
+  const filters: string[] = []
+
+  if (documentNumber !== null) filters.push(`DocNum eq ${documentNumber}`)
+  if (cardCode) filters.push(`startswith(CardCode, ${encodeODataString(cardCode)})`)
+  if (cardName) filters.push(...tokenizeOrderDescription(cardName).map(token => `contains(CardName, ${encodeODataString(token)})`))
+  if (input.status) filters.push(`DocumentStatus eq ${encodeODataString(input.status === 'O' ? 'bost_Open' : 'bost_Close')}`)
+  if (dateFrom) filters.push(`DocDate ge ${odataDateTime(dateFrom)}`)
+  if (dateTo) filters.push(`DocDate le ${odataDateTime(dateTo)}`)
+
+  if (filters.length === 0) {
+    throw new SapServiceLayerError('sales order search query is required', {
+      statusCode: 400,
+      sapCode: 'SAP_SEARCH_QUERY_REQUIRED',
+    })
+  }
+
+  const query = buildCollectionQuery({
+    select: ['DocEntry', 'DocNum', 'CardCode', 'CardName', 'DocDate', 'DocDueDate', 'DocumentStatus', 'DocTotal', 'DocCurrency', 'NumAtCard'],
+    filter: filters.join(' and '),
+    orderby: 'DocEntry desc',
+    top: requestLimit,
+    skip,
+  })
+  const response = await sapServiceLayerRequest<unknown>(`/Orders${query}`, { timeoutMs: options.timeoutMs })
+  const rows = recordsFromCollectionResponse(response).map(row => ({
+    documentEntry: readNumberField(row, 'DocEntry'),
+    documentNumber: readNumberField(row, 'DocNum'),
+    cardCode: readStringField(row, 'CardCode'),
+    cardName: readStringField(row, 'CardName'),
+    docDate: readStringField(row, 'DocDate'),
+    docDueDate: readStringField(row, 'DocDueDate'),
+    status: readStringField(row, 'DocumentStatus'),
+    total: readNumberField(row, 'DocTotal'),
+    currency: readStringField(row, 'DocCurrency'),
+    customerReference: readStringField(row, 'NumAtCard'),
+  }))
+
+  return collectionSearchResult(rows, skip, limit)
+}
+
+export async function getSapSalesOrder(documentEntry: number): Promise<SapEntityPayload> {
+  const normalizedEntry = normalizeOptionalDocumentNumber(documentEntry, 'sales order entry')
+  if (normalizedEntry === null) throw new SapServiceLayerError('sales order entry is required', { statusCode: 400 })
+  return sapServiceLayerRequest<SapEntityPayload>(`/Orders(${normalizedEntry})`)
+}
+
 export function productTreeQuantityMatches(
   before: BomLine[],
   after: BomLine[],

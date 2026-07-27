@@ -2,8 +2,17 @@
 
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, ChevronDown, ChevronRight, Layers, Loader2, RefreshCw, Search, X } from 'lucide-react'
+import { OrderConsultaPanel } from './OrderConsultaPanel'
 
 type SapItem = Record<string, unknown>
+
+type ConsultaMode = 'items' | 'production-orders' | 'sales-orders'
+
+const CONSULTA_MODES: Array<{ id: ConsultaMode; label: string }> = [
+  { id: 'items', label: 'Artículos y LdM' },
+  { id: 'production-orders', label: 'Órdenes de fabricación' },
+  { id: 'sales-orders', label: 'Órdenes de venta' },
+]
 
 type ConsultaSapClientProps = {
   initialCode: string
@@ -984,6 +993,7 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
   const [showBom, setShowBom] = useState(false)
   const [activeTab, setActiveTab] = useState<SapTabId>('general')
   const [customFieldsVisible, setCustomFieldsVisible] = useState(false)
+  const [consultaMode, setConsultaMode] = useState<ConsultaMode>('items')
 
   useEffect(() => {
     let cancelled = false
@@ -1233,6 +1243,24 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
   return (
     <main className="min-h-screen bg-slate-50 p-4 text-slate-900 sm:p-6">
       <div className="mx-auto flex max-w-[1600px] flex-col gap-4">
+        <div role="tablist" aria-label="Dominio de consulta SAP" className="flex overflow-x-auto rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+          {CONSULTA_MODES.map(mode => (
+            <button
+              key={mode.id}
+              type="button"
+              role="tab"
+              aria-selected={consultaMode === mode.id}
+              onClick={() => setConsultaMode(mode.id)}
+              className={[
+                'shrink-0 rounded-lg px-4 py-2.5 text-sm font-semibold transition',
+                consultaMode === mode.id ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
+              ].join(' ')}
+            >
+              {mode.label}
+            </button>
+          ))}
+        </div>
+        {consultaMode === 'items' ? <>
         <form onSubmit={handleSubmit} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_minmax(260px,1.2fr)_minmax(180px,0.8fr)_auto] lg:items-end">
             <label className="grid min-w-0 flex-1 gap-1.5">
@@ -1371,6 +1399,16 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
             onToggleCustomFields={() => setCustomFieldsVisible(previous => !previous)}
             priceRows={priceRows}
             activeProperties={activeProperties}
+          />
+        )}
+        </> : (
+          <OrderConsultaPanel
+            key={consultaMode}
+            mode={consultaMode}
+            onOpenItem={itemCode => {
+              setConsultaMode('items')
+              void loadItem({ itemCode, itemName: '' }, false)
+            }}
           />
         )}
       </div>
