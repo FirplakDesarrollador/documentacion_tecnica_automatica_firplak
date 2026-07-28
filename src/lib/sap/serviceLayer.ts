@@ -540,7 +540,7 @@ function tokenizeItemDescriptionQuery(query: string): string[] {
   return query
     .trim()
     .toUpperCase()
-    .split(/[^\p{L}\p{N}]+/u)
+    .split(/\s+/)
     .filter(Boolean)
 }
 
