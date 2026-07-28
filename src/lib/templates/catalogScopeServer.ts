@@ -619,7 +619,7 @@ export function buildCatalogTargetContext(scope: CatalogScope, row: HierarchyRow
             sku_complete: normalizeText(row.sku_complete) || '',
             color_code: normalizeText(row.color_code),
             color_name: resolveValue(effectiveAttrs, 'color_name', normalizeText(row.color_name)),
-            name_color_sap: normalizeText(row.color_name),
+            name_color_sap: resolveValue(effectiveAttrs, 'color_name', normalizeText(row.color_name)),
             sap_description: normalizeText(row.sap_description_original),
             final_complete_name_es: normalizeText(row.final_complete_name_es),
             final_complete_name_en: normalizeText(row.final_complete_name_en),
