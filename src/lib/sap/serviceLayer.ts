@@ -523,6 +523,7 @@ export type SapItemSearchInput = {
 
 export type SapItemSearchOptions = {
   skip?: number
+  afterItemCode?: string | null
   limit?: number
   timeoutMs?: number
 }
@@ -531,6 +532,7 @@ export type SapItemSearchResult = {
   items: SapEntityPayload[]
   hasMore: boolean
   nextSkip: number | null
+  lastItemCode: string | null
 }
 
 const SAP_ITEM_SEARCH_SELECT = ['ItemCode', 'ItemName']
@@ -578,18 +580,22 @@ export async function searchSapItems(
   options: SapItemSearchOptions = {}
 ): Promise<SapItemSearchResult> {
   const skip = Number.isInteger(options.skip) && (options.skip ?? 0) >= 0 ? options.skip ?? 0 : 0
+  const afterItemCode = options.afterItemCode?.trim().toUpperCase() || null
   const requestedLimit = Number.isInteger(options.limit) && (options.limit ?? 0) > 0
     ? options.limit ?? SAP_ITEM_SEARCH_PAGE_SIZE
     : SAP_ITEM_SEARCH_PAGE_SIZE
   const limit = Math.min(requestedLimit, SAP_ITEM_SEARCH_PAGE_SIZE)
-  const filter = buildSapItemSearchFilter(input)
+  const baseFilter = buildSapItemSearchFilter(input)
+  const filter = afterItemCode
+    ? `${baseFilter} and ItemCode gt ${encodeODataString(afterItemCode)}`
+    : baseFilter
   const requestLimit = limit + 1
   const queryString = buildCollectionQuery({
     select: SAP_ITEM_SEARCH_SELECT,
     filter,
     orderby: 'ItemCode asc',
     top: requestLimit,
-    skip,
+    skip: afterItemCode ? undefined : skip,
   })
   const response = await sapServiceLayerRequest<unknown>(`/Items${queryString}`, {
     timeoutMs: options.timeoutMs,
@@ -602,11 +608,15 @@ export async function searchSapItems(
     : null
   const hasMore = rows.length >= limit || Boolean(nextLink)
   const items = rows.slice(0, limit)
+  const lastItemCode = items.length > 0
+    ? readStringField(items[items.length - 1], 'ItemCode')?.trim().toUpperCase() ?? null
+    : null
 
   return {
     items,
     hasMore,
     nextSkip: hasMore ? skip + limit : null,
+    lastItemCode,
   }
 }
 
@@ -689,6 +699,225 @@ export type SapProductionOrderUsage = {
 function recordsFromCollectionResponse(value: unknown): Record<string, unknown>[] {
   if (!isRecord(value) || !Array.isArray(value.value)) return []
   return value.value.filter(isRecord)
+}
+
+export type SapProductTreeHeaderPageRow = {
+  treeCode: string
+  treeType: string | null
+  productDescription: string | null
+  headerWarehouse: string | null
+}
+
+export type SapProductTreeHeaderPage = {
+  sourceRowCount: number
+  rows: SapProductTreeHeaderPageRow[]
+}
+
+/**
+ * Reads ProductTree headers joined to their Items, without retrieving any BOM
+ * component lines. It is the lightweight path used by the output-warehouse audit.
+ */
+export async function getSapProductTreeHeaderPageByPrefix(
+  treeCodePrefix: string,
+  options?: { timeoutMs?: number; top?: number; skip?: number },
+): Promise<SapProductTreeHeaderPage> {
+  const normalizedPrefix = normalizeRequiredCode(treeCodePrefix, 'treeCodePrefix').toUpperCase()
+  const pageSize = Math.min(Math.max(options?.top ?? 20, 1), 100)
+  const skip = options?.skip ?? 0
+  if (!Number.isInteger(skip) || skip < 0) {
+    throw new SapServiceLayerError('skip must be a non-negative integer', {
+      statusCode: 400,
+      sapCode: 'SAP_VALIDATION_ERROR',
+    })
+  }
+
+  const queryOption = [
+    '$expand=ProductTrees($select=TreeCode,TreeType,ProductDescription,Warehouse),Items($select=ItemCode)',
+    `$filter=ProductTrees/TreeCode eq Items/ItemCode and startswith(ProductTrees/TreeCode, ${encodeODataString(normalizedPrefix)})`,
+    '$orderby=ProductTrees/TreeCode asc',
+    `$top=${pageSize}`,
+    `$skip=${skip}`,
+  ].join('&')
+  const response: unknown = await sapServiceLayerRequest<unknown>('/QueryService_PostQuery', {
+    method: 'POST',
+    body: {
+      QueryPath: '$crossjoin(ProductTrees,Items)',
+      QueryOption: queryOption,
+    },
+    timeoutMs: options?.timeoutMs,
+  })
+  const sourceRows = recordsFromCollectionResponse(response)
+  const rows = sourceRows.flatMap((row): SapProductTreeHeaderPageRow[] => {
+    const tree = isRecord(row.ProductTrees) ? row.ProductTrees : null
+    const item = isRecord(row.Items) ? row.Items : null
+    const treeCode = readStringField(tree, 'TreeCode')?.toUpperCase() ?? ''
+    const itemCode = readStringField(item, 'ItemCode')?.toUpperCase() ?? ''
+    if (!treeCode || itemCode !== treeCode) return []
+    return [{
+      treeCode,
+      treeType: readStringField(tree, 'TreeType'),
+      productDescription: readStringField(tree, 'ProductDescription'),
+      headerWarehouse: readStringField(tree, 'Warehouse'),
+    }]
+  })
+
+  return { sourceRowCount: sourceRows.length, rows }
+}
+
+/**
+ * Reconciles a bounded set of SKU whose tree header was not present in a
+ * previous page. It uses the same read-only QueryService path as the family
+ * scan, but exact codes prevent an incomplete local snapshot from classifying
+ * Product or Sales trees as missing.
+ */
+export async function getSapProductTreeHeadersByCodes(
+  treeCodes: string[],
+  options?: { timeoutMs?: number },
+): Promise<SapProductTreeHeaderPage> {
+  const normalizedCodes = [...new Set(treeCodes.map(code => normalizeRequiredCode(code, 'treeCode').toUpperCase()))]
+  if (normalizedCodes.length === 0) return { sourceRowCount: 0, rows: [] }
+  if (normalizedCodes.length > 20) {
+    throw new SapServiceLayerError('A header reconciliation request can contain at most 20 tree codes', {
+      statusCode: 400,
+      sapCode: 'SAP_VALIDATION_ERROR',
+    })
+  }
+
+  const exactCodeFilter = normalizedCodes.map(code => `ProductTrees/TreeCode eq ${encodeODataString(code)}`).join(' or ')
+  const queryOption = [
+    '$expand=ProductTrees($select=TreeCode,TreeType,ProductDescription,Warehouse),Items($select=ItemCode)',
+    `$filter=ProductTrees/TreeCode eq Items/ItemCode and (${exactCodeFilter})`,
+    '$orderby=ProductTrees/TreeCode asc',
+    `$top=${normalizedCodes.length}`,
+  ].join('&')
+  const response: unknown = await sapServiceLayerRequest<unknown>('/QueryService_PostQuery', {
+    method: 'POST',
+    body: {
+      QueryPath: '$crossjoin(ProductTrees,Items)',
+      QueryOption: queryOption,
+    },
+    timeoutMs: options?.timeoutMs,
+  })
+  const sourceRows = recordsFromCollectionResponse(response)
+  const rows = sourceRows.flatMap((row): SapProductTreeHeaderPageRow[] => {
+    const tree = isRecord(row.ProductTrees) ? row.ProductTrees : null
+    const item = isRecord(row.Items) ? row.Items : null
+    const treeCode = readStringField(tree, 'TreeCode')?.toUpperCase() ?? ''
+    const itemCode = readStringField(item, 'ItemCode')?.toUpperCase() ?? ''
+    if (!treeCode || itemCode !== treeCode || !normalizedCodes.includes(treeCode)) return []
+    return [{
+      treeCode,
+      treeType: readStringField(tree, 'TreeType'),
+      productDescription: readStringField(tree, 'ProductDescription'),
+      headerWarehouse: readStringField(tree, 'Warehouse'),
+    }]
+  })
+
+  return { sourceRowCount: sourceRows.length, rows }
+}
+
+export type SapProductTreeLinePageRow = {
+  treeCode: string
+  treeType: string | null
+  productDescription: string | null
+  headerWarehouse: string | null
+  childNum: number
+  itemCode: string
+  itemName: string | null
+  warehouse: string | null
+  issueMethod: string | null
+}
+
+export type SapProductTreeLinePage = {
+  sourceRowCount: number
+  rows: SapProductTreeLinePageRow[]
+}
+
+export type SapProductTreeLineCursor = {
+  treeCode: string
+  childNum: number
+}
+
+/**
+ * Reads only the immediate ProductTreeLines for one SKU family. QueryService
+ * returns one row per direct LdM line, which lets callers persist each page and
+ * resume without downloading an entire ProductTree for every SKU individually.
+ */
+export async function getSapProductTreeLinePageByPrefix(
+  treeCodePrefix: string,
+  options?: { timeoutMs?: number; top?: number; skip?: number; cursor?: SapProductTreeLineCursor | null },
+): Promise<SapProductTreeLinePage> {
+  const normalizedPrefix = normalizeRequiredCode(treeCodePrefix, 'treeCodePrefix').toUpperCase()
+  const pageSize = Math.min(Math.max(options?.top ?? 20, 1), 100)
+  const skip = options?.skip ?? 0
+  if (!Number.isInteger(skip) || skip < 0) {
+    throw new SapServiceLayerError('skip must be a non-negative integer', {
+      statusCode: 400,
+      sapCode: 'SAP_VALIDATION_ERROR',
+    })
+  }
+
+  const cursor = options?.cursor
+    ? {
+      treeCode: normalizeRequiredCode(options.cursor.treeCode, 'cursor.treeCode').toUpperCase(),
+      childNum: options.cursor.childNum,
+    }
+    : null
+  if (cursor && (!Number.isInteger(cursor.childNum) || cursor.childNum < 0)) {
+    throw new SapServiceLayerError('cursor.childNum must be a non-negative integer', {
+      statusCode: 400,
+      sapCode: 'SAP_VALIDATION_ERROR',
+    })
+  }
+  const baseFilter = `ProductTrees/TreeCode eq ProductTrees/ProductTreeLines/ParentItem and startswith(ProductTrees/TreeCode, ${encodeODataString(normalizedPrefix)})`
+  const cursorFilter = cursor
+    ? ` and (ProductTrees/TreeCode gt ${encodeODataString(cursor.treeCode)} or (ProductTrees/TreeCode eq ${encodeODataString(cursor.treeCode)} and ProductTrees/ProductTreeLines/ChildNum gt ${cursor.childNum}))`
+    : ''
+
+  const queryOption = [
+    '$expand=ProductTrees($select=TreeCode,TreeType,ProductDescription,Warehouse),ProductTrees/ProductTreeLines($select=ParentItem,ChildNum,ItemCode,ItemName,Warehouse,IssueMethod)',
+    `$filter=${baseFilter}${cursorFilter}`,
+    '$orderby=ProductTrees/TreeCode asc,ProductTrees/ProductTreeLines/ChildNum asc',
+    `$top=${pageSize}`,
+    ...(cursor ? [] : [`$skip=${skip}`]),
+  ].join('&')
+  const response: unknown = await sapServiceLayerRequest<unknown>('/QueryService_PostQuery', {
+    method: 'POST',
+    body: {
+      QueryPath: '$crossjoin(ProductTrees,ProductTrees/ProductTreeLines)',
+      QueryOption: queryOption,
+    },
+    timeoutMs: options?.timeoutMs,
+  })
+  const sourceRows = recordsFromCollectionResponse(response)
+  const rows = sourceRows.flatMap((row): SapProductTreeLinePageRow[] => {
+    const tree = isRecord(row.ProductTrees) ? row.ProductTrees : null
+    const line = isRecord(row['ProductTrees/ProductTreeLines']) ? row['ProductTrees/ProductTreeLines'] : null
+    const treeCode = readStringField(tree, 'TreeCode')?.toUpperCase() ?? ''
+    const parentItem = readStringField(line, 'ParentItem')?.toUpperCase() ?? ''
+    const childNum = readNumberField(line, 'ChildNum')
+    const itemCode = readStringField(line, 'ItemCode')?.toUpperCase() ?? ''
+    if (!treeCode || parentItem !== treeCode || !itemCode || childNum === null || !Number.isInteger(childNum) || childNum < 0) {
+      return []
+    }
+
+    return [{
+      treeCode,
+      treeType: readStringField(tree, 'TreeType'),
+      productDescription: readStringField(tree, 'ProductDescription'),
+      headerWarehouse: readStringField(tree, 'Warehouse'),
+      childNum,
+      itemCode,
+      itemName: readStringField(line, 'ItemName'),
+      warehouse: readStringField(line, 'Warehouse'),
+      issueMethod: readStringField(line, 'IssueMethod'),
+    }]
+  })
+
+  // QueryService can return a valid page in an order different from the
+  // requested $orderby. Normalize locally before deriving the resume cursor.
+  const orderedRows = rows.toSorted((left, right) => left.treeCode.localeCompare(right.treeCode) || left.childNum - right.childNum)
+  return { sourceRowCount: sourceRows.length, rows: orderedRows }
 }
 
 export async function getSapProductTreeUsages(
@@ -925,6 +1154,7 @@ export async function getSapItemBom(itemCode: string): Promise<{
   treeCode: string
   productDescription: string | null
   treeType: string | null
+  warehouse: string | null
   quantity: number
   lines: BomLine[]
 } | null> {
@@ -938,6 +1168,7 @@ export async function getSapItemBom(itemCode: string): Promise<{
       treeCode: String(tree.TreeCode ?? ''),
       productDescription: tree.ProductDescription != null ? String(tree.ProductDescription) : null,
       treeType: tree.TreeType != null ? String(tree.TreeType) : null,
+      warehouse: tree.Warehouse != null ? String(tree.Warehouse) : null,
       quantity: typeof tree.Quantity === 'number' ? tree.Quantity : 1,
       lines: parseBomLines(tree.ProductTreeLines),
     }
@@ -1284,6 +1515,80 @@ export function productTreeQuantityMatches(
     return line.ChildNum === target.childNum && line.ItemCode === target.itemCode
       ? afterLine.Quantity === target.quantity
       : afterLine.Quantity === line.Quantity
+  })
+}
+
+export async function updateSapProductTreeHeaderWarehouse(treeCode: string, warehouse: string): Promise<unknown> {
+  const normalizedTreeCode = normalizeRequiredCode(treeCode, 'treeCode')
+  const normalizedWarehouse = normalizeRequiredCode(warehouse, 'warehouse')
+  return sapServiceLayerRequest(`/ProductTrees(${encodeODataString(normalizedTreeCode)})`, {
+    method: 'PATCH',
+    body: { Warehouse: normalizedWarehouse },
+  })
+}
+
+export function productTreeLineItemCodeMatches(
+  before: BomLine[],
+  after: BomLine[],
+  target: { childNum: number; itemCode: string; replacementItemCode: string }
+): boolean {
+  if (before.length !== after.length) return false
+  const afterByChildNum = new Map(after.map(line => [line.ChildNum, line]))
+  return before.every((line) => {
+    const afterLine = afterByChildNum.get(line.ChildNum)
+    if (!afterLine || afterLine.Quantity !== line.Quantity || afterLine.Warehouse !== line.Warehouse || afterLine.IssueMethod !== line.IssueMethod) {
+      return false
+    }
+    return line.ChildNum === target.childNum && line.ItemCode === target.itemCode
+      ? afterLine.ItemCode === target.replacementItemCode
+      : afterLine.ItemCode === line.ItemCode
+  })
+}
+
+export async function updateSapProductTreeLineItemCode(input: {
+  treeCode: string
+  childNum: number
+  itemCode: string
+  replacementItemCode: string
+}): Promise<unknown> {
+  await assertSapWritesEnabled()
+  const treeCode = normalizeRequiredCode(input.treeCode, 'treeCode')
+  const itemCode = normalizeRequiredCode(input.itemCode, 'itemCode')
+  const replacementItemCode = normalizeRequiredCode(input.replacementItemCode, 'replacementItemCode')
+  if (!Number.isInteger(input.childNum) || input.childNum < 0) {
+    throw new SapServiceLayerError('childNum must be a non-negative integer', {
+      statusCode: 400,
+      sapCode: 'SAP_VALIDATION_ERROR',
+    })
+  }
+  if (itemCode === replacementItemCode) {
+    throw new SapServiceLayerError('The replacement item must differ from the current item', {
+      statusCode: 400,
+      sapCode: 'SAP_VALIDATION_ERROR',
+    })
+  }
+  const currentTree = await getSapItemBom(treeCode)
+  if (!currentTree) {
+    throw new SapServiceLayerError(`ProductTree not found for ${treeCode}`, {
+      statusCode: 404,
+      sapCode: 'SAP_PRODUCT_TREE_NOT_FOUND',
+    })
+  }
+  const targetMatches = currentTree.lines.filter(line => line.ChildNum === input.childNum && line.ItemCode === itemCode)
+  if (targetMatches.length !== 1) {
+    throw new SapServiceLayerError(`The requested ProductTree line was not found uniquely for ${treeCode}`, {
+      statusCode: 409,
+      sapCode: 'SAP_PRODUCT_TREE_LINE_MISMATCH',
+    })
+  }
+  return sapServiceLayerRequest(`/ProductTrees(${encodeODataString(treeCode)})`, {
+    method: 'PATCH',
+    body: {
+      ProductTreeLines: [{
+        ChildNum: input.childNum,
+        ItemCode: replacementItemCode,
+      }],
+    },
   })
 }
 
