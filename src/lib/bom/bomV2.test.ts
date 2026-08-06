@@ -221,6 +221,22 @@ test('classifies the sole body board as full product when the only companion is 
   })
 })
 
+test('blocks publication analysis when SAP captures an active SKU without BOM lines', () => {
+  const analysis = analyzeReferenceBom({
+    context: {
+      referenceId: 'reference', familyCode: 'BAN05', referenceCode: '0009', productName: 'Basico',
+      manufacturingProcess: 'MUEBLES NACIONAL', productType: 'MUEBLE',
+    },
+    snapshots: [snapshot('VBAN05-0009-000-0368', '0368', [])],
+    colorConfigurations: new Map(),
+  })
+
+  assert.equal(analysis.proposedBomStructure.lines.length, 0)
+  assert.equal(analysis.summaryJson.source_analysis_complete, false)
+  assert.equal(analysis.findings[0]?.findingType, 'sap_bom_unavailable')
+  assert.equal(analysis.findings[0]?.severity, 'blocker')
+})
+
 test('fresh SAP import classifies a fondo board as drawer bottom', () => {
   const analysis = analyzeReferenceBom({
     context: {
@@ -1608,6 +1624,16 @@ test('detects a SAP-backed board Dual candidate without promoting it globally', 
   }, {
     structureColorCode: '1371', structureMaterialProfile: 'CARB2', frontColorCode: '0467', frontMaterialProfile: 'RH', evidenceSkuCount: 1,
   })
+})
+
+test('does not treat a named drawer bottom as a board Dual candidate', () => {
+  const candidates = detectBoardDualCandidates({
+    evidence: [
+      boardEvidence({ skuComplete: 'VBAN05-0117-000-0100', boardColorCode: '0100', materialProfile: 'RH', qty: 2.07, role: 'full_product', itemCode: 'CMPD06-0008-000-0100', lineIdentity: 'CMPD06-0008-000#1' }),
+      boardEvidence({ skuComplete: 'VBAN05-0117-000-0100', boardColorCode: '0408', materialProfile: 'CARB2 RH', qty: 0.22, role: 'drawer_bottom', itemCode: 'CMPD06-0030-000-0408', lineIdentity: 'CMPD06-0030-000#1' }),
+    ],
+  })
+  assert.deepEqual(candidates, [])
 })
 
 test('keeps edge bands untouched by a board-only Dual color case', () => {

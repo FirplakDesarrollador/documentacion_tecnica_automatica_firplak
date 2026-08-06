@@ -21,6 +21,10 @@ function parseColorCodes(value: unknown): string[] {
     : []
 }
 
+function parseProductType(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length <= 80 ? value.trim().toUpperCase() : null
+}
+
 function streamEvent(encoder: TextEncoder, event: BoardMatrixEvent): Uint8Array {
   return encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
 }
@@ -30,13 +34,17 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (guard.response) return guard.response
 
   let colorCodes: string[] = []
+  let productType: string | null = null
   try {
     const body: unknown = await request.json()
-    colorCodes = parseColorCodes(typeof body === 'object' && body !== null ? (body as { colorCodes?: unknown }).colorCodes : null)
+    const input = typeof body === 'object' && body !== null ? body as { colorCodes?: unknown; productType?: unknown } : null
+    colorCodes = parseColorCodes(input?.colorCodes)
+    productType = parseProductType(input?.productType)
   } catch {
     colorCodes = []
   }
   if (colorCodes.length === 0) return Response.json({ success: false, message: 'Selecciona al menos un color de cuatro caracteres.' }, { status: 400 })
+  if (!productType) return Response.json({ success: false, message: 'La referencia seleccionada no tiene tipo de producto para limitar el análisis.' }, { status: 400 })
 
   const encoder = new TextEncoder()
   let cancelled = request.signal.aborted
@@ -57,6 +65,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         try {
           const results = await analyzeReferenceImportBoardMatrix({
             colorCodes,
+            productType,
             onProgress: progress => send({ type: 'progress', progress }),
             isCancelled: () => cancelled,
           })

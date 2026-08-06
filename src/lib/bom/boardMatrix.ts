@@ -83,6 +83,7 @@ function uniqueSkuCount(evidence: BoardMatrixEvidence[]): number {
 }
 
 export type BoardProfileEvidenceSummary = {
+  boardColorCode: string
   materialProfile: string
   skuCount: number
   examples: Array<{
@@ -152,6 +153,8 @@ export function consolidateIdenticalBoardEvidence(
         ...first.item,
         qty: group.reduce((total, entry) => total + entry.item.qty, 0),
         sourceLineCount: group.reduce((total, entry) => total + (entry.item.sourceLineCount ?? 1), 0),
+        sapChildNums: [...new Set(group.flatMap(entry => entry.item.sapChildNums ?? []))]
+          .sort((left, right) => left - right),
       },
     }]
   })
@@ -205,24 +208,31 @@ export function summarizeBoardEvidenceExamples(
 }
 
 /**
- * Keeps the variation report actionable: counts are distinct sales SKU and
- * examples retain the SAP sales description that a business reviewer needs.
+ * Keeps variation reports actionable by grouping the exact board-color/profile
+ * pair. Separate color and profile lists are ambiguous and must not imply a
+ * relationship based on their display order.
  */
 export function summarizeBoardProfileEvidence(
   evidence: BoardMatrixEvidence[],
   exampleLimit = 5
 ): BoardProfileEvidenceSummary[] {
-  const examplesPerProfile = new Map<string, Map<string, BoardMatrixEvidence>>()
+  const examplesPerPattern = new Map<string, Map<string, BoardMatrixEvidence>>()
   for (const item of evidence) {
+    const boardColorCode = item.boardColorCode.trim().toUpperCase()
     const profile = item.materialProfile?.trim().toUpperCase() || 'PENDIENTE'
-    const examplesBySku = examplesPerProfile.get(profile) ?? new Map<string, BoardMatrixEvidence>()
+    const pattern = `${boardColorCode}|${profile}`
+    const examplesBySku = examplesPerPattern.get(pattern) ?? new Map<string, BoardMatrixEvidence>()
     const current = examplesBySku.get(item.skuComplete)
     if (!current || item.itemCode.localeCompare(current.itemCode) < 0) examplesBySku.set(item.skuComplete, item)
-    examplesPerProfile.set(profile, examplesBySku)
+    examplesPerPattern.set(pattern, examplesBySku)
   }
   const limit = Math.max(1, Math.floor(exampleLimit))
-  return [...examplesPerProfile.entries()]
-    .map(([materialProfile, examplesBySku]) => {
+  return [...examplesPerPattern.entries()]
+    .map(([, examplesBySku]) => {
+      const representative = [...examplesBySku.values()]
+        .sort((left, right) => left.skuComplete.localeCompare(right.skuComplete) || left.itemCode.localeCompare(right.itemCode))[0]
+      const boardColorCode = representative?.boardColorCode.trim().toUpperCase() ?? 'PENDIENTE'
+      const materialProfile = representative?.materialProfile?.trim().toUpperCase() || 'PENDIENTE'
       const examples = [...examplesBySku.values()]
         .sort((left, right) => left.skuComplete.localeCompare(right.skuComplete) || left.itemCode.localeCompare(right.itemCode))
         .slice(0, limit)
@@ -232,9 +242,9 @@ export function summarizeBoardProfileEvidence(
           itemCode: item.itemCode,
           qty: item.qty,
         }))
-      return { materialProfile, skuCount: examplesBySku.size, examples }
+      return { boardColorCode, materialProfile, skuCount: examplesBySku.size, examples }
     })
-    .sort((left, right) => right.skuCount - left.skuCount || left.materialProfile.localeCompare(right.materialProfile))
+    .sort((left, right) => right.skuCount - left.skuCount || left.boardColorCode.localeCompare(right.boardColorCode) || left.materialProfile.localeCompare(right.materialProfile))
 }
 
 /**
@@ -635,7 +645,13 @@ export function deriveBoardConditionalRuleStrategies(input: {
 export function detectBoardDualCandidates(input: {
   evidence: BoardMatrixEvidence[]
 }): BoardMatrixDualCandidate[] {
-  const evidence = consolidateIdenticalBoardEvidence(input.evidence.map(item => ({ sourceColorCode: '', item }))).map(entry => entry.item)
+  // A named role (for example, drawer_bottom) is an independent material
+  // application, not one half of a Dual case. Only unresolved board roles may
+  // be proposed as Dual from their two-board SAP pattern.
+  const evidence = consolidateIdenticalBoardEvidence(input.evidence
+    .filter(item => item.role === 'role_pending')
+    .map(item => ({ sourceColorCode: '', item })))
+    .map(entry => entry.item)
   const candidateCases = new Map<string, BoardMatrixDualCandidate['cases']>()
   const evidenceBySku = new Map<string, BoardMatrixEvidence[]>()
   for (const item of evidence) evidenceBySku.set(item.skuComplete, [...(evidenceBySku.get(item.skuComplete) ?? []), item])

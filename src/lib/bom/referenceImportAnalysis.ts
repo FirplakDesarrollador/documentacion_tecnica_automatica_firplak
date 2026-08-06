@@ -119,6 +119,9 @@ function isEdgeBandScope(scope: ReferenceProductApplicationScope): boolean {
 }
 
 function configuredScopeForColor(configuration: ColorConfiguration, scope: ReferenceProductApplicationScope): ReferenceProductApplicationScope {
+  // A precise rule takes precedence over the whole-product fallback, so a
+  // resolved structure edge does not hide a pending front edge for this color.
+  if (configuration.applicationColors[scope]) return scope
   return (configuration.colorMode === 'full' || configuration.colorMode === 'equivalent') && isEdgeBandScope(scope)
     ? 'edge_band_full_product'
     : scope
@@ -755,6 +758,42 @@ export function analyzeReferenceBom(input: {
       summaryJson: {
         captured_sku_count: capturedSnapshots.length,
         failed_sku_count: failedSnapshots.length,
+        source_analysis_complete: false,
+        proposed_line_count: 0,
+        blocker_count: findings.length,
+        warning_count: 0,
+      },
+    }
+  }
+
+  const emptySnapshots = capturedSnapshots.filter(snapshot => snapshot.normalizedLines.length === 0)
+  if (emptySnapshots.length > 0) {
+    const findings = emptySnapshots.map(snapshot => createFinding({
+      findingKey: `source:sap-bom-empty:${snapshot.skuComplete}`,
+      findingType: 'sap_bom_unavailable',
+      severity: 'blocker',
+      lineIdentity: null,
+      baseItemCode: null,
+      occurrence: null,
+      proposedScope: null,
+      proposedColorCode: null,
+      detailsJson: {
+        sku_complete: snapshot.skuComplete,
+        error: 'SAP devolvió la LdM sin líneas para este SKU activo.',
+      },
+    }))
+    return {
+      proposedBomStructure: {
+        schema_version: 2,
+        structure_type: capturedSnapshots.some(snapshot => snapshot.treeType === 'iSalesTree') ? 'sales_kit' : 'production',
+        input_warehouse_code: null,
+        output_warehouse_code: null,
+        lines: [],
+      },
+      findings,
+      summaryJson: {
+        captured_sku_count: capturedSnapshots.length,
+        failed_sku_count: 0,
         source_analysis_complete: false,
         proposed_line_count: 0,
         blocker_count: findings.length,

@@ -8,6 +8,7 @@ import {
   analyzeReferenceBomImportTransient,
   analyzeReferenceImportBoardMatrix,
   listReferenceImportCandidates,
+  refreshTransientReferenceBomAnalysisFromWorkspace,
   refreshComponentMetadata,
   type DirectColorRuleMatrixSelection,
   verifyReferenceImportColorRulesMatrixDirect,
@@ -17,8 +18,8 @@ import type { ReferenceBomStructure, ReferenceImportWorkspace } from '@/lib/bom/
 import { isBoardMaterialApplicationScope, isReferenceProductApplicationScope, type ReferenceProductApplicationScope } from '@/lib/bom/referenceImportScopes'
 import type { BoardProfileConditionalRule, HybridColorCase } from '@/lib/bom/types'
 import { canonicalBomStructureJson, normalizeBomStructure } from '@/lib/bom/resolve'
-import { deleteSapItem, deleteSapProductTree, getSapItem, getSapItemBom, getSapProductTreeUsages, productTreeQuantityMatches, productTreeStructureMatches, SapServiceLayerError, updateSapItem, updateSapProductTreeIssueMethod, updateSapProductTreeLineQuantity, type SapEntityPayload } from '@/lib/sap/serviceLayer'
-import { parseSapItemCode, readSapFrozen, readSapValid } from '@/lib/bom/sapMapping'
+import { deleteSapItem, deleteSapProductTree, getSapItem, getSapItemBom, getSapProductTreeUsages, productTreeLineItemCodeMatches, productTreeQuantityMatches, productTreeStructureMatches, SapServiceLayerError, updateSapItem, updateSapProductTreeIssueMethod, updateSapProductTreeLineItemCode, updateSapProductTreeLineQuantity, type SapEntityPayload } from '@/lib/sap/serviceLayer'
+import { buildSapItemCode, parseSapItemCode, readSapFrozen, readSapUom, readSapValid } from '@/lib/bom/sapMapping'
 import { syncMissingSapComponentsToCatalog } from '@/lib/sap/componentCatalogSync'
 import { getColorsAction, upsertColorAction, type ColorEntry } from '@/app/rules/colors/actions'
 import { assertPermission } from '@/utils/auth/access'
@@ -42,6 +43,7 @@ export type ComponentMetadataRefreshResult = {
 type MatrixSelection = DirectColorRuleMatrixSelection
 type IssueMethodItem = { skuComplete: string; childNum: number; itemCode: string }
 type QuantityItem = { skuComplete: string; childNum: number; itemCode: string; expectedQty: number }
+type MatrixColorHomologationItem = { skuComplete: string; childNum: number; itemCode: string; targetColorCode: string }
 type MatrixAbsence = { skuComplete: string; baseItemCode: string }
 type MatrixHybridColorCase = {
   sourceColorCode: string
@@ -50,6 +52,107 @@ type MatrixHybridColorCase = {
   structureColorCode: string
   frontColorCode: string
   skuCompletes: string[]
+}
+
+export type ConfirmedColorMatrixRule = {
+  sourceColorCode: string
+  scope: ReferenceProductApplicationScope
+  targetColorCode: string
+}
+
+export type BoardRoleRuleSaveResult = {
+  success: boolean
+  message: string
+  sourceColorCode: string
+  scope: ReferenceProductApplicationScope
+  boardColorCode: string
+  materialProfile: string
+}
+
+export async function saveTransientBoardRoleRuleAction(input: {
+  sourceColorCode: string
+  scope: ReferenceProductApplicationScope
+  boardColorCode: string
+  materialProfile: string
+  confirmed: boolean
+}): Promise<BoardRoleRuleSaveResult> {
+  await assertPermission('module:product-design')
+  const sourceColorCode = normalizedColorCode(input.sourceColorCode)
+  const boardColorCode = normalizedColorCode(input.boardColorCode)
+  const materialProfile = input.materialProfile.trim().toUpperCase()
+  try {
+    if (!input.confirmed) throw new Error('Confirma la regla de tablero antes de guardarla.')
+    if (!isBoardMaterialApplicationScope(input.scope)) throw new Error('El ámbito seleccionado no corresponde a un tablero.')
+    if (!isColorCode(boardColorCode) || !materialProfile) throw new Error('La regla necesita un color interno y un perfil de tablero válidos.')
+    const colorRows: Record<string, unknown>[] = await dbQuery(
+      `SELECT application_colors_json, application_material_profiles_json
+       FROM public.colors
+       WHERE code_4dig = $1`,
+      [sourceColorCode]
+    )
+    const current = colorRows[0]
+    if (!current) throw new Error(`No existe el color ${sourceColorCode}.`)
+    const applicationColors = jsonRecord(current.application_colors_json)
+    const applicationMaterialProfiles = jsonRecord(current.application_material_profiles_json)
+    applicationColors[input.scope] = boardColorCode
+    applicationMaterialProfiles[input.scope] = materialProfile
+    const savedRows: Record<string, unknown>[] = await dbQuery(
+      `UPDATE public.colors
+       SET application_colors_json = $1::jsonb,
+           application_material_profiles_json = $2::jsonb
+       WHERE code_4dig = $3
+       RETURNING code_4dig, application_colors_json, application_material_profiles_json`,
+      [JSON.stringify(applicationColors), JSON.stringify(applicationMaterialProfiles), sourceColorCode]
+    )
+    const saved = savedRows[0]
+    const savedColors = jsonRecord(saved?.application_colors_json)
+    const savedProfiles = jsonRecord(saved?.application_material_profiles_json)
+    if (readString(savedColors[input.scope])?.toUpperCase() !== boardColorCode
+      || readString(savedProfiles[input.scope])?.toUpperCase() !== materialProfile) {
+      throw new Error(`La lectura posterior no confirma la regla ${sourceColorCode} en ${input.scope}.`)
+    }
+    revalidatePath('/configuration/colors')
+    revalidatePath('/product-design/bom')
+    return {
+      success: true,
+      message: `${sourceColorCode}: ${input.scope} quedó guardado con tablero ${boardColorCode} y perfil ${materialProfile}. SAP no fue releído.`,
+      sourceColorCode,
+      scope: input.scope,
+      boardColorCode,
+      materialProfile,
+    }
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : 'No se pudo guardar la regla de tablero.',
+      sourceColorCode,
+      scope: input.scope,
+      boardColorCode,
+      materialProfile,
+    }
+  }
+}
+
+type ConfirmColorMatrixResult = ActionResult & {
+  confirmedRules?: ConfirmedColorMatrixRule[]
+}
+
+export async function refreshTransientReferenceBomAnalysisAction(workspace: ReferenceImportWorkspace): Promise<ActionResult> {
+  await assertPermission('module:product-design')
+  try {
+    const refreshedWorkspace = await refreshTransientReferenceBomAnalysisFromWorkspace(workspace)
+    const reopenedEmptyPublication = workspace.run.status === 'published'
+      && refreshedWorkspace.run.status === 'needs_review'
+    return {
+      success: true,
+      message: reopenedEmptyPublication
+        ? 'La publicación vacía se reabrió para revisión. El análisis actual se reconstruyó con las capturas SAP ya presentes y la configuración vigente de Supabase; SAP no fue consultado.'
+        : 'Análisis actual reconstruido con las capturas SAP ya presentes y la configuración vigente de Supabase. SAP no fue consultado.',
+      workspace: refreshedWorkspace,
+    }
+  } catch (error) {
+    return failure(error, 'No se pudo reconstruir el análisis actual sin SAP.')
+  }
 }
 
 export type BoardDualResolvedScope = {
@@ -674,7 +777,12 @@ export async function saveTransientBoardConditionalProfileRuleAction(input: {
     targetBoardColorCode: string
     targetMaterialProfile: string
   }>
-}): Promise<{ success: boolean; message: string; boardProfileConditions?: BoardProfileConditionalRule[] }> {
+}): Promise<{
+  success: boolean
+  message: string
+  boardProfileConditions?: BoardProfileConditionalRule[]
+  verification?: { defaultBoardColorCode: string; defaultMaterialProfile: string | null; conditionCount: number }
+}> {
   await assertPermission('module:product-design')
   try {
     const sourceColorCode = normalizedColorCode(input.sourceColorCode)
@@ -690,7 +798,6 @@ export async function saveTransientBoardConditionalProfileRuleAction(input: {
     if (![sourceColorCode, defaultBoardColorCode, ...conditions.map(condition => condition.targetBoardColorCode)].every(isColorCode)) {
       throw new Error('Los colores de producto y tablero deben tener cuatro caracteres.')
     }
-    if (conditions.length === 0) throw new Error('La estrategia necesita al menos una excepción de perfil respaldada por SAP.')
     if (
       (defaultMaterialProfile !== null && !isBoardMaterialProfile(defaultMaterialProfile))
       || conditions.some(condition => !isBoardMaterialProfile(condition.sourceMaterialProfile) || !isBoardMaterialProfile(condition.targetMaterialProfile))
@@ -741,12 +848,34 @@ export async function saveTransientBoardConditionalProfileRuleAction(input: {
       [JSON.stringify(applicationColors), JSON.stringify(materialProfiles), sourceColorCode]
     )
     if (!readString(savedRows[0]?.code_4dig)) throw new Error(`No se pudo guardar la regla condicional de ${sourceColorCode}.`)
+    const verifiedRows: Record<string, unknown>[] = await dbQuery(
+      `SELECT application_colors_json, application_material_profiles_json
+       FROM public.colors
+       WHERE code_4dig = $1
+       LIMIT 1`,
+      [sourceColorCode]
+    )
+    const verified = verifiedRows[0]
+    if (!verified) throw new Error(`No se pudo releer la regla de tablero de ${sourceColorCode} en Supabase.`)
+    const verifiedColors = jsonRecord(verified.application_colors_json)
+    const verifiedProfiles = jsonRecord(verified.application_material_profiles_json)
+    const verifiedConditions = readBoardProfileConditions(verifiedColors)
+      .filter(condition => condition.product_application_scope === scope)
+    const expectedConditions = boardProfileConditions.filter(condition => condition.product_application_scope === scope)
+    const hasExactDefault = readString(verifiedColors[scope]) === defaultBoardColorCode
+      && (defaultMaterialProfile === null
+        ? !readString(verifiedProfiles[scope])
+        : readString(verifiedProfiles[scope]) === defaultMaterialProfile)
+    if (!hasExactDefault || JSON.stringify(verifiedConditions) !== JSON.stringify(expectedConditions)) {
+      throw new Error(`La lectura posterior no confirma la estrategia de tablero de ${sourceColorCode}.`)
+    }
     revalidatePath('/configuration/colors')
     revalidatePath('/product-design/bom')
     return {
       success: true,
       boardProfileConditions,
-      message: `Estrategia de tablero guardada para ${sourceColorCode}: por defecto ${defaultBoardColorCode}${defaultMaterialProfile ? ` · ${defaultMaterialProfile}` : ' · perfil definido por la referencia'}; ${conditions.length} excepción(es) por perfil. No modifica cantos, consumos, formatos ni SAP.`,
+      verification: { defaultBoardColorCode, defaultMaterialProfile, conditionCount: verifiedConditions.length },
+      message: `Estrategia de tablero confirmada en Supabase para ${sourceColorCode}: por defecto ${defaultBoardColorCode}${defaultMaterialProfile ? ` · ${defaultMaterialProfile}` : ' · perfil definido por la referencia'}${conditions.length > 0 ? `; ${conditions.length} excepción(es) por perfil.` : '; sin excepciones por perfil.'} No modifica cantos, consumos, formatos ni SAP.`,
     }
   } catch (error) {
     return { success: false, message: error instanceof Error ? error.message : 'No se pudo guardar la regla condicional de tablero.' }
@@ -762,6 +891,7 @@ export async function confirmTransientBoardMatrixResolutionAction(input: {
   sapActiveSkuCount: number
   checkedSkuCount: number
   dualCandidateCount: number
+  resolutionKind?: 'conditional' | 'unconditional_full_product'
 }): Promise<{ success: boolean; message: string; confirmedAt?: string }> {
   await assertPermission('module:product-design')
   try {
@@ -771,7 +901,7 @@ export async function confirmTransientBoardMatrixResolutionAction(input: {
       throw new Error('La evidencia de cierre de la matriz no es válida.')
     }
     const colorRows: Record<string, unknown>[] = await dbQuery(
-      `SELECT application_colors_json
+      `SELECT application_colors_json, application_material_profiles_json
        FROM public.colors
        WHERE code_4dig = $1
        LIMIT 1`,
@@ -780,7 +910,14 @@ export async function confirmTransientBoardMatrixResolutionAction(input: {
     const color = colorRows[0]
     if (!color) throw new Error(`No existe el color ${sourceColorCode} en Supabase.`)
     const applicationColors = jsonRecord(color.application_colors_json)
-    if (!Array.isArray(applicationColors.board_profile_conditions) || applicationColors.board_profile_conditions.length === 0) {
+    const conditions = readBoardProfileConditions(applicationColors)
+      .filter(condition => condition.product_application_scope === 'full_product')
+    const hasUnconditionalFullProductRule = Boolean(readString(applicationColors.full_product))
+      && Boolean(readString(jsonRecord(color.application_material_profiles_json).full_product))
+    if (input.resolutionKind === 'unconditional_full_product' && (!hasUnconditionalFullProductRule || conditions.length > 0)) {
+      throw new Error(`El color ${sourceColorCode} no tiene una combinación única de tablero confirmable.`)
+    }
+    if (input.resolutionKind !== 'unconditional_full_product' && conditions.length === 0) {
       throw new Error(`El color ${sourceColorCode} no tiene una regla condicional de tablero que cerrar.`)
     }
     const confirmedAt = new Date().toISOString()
@@ -791,6 +928,7 @@ export async function confirmTransientBoardMatrixResolutionAction(input: {
       checked_sku_count: input.checkedSkuCount,
       dual_candidate_count: input.dualCandidateCount,
       source: 'reference_import',
+      resolution_kind: input.resolutionKind ?? 'conditional',
     }
     const savedRows: Record<string, unknown>[] = await dbQuery(
       `UPDATE public.colors
@@ -799,10 +937,19 @@ export async function confirmTransientBoardMatrixResolutionAction(input: {
        RETURNING code_4dig, application_colors_json`,
       [JSON.stringify(applicationColors), sourceColorCode]
     )
-    const savedApplicationColors = jsonRecord(savedRows[0]?.application_colors_json)
-    const savedResolution = jsonRecord(savedApplicationColors.board_matrix_resolution)
-    if (normalizedColorCode(readString(savedRows[0]?.code_4dig) ?? '') !== sourceColorCode || savedResolution.status !== 'configured' || readString(savedResolution.confirmed_at) !== confirmedAt) {
+    if (normalizedColorCode(readString(savedRows[0]?.code_4dig) ?? '') !== sourceColorCode) {
       throw new Error(`No se pudo confirmar la resolución del color ${sourceColorCode}.`)
+    }
+    const verifiedRows: Record<string, unknown>[] = await dbQuery(
+      `SELECT application_colors_json
+       FROM public.colors
+       WHERE code_4dig = $1
+       LIMIT 1`,
+      [sourceColorCode]
+    )
+    const verifiedResolution = jsonRecord(jsonRecord(verifiedRows[0]?.application_colors_json).board_matrix_resolution)
+    if (verifiedResolution.status !== 'configured' || readString(verifiedResolution.confirmed_at) !== confirmedAt || readString(verifiedResolution.resolution_kind) !== (input.resolutionKind ?? 'conditional')) {
+      throw new Error(`La lectura posterior no confirma el cierre de tableros para ${sourceColorCode}.`)
     }
     revalidatePath('/configuration/colors')
     revalidatePath('/product-design/bom')
@@ -1078,10 +1225,11 @@ export async function saveTransientBoardDualColorCaseAction(input: {
 
 export async function verifyTransientColorMatrixAction(input: {
   selections: MatrixSelection[]
+  productType: string | null
 }): Promise<{ success: boolean; message: string; results: ColorRuleCoverageResult[] }> {
   await assertPermission('module:product-design')
   try {
-    const results = await verifyReferenceImportColorRulesMatrixDirect({ selections: input.selections })
+    const results = await verifyReferenceImportColorRulesMatrixDirect({ selections: input.selections, productType: input.productType })
     const pending = results.reduce((total, result) => total + result.mismatches.length + result.sapReadErrors.length, 0)
     return { success: pending === 0, message: pending === 0 ? 'SAP confirma las reglas seleccionadas.' : `SAP encontró ${pending} caso(s) por revisar.`, results }
   } catch (error) {
@@ -1093,7 +1241,7 @@ export async function confirmTransientColorMatrixAction(input: {
   selections: MatrixSelection[]
   hybridCases: MatrixHybridColorCase[]
   acceptedAbsences: Array<{ skuComplete: string; baseItemCode: string }>
-}): Promise<ActionResult> {
+}): Promise<ConfirmColorMatrixResult> {
   await assertPermission('module:product-design')
   try {
     if (input.selections.length === 0) throw new Error('Selecciona al menos una regla para aplicar.')
@@ -1104,6 +1252,9 @@ export async function confirmTransientColorMatrixAction(input: {
       const targetColorCode = normalizedColorCode(selection.targetColorCode)
       if (!sourceColorCode || !targetColorCode || !isColorCode(targetColorCode)) {
         throw new Error('Cada regla seleccionada necesita un color interno de cuatro caracteres.')
+      }
+      if (!isReferenceProductApplicationScope(selection.scope)) {
+        throw new Error(`El ámbito ${selection.scope} no es válido para ${sourceColorCode}.`)
       }
       const scopes = selectionsBySource.get(sourceColorCode) ?? new Map<string, string>()
       scopes.set(selection.scope, targetColorCode)
@@ -1138,6 +1289,7 @@ export async function confirmTransientColorMatrixAction(input: {
       return code4dig ? [[code4dig, row] as const] : []
     }))
 
+    const confirmedRules: ConfirmedColorMatrixRule[] = []
     for (const sourceColorCode of sourceColorCodes) {
       const currentRow = colorRowsByCode.get(sourceColorCode)
       if (!currentRow) throw new Error(`No existe el color ${sourceColorCode}.`)
@@ -1173,10 +1325,18 @@ export async function confirmTransientColorMatrixAction(input: {
          SET color_mode = $1,
              application_colors_json = $2::jsonb
          WHERE code_4dig = $3
-         RETURNING code_4dig`,
+         RETURNING code_4dig, application_colors_json`,
         [sourceHybridCases.length > 0 ? 'full' : readString(currentRow.color_mode) ?? 'full', JSON.stringify(nextApplicationColors), sourceColorCode]
       )
-      if (!readString(rows[0]?.code_4dig)) throw new Error(`No se pudo guardar el color ${sourceColorCode}.`)
+      const savedRow = rows[0]
+      if (!readString(savedRow?.code_4dig)) throw new Error(`No se pudo guardar el color ${sourceColorCode}.`)
+      const savedApplicationColors = jsonRecord(savedRow.application_colors_json)
+      for (const [scope, targetColorCode] of scopes) {
+        if (readString(savedApplicationColors[scope])?.toUpperCase() !== targetColorCode) {
+          throw new Error(`La lectura posterior no confirma la regla ${sourceColorCode} en ${scope}.`)
+        }
+        confirmedRules.push({ sourceColorCode, scope: scope as ReferenceProductApplicationScope, targetColorCode })
+      }
     }
     revalidatePath('/configuration/colors')
     revalidatePath('/product-design/bom')
@@ -1187,6 +1347,7 @@ export async function confirmTransientColorMatrixAction(input: {
         ? `Regla unicolor y ${hybridCases.length} caso(s) Dual guardados para ${hybridSkuCount} SKU(s) completos. No se reconsultó SAP: se reutilizó la evidencia de esta verificación.`
         : 'Reglas unicolor guardadas. No se reconsultó SAP.',
       workspace: null,
+      confirmedRules,
     }
   } catch (error) {
     return failure(error, 'No se pudieron guardar las reglas de la matriz.')
@@ -1346,6 +1507,129 @@ export async function applyTransientQuantitiesBatchAction(input: {
   }
 }
 
+function colorHomologationOperationKey(item: MatrixColorHomologationItem): string {
+  return `${item.skuComplete}:${item.childNum}:${item.itemCode}:${item.targetColorCode}`
+}
+
+export async function homologateTransientMatrixColorsInSapAction(input: {
+  dryRun: boolean
+  confirmed: boolean
+  items: MatrixColorHomologationItem[]
+}): Promise<ActionResult & { homologationResult?: { dryRun: boolean; results: Array<{ skuComplete: string; childNum: number; itemCode: string; replacementItemCode: string | null; success: boolean; changed: boolean; message: string }> } }> {
+  const access = await assertPermission('module:product-design')
+  const items = [...new Map(input.items.flatMap((item) => {
+    const skuComplete = item.skuComplete.trim().toUpperCase()
+    const itemCode = item.itemCode.trim().toUpperCase()
+    const targetColorCode = item.targetColorCode.trim().toUpperCase()
+    return skuComplete && itemCode && Number.isInteger(item.childNum) && item.childNum >= 0 && /^[A-Z0-9]{4}$/.test(targetColorCode)
+      ? [[`${skuComplete}:${item.childNum}:${itemCode}:${targetColorCode}`, { skuComplete, childNum: item.childNum, itemCode, targetColorCode }] as const]
+      : []
+  })).values()]
+  try {
+    if (items.length === 0) throw new Error('Selecciona al menos una línea de LdM con un color objetivo válido.')
+    if (!input.dryRun && !input.confirmed) throw new Error('Confirma la acción antes de homologar colores en SAP.')
+    if (!input.dryRun) {
+      const operationKeys = items.map(colorHomologationOperationKey)
+      const rows: Record<string, unknown>[] = await dbQuery(
+        `SELECT COUNT(DISTINCT requested_status) AS count
+         FROM public.sap_operation_logs
+         WHERE operation_type = 'product_tree_color_homologation'
+           AND dry_run = true
+           AND success = true
+           AND requested_status IN (SELECT value FROM jsonb_array_elements_text($1::jsonb))
+           AND created_at >= now() - interval '30 minutes'`,
+        [JSON.stringify(operationKeys)]
+      )
+      if (Number(rows[0]?.count ?? 0) !== operationKeys.length) {
+        throw new Error('Primero ejecuta el dry-run de todas las líneas seleccionadas; es válido durante 30 minutos.')
+      }
+    }
+
+    const results: Array<{ skuComplete: string; childNum: number; itemCode: string; replacementItemCode: string | null; success: boolean; changed: boolean; message: string }> = []
+    for (const item of items) {
+      let success = false
+      let changed = false
+      let replacementItemCode: string | null = null
+      let targetQuantityOnStock: number | null = null
+      let targetInventoryUom: string | null = null
+      let message = ''
+      let response: Record<string, unknown> = {}
+      try {
+        const beforeTree = await getSapItemBom(item.skuComplete)
+        if (!beforeTree) throw new Error(`SAP no devolvió ProductTree para ${item.skuComplete}.`)
+        const beforeLine = beforeTree.lines.find(line => line.ChildNum === item.childNum && line.ItemCode === item.itemCode)
+        if (!beforeLine) throw new Error(`SAP ya no contiene la línea ${item.childNum}/${item.itemCode}; vuelve a analizar antes de homologar.`)
+        const parsedCurrentItem = parseSapItemCode(beforeLine.ItemCode)
+        if (parsedCurrentItem.variantCode4 === '0000') throw new Error(`La línea ${item.itemCode} no tiene una variante de color que se pueda reemplazar.`)
+        replacementItemCode = buildSapItemCode(parsedCurrentItem.baseItemCode, item.targetColorCode)
+        const targetItem = await getSapItem(replacementItemCode, ['ItemCode', 'Valid', 'Frozen', 'QuantityOnStock', 'InventoryUOM'])
+        if (readSapValid(targetItem) === false || readSapFrozen(targetItem) === true) {
+          throw new Error(`El componente objetivo ${replacementItemCode} está inactivo o congelado en SAP.`)
+        }
+        targetQuantityOnStock = typeof targetItem.QuantityOnStock === 'number' && Number.isFinite(targetItem.QuantityOnStock)
+          ? targetItem.QuantityOnStock
+          : null
+        targetInventoryUom = readSapUom(targetItem, null)
+        if (input.dryRun) {
+          success = true
+          message = `Dry-run listo: ${beforeLine.ItemCode} cambiaría a ${replacementItemCode}.`
+          message += ` Inventario total objetivo: ${targetQuantityOnStock ?? 'sin dato'} ${targetInventoryUom ?? ''}.`
+        } else {
+          response = (await updateSapProductTreeLineItemCode({
+            treeCode: beforeTree.treeCode,
+            childNum: item.childNum,
+            itemCode: beforeLine.ItemCode,
+            replacementItemCode,
+          })) as Record<string, unknown>
+          const afterTree = await getSapItemBom(item.skuComplete)
+          if (!afterTree || !productTreeLineItemCodeMatches(beforeTree.lines, afterTree.lines, {
+            childNum: item.childNum,
+            itemCode: beforeLine.ItemCode,
+            replacementItemCode,
+          })) {
+            throw new Error('La lectura posterior no confirma el cambio de color esperado en SAP.')
+          }
+          success = true
+          changed = true
+          message = 'Color de la línea homologado y verificado en SAP.'
+        }
+      } catch (error) {
+        message = error instanceof Error ? error.message : 'No se pudo homologar el color en SAP.'
+      } finally {
+        await supabaseTable('sap_operation_logs').insert({
+          operation_type: 'product_tree_color_homologation',
+          item_code: item.skuComplete,
+          requested_status: colorHomologationOperationKey(item),
+          dry_run: input.dryRun,
+          confirmation_text: input.confirmed ? 'CHECKED' : '',
+          sap_payload: {
+            child_num: item.childNum,
+            item_code: item.itemCode,
+            target_color_code: item.targetColorCode,
+            replacement_item_code: replacementItemCode,
+          },
+          sap_response: response,
+          success,
+          error_message: success ? null : message,
+          created_by: access.user?.id ?? null,
+        })
+      }
+      results.push({ ...item, replacementItemCode, success, changed, message })
+    }
+    const failedCount = results.filter(result => !result.success).length
+    return {
+      success: failedCount === 0,
+      message: input.dryRun
+        ? `Dry-run de ${results.length} línea(s): ${failedCount} con error.`
+        : `${results.filter(result => result.success).length} línea(s) homologadas y verificadas en SAP; ${failedCount} con error.`,
+      workspace: null,
+      homologationResult: { dryRun: input.dryRun, results },
+    }
+  } catch (error) {
+    return { ...failure(error, 'No se pudieron homologar los colores de las líneas en SAP.'), homologationResult: undefined }
+  }
+}
+
 export async function syncTransientSapInactiveSkusInSupabaseAction(input: { skuCompletes: string[] }): Promise<{
   success: boolean
   message: string
@@ -1357,18 +1641,19 @@ export async function syncTransientSapInactiveSkusInSupabaseAction(input: { skuC
   const results: Array<{ skuComplete: string; success: boolean; changed: boolean; persistedStatus: string | null; message: string }> = []
   for (const skuComplete of skuCompletes) {
     try {
-      const rows: Record<string, unknown>[] = await dbQuery(
-        `WITH updated AS (
-           UPDATE public.product_skus sku
-           SET status = 'INACTIVO', updated_at = now()
-           FROM public.product_versions version
-           WHERE sku.version_id = version.id
-             AND version.version_code = '000'
-             AND sku.sku_complete = $1
-             AND COALESCE(sku.status, 'ACTIVO') = 'ACTIVO'
-           RETURNING sku.id
-         )
-         SELECT sku.id, sku.status, EXISTS(SELECT 1 FROM updated) AS changed
+      const updatedRows: Record<string, unknown>[] = await dbQuery(
+        `UPDATE public.product_skus sku
+         SET status = 'INACTIVO', updated_at = now()
+         FROM public.product_versions version
+         WHERE sku.version_id = version.id
+           AND version.version_code = '000'
+           AND sku.sku_complete = $1
+           AND COALESCE(sku.status, 'ACTIVO') = 'ACTIVO'
+         RETURNING sku.id`,
+        [skuComplete]
+      )
+      const persistedRows: Record<string, unknown>[] = await dbQuery(
+        `SELECT sku.status
          FROM public.product_skus sku
          JOIN public.product_versions version ON version.id = sku.version_id
          WHERE version.version_code = '000'
@@ -1376,9 +1661,9 @@ export async function syncTransientSapInactiveSkusInSupabaseAction(input: { skuC
          LIMIT 1`,
         [skuComplete]
       )
-      const persistedStatus = readString(rows[0]?.status)?.toUpperCase() ?? null
+      const persistedStatus = readString(persistedRows[0]?.status)?.toUpperCase() ?? null
       if (persistedStatus !== 'INACTIVO') throw new Error('La lectura posterior no confirma el estado INACTIVO en Supabase.')
-      const changed = rows[0]?.changed === true
+      const changed = updatedRows.length > 0
       results.push({
         skuComplete,
         success: true,
@@ -1402,6 +1687,90 @@ export async function syncTransientSapInactiveSkusInSupabaseAction(input: { skuC
     success: failedCount === 0,
     message: `${changedCount} SKU sincronizado(s) como inactivo(s) en Supabase; ${failedCount} sin cambio.`,
     results,
+  }
+}
+
+/** Activates one version-000 SKU in Supabase after SAP already reported it active. */
+export async function activateTransientSapActiveSkuInSupabaseAction(input: {
+  skuComplete: string
+  confirmed: boolean
+}): Promise<{ success: boolean; message: string; persistedStatus: string | null }> {
+  await assertPermission('module:product-design')
+  const skuComplete = input.skuComplete.trim().toUpperCase()
+  if (!input.confirmed) return { success: false, persistedStatus: null, message: 'Confirma la activación en Supabase antes de continuar.' }
+  try {
+    const updatedRows: Record<string, unknown>[] = await dbQuery(
+      `UPDATE public.product_skus sku
+       SET status = 'ACTIVO', updated_at = now()
+       FROM public.product_versions version
+       WHERE sku.version_id = version.id
+         AND version.version_code = '000'
+         AND sku.sku_complete = $1
+         AND COALESCE(sku.status, 'ACTIVO') = 'INACTIVO'
+       RETURNING sku.sku_complete`,
+      [skuComplete]
+    )
+    const verifiedRows: Record<string, unknown>[] = await dbQuery(
+      `SELECT sku.status
+       FROM public.product_skus sku
+       JOIN public.product_versions version ON version.id = sku.version_id
+       WHERE version.version_code = '000'
+         AND sku.sku_complete = $1
+       LIMIT 1`,
+      [skuComplete]
+    )
+    const persistedStatus = readString(verifiedRows[0]?.status)?.toUpperCase() ?? null
+    if (persistedStatus !== 'ACTIVO') throw new Error('La lectura posterior no confirma el estado ACTIVO en Supabase.')
+    revalidatePath('/product-design/bom')
+    return {
+      success: true,
+      persistedStatus,
+      message: updatedRows.length > 0
+        ? `${skuComplete} quedó activo en Supabase; la lectura posterior lo confirmó. SAP no fue modificado.`
+        : `${skuComplete} ya estaba activo en Supabase; la lectura posterior lo confirmó.`,
+    }
+  } catch (error) {
+    return { success: false, persistedStatus: null, message: error instanceof Error ? error.message : 'No se pudo activar el SKU en Supabase.' }
+  }
+}
+
+export async function deleteTransientMissingSapSkuInSupabaseAction(input: {
+  skuComplete: string
+  confirmed: boolean
+}): Promise<{ success: boolean; message: string; deletedSkuComplete: string | null }> {
+  await assertPermission('module:product-design')
+  const skuComplete = input.skuComplete.trim().toUpperCase()
+  if (!input.confirmed) return { success: false, message: 'Confirma la eliminación del SKU en Supabase antes de continuar.', deletedSkuComplete: null }
+  try {
+    const deletedRows: Record<string, unknown>[] = await dbQuery(
+      `DELETE FROM public.product_skus sku
+       USING public.product_versions version
+       WHERE sku.version_id = version.id
+         AND version.version_code = '000'
+         AND sku.sku_complete = $1
+         AND COALESCE(sku.status, 'ACTIVO') = 'ACTIVO'
+       RETURNING sku.sku_complete`,
+      [skuComplete]
+    )
+    const deletedSkuComplete = readString(deletedRows[0]?.sku_complete)?.toUpperCase() ?? null
+    if (deletedSkuComplete !== skuComplete) throw new Error('No se encontró un SKU activo de versión 000 para eliminar en Supabase.')
+    const remainingRows: Record<string, unknown>[] = await dbQuery(
+      `SELECT sku_complete FROM public.product_skus WHERE sku_complete = $1 LIMIT 1`,
+      [skuComplete]
+    )
+    if (remainingRows.length > 0) throw new Error('La lectura posterior todavía encuentra el SKU en Supabase.')
+    revalidatePath('/product-design/bom')
+    return {
+      success: true,
+      deletedSkuComplete,
+      message: `${skuComplete} fue eliminado de Supabase y la lectura posterior confirmó su ausencia. SAP no fue modificado.`,
+    }
+  } catch (error) {
+    return {
+      success: false,
+      deletedSkuComplete: null,
+      message: error instanceof Error ? error.message : 'No se pudo eliminar el SKU de Supabase.',
+    }
   }
 }
 
@@ -1700,6 +2069,9 @@ export async function publishTransientReferenceBomAction(input: {
         return resolution ? { ...line, qty: resolution.qty } : line
       }),
     })
+    if (proposedBomStructure.lines.length === 0) {
+      throw new Error('No se puede publicar una BOM base vacía. Reconstruye el análisis con las LdM ya capturadas o vuelve a analizar la referencia antes de publicar.')
+    }
     const updatedRows: Record<string, unknown>[] = await dbQuery(
       `UPDATE public.product_references
        SET product_bom_structure = $1::jsonb

@@ -243,6 +243,11 @@ export type BoardMatrixEvidence = {
   qty: number
   /** Number of identical SAP rows represented by this observation. */
   sourceLineCount?: number
+  /** Exact SAP child rows represented by this observation. */
+  sapChildNums?: number[]
+  /** Total inventory currently reported by SAP for this exact material. */
+  inventoryQty?: number | null
+  inventoryUom?: string | null
   role: BoardMatrixRole
   roleSource: BoardMatrixRoleSource
 }

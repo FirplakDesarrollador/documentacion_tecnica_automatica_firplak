@@ -17,6 +17,7 @@ import {
   type SapEntityPayload,
 } from '@/lib/sap/serviceLayer'
 import {
+  buildSapItemCode,
   buildComponentTechnicalMetadata,
   inferBaseItemName,
   inferBoardApplicationScope,
@@ -85,6 +86,7 @@ const COMPONENT_ITEM_SELECT = [
   'Valid',
   'Frozen',
   'InventoryItem',
+  'QuantityOnStock',
   'PurchaseUnitLength',
   'PurchaseLengthUnit',
   'PurchaseUnitWidth',
@@ -2081,6 +2083,70 @@ export async function analyzeReferenceBomImportTransient(input: {
   return workspace
 }
 
+/**
+ * Rebuilds color and board decisions from the SAP snapshots already held by
+ * the transient workspace. It deliberately reads only application data and
+ * color configuration from Supabase; it never calls SAP.
+ */
+export async function refreshTransientReferenceBomAnalysisFromWorkspace(workspace: ReferenceImportWorkspace): Promise<ReferenceImportWorkspace> {
+  const source = await getReferenceImportSource(workspace.run.referenceId)
+  const snapshotsBySku = cachedDirectSnapshots(workspace.snapshots, source.skus)
+  const snapshots = source.skus.map(sku => snapshotsBySku.get(sku.skuComplete.toUpperCase()) ?? failedDirectSnapshot(
+    sku,
+    'No hay una captura SAP vigente en esta pantalla para reconstruir este SKU.'
+  ))
+  const componentItemCodes = [...new Set(snapshots.flatMap(snapshot =>
+    snapshot.status === 'captured' ? snapshot.normalizedLines.map(line => line.itemCode) : []
+  ))]
+  const currentComponentsByCode = await getExistingComponentItems(componentItemCodes)
+  const currentUomByItemCode = new Map(
+    [...currentComponentsByCode.entries()].flatMap(([itemCode, item]) => item.uom ? [[itemCode, item.uom] as const] : [])
+  )
+  const snapshotsWithCurrentComponentMetadata = snapshots.map(snapshot => snapshot.status === 'captured'
+    ? {
+        ...snapshot,
+        normalizedLines: snapshot.normalizedLines.map(line => ({
+          ...line,
+          inventoryUom: currentUomByItemCode.get(line.itemCode) ?? line.inventoryUom,
+        })),
+      }
+    : snapshot
+  )
+  const colorCodes = snapshotsWithCurrentComponentMetadata.flatMap(snapshot => [
+    snapshot.skuColorCode,
+    ...snapshot.normalizedLines.map(line => line.variantCode4),
+  ]).flatMap(code => code && code !== '0000' ? [code] : [])
+  const colorConfigurations = await getColorConfigurations(colorCodes)
+  const directAnalysis = analyzeReferenceBom({ context: source.context, snapshots: snapshotsWithCurrentComponentMetadata, colorConfigurations })
+  const createdAt = new Date().toISOString()
+  const reopensEmptyPublication = workspace.run.status === 'published'
+    && (workspace.run.publishedBomStructure?.lines.length ?? 0) === 0
+  const preservedFindings = workspace.findings.filter(finding => {
+    if (finding.findingType === 'color_rule_proposal') return false
+    if (finding.findingType !== 'component_uom_missing') return true
+    const itemCode = readString(finding.detailsJson.item_code)
+    return !itemCode || !currentUomByItemCode.has(itemCode)
+  })
+  const colorRuleFindings = directAnalysis.findings
+    .filter(finding => finding.findingType === 'color_rule_proposal')
+    .map(finding => transientFinding(finding, source.context.referenceId, createdAt))
+  return {
+    ...workspace,
+    run: {
+      ...workspace.run,
+      summaryJson: { ...workspace.run.summaryJson, ...directAnalysis.summaryJson },
+      proposedBomStructure: directAnalysis.proposedBomStructure,
+      status: reopensEmptyPublication ? 'needs_review' : workspace.run.status,
+      publishedBomStructure: reopensEmptyPublication ? null : workspace.run.publishedBomStructure,
+      updatedAt: createdAt,
+    },
+    findings: [...preservedFindings, ...colorRuleFindings],
+    snapshots: snapshotsWithCurrentComponentMetadata.map(snapshot => transientSnapshot(snapshot, source.context.referenceId, createdAt)),
+    activeOverrides: await activeOverridesForReference(source.context.referenceId),
+    boardMatrix: boardMatrixFromSnapshots({ context: source.context, snapshots: snapshotsWithCurrentComponentMetadata, colorConfigurations }),
+  }
+}
+
 function parseSnapshot(row: Record<string, unknown>): ReferenceImportSnapshotSummary {
   const id = readString(row.id)
   const runId = readString(row.run_id)
@@ -2363,11 +2429,24 @@ export type ColorRuleCoverageMismatch = {
   skuComplete: string
   skuItemName: string | null
   baseItemCode: string
+  childNum: number | null
   itemCode: string | null
   itemName: string | null
   observedColorCode: string | null
   reason: 'missing_component' | 'unexpected_color'
   semanticScope?: ReferenceProductApplicationScope | null
+  /** Inventario total que SAP reportó para la materia prima observada. */
+  currentInventory?: {
+    itemCode: string
+    quantityOnStock: number | null
+    inventoryUom: string | null
+  } | null
+  /** Inventario total del reemplazo de color que se contrastó en la misma lectura. */
+  targetInventory?: {
+    itemCode: string
+    quantityOnStock: number | null
+    inventoryUom: string | null
+  } | null
 }
 
 export type EdgeDualCandidate = {
@@ -2403,6 +2482,11 @@ export type ColorRuleCoverageResult = {
   checkedSkuCount: number
   matchingSkuCount: number
   sapReadErrors: Array<{ skuComplete: string; message: string }>
+  catalogStatusIssues: Array<{
+    skuComplete: string
+    skuItemName: string | null
+    status: 'inactive' | 'not_found'
+  }>
   mismatches: ColorRuleCoverageMismatch[]
   dualCandidates: EdgeDualCandidate[]
 }
@@ -2429,9 +2513,14 @@ type CatalogSapSkuStatus = {
   itemName: string | null
 }
 
+function sapItemNameMatchesProductType(itemName: string | null, productType: string | null | undefined): boolean {
+  const normalizedProductType = productType?.trim().toUpperCase() ?? ''
+  return normalizedProductType.length > 0 && (itemName?.toUpperCase().includes(normalizedProductType) ?? false)
+}
+
 type CatalogSapBom = {
   treeType: string | null
-  lines: Array<{ itemCode: string; itemName: string | null; qty: number | null }>
+  lines: Array<{ childNum: number | null; itemCode: string; itemName: string | null; qty: number | null }>
 }
 
 type EdgeColorTotal = {
@@ -2559,7 +2648,7 @@ function catalogSapBomFromTree(tree: SapEntityPayload): CatalogSapBom | null {
     lines: rawLines.flatMap((value) => {
       const line = isRecord(value) ? value : {}
       const itemCode = readString(line.ItemCode)
-      return itemCode ? [{ itemCode, itemName: readString(line.ItemName), qty: readNumber(line.Quantity) }] : []
+      return itemCode ? [{ childNum: readNumber(line.ChildNum), itemCode, itemName: readString(line.ItemName), qty: readNumber(line.Quantity) }] : []
     }),
   }
 }
@@ -2614,7 +2703,7 @@ async function readReferenceDirectSnapshots(
 function catalogSapBomFromDirectBom(bom: SapBom): CatalogSapBom {
   return {
     treeType: bom.treeType,
-    lines: bom.lines.map(line => ({ itemCode: line.ItemCode, itemName: line.ItemName?.trim() || null, qty: readNumber(line.Quantity) })),
+    lines: bom.lines.map(line => ({ childNum: line.ChildNum, itemCode: line.ItemCode, itemName: line.ItemName?.trim() || null, qty: readNumber(line.Quantity) })),
   }
 }
 
@@ -2622,9 +2711,12 @@ function isSalesKitTree(treeType: string | null): boolean {
   return treeType?.trim() === 'iSalesTree'
 }
 
-async function getCatalogColorSkus(colorCodes: string[]): Promise<CatalogColorSku[]> {
+async function getCatalogColorSkus(colorCodes: string[], productType?: string | null): Promise<CatalogColorSku[]> {
   const normalizedColors = [...new Set(colorCodes.map(color => color.trim().toUpperCase()).filter(Boolean))]
   if (normalizedColors.length === 0) return []
+  const normalizedProductType = productType?.trim().toUpperCase() ?? ''
+  if (!normalizedProductType) throw new Error('La matriz requiere un tipo de producto para limitar la evidencia SAP.')
+  const parameters = [...normalizedColors, normalizedProductType]
   const rows: Record<string, unknown>[] = await dbQuery(
     `SELECT s.sku_complete, s.color_code, s.sap_description_original,
             s.bom_overrides AS sku_bom_overrides
@@ -2636,9 +2728,9 @@ async function getCatalogColorSkus(colorCodes: string[]): Promise<CatalogColorSk
        AND COALESCE(s.status, 'ACTIVO') = 'ACTIVO'
        AND v.version_code = '000'
        AND upper(trim(s.color_code)) IN (${sqlPlaceholders(normalizedColors.length)})
-       AND upper(COALESCE(f.product_type, '')) NOT LIKE 'KIT%'
-     ORDER BY s.sku_complete`,
-    normalizedColors
+        AND upper(trim(COALESCE(f.product_type, ''))) = $${parameters.length}
+      ORDER BY s.sku_complete`,
+    parameters
   )
   return rows.flatMap(row => {
     const skuComplete = readString(row.sku_complete)
@@ -2665,9 +2757,12 @@ function boardMatrixColorFromSku(skuComplete: string, selectedColors: Set<string
     : null
 }
 
-async function getBoardMatrixCatalogSkus(colorCodes: string[]): Promise<BoardCatalogColorSku[]> {
+async function getBoardMatrixCatalogSkus(colorCodes: string[], productType?: string | null): Promise<BoardCatalogColorSku[]> {
   const normalizedColors = [...new Set(colorCodes.map(color => color.trim().toUpperCase()).filter(Boolean))]
   if (normalizedColors.length === 0) return []
+  const normalizedProductType = productType?.trim().toUpperCase() ?? ''
+  if (!normalizedProductType) throw new Error('La matriz requiere un tipo de producto para limitar la evidencia SAP.')
+  const parameters = [...normalizedColors, normalizedProductType]
   const rows: Record<string, unknown>[] = await dbQuery(
     `SELECT s.sku_complete, s.color_code, s.sap_description_original,
             s.bom_overrides AS sku_bom_overrides,
@@ -2679,9 +2774,10 @@ async function getBoardMatrixCatalogSkus(colorCodes: string[]): Promise<BoardCat
      LEFT JOIN public.families f ON f.family_code = r.family_code
      WHERE s.sku_complete LIKE 'V%'
        AND v.version_code = '000'
-       AND upper(trim(s.color_code)) IN (${sqlPlaceholders(normalizedColors.length)})
-     ORDER BY s.sku_complete`,
-    normalizedColors
+        AND upper(trim(s.color_code)) IN (${sqlPlaceholders(normalizedColors.length)})
+        AND upper(trim(COALESCE(f.product_type, ''))) = $${parameters.length}
+      ORDER BY s.sku_complete`,
+    parameters
   )
   return rows.flatMap(row => {
     const skuComplete = readString(row.sku_complete)?.toUpperCase()
@@ -2845,7 +2941,8 @@ async function discoverSapBoardMatrixSkus(input: {
 
 async function getCatalogSapSkuStatuses(
   skus: CatalogColorSku[],
-  onProgress?: CatalogSapProgressReporter
+  onProgress?: CatalogSapProgressReporter,
+  isCancelled?: () => boolean
 ): Promise<Map<string, CatalogSapSkuStatus>> {
   const statuses = new Map<string, CatalogSapSkuStatus>()
   const batches = Array.from(
@@ -2854,6 +2951,7 @@ async function getCatalogSapSkuStatuses(
   )
   let completedSkuCount = 0
   const batchStatuses = await mapWithConcurrency(batches, COLOR_COVERAGE_ITEM_STATUS_CONCURRENCY, async batch => {
+    throwIfBoardMatrixCancelled(isCancelled)
     const items = await getSapItemsByCodes(batch.map(sku => sku.skuComplete), ['ItemCode', 'ItemName', 'Valid', 'Frozen'], { timeoutMs: 60_000 })
     const entries = batch.map((sku) => {
       const item = items.get(sku.skuComplete)
@@ -2868,7 +2966,7 @@ async function getCatalogSapSkuStatuses(
     completedSkuCount += batch.length
     await reportCatalogSapProgress(onProgress, completedSkuCount)
     return entries
-  })
+  }, () => !isCancelled?.(), 'La verificación de matriz fue cancelada.')
   for (const entries of batchStatuses) {
     for (const [skuComplete, status] of entries) statuses.set(skuComplete, status)
   }
@@ -3070,9 +3168,13 @@ export async function verifyReferenceImportColorRulesMatrix(input: {
   }
 
   const skuCodes = new Set(rules.map(rule => rule.sourceColorCode))
-  const skus = await getCatalogColorSkus([...skuCodes])
+  const source = await getReferenceImportSource(input.runId)
+  const skus = await getCatalogColorSkus([...skuCodes], source.context.productType)
   const sapSkuStatuses = await getCatalogSapSkuStatuses(skus)
-  const activeSkus = skus.filter(sku => sapSkuStatuses.get(sku.skuComplete)?.status === 'active')
+  const activeSkus = skus.filter(sku => {
+    const status = sapSkuStatuses.get(sku.skuComplete)
+    return status?.status === 'active' && sapItemNameMatchesProductType(status.itemName, source.context.productType)
+  })
   const sapBoms = await readCatalogSapBoms(activeSkus)
 
   return rules.map(rule => {
@@ -3083,6 +3185,18 @@ export async function verifyReferenceImportColorRulesMatrix(input: {
       return status?.status === 'inactive' ? [{ skuComplete: sku.skuComplete, itemName: status.itemName }] : []
     })
     const missingRuleSkus = catalogRuleSkus.filter(sku => sapSkuStatuses.get(sku.skuComplete)?.status === 'not_found')
+    const catalogStatusIssues = [
+      ...inactiveRuleSkus.map(sku => ({
+        skuComplete: sku.skuComplete,
+        skuItemName: sku.itemName,
+        status: 'inactive' as const,
+      })),
+      ...missingRuleSkus.map(sku => ({
+        skuComplete: sku.skuComplete,
+        skuItemName: sku.sapDescriptionOriginal,
+        status: 'not_found' as const,
+      })),
+    ]
     const mismatches: ColorRuleCoverageMismatch[] = []
     const sapReadErrors: Array<{ skuComplete: string; message: string }> = missingRuleSkus.map(sku => ({
       skuComplete: sku.skuComplete,
@@ -3113,6 +3227,7 @@ export async function verifyReferenceImportColorRulesMatrix(input: {
             skuComplete: sku.skuComplete,
             skuItemName: sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal,
             baseItemCode: rule.baseItemCodes.join(' + '),
+            childNum: null,
             itemCode: null,
             itemName: null,
             observedColorCode: null,
@@ -3125,6 +3240,7 @@ export async function verifyReferenceImportColorRulesMatrix(input: {
             skuComplete: sku.skuComplete,
             skuItemName: sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal,
             baseItemCode: rule.baseItemCodes.join(' + '),
+            childNum: null,
             itemCode: null,
             itemName: null,
             observedColorCode: observed.colorCode,
@@ -3145,6 +3261,7 @@ export async function verifyReferenceImportColorRulesMatrix(input: {
               skuComplete: sku.skuComplete,
               skuItemName: sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal,
               baseItemCode,
+              childNum: null,
               itemCode: null,
               itemName: null,
               observedColorCode: null,
@@ -3161,6 +3278,7 @@ export async function verifyReferenceImportColorRulesMatrix(input: {
             skuComplete: sku.skuComplete,
             skuItemName: sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal,
             baseItemCode,
+            childNum: line.childNum,
             itemCode: parsed.itemCode,
             itemName: line.itemName,
             observedColorCode: parsed.variantCode4,
@@ -3183,6 +3301,7 @@ export async function verifyReferenceImportColorRulesMatrix(input: {
       checkedSkuCount,
       matchingSkuCount,
       sapReadErrors,
+      catalogStatusIssues,
       mismatches,
       dualCandidates: [],
     }
@@ -3260,13 +3379,21 @@ function catalogLinesForSemanticRule(input: {
   bom: CatalogSapBom
 }): CatalogSapBom['lines'] {
   const materialKinds = new Set(input.rule.materialKinds ?? [])
+  const baseItemCodes = new Set(input.rule.baseItemCodes)
   if (input.rule.scope.startsWith('edge_band_') || materialKinds.has('edge_band')) {
-    return input.bom.lines.filter(line => isCatalogEdgeBandLine(line) && parseSapItemCode(line.itemCode).variantCode4 !== '0000')
+    return input.bom.lines.filter(line =>
+      isCatalogEdgeBandLine(line)
+      && parseSapItemCode(line.itemCode).variantCode4 !== '0000'
+      && (baseItemCodes.size === 0 || baseItemCodes.has(parseSapItemCode(line.itemCode).baseItemCode))
+    )
   }
   if (materialKinds.has('board')) {
-    return input.bom.lines.filter(line => isCatalogBoardLine(line) && parseSapItemCode(line.itemCode).variantCode4 !== '0000')
+    return input.bom.lines.filter(line =>
+      isCatalogBoardLine(line)
+      && parseSapItemCode(line.itemCode).variantCode4 !== '0000'
+      && (baseItemCodes.size === 0 || baseItemCodes.has(parseSapItemCode(line.itemCode).baseItemCode))
+    )
   }
-  const baseItemCodes = new Set(input.rule.baseItemCodes)
   return input.bom.lines.filter(line => baseItemCodes.has(parseSapItemCode(line.itemCode).baseItemCode))
 }
 
@@ -3296,7 +3423,13 @@ async function reportColorMatrixVerificationProgress(
 export async function verifyReferenceImportColorRulesMatrixDirect(input: {
   selections: DirectColorRuleMatrixSelection[]
   onProgress?: (progress: ColorMatrixVerificationProgress) => void | Promise<void>
+  isCancelled?: () => boolean
+  productType?: string | null
 }): Promise<ColorRuleCoverageResult[]> {
+  const throwIfCancelled = (): void => {
+    if (input.isCancelled?.()) throw new Error('La verificación de la matriz fue cancelada.')
+  }
+  throwIfCancelled()
   const rules = input.selections.flatMap((selection) => {
     const sourceColorCode = selection.sourceColorCode.trim().toUpperCase()
     const targetColorCode = selection.targetColorCode.trim().toUpperCase()
@@ -3312,29 +3445,48 @@ export async function verifyReferenceImportColorRulesMatrixDirect(input: {
     stage: 'catalog', message: 'Buscando los SKU de venta que aplican a las reglas seleccionadas.', current: null, total: null,
   })
   const colorCodes = [...new Set(rules.map(rule => rule.sourceColorCode))]
-  const skus = await getCatalogColorSkus(colorCodes)
+  const skus = await getCatalogColorSkus(colorCodes, input.productType)
+  throwIfCancelled()
   await reportColorMatrixVerificationProgress(input.onProgress, {
     stage: 'item_status', message: 'Comprobando cuáles SKU están activos en SAP.', current: 0, total: skus.length,
   })
   const sapSkuStatuses = await getCatalogSapSkuStatuses(skus, completedSkuCount => reportColorMatrixVerificationProgress(input.onProgress, {
     stage: 'item_status', message: 'Comprobando estados en SAP.', current: completedSkuCount, total: skus.length,
-  }))
-  const activeSkus = skus.filter(sku => sapSkuStatuses.get(sku.skuComplete)?.status === 'active')
+  }), input.isCancelled)
+  throwIfCancelled()
+  const activeSkus = skus.filter(sku => {
+    const status = sapSkuStatuses.get(sku.skuComplete)
+    return status?.status === 'active' && sapItemNameMatchesProductType(status.itemName, input.productType)
+  })
   await reportColorMatrixVerificationProgress(input.onProgress, {
-    stage: 'bom_read', message: 'Leyendo las LdM activas en SAP para comparar los cantos.', current: 0, total: activeSkus.length,
+    stage: 'bom_read', message: `Leyendo las LdM activas de SAP cuya descripción incluye ${input.productType?.trim().toUpperCase()} para comparar los cantos.`, current: 0, total: activeSkus.length,
   })
   const sapBoms = await readCatalogSapBoms(activeSkus, completedSkuCount => reportColorMatrixVerificationProgress(input.onProgress, {
     stage: 'bom_read', message: 'Leyendo las LdM activas en SAP.', current: completedSkuCount, total: activeSkus.length,
-  }))
+  }), input.isCancelled)
+  throwIfCancelled()
 
   await reportColorMatrixVerificationProgress(input.onProgress, {
     stage: 'comparison', message: 'Comparando colores internos y ausencias contra las reglas seleccionadas.', current: activeSkus.length, total: activeSkus.length,
   })
   const results = rules.map(rule => {
+    throwIfCancelled()
     const catalogRuleSkus = skus.filter(sku => sku.colorCode === rule.sourceColorCode)
     const ruleSkus = activeSkus.filter(sku => sku.colorCode === rule.sourceColorCode)
     const inactiveRuleSkus = catalogRuleSkus.filter(sku => sapSkuStatuses.get(sku.skuComplete)?.status === 'inactive')
     const missingRuleSkus = catalogRuleSkus.filter(sku => sapSkuStatuses.get(sku.skuComplete)?.status === 'not_found')
+    const catalogStatusIssues = [
+      ...inactiveRuleSkus.map(sku => ({
+        skuComplete: sku.skuComplete,
+        skuItemName: sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal,
+        status: 'inactive' as const,
+      })),
+      ...missingRuleSkus.map(sku => ({
+        skuComplete: sku.skuComplete,
+        skuItemName: sku.sapDescriptionOriginal,
+        status: 'not_found' as const,
+      })),
+    ]
     const mismatches: ColorRuleCoverageMismatch[] = []
     const sapReadErrors = missingRuleSkus.map(sku => ({ skuComplete: sku.skuComplete, message: 'No existe en SAP: el maestro del artículo no devolvió este código.' }))
     let excludedKitSkuCount = 0
@@ -3356,8 +3508,27 @@ export async function verifyReferenceImportColorRulesMatrixDirect(input: {
       if (ruleUsesSemanticLineComparison(rule)) {
         const semanticLines = catalogLinesForSemanticRule({ rule, bom })
         const applicableLines = rule.scope === 'edge_band_body' || rule.scope === 'edge_band_front'
-          ? semanticLines.filter(line => catalogLineSemanticScope({ sku, line, sourceColorCode: rule.sourceColorCode }) === rule.scope)
+          ? semanticLines.filter(line => {
+              const semanticScope = catalogLineSemanticScope({ sku, line, sourceColorCode: rule.sourceColorCode })
+              return semanticScope === null || semanticScope === rule.scope
+            })
           : semanticLines
+        if (applicableLines.length === 0 && semanticLines.length === 0) {
+          for (const baseItemCode of rule.baseItemCodes) {
+            mismatches.push({
+              skuComplete: sku.skuComplete,
+              skuItemName: sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal,
+              baseItemCode,
+              childNum: null,
+              itemCode: null,
+              itemName: null,
+              observedColorCode: null,
+              reason: 'missing_component',
+              semanticScope: rule.scope,
+            })
+          }
+          skuMatchesRule = false
+        }
         for (const line of applicableLines) {
           const parsed = parseSapItemCode(line.itemCode)
           const semanticScope = catalogLineSemanticScope({ sku, line, sourceColorCode: rule.sourceColorCode })
@@ -3372,6 +3543,7 @@ export async function verifyReferenceImportColorRulesMatrixDirect(input: {
             skuComplete: sku.skuComplete,
             skuItemName: sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal,
             baseItemCode: parsed.baseItemCode,
+            childNum: line.childNum,
             itemCode: parsed.itemCode,
             itemName: line.itemName,
             observedColorCode: parsed.variantCode4,
@@ -3386,14 +3558,14 @@ export async function verifyReferenceImportColorRulesMatrixDirect(input: {
       for (const baseItemCode of rule.baseItemCodes) {
         const matchingLines = bom.lines.filter(line => parseSapItemCode(line.itemCode).baseItemCode === baseItemCode)
         if (matchingLines.length === 0) {
-          mismatches.push({ skuComplete: sku.skuComplete, skuItemName: sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal, baseItemCode, itemCode: null, itemName: null, observedColorCode: null, reason: 'missing_component' })
+          mismatches.push({ skuComplete: sku.skuComplete, skuItemName: sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal, baseItemCode, childNum: null, itemCode: null, itemName: null, observedColorCode: null, reason: 'missing_component' })
           skuMatchesRule = false
           continue
         }
         for (const line of matchingLines) {
           const parsed = parseSapItemCode(line.itemCode)
           if (parsed.variantCode4 === rule.targetColorCode) continue
-          mismatches.push({ skuComplete: sku.skuComplete, skuItemName: sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal, baseItemCode, itemCode: parsed.itemCode, itemName: line.itemName, observedColorCode: parsed.variantCode4, reason: 'unexpected_color' })
+          mismatches.push({ skuComplete: sku.skuComplete, skuItemName: sapSkuStatuses.get(sku.skuComplete)?.itemName ?? sku.sapDescriptionOriginal, baseItemCode, childNum: line.childNum, itemCode: parsed.itemCode, itemName: line.itemName, observedColorCode: parsed.variantCode4, reason: 'unexpected_color' })
           skuMatchesRule = false
         }
       }
@@ -3411,16 +3583,50 @@ export async function verifyReferenceImportColorRulesMatrixDirect(input: {
       checkedSkuCount,
       matchingSkuCount,
       sapReadErrors,
+      catalogStatusIssues,
       mismatches,
       dualCandidates: rule.scope === 'edge_band_full_product'
         ? detectedEdgeDualCandidates({ ruleSkus, sapBoms, sapSkuStatuses })
         : [],
     }
   })
+  const inventoryItemCodes = [...new Set(results.flatMap(result => result.mismatches.flatMap(mismatch => {
+    if (!mismatch.itemCode) return []
+    const currentItemCode = parseSapItemCode(mismatch.itemCode).itemCode
+    const targetItemCode = buildSapItemCode(parseSapItemCode(currentItemCode).baseItemCode, result.targetColorCode)
+    return [currentItemCode, targetItemCode]
+  })))]
+  const inventoryByItemCode = inventoryItemCodes.length > 0
+    ? (await getComponentMetadata(inventoryItemCodes, input.isCancelled)).itemsByCode
+    : new Map<string, SapEntityPayload | null>()
+  throwIfCancelled()
+  const resultsWithInventory = results.map(result => ({
+    ...result,
+    mismatches: result.mismatches.map(mismatch => {
+      if (!mismatch.itemCode) return mismatch
+      const currentItemCode = parseSapItemCode(mismatch.itemCode).itemCode
+      const targetItemCode = buildSapItemCode(parseSapItemCode(currentItemCode).baseItemCode, result.targetColorCode)
+      const currentItem = inventoryByItemCode.get(currentItemCode) ?? null
+      const targetItem = inventoryByItemCode.get(targetItemCode) ?? null
+      return {
+        ...mismatch,
+        currentInventory: {
+          itemCode: currentItemCode,
+          quantityOnStock: currentItem ? readNullableNumber(currentItem.QuantityOnStock) : null,
+          inventoryUom: currentItem ? readSapUom(currentItem, null) : null,
+        },
+        targetInventory: {
+          itemCode: targetItemCode,
+          quantityOnStock: targetItem ? readNullableNumber(targetItem.QuantityOnStock) : null,
+          inventoryUom: targetItem ? readSapUom(targetItem, null) : null,
+        },
+      }
+    }),
+  }))
   await reportColorMatrixVerificationProgress(input.onProgress, {
     stage: 'complete', message: 'Verificación de la matriz terminada.', current: activeSkus.length, total: activeSkus.length,
   })
-  return results
+  return resultsWithInventory
 }
 
 export type BoardMatrixVerificationProgress = {
@@ -3448,6 +3654,7 @@ function boardRoleFromCatalogLine(input: {
   line: CatalogSapBom['lines'][number]
   itemName: string
   materialKind: ReturnType<typeof buildComponentTechnicalMetadata>['material_kind']
+  componentItemsByCode: Map<string, SapEntityPayload | null>
 }): { role: BoardMatrixRole; roleSource: BoardMatrixRoleSource } {
   const baseItemCode = parseSapItemCode(input.line.itemCode).baseItemCode
   const boardNameScope = inferBoardApplicationScope({
@@ -3465,7 +3672,18 @@ function boardRoleFromCatalogLine(input: {
   return override && isBoardMaterialApplicationScope(override.product_application_scope)
     ? { role: override.product_application_scope, roleSource: 'sku_override' }
     : new Set(input.bom.lines
-      .filter(candidate => isCatalogBoardLine(candidate))
+      .filter(candidate => {
+        if (!isCatalogBoardLine(candidate)) return false
+        const candidateCode = parseSapItemCode(candidate.itemCode).itemCode
+        const candidateItem = input.componentItemsByCode.get(candidateCode) ?? null
+        return inferBoardApplicationScope({
+          itemName: candidateItem
+            ? readSapItemName(candidateItem, candidate.itemName ?? candidateCode)
+            : candidate.itemName ?? candidateCode,
+          baseItemCode: parseSapItemCode(candidateCode).baseItemCode,
+          materialKind: 'board',
+        }) === null
+      })
       .map(candidate => parseSapItemCode(candidate.itemCode).variantCode4)
       .filter(colorCode => colorCode !== '0000')
     ).size === 1
@@ -3477,17 +3695,18 @@ export async function analyzeReferenceImportBoardMatrix(input: {
   colorCodes: string[]
   onProgress?: (progress: BoardMatrixVerificationProgress) => void | Promise<void>
   isCancelled?: () => boolean
+  productType?: string | null
 }): Promise<BoardMatrixCatalogResult[]> {
   const colorCodes = [...new Set(input.colorCodes.map(code => code.trim().toUpperCase()).filter(code => /^[A-Z0-9]{4}$/.test(code)))]
   if (colorCodes.length === 0) throw new Error('Selecciona al menos un color de producto para analizar en SAP.')
   throwIfBoardMatrixCancelled(input.isCancelled)
   const selectedColors = new Set(colorCodes)
   await reportBoardMatrixVerificationProgress(input.onProgress, {
-    stage: 'catalog', message: 'Descubriendo en SAP los SKU V*, versión 000, de los colores seleccionados.', current: null, total: null,
+    stage: 'catalog', message: `Descubriendo en SAP los SKU V*, versión 000, de los colores seleccionados; solo se analizarán descripciones que incluyan ${input.productType?.trim().toUpperCase()}.`, current: null, total: null,
   })
   const [sapItems, catalogSkus] = await Promise.all([
     discoverSapBoardMatrixSkus({ colorCodes, onProgress: input.onProgress, isCancelled: input.isCancelled }),
-    getBoardMatrixCatalogSkus(colorCodes),
+    getBoardMatrixCatalogSkus(colorCodes, input.productType),
   ])
   throwIfBoardMatrixCancelled(input.isCancelled)
   const sapItemsBySku = new Map(sapItems.flatMap(item => {
@@ -3502,6 +3721,7 @@ export async function analyzeReferenceImportBoardMatrix(input: {
     const prefix = skuComplete ? catalogPrefixFromSku(skuComplete) : null
     if (!skuComplete || !colorCode || !prefix) return []
     const catalogSku = catalogBySku.get(skuComplete)
+    if (!catalogSku || !sapItemNameMatchesProductType(readString(sapItem.ItemName), input.productType)) return []
     return [{
       skuComplete,
       colorCode,
@@ -3600,7 +3820,14 @@ export async function analyzeReferenceImportBoardMatrix(input: {
         const sapItem = itemsByCode.get(parsed.itemCode) ?? null
         const itemName = sapItem ? readSapItemName(sapItem, line.itemName ?? parsed.itemCode) : line.itemName ?? parsed.itemCode
         const metadata = buildComponentTechnicalMetadata(sapItem ?? {}, itemName)
-        const role = boardRoleFromCatalogLine({ sku, bom, line, itemName, materialKind: metadata.material_kind })
+        const role = boardRoleFromCatalogLine({
+          sku,
+          bom,
+          line,
+          itemName,
+          materialKind: metadata.material_kind,
+          componentItemsByCode: itemsByCode,
+        })
         evidence.push({
           sourceColorCode,
           item: {
@@ -3616,6 +3843,9 @@ export async function analyzeReferenceImportBoardMatrix(input: {
             thicknessMm: metadata.thickness_mm,
             formatKey: metadata.format_key,
             qty: line.qty ?? 0,
+            sapChildNums: line.childNum === null ? [] : [line.childNum],
+            inventoryQty: sapItem ? readNullableNumber(sapItem.QuantityOnStock) : null,
+            inventoryUom: sapItem ? readSapUom(sapItem, null) : null,
             ...role,
           },
         })
@@ -4354,6 +4584,9 @@ export async function publishReferenceBomImportRun(input: {
   }
 
   const cleanStructure = cleanBomStructure(workspace.run.proposedBomStructure)
+  if (cleanStructure.lines.length === 0) {
+    throw new Error('No se puede publicar una BOM de referencia vacía. Reconstruye o vuelve a analizar la referencia antes de publicar.')
+  }
   const rows = await dbQuery(
     `WITH updated_reference AS (
       UPDATE public.product_references

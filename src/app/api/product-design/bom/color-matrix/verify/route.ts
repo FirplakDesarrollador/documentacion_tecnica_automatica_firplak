@@ -27,6 +27,11 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
+function parseProductType(value: unknown): string | null {
+  const productType = readString(value)?.toUpperCase() ?? null
+  return productType && productType.length <= 80 ? productType : null
+}
+
 function parseSelections(value: unknown): DirectColorRuleMatrixSelection[] {
   if (!Array.isArray(value)) return []
   return value.flatMap((candidate) => {
@@ -55,18 +60,25 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (guard.response) return guard.response
 
   let selections: DirectColorRuleMatrixSelection[] = []
+  let productType: string | null = null
   try {
     const body: unknown = await request.json()
-    selections = parseSelections(asRecord(body).selections)
+    const input = asRecord(body)
+    selections = parseSelections(input.selections)
+    productType = parseProductType(input.productType)
   } catch {
     selections = []
   }
   if (selections.length === 0) return Response.json({ success: false, message: 'Selecciona al menos una regla completa.' }, { status: 400 })
+  if (!productType) return Response.json({ success: false, message: 'La referencia seleccionada no tiene tipo de producto para limitar la verificación.' }, { status: 400 })
 
   const encoder = new TextEncoder()
+  let cancelled = request.signal.aborted
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       let closed = false
+      const markCancelled = (): void => { cancelled = true }
+      request.signal.addEventListener('abort', markCancelled, { once: true })
       const send = (event: MatrixVerificationEvent): void => {
         if (closed) return
         controller.enqueue(streamEvent(encoder, event))
@@ -81,8 +93,11 @@ export async function POST(request: NextRequest): Promise<Response> {
         try {
           const results = await verifyReferenceImportColorRulesMatrixDirect({
             selections,
+            productType,
             onProgress: progress => send({ type: 'progress', progress }),
+            isCancelled: () => cancelled,
           })
+          if (cancelled) return
           const pending = results.reduce((total, result) => total + result.mismatches.length + result.sapReadErrors.length, 0)
           send({
             type: 'complete',
@@ -91,11 +106,17 @@ export async function POST(request: NextRequest): Promise<Response> {
             results,
           })
         } catch (error) {
-          send({ type: 'error', message: error instanceof Error ? error.message : 'No se pudo verificar la matriz.' })
+          if (!cancelled) send({ type: 'error', message: error instanceof Error ? error.message : 'No se pudo verificar la matriz.' })
         } finally {
+          request.signal.removeEventListener('abort', markCancelled)
           close()
         }
       })()
+    },
+    cancel() {
+      // The browser stopped consuming this stream: do not schedule another SAP read.
+      // An in-flight read is read-only and may still finish at SAP.
+      cancelled = true
     },
   })
 
