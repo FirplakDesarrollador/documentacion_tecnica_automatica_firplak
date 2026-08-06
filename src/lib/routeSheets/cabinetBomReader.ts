@@ -3,7 +3,6 @@ import type {
   BomStructureLine,
   BomConsumption,
   ProductApplicationScope,
-  ComponentItem,
 } from '@/lib/bom/types'
 
 export type BomBoardItem = {
@@ -257,9 +256,19 @@ interface ComponentItemRow {
   item_bom_structure: unknown
 }
 
+interface ComponentItemsQueryClient {
+  from(table: 'component_items'): {
+    select(columns: string): {
+      eq(column: 'base_item_code', value: string): Promise<{
+        data: unknown
+        error: unknown
+      }>
+    }
+  }
+}
+
 export async function resolveComponentItems(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  supabase: any,
+  supabase: ComponentItemsQueryClient,
   itemCode: string
 ): Promise<BomComponentItem[]> {
   const { data, error } = await supabase
@@ -267,7 +276,7 @@ export async function resolveComponentItems(
     .select('item_code, item_name, base_item_code, component_category, uom, item_bom_structure')
     .eq('base_item_code', itemCode)
 
-  if (error || !data || data.length === 0) return []
+  if (error || !Array.isArray(data) || data.length === 0) return []
 
   const items = data as ComponentItemRow[]
   const children: BomComponentItem[] = []

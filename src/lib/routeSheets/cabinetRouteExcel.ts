@@ -250,32 +250,6 @@ function parseOptimizationSheet(worksheet: ExcelJS.Worksheet): CabinetBoardConsu
   return rows.filter(row => row.board_size_label || row.units_per_board || row.board_count)
 }
 
-function createBoardConsumption(
-  worksheet: ExcelJS.Worksheet,
-  id: string,
-  labelCell: string,
-  materialLabel: string,
-  boardSizeCell: string,
-  unitsCell: string,
-  boardCountCell: string,
-  consumptionCell: string
-): CabinetBoardConsumption {
-  const boardSizeLabel = readCellText(worksheet.getCell(boardSizeCell))
-  return {
-    id,
-    source: 'original_sheet',
-    original_ref: `${worksheet.name}!${labelCell}`,
-    material_label: materialLabel,
-    thickness_mm: readThicknessMm(materialLabel),
-    board_size_label: boardSizeLabel,
-    units_per_board: readCellNumber(worksheet.getCell(unitsCell)),
-    board_count: readCellNumber(worksheet.getCell(boardCountCell)),
-    consumption_m2: readCellNumber(worksheet.getCell(consumptionCell)),
-    observation: readCellText(worksheet.getCell(labelCell)),
-    edited_fields: [],
-  }
-}
-
 function parseHardwareSheet(worksheet: ExcelJS.Worksheet): {
   hardwareRows: CabinetRouteMaterialRow[]
   packingRows: CabinetRouteMaterialRow[]

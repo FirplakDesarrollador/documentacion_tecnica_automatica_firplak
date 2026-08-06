@@ -53,9 +53,9 @@ export default async function ProductDesignPage() {
                 <ClipboardCheck className="h-5 w-5" />
               </div>
               <div>
-                <h2 className="font-semibold text-slate-900">Auditoría de colores SAP</h2>
+                <h2 className="font-semibold text-slate-900">Auditorías SAP</h2>
                 <p className="mt-1 text-sm text-slate-600">
-                  Contrasta U_Color contra el color codificado en todos los SKU de venta, con avance y exportación.
+                  Revisa color, bodegas de salida, almacenes destino y métodos de emisión con una sola corrida SAP.
                 </p>
               </div>
             </div>

@@ -6,8 +6,6 @@ import type {
 import type {
   BomSplitResult,
   BomBoardItem,
-  BomEdgeItem,
-  BomKittingItem,
 } from './cabinetBomReader'
 import { findItemByCode, buildComparisonKey } from './cabinetBomReader'
 

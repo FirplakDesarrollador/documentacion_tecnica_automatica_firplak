@@ -1,6 +1,5 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import ExcelJS from 'exceljs'
 import { parseCabinetRouteWorkbook } from '../cabinetRouteExcel'
 import { suggestMaterialRole, type CabinetPieceRow } from '../cabinets'
 import * as path from 'path'
