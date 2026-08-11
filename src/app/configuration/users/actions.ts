@@ -253,7 +253,7 @@ async function countUserQuotations(admin: SupabaseAdminClient, userId: string) {
   return count ?? 0
 }
 
-async function getAuthRedirectTo(destination: 'callback' | 'accept-invite') {
+async function getAuthRedirectTo(destination: 'accept-invite' | 'accept-recovery') {
   const headerStore = await headers()
   const origin = headerStore.get('origin')
   const host = headerStore.get('x-forwarded-host') ?? headerStore.get('host')
@@ -268,7 +268,7 @@ async function getAuthRedirectTo(destination: 'callback' | 'accept-invite') {
     return `${baseUrl}/auth/accept-invite`
   }
 
-  return `${baseUrl}/auth/callback?next=${encodeURIComponent('/auth/update-password')}`
+  return `${baseUrl}/auth/accept-recovery`
 }
 
 function revalidateUsers() {
@@ -397,7 +397,7 @@ export async function sendUserRecoveryAction(input: { userId: string }) {
   const admin = createSupabaseAdminClient()
   const authUser = await fetchAuthUserById(admin, userId)
   const email = normalizeEmail(authUser.email)
-  const redirectTo = await getAuthRedirectTo('callback')
+  const redirectTo = await getAuthRedirectTo('accept-recovery')
   const { error } = await admin.auth.resetPasswordForEmail(email, { redirectTo })
 
   if (error) {
