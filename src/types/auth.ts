@@ -34,6 +34,7 @@ export const PERMISSIONS = [
   'module:print',
   'module:product-design',
   'module:productive-modules',
+  'module:engineering',
   'module:configuration',
   'module:consulta-sap',
   'action:print',
@@ -109,6 +110,12 @@ export const APP_MODULES: AppModuleDefinition[] = [
     assignable: true,
   },
   {
+    key: 'module:engineering',
+    label: 'Ingeniería',
+    href: '/engineering',
+    assignable: true,
+  },
+  {
     key: 'module:configuration',
     label: 'Configuración',
     href: '/configuration',
@@ -172,7 +179,7 @@ const DEFAULT_ROLE_MODULES: Record<string, ModulePermission[]> = {
   admin: [...MODULE_PERMISSIONS],
   production: ['module:print', 'module:productive-modules'],
   designer: ['module:product-design'],
-  engineering: [],
+  engineering: ['module:engineering'],
 }
 
 const ROUTE_PERMISSION_PREFIXES: Array<{ prefix: string; permission: ModulePermission }> = [
@@ -184,6 +191,7 @@ const ROUTE_PERMISSION_PREFIXES: Array<{ prefix: string; permission: ModulePermi
   { prefix: '/print', permission: 'module:print' },
   { prefix: '/product-design', permission: 'module:product-design' },
   { prefix: '/productive-modules', permission: 'module:productive-modules' },
+  { prefix: '/engineering', permission: 'module:engineering' },
   { prefix: '/configuration', permission: 'module:configuration' },
   { prefix: '/rules', permission: 'module:configuration' },
   { prefix: '/consulta-sap', permission: 'module:consulta-sap' },
@@ -198,6 +206,7 @@ const HOME_PRIORITY: ModulePermission[] = [
   'module:print',
   'module:product-design',
   'module:productive-modules',
+  'module:engineering',
   'module:generate',
   'module:templates',
   'module:datasets',
@@ -324,7 +333,7 @@ export function hasPermission(accessOrRole: Permission[] | UserRole, permission:
 }
 
 export function isPendingLikeRole(role: UserRole): boolean {
-  return role === PENDING_ROLE || role === 'engineering'
+  return role === PENDING_ROLE
 }
 
 export function isPublicRoute(pathname: string): boolean {
@@ -362,6 +371,7 @@ const API_PERMISSION_PREFIXES: Array<{ prefix: string; permission: ModulePermiss
   { prefix: '/api/families', permission: 'module:configuration' },
   { prefix: '/api/rules', permission: 'module:configuration' },
   { prefix: '/api/sap', permission: 'module:consulta-sap' },
+  { prefix: '/api/engineering', permission: 'module:engineering' },
 ]
 
 export function isAllowedUserApi(pathname: string, role: UserRole, permissions: Permission[] = []): boolean {

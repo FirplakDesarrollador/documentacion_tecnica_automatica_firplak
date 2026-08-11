@@ -454,6 +454,168 @@ export async function getSapItem(itemCode: string, select?: string[]): Promise<S
   return item
 }
 
+function recordsFromSapCollection(value: unknown): SapEntityPayload[] {
+  return isRecord(value) && Array.isArray(value.value)
+    ? value.value.filter(isRecord)
+    : []
+}
+
+/**
+ * Retrieves the active warehouse master data needed by the transfer-request
+ * workflow. It deliberately does not expose a generic Service Layer endpoint.
+ */
+export async function getSapActiveWarehouses(options?: { timeoutMs?: number }): Promise<SapEntityPayload[]> {
+  const query = buildCollectionQuery({
+    select: ['WarehouseCode', 'WarehouseName', 'Inactive', 'EnableBinLocations'],
+    filter: "Inactive eq 'tNO'",
+    orderby: 'WarehouseCode asc',
+    top: 500,
+  })
+  const response = await sapServiceLayerRequest<unknown>(`/Warehouses${query}`, {
+    timeoutMs: options?.timeoutMs,
+  })
+
+  return recordsFromSapCollection(response)
+}
+
+/**
+ * Reads batch masters for an item. Warehouse-level allocation is normalized by
+ * the transfer-request layer because some SAP versions do not return it here.
+ */
+export async function getSapBatchNumberDetails(
+  itemCode: string,
+  options?: { timeoutMs?: number },
+): Promise<SapEntityPayload[]> {
+  const normalizedCode = normalizeRequiredCode(itemCode, 'itemCode')
+  const query = buildCollectionQuery({
+    filter: `ItemCode eq ${encodeODataString(normalizedCode)}`,
+    orderby: 'DocEntry asc',
+    top: 500,
+  })
+  const response = await sapServiceLayerRequest<unknown>(`/BatchNumberDetails${query}`, {
+    timeoutMs: options?.timeoutMs,
+  })
+
+  return recordsFromSapCollection(response)
+}
+
+/**
+ * Reads serial masters for an item. Warehouse-level allocation is normalized by
+ * the transfer-request layer because some SAP versions do not return it here.
+ */
+export async function getSapSerialNumberDetails(
+  itemCode: string,
+  options?: { timeoutMs?: number },
+): Promise<SapEntityPayload[]> {
+  const normalizedCode = normalizeRequiredCode(itemCode, 'itemCode')
+  const query = buildCollectionQuery({
+    filter: `ItemCode eq ${encodeODataString(normalizedCode)}`,
+    orderby: 'DocEntry asc',
+    top: 500,
+  })
+  const response = await sapServiceLayerRequest<unknown>(`/SerialNumberDetails${query}`, {
+    timeoutMs: options?.timeoutMs,
+  })
+
+  return recordsFromSapCollection(response)
+}
+
+/**
+ * Creates only an Inventory Transfer Request. Effective-transfer endpoints are
+ * intentionally absent from this integration until the later module.
+ */
+export async function createSapInventoryTransferRequest(payload: SapEntityPayload): Promise<SapEntityPayload> {
+  await assertSapWritesEnabled()
+  const response = await sapServiceLayerRequest<unknown>('/InventoryTransferRequests', {
+    method: 'POST',
+    body: payload,
+  })
+
+  if (!isRecord(response)) {
+    throw new SapServiceLayerError('SAP returned an invalid inventory transfer request payload', {
+      statusCode: 502,
+      sapCode: 'SAP_INVALID_TRANSFER_REQUEST_PAYLOAD',
+    })
+  }
+
+  return response
+}
+
+export async function getSapInventoryTransferRequest(docEntry: number): Promise<SapEntityPayload> {
+  if (!Number.isSafeInteger(docEntry) || docEntry <= 0) {
+    throw new SapServiceLayerError('docEntry must be a positive integer', {
+      statusCode: 400,
+      sapCode: 'SAP_VALIDATION_ERROR',
+    })
+  }
+  const response = await sapServiceLayerRequest<unknown>(`/InventoryTransferRequests(${docEntry})`)
+
+  if (!isRecord(response)) {
+    throw new SapServiceLayerError('SAP returned an invalid inventory transfer request payload', {
+      statusCode: 502,
+      sapCode: 'SAP_INVALID_TRANSFER_REQUEST_PAYLOAD',
+    })
+  }
+
+  return response
+}
+
+export type SapStockTransferHistoryLine = {
+  docEntry: number | null
+  docNum: number | null
+  docDate: string | null
+  sourceWarehouseCode: string
+  destinationWarehouseCode: string | null
+  itemCode: string
+  quantity: number
+}
+
+/**
+ * Reads recent recorded transfers from one warehouse. This is deliberately a
+ * narrow historical read for package-pattern guidance, not a generic SAP API.
+ */
+export async function getSapStockTransferHistoryFromWarehouse(
+  sourceWarehouseCode: string,
+  options: { limit?: number; timeoutMs?: number } = {},
+): Promise<SapStockTransferHistoryLine[]> {
+  const normalizedSourceWarehouse = normalizeRequiredCode(sourceWarehouseCode, 'sourceWarehouseCode').toUpperCase()
+  const requestedLimit = Number.isSafeInteger(options.limit) && (options.limit ?? 0) > 0
+    ? options.limit ?? 500
+    : 500
+  const query = buildCollectionQuery({
+    filter: `FromWarehouse eq ${encodeODataString(normalizedSourceWarehouse)}`,
+    orderby: 'DocEntry desc',
+    top: Math.min(requestedLimit, 200),
+  })
+  const transfers = recordsFromSapCollection(await sapServiceLayerRequest<unknown>(`/StockTransfers${query}`, {
+    timeoutMs: options.timeoutMs,
+  }))
+  return transfers.flatMap(transfer => {
+    if (readStringField(transfer, 'FromWarehouse')?.toUpperCase() !== normalizedSourceWarehouse) return []
+    const lines = Array.isArray(transfer.StockTransferLines)
+      ? transfer.StockTransferLines.filter(isRecord)
+      : []
+    return lines.flatMap(line => {
+      const itemCode = readStringField(line, 'ItemCode')?.toUpperCase()
+      const quantity = readNumberField(line, 'Quantity')
+      if (!itemCode || quantity === null || quantity <= 0) return []
+      const destinationWarehouseCode = readStringField(line, 'WarehouseCode')?.toUpperCase()
+        ?? readStringField(transfer, 'ToWarehouse')?.toUpperCase()
+        ?? null
+      if (!destinationWarehouseCode || destinationWarehouseCode === normalizedSourceWarehouse) return []
+      return [{
+        docEntry: readNumberField(transfer, 'DocEntry'),
+        docNum: readNumberField(transfer, 'DocNum'),
+        docDate: readStringField(transfer, 'DocDate'),
+        sourceWarehouseCode: normalizedSourceWarehouse,
+        destinationWarehouseCode,
+        itemCode,
+        quantity,
+      }]
+    })
+  })
+}
+
 export async function getSapItemsByCodes(
   itemCodes: string[],
   select?: string[],
