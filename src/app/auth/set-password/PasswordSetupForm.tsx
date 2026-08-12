@@ -73,14 +73,14 @@ export default function PasswordSetupForm({ userId, token }: PasswordSetupFormPr
             <div className="space-y-5 text-center">
               <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600" />
               <div>
-                <h2 className="text-xl font-bold text-primary">Contraseña actualizada</h2>
-                <p className="mt-2 text-sm text-slate-600">Ya puedes ingresar a SamiGen con tu correo y nueva contraseña.</p>
+                <h2 className="text-xl font-bold text-primary">Contraseña actualizada correctamente</h2>
+                <p className="mt-2 text-sm text-slate-600">Tu acceso ya está activo. Ingresa a SamiGen con tu correo y la nueva contraseña.</p>
               </div>
               <Link
                 href="/login"
                 className="inline-flex rounded-xl bg-primary px-5 py-3 text-sm font-bold text-white transition-colors hover:bg-primary/90"
               >
-                Ir a iniciar sesión
+                Iniciar sesión
               </Link>
             </div>
           ) : (

@@ -52,7 +52,7 @@ function getMessageCopy(actionType: string) {
       subject: 'Actualiza tu contraseña | SamiGen',
       heading: 'Actualiza tu contraseña',
       intro: 'Solicitaste crear o actualizar la contraseña de acceso a SamiGen.',
-      buttonLabel: 'Crear o actualizar contraseña',
+      buttonLabel: 'Actualizar contraseña',
     }
   }
 
@@ -139,7 +139,7 @@ function getMessageFromInternalRequest(rawPayload: string): AutomationMessage {
 async function sendToPowerAutomate(message: AutomationMessage, automationUrl: string) {
   const automationResponse = await fetch(automationUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
     body: JSON.stringify(message),
     signal: AbortSignal.timeout(4_000),
   })

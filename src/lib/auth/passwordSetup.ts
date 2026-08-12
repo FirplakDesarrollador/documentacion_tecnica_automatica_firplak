@@ -62,9 +62,12 @@ export function passwordSetupMetadata(appMetadata: unknown, challenge: PasswordS
 }
 
 export function clearPasswordSetupMetadata(appMetadata: unknown) {
-  const metadata = { ...(isRecord(appMetadata) ? appMetadata : {}) }
-  delete metadata[PASSWORD_SETUP_KEY]
-  return metadata
+  return {
+    ...(isRecord(appMetadata) ? appMetadata : {}),
+    // Supabase fusiona app_metadata en vez de borrar las claves omitidas.
+    // null invalida el desafío y conserva los demás metadatos del usuario.
+    [PASSWORD_SETUP_KEY]: null,
+  }
 }
 
 export function isValidPasswordSetupToken(challenge: PasswordSetupChallenge, token: string) {
