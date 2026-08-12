@@ -26,8 +26,6 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     '/api/export': ['./node_modules/@sparticuz/chromium/bin/**'],
     '/api/export/route': ['./node_modules/@sparticuz/chromium/bin/**'],
-    '/api/engineering/sap-operations/transfer-requests/[docEntry]/pdf': ['./node_modules/@sparticuz/chromium/bin/**'],
-    '/api/engineering/sap-operations/transfer-requests/[docEntry]/pdf/route': ['./node_modules/@sparticuz/chromium/bin/**'],
   },
   images: {
     remotePatterns: [

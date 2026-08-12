@@ -5,11 +5,12 @@ import {
   AlertCircle,
   CheckCircle2,
   ClipboardCheck,
-  Download,
   FileSearch,
   Loader2,
   PackageSearch,
+  Pencil,
   Plus,
+  Printer,
   RefreshCw,
   Search,
   Trash2,
@@ -140,6 +141,7 @@ type ValidationResult = {
 
 type OperationSummary = {
   id: string
+  operationType: 'inventory_transfer_request_create' | 'inventory_transfer_request_update'
   operationStatus: 'pending' | 'verified' | 'failed' | 'ambiguous'
   sapDocEntry: number | null
   sapDocNum: number | null
@@ -150,7 +152,13 @@ type OperationSummary = {
   destinationWarehouse: string | null
   businessComment: string | null
   operationItems: Array<Record<string, unknown>>
+  operationContext: Record<string, unknown>
   errorMessage: string | null
+}
+
+type ResponsibleSnapshot = {
+  email: string
+  role: string | null
 }
 
 type RequestDetail = {
@@ -163,7 +171,11 @@ type RequestDetail = {
     dueDate: string | null
     taxDate: string | null
     cardCode: string | null
+    contactPerson: number | null
     shipToCode: string | null
+    address: string | null
+    fromWarehouse: string | null
+    toWarehouse: string | null
     comments: string | null
     businessComment: string | null
     lines: Array<{
@@ -175,6 +187,8 @@ type RequestDetail = {
       fromWarehouseCode: string | null
       warehouseCode: string | null
       transferType: string | null
+      batchNumbers: Array<{ batchNumber: string; quantity: number }>
+      serialNumbers: Array<{ systemSerialNumber: number }>
     }>
   }
 }
@@ -273,6 +287,34 @@ function statusVariant(status: OperationSummary['operationStatus']): 'default' |
   return 'outline'
 }
 
+function operationTypeLabel(operation: OperationSummary): string {
+  const modificationCount = Array.isArray(operation.operationContext.modificationHistory)
+    ? operation.operationContext.modificationHistory.length
+    : 0
+  if (modificationCount > 0) {
+    return modificationCount === 1 ? 'Solicitud modificada' : `${modificationCount} modificaciones`
+  }
+  return operation.operationType === 'inventory_transfer_request_update' ? 'Modificación' : 'Creación'
+}
+
+function isEditableDocumentStatus(status: string | null): boolean {
+  const normalized = status?.trim().toLowerCase() ?? ''
+  return normalized === 'bost_open' || normalized === 'open'
+}
+
+function transferTypeFromDocument(value: string | null): DraftLine['transferType'] {
+  return value === 'Físico' || value === 'Virtual' ? value : ''
+}
+
+function responsibleFromOperation(operation: OperationSummary): ResponsibleSnapshot | null {
+  const candidate = operation.operationContext.responsible
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null
+  const responsible = candidate as Record<string, unknown>
+  const email = typeof responsible.email === 'string' ? responsible.email.trim() : ''
+  if (!email) return null
+  return { email, role: typeof responsible.role === 'string' ? responsible.role : null }
+}
+
 function getLineClientError(line: DraftLine): string | null {
   if (!line.item) return 'Seleccione un artículo.'
   const quantity = Number(line.quantity)
@@ -327,11 +369,13 @@ export default function TransferRequestsClient() {
   const [configuration, setConfiguration] = useState<FormConfiguration | null>(null)
   const [configurationError, setConfigurationError] = useState<string | null>(null)
   const [newRequestOpen, setNewRequestOpen] = useState(false)
+  const [editingDocEntry, setEditingDocEntry] = useState<number | null>(null)
   const [sourceWarehouseCode, setSourceWarehouseCode] = useState('')
   const [destinationWarehouseCode, setDestinationWarehouseCode] = useState('')
   const [businessComment, setBusinessComment] = useState('')
   const [responsibleMode, setResponsibleMode] = useState<'creator' | 'other'>('creator')
   const [responsibleUserId, setResponsibleUserId] = useState('')
+  const [responsibleConfirmed, setResponsibleConfirmed] = useState(false)
   const [lines, setLines] = useState<DraftLine[]>(() => [createDraftLine()])
   const [selectedTargetLineId, setSelectedTargetLineId] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
@@ -369,10 +413,10 @@ export default function TransferRequestsClient() {
     try {
       const result = await apiRequest<{ configuration: FormConfiguration }>('/api/engineering/sap-operations/transfer-requests/configuration')
       setConfiguration(result.configuration)
-      setSourceWarehouseCode(current => current || result.configuration.warehouses[0]?.warehouseCode || '')
-      setDestinationWarehouseCode(current => current || result.configuration.warehouses[1]?.warehouseCode || result.configuration.warehouses[0]?.warehouseCode || '')
+      return result.configuration
     } catch (error) {
       setConfigurationError(error instanceof Error ? error.message : 'No fue posible cargar la configuración SAP.')
+      return null
     }
   }, [])
 
@@ -381,15 +425,20 @@ export default function TransferRequestsClient() {
   }, [loadHistory])
 
   const clientLineErrors = useMemo(() => lines.map(getLineClientError), [lines])
+  const warehousesReady = Boolean(sourceWarehouseCode && destinationWarehouseCode && sourceWarehouseCode !== destinationWarehouseCode)
+  const hasReadyTransferLine = useMemo(() => lines.some(line => getLineClientError(line) === null), [lines])
+  const hasBusinessComment = businessComment.trim().length > 0
+  const hasSelectedResponsible = responsibleConfirmed && (responsibleMode !== 'other' || Boolean(responsibleUserId))
   const clientFormError = useMemo(() => {
     if (!sourceWarehouseCode || !destinationWarehouseCode) return 'Seleccione ambas bodegas.'
     if (sourceWarehouseCode === destinationWarehouseCode) return 'La bodega de origen y la bodega destino deben ser diferentes.'
     const commentLength = Array.from(businessComment.trim()).length
     if (commentLength < 1 || commentLength > 50) return 'El comentario contextual debe tener entre 1 y 50 caracteres.'
+    if (!responsibleConfirmed) return 'Marque la persona responsable de la solicitud.'
     if (responsibleMode === 'other' && !responsibleUserId) return 'Seleccione la persona responsable.'
     if (lines.length === 0) return 'Agregue al menos una línea.'
     return clientLineErrors.find(Boolean) ?? null
-  }, [businessComment, clientLineErrors, destinationWarehouseCode, lines.length, responsibleMode, responsibleUserId, sourceWarehouseCode])
+  }, [businessComment, clientLineErrors, destinationWarehouseCode, lines.length, responsibleConfirmed, responsibleMode, responsibleUserId, sourceWarehouseCode])
 
   const invalidateValidation = useCallback(() => {
     setValidation(null)
@@ -402,12 +451,22 @@ export default function TransferRequestsClient() {
     invalidateValidation()
   }, [invalidateValidation])
 
-  const requestAvailability = useCallback(async (lineId: string, itemCode: string, warehouseCode: string) => {
+  const requestAvailability = useCallback(async (
+    lineId: string,
+    itemCode: string,
+    warehouseCode: string,
+    preserveAllocations = false,
+  ) => {
     if (!warehouseCode) {
       updateLine(lineId, { availability: null, availabilityError: 'Seleccione la bodega de origen.', availabilityLoading: false })
       return
     }
-    updateLine(lineId, { availability: null, availabilityError: null, availabilityLoading: true, batchQuantities: {}, selectedSerials: [] })
+    updateLine(lineId, {
+      availability: null,
+      availabilityError: null,
+      availabilityLoading: true,
+      ...(preserveAllocations ? {} : { batchQuantities: {}, selectedSerials: [] }),
+    })
     try {
       const result = await apiRequest<{ availability: ItemAvailability }>('/api/engineering/sap-operations/transfer-requests/availability', {
         method: 'POST',
@@ -540,7 +599,11 @@ export default function TransferRequestsClient() {
     setCreating(true)
     setFormError(null)
     try {
-      const result = await apiRequest<{ operation: OperationSummary; request: RequestDetail['request']; idempotent: boolean }>('/api/engineering/sap-operations/transfer-requests/create', {
+      const isEditing = editingDocEntry !== null
+      const endpoint = isEditing
+        ? `/api/engineering/sap-operations/transfer-requests/${editingDocEntry}/update`
+        : '/api/engineering/sap-operations/transfer-requests/create'
+      const result = await apiRequest<{ operation: OperationSummary; request: RequestDetail['request']; idempotent: boolean }>(endpoint, {
         method: 'POST',
         body: JSON.stringify({
           ...serializeDraft(sourceWarehouseCode, destinationWarehouseCode, businessComment.trim(), lines),
@@ -551,14 +614,21 @@ export default function TransferRequestsClient() {
       })
       setSelectedDetail({ operation: result.operation, request: result.request })
       setOperations(current => [result.operation, ...current.filter(operation => operation.id !== result.operation.id)])
+      setNewRequestOpen(false)
       setLines([createDraftLine()])
       setSelectedTargetLineId(null)
+      setSourceWarehouseCode('')
+      setDestinationWarehouseCode('')
       setBusinessComment('')
+      setEditingDocEntry(null)
+      setResponsibleConfirmed(false)
       setValidation(null)
       setConfirmed(false)
       setIdempotencyKey(createClientId())
       if (result.idempotent) {
-        setFormError('Se recuperó la solicitud ya creada con la misma clave de idempotencia.')
+        setFormError(isEditing
+          ? 'Se recuperó la modificación ya registrada con la misma clave de idempotencia.'
+          : 'Se recuperó la solicitud ya creada con la misma clave de idempotencia.')
       }
       await loadHistory()
     } catch (error) {
@@ -574,7 +644,7 @@ export default function TransferRequestsClient() {
     } finally {
       setCreating(false)
     }
-  }, [businessComment, configuration?.creator.id, confirmed, destinationWarehouseCode, idempotencyKey, lines, loadHistory, responsibleMode, responsibleUserId, sourceWarehouseCode, validation?.valid])
+  }, [businessComment, configuration?.creator.id, confirmed, destinationWarehouseCode, editingDocEntry, idempotencyKey, lines, loadHistory, responsibleMode, responsibleUserId, sourceWarehouseCode, validation?.valid])
 
   const loadDetail = useCallback(async (docEntry: number) => {
     setDetailLoadingEntry(docEntry)
@@ -610,8 +680,78 @@ export default function TransferRequestsClient() {
 
   const openNewRequest = useCallback(() => {
     setNewRequestOpen(true)
+    setEditingDocEntry(null)
+    setSourceWarehouseCode('')
+    setDestinationWarehouseCode('')
+    setBusinessComment('')
+    setResponsibleMode('creator')
+    setResponsibleUserId('')
+    setResponsibleConfirmed(false)
+    setLines([createDraftLine()])
+    setSelectedTargetLineId(null)
+    setValidation(null)
+    setConfirmed(false)
+    setFormError(null)
+    setIdempotencyKey(createClientId())
     if (!configuration) void loadConfiguration()
   }, [configuration, loadConfiguration])
+
+  const startEditingRequest = useCallback(async () => {
+    if (!selectedDetail) return
+    if (!isEditableDocumentStatus(selectedDetail.request.documentStatus)) {
+      setDetailError('La solicitud ya no está abierta en SAP y no se puede modificar.')
+      return
+    }
+    const activeConfiguration = configuration ?? await loadConfiguration()
+    if (!activeConfiguration) return
+
+    const sourceWarehouseCode = selectedDetail.request.fromWarehouse
+      ?? selectedDetail.request.lines[0]?.fromWarehouseCode
+      ?? ''
+    const destinationWarehouseCode = selectedDetail.request.toWarehouse
+      ?? selectedDetail.request.lines[0]?.warehouseCode
+      ?? ''
+    const nextLines = selectedDetail.request.lines.map(line => ({
+      ...createDraftLine(),
+      item: { itemCode: line.itemCode, itemName: line.itemDescription || line.itemCode },
+      quantity: String(line.quantity),
+      transferType: transferTypeFromDocument(line.transferType),
+      batchQuantities: Object.fromEntries(line.batchNumbers.map(batch => [batch.batchNumber, String(batch.quantity)])),
+      selectedSerials: line.serialNumbers.map(serial => serial.systemSerialNumber),
+    }))
+    const draftLines = nextLines.length > 0 ? nextLines : [createDraftLine()]
+
+    setNewRequestOpen(true)
+    setEditingDocEntry(selectedDetail.request.docEntry)
+    setSourceWarehouseCode(sourceWarehouseCode)
+    setDestinationWarehouseCode(destinationWarehouseCode)
+    setBusinessComment(selectedDetail.request.businessComment || '')
+    setResponsibleMode('creator')
+    setResponsibleUserId('')
+    setResponsibleConfirmed(false)
+    setLines(draftLines)
+    setSelectedTargetLineId(draftLines[0]?.id ?? null)
+    setValidation(null)
+    setConfirmed(false)
+    setFormError(null)
+    setIdempotencyKey(createClientId())
+    for (const line of draftLines) {
+      if (!line.item) continue
+      void requestAvailability(line.id, line.item.itemCode, sourceWarehouseCode, true)
+      void requestPackagePattern(line.id, line.item.itemCode)
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [configuration, loadConfiguration, requestAvailability, requestPackagePattern, selectedDetail])
+
+  const editingRequest = editingDocEntry !== null
+  const detailResponsible = selectedDetail ? responsibleFromOperation(selectedDetail.operation) : null
+  const detailTotalQuantity = selectedDetail
+    ? selectedDetail.request.lines.reduce((total, line) => total + line.quantity, 0)
+    : 0
+
+  const printTransferRequest = useCallback(() => {
+    window.print()
+  }, [])
 
   return (
     <div className="space-y-8 pb-8">
@@ -628,8 +768,8 @@ export default function TransferRequestsClient() {
 
       {newRequestOpen ? <Card>
         <CardHeader className="border-b border-slate-100">
-          <CardTitle className="flex items-center gap-2"><ClipboardCheck className="h-5 w-5 text-firplak-green" /> Nueva solicitud</CardTitle>
-          <CardDescription>Los datos del socio, contacto, destino, serie y lista de precios están fijados para evitar errores operativos.</CardDescription>
+          <CardTitle className="flex items-center gap-2"><ClipboardCheck className="h-5 w-5 text-firplak-green" /> {editingRequest ? `Modificar solicitud #${editingDocEntry}` : 'Nueva solicitud'}</CardTitle>
+          <CardDescription>{editingRequest ? 'Solo se puede modificar mientras SAP mantenga el documento abierto. Se volverá a validar antes de guardar.' : 'Los datos del socio, contacto, destino, serie y lista de precios están fijados para evitar errores operativos.'}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-7 pt-5">
            {configuration ? (
@@ -668,6 +808,7 @@ export default function TransferRequestsClient() {
                 ) : null}
               </section>
 
+              {warehousesReady ? <>
               <section className="space-y-3">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
                   <div className="grid flex-1 gap-1.5">
@@ -731,34 +872,39 @@ export default function TransferRequestsClient() {
                   })}</TableBody>
                 </Table>
               </section>
+              </> : null}
 
-              <section className="grid gap-4 md:grid-cols-2">
+              {hasReadyTransferLine ? <section className="grid gap-4 md:grid-cols-2">
                 <div className="grid gap-1.5">
                   <div className="flex items-center justify-between gap-4"><Label htmlFor="business-comment">Comentarios</Label><span className="text-xs font-medium text-slate-500">{Array.from(businessComment).length}/50</span></div>
                   <Textarea id="business-comment" value={businessComment} onChange={event => { setBusinessComment(event.target.value); invalidateValidation() }} maxLength={50} placeholder="Indique a quién se relaciona y por qué se solicita el traslado." className="min-h-24" />
                   <p className="text-xs text-slate-500">Se guarda en U_Comentarios de cabecera.</p>
                 </div>
+              </section> : null}
+
+              {hasBusinessComment ? <section className="grid gap-4 md:grid-cols-2">
                 <div className="grid content-start gap-2">
-                  <Label>Responsable</Label>
-                  <label className="flex items-center gap-2 text-sm text-slate-700"><input type="radio" name="responsible-mode" checked={responsibleMode === 'creator'} onChange={() => { setResponsibleMode('creator'); invalidateValidation() }} className="h-4 w-4 accent-firplak-green" />La persona que crea la solicitud</label>
-                  <label className="flex items-center gap-2 text-sm text-slate-700"><input type="radio" name="responsible-mode" checked={responsibleMode === 'other'} onChange={() => { setResponsibleMode('other'); invalidateValidation() }} className="h-4 w-4 accent-firplak-green" />El responsable es otro</label>
+                  <Label>Responsable de solicitud</Label>
+                  <p className="text-xs text-slate-500">Marque quién responderá por esta solicitud.</p>
+                  <label className="flex items-center gap-2 text-sm text-slate-700"><input type="radio" name="responsible-mode" checked={responsibleMode === 'creator'} onChange={() => { setResponsibleMode('creator'); setResponsibleConfirmed(true); invalidateValidation() }} className="h-4 w-4 accent-firplak-green" />La persona que {editingRequest ? 'modifica' : 'crea'} la solicitud</label>
+                  <label className="flex items-center gap-2 text-sm text-slate-700"><input type="radio" name="responsible-mode" checked={responsibleMode === 'other'} onChange={() => { setResponsibleMode('other'); setResponsibleConfirmed(true); invalidateValidation() }} className="h-4 w-4 accent-firplak-green" />El responsable es otro</label>
                   {responsibleMode === 'other' ? <select value={responsibleUserId} onChange={event => { setResponsibleUserId(event.target.value); invalidateValidation() }} className={SELECT_CLASS_NAME} aria-label="Seleccionar responsable"><option value="">Seleccione una persona</option>{configuration.responsibleUsers.map(user => <option key={user.id} value={user.id}>{user.email}{user.role ? ` - ${user.role}` : ''}</option>)}</select> : <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">{configuration.creator.email || 'Usuario autenticado'}</p>}
                 </div>
-              </section>
+              </section> : null}
 
-              {formError ? <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-800"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{formError}</span></div> : null}
-              {validation ? (
+              {hasSelectedResponsible && formError ? <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-800"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{formError}</span></div> : null}
+              {hasSelectedResponsible && validation ? (
                 <div className={`rounded-lg border px-4 py-3 ${validation.valid ? 'border-firplak-green/30 bg-firplak-green/5' : 'border-red-200 bg-red-50'}`}>
                   <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">{validation.valid ? <CheckCircle2 className="h-4 w-4 text-firplak-green" /> : <AlertCircle className="h-4 w-4 text-red-700" />}{validation.valid ? `Validación SAP completada: ${formatDate(validation.checkedAt)}` : 'SAP encontró correcciones necesarias'}</div>
                   {validation.issues.length > 0 ? <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-red-800">{validation.issues.map((issue, index) => <li key={`${issue.code}-${index}`}>{issue.lineIndex === null ? '' : `Línea ${issue.lineIndex + 1}: `}{issue.message}</li>)}</ul> : null}
                 </div>
               ) : null}
 
-              <div className="grid gap-3 border-t border-slate-100 pt-5 lg:grid-cols-3">
+              {hasSelectedResponsible ? <div className="grid gap-3 border-t border-slate-100 pt-5 lg:grid-cols-3">
                 <div className="rounded-lg border border-slate-200 p-3"><p className="mb-2 text-sm font-semibold text-slate-800">1. Validar en SAP</p><Button type="button" variant="outline" onClick={() => void validateRequest()} disabled={validating || creating || Boolean(clientFormError)} className="w-full border-slate-300"><FileSearch className="mr-2 h-4 w-4" />{validating ? 'Validando...' : 'Validar en SAP'}</Button></div>
-                <label className="rounded-lg border border-slate-200 p-3 text-sm text-slate-700"><span className="mb-2 block font-semibold text-slate-800">2. Confirmar</span><span className="flex items-start gap-2"><input type="checkbox" checked={confirmed} disabled={!validation?.valid || creating} onChange={event => setConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-firplak-green disabled:opacity-50" /><span>Confirmo la creación en SAP.</span></span></label>
-                <div className="rounded-lg border border-firplak-green/25 bg-firplak-green/5 p-3"><p className="mb-2 text-sm font-semibold text-slate-800">3. Crear solicitud</p><Button type="button" onClick={() => void createRequest()} disabled={creating || !validation?.valid || !confirmed} className="w-full bg-firplak-green text-white hover:bg-firplak-green/90"><Truck className="mr-2 h-4 w-4" />{creating ? 'Creando en SAP...' : 'Crear solicitud'}</Button></div>
-              </div>
+                <label className="rounded-lg border border-slate-200 p-3 text-sm text-slate-700"><span className="mb-2 block font-semibold text-slate-800">2. Confirmar</span><span className="flex items-start gap-2"><input type="checkbox" checked={confirmed} disabled={!validation?.valid || creating} onChange={event => setConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-firplak-green disabled:opacity-50" /><span>{editingRequest ? 'Confirmo la modificación en SAP.' : 'Confirmo la creación en SAP.'}</span></span></label>
+                <div className="rounded-lg border border-firplak-green/25 bg-firplak-green/5 p-3"><p className="mb-2 text-sm font-semibold text-slate-800">3. {editingRequest ? 'Guardar modificación' : 'Crear solicitud'}</p><Button type="button" onClick={() => void createRequest()} disabled={creating || !validation?.valid || !confirmed} className="w-full bg-firplak-green text-white hover:bg-firplak-green/90"><Truck className="mr-2 h-4 w-4" />{creating ? (editingRequest ? 'Modificando en SAP...' : 'Creando en SAP...') : (editingRequest ? 'Modificar solicitud' : 'Crear solicitud')}</Button></div>
+              </div> : null}
              </>
            ) : configurationError ? (
              <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-800"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{configurationError}</span></div>
@@ -770,17 +916,17 @@ export default function TransferRequestsClient() {
 
       <Card>
         <CardHeader className="border-b border-slate-100">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><CardTitle>Historial de Operaciones SAP</CardTitle><CardDescription>Incluye todas las solicitudes creadas desde esta aplicación, con su auditoría y verificación.</CardDescription></div><Button type="button" variant="outline" onClick={() => void loadHistory()} disabled={historyLoading} className="border-slate-200"><RefreshCw className={`mr-2 h-4 w-4 ${historyLoading ? 'animate-spin' : ''}`} />Actualizar</Button></div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><CardTitle>Historial de Operaciones SAP</CardTitle><CardDescription>Incluye creaciones y modificaciones realizadas desde esta aplicación, con su auditoría y verificación.</CardDescription></div><Button type="button" variant="outline" onClick={() => void loadHistory()} disabled={historyLoading} className="border-slate-200"><RefreshCw className={`mr-2 h-4 w-4 ${historyLoading ? 'animate-spin' : ''}`} />Actualizar</Button></div>
         </CardHeader>
         <CardContent className="pt-0">
           {historyError ? <div className="mt-5 flex items-center gap-2 text-sm text-red-700"><AlertCircle className="h-4 w-4" />{historyError}</div> : null}
           {historyLoading ? <div className="flex items-center gap-2 py-8 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Cargando historial...</div> : null}
           {!historyLoading && !historyError ? (
             <Table>
-              <TableHeader><TableRow><TableHead>Documento SAP</TableHead><TableHead>Estado</TableHead><TableHead>Creada por</TableHead><TableHead>Bodegas</TableHead><TableHead>Comentario</TableHead><TableHead className="text-right">Acciones</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead>Documento SAP</TableHead><TableHead>Estado</TableHead><TableHead>Hecha por</TableHead><TableHead>Responsable</TableHead><TableHead>Bodegas</TableHead><TableHead>Comentario</TableHead><TableHead className="text-right">Acciones</TableHead></TableRow></TableHeader>
               <TableBody>
-                {operations.length === 0 ? <TableRow><TableCell colSpan={6} className="h-24 text-center text-slate-500">Aún no hay solicitudes creadas desde la aplicación.</TableCell></TableRow> : null}
-                {operations.map(operation => <TableRow key={operation.id}><TableCell><div className="font-semibold text-slate-800">{operation.sapDocNum ? `#${operation.sapDocNum}` : 'Pendiente de número'}</div><div className="text-xs text-slate-400">{formatDate(operation.createdAt)}</div></TableCell><TableCell><Badge variant={statusVariant(operation.operationStatus)}>{statusLabel(operation.operationStatus)}</Badge>{operation.errorMessage ? <div className="mt-1 max-w-48 truncate text-xs text-red-600" title={operation.errorMessage}>{operation.errorMessage}</div> : null}</TableCell><TableCell><div className="text-sm text-slate-700">{operation.actorEmail || 'No disponible'}</div><div className="text-xs text-slate-400">{operation.actorRole || 'Sin rol'}</div></TableCell><TableCell className="text-sm">{operation.sourceWarehouse || '-'} <span className="text-slate-400">→</span> {operation.destinationWarehouse || '-'}</TableCell><TableCell className="max-w-64 truncate" title={operation.businessComment || ''}>{operation.businessComment || '-'}</TableCell><TableCell className="text-right">{operation.sapDocEntry ? <Button type="button" size="sm" variant="outline" onClick={() => void loadDetail(operation.sapDocEntry!)} disabled={detailLoadingEntry === operation.sapDocEntry} className="border-slate-200">{detailLoadingEntry === operation.sapDocEntry ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <FileSearch className="mr-1.5 h-3.5 w-3.5" />}Ver detalle</Button> : <span className="text-xs text-slate-400">Sin DocEntry</span>}</TableCell></TableRow>)}
+                {operations.length === 0 ? <TableRow><TableCell colSpan={7} className="h-24 text-center text-slate-500">Aún no hay solicitudes creadas desde la aplicación.</TableCell></TableRow> : null}
+                {operations.map(operation => { const responsible = responsibleFromOperation(operation); return <TableRow key={operation.id}><TableCell><div className="font-semibold text-slate-800">{operation.sapDocNum ? `#${operation.sapDocNum}` : 'Pendiente de número'}</div><div className="text-xs text-slate-400">{formatDate(operation.createdAt)}</div></TableCell><TableCell><Badge variant={statusVariant(operation.operationStatus)}>{statusLabel(operation.operationStatus)}</Badge><div className="mt-1 text-xs text-slate-500">{operationTypeLabel(operation)}</div>{operation.errorMessage ? <div className="mt-1 max-w-48 truncate text-xs text-red-600" title={operation.errorMessage}>{operation.errorMessage}</div> : null}</TableCell><TableCell><div className="text-sm text-slate-700">{operation.actorEmail || 'No disponible'}</div><div className="text-xs text-slate-400">{operation.actorRole || 'Sin rol'}</div></TableCell><TableCell><div className="text-sm text-slate-700">{responsible?.email || 'No registrado'}</div><div className="text-xs text-slate-400">{responsible?.role || 'Sin rol'}</div></TableCell><TableCell className="text-sm">{operation.sourceWarehouse || '-'} <span className="text-slate-400">→</span> {operation.destinationWarehouse || '-'}</TableCell><TableCell className="max-w-64 truncate" title={operation.businessComment || ''}>{operation.businessComment || '-'}</TableCell><TableCell className="text-right">{operation.sapDocEntry ? <Button type="button" size="sm" variant="outline" onClick={() => void loadDetail(operation.sapDocEntry!)} disabled={detailLoadingEntry === operation.sapDocEntry} className="border-slate-200">{detailLoadingEntry === operation.sapDocEntry ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <FileSearch className="mr-1.5 h-3.5 w-3.5" />}Ver detalle</Button> : <span className="text-xs text-slate-400">Sin DocEntry</span>}</TableCell></TableRow>})}
               </TableBody>
             </Table>
           ) : null}
@@ -790,10 +936,105 @@ export default function TransferRequestsClient() {
       {detailError ? <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"><AlertCircle className="h-4 w-4" />{detailError}</div> : null}
       {selectedDetail ? (
         <Card className="border-firplak-green/20">
-          <CardHeader className="border-b border-slate-100"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><CardTitle>Detalle verificado desde SAP {selectedDetail.request.docNum ? `#${selectedDetail.request.docNum}` : ''}</CardTitle><CardDescription>Leído nuevamente desde SAP antes de mostrarlo.</CardDescription></div><a href={`/api/engineering/sap-operations/transfer-requests/${selectedDetail.request.docEntry}/pdf`}><Button type="button" className="bg-slate-900 text-white hover:bg-slate-800"><Download className="mr-2 h-4 w-4" />Descargar PDF</Button></a></div></CardHeader>
-          <CardContent className="space-y-5 pt-5"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Estado SAP</span><span className="text-sm font-bold text-slate-800">{selectedDetail.request.documentStatus || 'No disponible'}</span></div><div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Documento</span><span className="text-sm font-bold text-slate-800">{formatDate(selectedDetail.request.docDate)}</span></div><div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Vencimiento</span><span className="text-sm font-bold text-slate-800">{formatDate(selectedDetail.request.dueDate)}</span></div><div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Contabilización</span><span className="text-sm font-bold text-slate-800">{formatDate(selectedDetail.request.taxDate)}</span></div></div><Table><TableHeader><TableRow><TableHead>Artículo</TableHead><TableHead>Unidad</TableHead><TableHead>Cantidad</TableHead><TableHead>De almacén</TableHead><TableHead>Destino</TableHead><TableHead>Tipo</TableHead></TableRow></TableHeader><TableBody>{selectedDetail.request.lines.map(line => <TableRow key={`${line.lineNumber}-${line.itemCode}`}><TableCell><div className="font-semibold">{line.itemCode}</div><div className="text-xs text-slate-500">{line.itemDescription || 'Sin descripción'}</div></TableCell><TableCell>{line.unitOfMeasure || '-'}</TableCell><TableCell>{formatNumber(line.quantity)}</TableCell><TableCell>{line.fromWarehouseCode || '-'}</TableCell><TableCell>{line.warehouseCode || '-'}</TableCell><TableCell>{line.transferType || '-'}</TableCell></TableRow>)}</TableBody></Table><div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700"><span className="font-semibold">Comentario contextual:</span> {selectedDetail.request.businessComment || selectedDetail.operation.businessComment || 'No disponible'}</div></CardContent>
+          <CardHeader className="border-b border-slate-100">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div><CardTitle>Detalle verificado desde SAP {selectedDetail.request.docNum ? `#${selectedDetail.request.docNum}` : ''}</CardTitle><CardDescription>Leído nuevamente desde SAP antes de mostrarlo.</CardDescription></div>
+              <div className="flex flex-wrap gap-2">
+                {isEditableDocumentStatus(selectedDetail.request.documentStatus) ? <Button type="button" variant="outline" onClick={() => void startEditingRequest()} className="border-firplak-green text-firplak-green hover:bg-firplak-green/5"><Pencil className="mr-2 h-4 w-4" />Modificar solicitud</Button> : <span className="self-center text-xs text-slate-500">SAP ya no permite modificar esta solicitud.</span>}
+                <Button type="button" onClick={printTransferRequest} className="bg-slate-900 text-white hover:bg-slate-800"><Printer className="mr-2 h-4 w-4" />Imprimir comprobante</Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-5 pt-5">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Estado SAP</span><span className="text-sm font-bold text-slate-800">{selectedDetail.request.documentStatus || 'No disponible'}</span></div>
+              <div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Documento SAP</span><span className="text-sm font-bold text-slate-800">{selectedDetail.request.docNum ? `#${selectedDetail.request.docNum}` : 'No disponible'}</span></div>
+              <div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Fecha documento</span><span className="text-sm font-bold text-slate-800">{formatDate(selectedDetail.request.docDate)}</span></div>
+              <div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Vencimiento</span><span className="text-sm font-bold text-slate-800">{formatDate(selectedDetail.request.dueDate)}</span></div>
+              <div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Contabilización</span><span className="text-sm font-bold text-slate-800">{formatDate(selectedDetail.request.taxDate)}</span></div>
+              <div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Socio</span><span className="text-sm font-bold text-slate-800">{selectedDetail.request.cardCode || 'No disponible'}</span></div>
+              <div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Destino</span><span className="text-sm font-bold text-slate-800">{selectedDetail.request.shipToCode || 'No disponible'}</span></div>
+              <div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Contacto SAP</span><span className="text-sm font-bold text-slate-800">{selectedDetail.request.contactPerson ?? 'No disponible'}</span></div>
+              <div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Solicitó</span><span className="block break-all text-sm font-bold text-slate-800">{selectedDetail.operation.actorEmail || 'No registrado'}</span><span className="text-xs text-slate-500">{selectedDetail.operation.actorRole || 'Sin rol'}</span></div>
+              <div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Responsable</span><span className="block break-all text-sm font-bold text-slate-800">{detailResponsible?.email || 'No registrado'}</span><span className="text-xs text-slate-500">{detailResponsible?.role || 'Sin rol'}</span></div>
+            </div>
+            <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm sm:grid-cols-2"><div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Bodega de salida</span><span className="font-bold text-slate-800">{selectedDetail.request.fromWarehouse || selectedDetail.operation.sourceWarehouse || 'No disponible'}</span></div><div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Bodega de entrada</span><span className="font-bold text-slate-800">{selectedDetail.request.toWarehouse || selectedDetail.operation.destinationWarehouse || 'No disponible'}</span></div></div>
+            <Table><TableHeader><TableRow><TableHead>Artículo</TableHead><TableHead>Unidad</TableHead><TableHead>Cantidad</TableHead><TableHead>De almacén</TableHead><TableHead>Destino</TableHead><TableHead>Tipo</TableHead></TableRow></TableHeader><TableBody>{selectedDetail.request.lines.map(line => <TableRow key={`${line.lineNumber}-${line.itemCode}`}><TableCell><div className="font-semibold">{line.itemCode}</div><div className="text-xs text-slate-500">{line.itemDescription || 'Sin descripción'}</div></TableCell><TableCell>{line.unitOfMeasure || '-'}</TableCell><TableCell>{formatNumber(line.quantity)}</TableCell><TableCell>{line.fromWarehouseCode || '-'}</TableCell><TableCell>{line.warehouseCode || '-'}</TableCell><TableCell>{line.transferType || '-'}</TableCell></TableRow>)}</TableBody></Table>
+            <div className="flex justify-end border-t border-slate-200 pt-3 text-sm text-slate-700"><span className="mr-4 font-semibold">Total solicitado</span><span className="font-bold text-slate-900">{formatNumber(detailTotalQuantity)}</span></div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700"><span className="font-semibold">Comentario contextual:</span> {selectedDetail.request.businessComment || selectedDetail.operation.businessComment || 'No disponible'}</div>
+          </CardContent>
         </Card>
       ) : null}
+      {selectedDetail ? (
+        <section data-transfer-print-sheet className="hidden" aria-hidden="true">
+          <div className="transfer-print-sheet">
+            <header className="transfer-print-header">
+              <div>
+                <div className="transfer-print-brand">FIRPLAK</div>
+                <div className="transfer-print-company">Firplak S.A.</div>
+              </div>
+              <div className="transfer-print-title-block">
+                <h1>Solicitud de traslado</h1>
+                <div className="transfer-print-document-data">
+                  <div><span>Almacén de salida</span><strong>{selectedDetail.request.fromWarehouse || selectedDetail.operation.sourceWarehouse || '-'}</strong></div>
+                  <div><span>Número de documento</span><strong>{selectedDetail.request.docNum ? `#${selectedDetail.request.docNum}` : '-'}</strong></div>
+                  <div><span>Fecha de entrega</span><strong>{formatDate(selectedDetail.request.docDate)}</strong></div>
+                </div>
+              </div>
+            </header>
+
+            <div className="transfer-print-destination"><strong>Almacén de entrada:</strong> {selectedDetail.request.toWarehouse || selectedDetail.operation.destinationWarehouse || '-'}</div>
+            <div className="transfer-print-meta">
+              <span><strong>Solicitó:</strong> {selectedDetail.operation.actorEmail || 'No registrado'}</span>
+              <span><strong>Responsable:</strong> {detailResponsible?.email || 'No registrado'}</span>
+              <span><strong>Contacto SAP:</strong> {selectedDetail.request.contactPerson ?? '-'}</span>
+            </div>
+
+            <table className="transfer-print-table">
+              <thead><tr><th>#</th><th>Artículo / descripción</th><th>UND</th><th>Cant.</th><th>Tipo</th></tr></thead>
+              <tbody>{selectedDetail.request.lines.map((line, index) => <tr key={`print-${line.lineNumber}-${line.itemCode}`}><td>{index + 1}</td><td><strong>{line.itemCode}</strong>{line.itemDescription ? <span>{line.itemDescription}</span> : null}</td><td>{line.unitOfMeasure || '-'}</td><td>{formatNumber(line.quantity)}</td><td>{line.transferType || '-'}</td></tr>)}</tbody>
+            </table>
+
+            <footer className="transfer-print-footer">
+              <div className="transfer-print-total"><strong>Total:</strong> {formatNumber(detailTotalQuantity)}</div>
+              <div className="transfer-print-comment"><strong>Comentarios</strong><span>{selectedDetail.request.businessComment || selectedDetail.operation.businessComment || 'Sin comentario'}</span></div>
+            </footer>
+          </div>
+        </section>
+      ) : null}
+      {selectedDetail ? <style>{`@page { size: letter portrait; margin: 12mm; }
+        @media print {
+          body * { visibility: hidden; }
+          [data-transfer-print-sheet], [data-transfer-print-sheet] * { visibility: visible !important; }
+          [data-transfer-print-sheet] { display: block !important; position: absolute; left: 0; top: 0; width: 100%; }
+          .transfer-print-sheet { box-sizing: border-box; color: #1f3442; font-family: Arial, sans-serif; font-size: 9pt; line-height: 1.22; max-width: 192mm; }
+          .transfer-print-header { align-items: end; border-bottom: 1px solid #79b8df; display: grid; gap: 12mm; grid-template-columns: 1fr 1.65fr; padding-bottom: 4mm; }
+          .transfer-print-brand { color: #294a5c; font-size: 24pt; font-weight: 500; letter-spacing: .06em; line-height: 1; }
+          .transfer-print-company { font-size: 10pt; font-weight: 700; margin-top: 5mm; }
+          .transfer-print-title-block h1 { border-left: 3mm solid #f4b000; color: #12202b; font-size: 16pt; line-height: 1.05; margin: 0 0 3mm; padding-left: 3mm; }
+          .transfer-print-document-data { display: grid; gap: 3mm; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+          .transfer-print-document-data span { color: #6f8290; display: block; font-size: 7.5pt; }
+          .transfer-print-document-data strong { color: #14232e; display: block; font-size: 9pt; margin-top: 1mm; }
+          .transfer-print-destination { border-bottom: 1px dotted #79b8df; color: #13222c; font-size: 10pt; margin-top: 5mm; padding-bottom: 4mm; }
+          .transfer-print-meta { color: #526673; display: flex; flex-wrap: wrap; font-size: 7.5pt; gap: 2mm 7mm; margin: 3mm 0; }
+          .transfer-print-meta strong { color: #263b48; }
+          .transfer-print-table { border-collapse: collapse; table-layout: fixed; width: 100%; }
+          .transfer-print-table th { background: #f4f7f8; border-bottom: 1px solid #3e9dd5; color: #314957; font-size: 7.5pt; font-weight: 700; padding: 2mm 1.5mm; text-align: left; }
+          .transfer-print-table td { border-bottom: 1px dotted #79b8df; padding: 2mm 1.5mm; vertical-align: top; word-break: break-word; }
+          .transfer-print-table th:nth-child(1), .transfer-print-table td:nth-child(1) { text-align: center; width: 5%; }
+          .transfer-print-table th:nth-child(2), .transfer-print-table td:nth-child(2) { width: 63%; }
+          .transfer-print-table th:nth-child(3), .transfer-print-table td:nth-child(3) { width: 9%; }
+          .transfer-print-table th:nth-child(4), .transfer-print-table td:nth-child(4) { text-align: right; width: 11%; }
+          .transfer-print-table th:nth-child(5), .transfer-print-table td:nth-child(5) { width: 12%; }
+          .transfer-print-table td:nth-child(2) strong { display: block; font-size: 8.5pt; }
+          .transfer-print-table td:nth-child(2) span { color: #526673; display: block; font-size: 7.5pt; margin-top: .5mm; }
+          .transfer-print-footer { margin-top: 3mm; }
+          .transfer-print-total { border-bottom: 1px solid #3e9dd5; font-size: 10pt; padding: 2mm 1.5mm; text-align: right; }
+          .transfer-print-total strong { margin-right: 8mm; }
+          .transfer-print-comment { margin-top: 3mm; }
+          .transfer-print-comment strong { display: block; font-size: 8pt; margin-bottom: 1mm; }
+          .transfer-print-comment span { display: block; min-height: 6mm; white-space: pre-wrap; }
+        }`}</style> : null}
     </div>
   )
 }

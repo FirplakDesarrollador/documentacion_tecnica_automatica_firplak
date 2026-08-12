@@ -11,6 +11,7 @@ import {
   getSapSerialNumberDetails,
   SapServiceLayerError,
   searchSapItems,
+  updateSapInventoryTransferRequest,
   type SapEntityPayload,
 } from './serviceLayer'
 
@@ -1191,6 +1192,13 @@ export type SapTransferRequestPayload = SapEntityPayload & {
   StockTransferLines: SapTransferRequestPayloadLine[]
 }
 
+export type SapTransferRequestUpdatePayload = SapEntityPayload & {
+  FromWarehouse: string
+  ToWarehouse: string
+  U_Comentarios: string
+  StockTransferLines: SapTransferRequestPayloadLine[]
+}
+
 /** Converts a successful no-write validation into the exact SAP POST body. */
 export function buildSapTransferRequestPayload(validation: SapTransferRequestValidationSuccess): SapTransferRequestPayload {
   const documentDate = currentColombiaDate()
@@ -1234,6 +1242,19 @@ export function buildSapTransferRequestPayload(validation: SapTransferRequestVal
     Comments: SAP_TRANSFER_REQUEST_AUTOMATIC_COMMENT,
     U_Comentarios: validation.businessComment,
     StockTransferLines: stockTransferLines,
+  }
+}
+
+/** Builds the mutable subset of a request without changing its original dates or fixed partner data. */
+export function buildSapTransferRequestUpdatePayload(
+  validation: SapTransferRequestValidationSuccess,
+): SapTransferRequestUpdatePayload {
+  const createdPayload = buildSapTransferRequestPayload(validation)
+  return {
+    FromWarehouse: createdPayload.FromWarehouse,
+    ToWarehouse: createdPayload.ToWarehouse,
+    U_Comentarios: createdPayload.U_Comentarios,
+    StockTransferLines: createdPayload.StockTransferLines,
   }
 }
 
@@ -1341,6 +1362,24 @@ export async function getSapTransferRequestByDocEntry(docEntry: number): Promise
   return normalizeSapTransferRequestDocument(rawDocument)
 }
 
+export function isSapTransferRequestEditable(document: SapTransferRequestDocument): boolean {
+  const status = document.documentStatus?.trim().toLowerCase() ?? ''
+  return status === 'bost_open' || status === 'open'
+}
+
+export class SapTransferRequestNotEditableError extends SapServiceLayerError {
+  constructor(documentStatus: string | null) {
+    super('La solicitud ya no está abierta en SAP y no se puede modificar.', {
+      statusCode: 409,
+      sapCode: 'SAP_TRANSFER_REQUEST_NOT_EDITABLE',
+    })
+    this.name = 'SapTransferRequestNotEditableError'
+    this.documentStatus = documentStatus
+  }
+
+  readonly documentStatus: string | null
+}
+
 export class SapTransferRequestValidationError extends SapServiceLayerError {
   readonly issues: SapTransferRequestValidationIssue[]
 
@@ -1363,6 +1402,19 @@ export class SapTransferRequestCreationAmbiguousError extends SapServiceLayerErr
       sapCode: 'SAP_TRANSFER_REQUEST_CREATION_AMBIGUOUS',
     })
     this.name = 'SapTransferRequestCreationAmbiguousError'
+    this.docEntry = docEntry
+  }
+}
+
+export class SapTransferRequestUpdateAmbiguousError extends SapServiceLayerError {
+  readonly docEntry: number
+
+  constructor(message: string, docEntry: number) {
+    super(message, {
+      statusCode: 502,
+      sapCode: 'SAP_TRANSFER_REQUEST_UPDATE_AMBIGUOUS',
+    })
+    this.name = 'SapTransferRequestUpdateAmbiguousError'
     this.docEntry = docEntry
   }
 }
@@ -1421,6 +1473,61 @@ export async function createAndVerifySapTransferRequest(
   } catch {
     throw new SapTransferRequestCreationAmbiguousError(
       'SAP recibió la creación, pero no fue posible releer la solicitud. Consulte el historial antes de reintentar.',
+      docEntry,
+    )
+  }
+}
+
+export type SapTransferRequestUpdateResult = {
+  validation: SapTransferRequestValidationSuccess
+  payload: SapTransferRequestUpdatePayload
+  previousDocument: SapTransferRequestDocument
+  document: SapTransferRequestDocument
+}
+
+export type SapTransferRequestBeforeUpdateHook = (context: {
+  validation: SapTransferRequestValidationSuccess
+  payload: SapTransferRequestUpdatePayload
+  previousDocument: SapTransferRequestDocument
+}) => Promise<void>
+
+/**
+ * Revalidates stock and rereads the exact request immediately before PATCH.
+ * Only documents that SAP still reports as open can be changed.
+ */
+export async function updateAndVerifySapTransferRequest(
+  docEntry: number,
+  input: unknown,
+  options: { beforeUpdate?: SapTransferRequestBeforeUpdateHook } = {},
+): Promise<SapTransferRequestUpdateResult> {
+  const validation = await validateSapTransferRequest(input)
+  if (!validation.valid) throw new SapTransferRequestValidationError(validation)
+
+  const previousDocument = await getSapTransferRequestByDocEntry(docEntry)
+  if (!isSapTransferRequestEditable(previousDocument)) {
+    throw new SapTransferRequestNotEditableError(previousDocument.documentStatus)
+  }
+
+  const payload = buildSapTransferRequestUpdatePayload(validation)
+  await options.beforeUpdate?.({ validation, payload, previousDocument })
+  try {
+    await updateSapInventoryTransferRequest(docEntry, payload)
+  } catch (error) {
+    if (isPotentiallyAmbiguousSapWriteError(error)) {
+      throw new SapTransferRequestUpdateAmbiguousError(
+        'SAP no confirmó si la solicitud fue modificada. Consulte el detalle antes de reintentar.',
+        docEntry,
+      )
+    }
+    throw error
+  }
+
+  try {
+    const document = await getSapTransferRequestByDocEntry(docEntry)
+    return { validation, payload, previousDocument, document }
+  } catch {
+    throw new SapTransferRequestUpdateAmbiguousError(
+      'SAP recibió la modificación, pero no fue posible releer la solicitud. Consulte el detalle antes de reintentar.',
       docEntry,
     )
   }

@@ -560,6 +560,28 @@ export async function getSapInventoryTransferRequest(docEntry: number): Promise<
   return response
 }
 
+/**
+ * Updates an existing inventory transfer request only. SAP applies the line
+ * collection replacement atomically; no StockTransfers endpoint is exposed.
+ */
+export async function updateSapInventoryTransferRequest(
+  docEntry: number,
+  payload: SapEntityPayload,
+): Promise<void> {
+  if (!Number.isSafeInteger(docEntry) || docEntry <= 0) {
+    throw new SapServiceLayerError('docEntry must be a positive integer', {
+      statusCode: 400,
+      sapCode: 'SAP_VALIDATION_ERROR',
+    })
+  }
+  await assertSapWritesEnabled()
+  await sapServiceLayerRequest<unknown>(`/InventoryTransferRequests(${docEntry})`, {
+    method: 'PATCH',
+    body: payload,
+    headers: { 'B1S-ReplaceCollectionsOnPatch': 'true' },
+  })
+}
+
 export type SapStockTransferHistoryLine = {
   docEntry: number | null
   docNum: number | null

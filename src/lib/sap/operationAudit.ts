@@ -4,9 +4,11 @@ import { dbQuery } from '@/lib/supabase'
 import { supabaseTable } from '@/lib/supabaseDynamic'
 
 export const SAP_TRANSFER_REQUEST_CREATE_OPERATION_TYPE = 'inventory_transfer_request_create' as const
+export const SAP_TRANSFER_REQUEST_UPDATE_OPERATION_TYPE = 'inventory_transfer_request_update' as const
 export const SAP_TRANSFER_REQUEST_SUBJECT_TYPE = 'inventory_transfer_request' as const
 export const SAP_OPERATION_TYPES = [
   SAP_TRANSFER_REQUEST_CREATE_OPERATION_TYPE,
+  SAP_TRANSFER_REQUEST_UPDATE_OPERATION_TYPE,
 ] as const
 
 export type SapOperationType = (typeof SAP_OPERATION_TYPES)[number]
@@ -74,6 +76,17 @@ export type StartSapOperationInput = {
 export type SapOperationStartResult = {
   created: boolean
   operation: SapOperationLog
+}
+
+export type UpdateSapOperationInput = {
+  operationId: string
+  idempotencyKey: string
+  sapPayload: Record<string, unknown>
+  operationItems: Array<Record<string, unknown>>
+  operationContext: Record<string, unknown>
+  businessComment: string | null
+  sourceWarehouse: string | null
+  destinationWarehouse: string | null
 }
 
 type CompleteSapOperationInput = {
@@ -252,16 +265,16 @@ export async function listSapTransferRequestOperations(limit?: number): Promise<
   const query = normalizedLimit === null
     ? `SELECT *
          FROM public.sap_operation_logs
-        WHERE operation_type = $1
+        WHERE operation_type IN ($1, $2)
         ORDER BY created_at DESC, id DESC`
     : `SELECT *
          FROM public.sap_operation_logs
-        WHERE operation_type = $1
+        WHERE operation_type IN ($1, $2)
         ORDER BY created_at DESC, id DESC
-        LIMIT $2`
+        LIMIT $3`
   const values = normalizedLimit === null
-    ? [SAP_TRANSFER_REQUEST_CREATE_OPERATION_TYPE]
-    : [SAP_TRANSFER_REQUEST_CREATE_OPERATION_TYPE, normalizedLimit]
+    ? [SAP_TRANSFER_REQUEST_CREATE_OPERATION_TYPE, SAP_TRANSFER_REQUEST_UPDATE_OPERATION_TYPE]
+    : [SAP_TRANSFER_REQUEST_CREATE_OPERATION_TYPE, SAP_TRANSFER_REQUEST_UPDATE_OPERATION_TYPE, normalizedLimit]
 
   try {
     const rows = await dbQuery(query, values)
@@ -276,17 +289,36 @@ export async function getSapTransferRequestOperationByDocEntry(docEntry: number)
   try {
     const rows = await dbQuery(
       `SELECT *
+        FROM public.sap_operation_logs
+        WHERE operation_type IN ($1, $2)
+          AND sap_doc_entry = $3
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1`,
+      [SAP_TRANSFER_REQUEST_CREATE_OPERATION_TYPE, SAP_TRANSFER_REQUEST_UPDATE_OPERATION_TYPE, normalizedDocEntry],
+    )
+    const row = readRecords(rows)[0]
+    return row ? parseSapOperationLog(row) : null
+  } catch (error) {
+    rethrowAuditError(error, 'consultar la solicitud de traslado por DocEntry')
+  }
+}
+
+export async function getSapTransferRequestCreationOperationByDocEntry(docEntry: number): Promise<SapOperationLog | null> {
+  const normalizedDocEntry = normalizeSapDocEntry(docEntry)
+  try {
+    const rows = await dbQuery(
+      `SELECT *
          FROM public.sap_operation_logs
         WHERE operation_type = $1
           AND sap_doc_entry = $2
-        ORDER BY created_at DESC, id DESC
+        ORDER BY created_at ASC, id ASC
         LIMIT 1`,
       [SAP_TRANSFER_REQUEST_CREATE_OPERATION_TYPE, normalizedDocEntry],
     )
     const row = readRecords(rows)[0]
     return row ? parseSapOperationLog(row) : null
   } catch (error) {
-    rethrowAuditError(error, 'consultar la solicitud de traslado por DocEntry')
+    rethrowAuditError(error, 'consultar la creación de la solicitud de traslado')
   }
 }
 
@@ -331,6 +363,40 @@ export async function startSapOperation(input: StartSapOperationInput): Promise<
       if (concurrentOperation) return { created: false, operation: concurrentOperation }
     }
     rethrowAuditError(error, 'crear la operaci\u00f3n pendiente')
+  }
+}
+
+/**
+ * Reuses the original request log for a modification. The immutable creator
+ * snapshot remains intact while the contextual modification history records
+ * the latest SAP write without introducing another top-level operation row.
+ */
+export async function prepareSapOperationUpdate(input: UpdateSapOperationInput): Promise<SapOperationLog> {
+  const operationId = normalizeRequiredText(input.operationId, 'El identificador de operación')
+  const idempotencyKey = normalizeRequiredText(input.idempotencyKey, 'La clave de idempotencia')
+  const update = {
+    idempotency_key: idempotencyKey,
+    sap_payload: input.sapPayload,
+    operation_items: input.operationItems,
+    operation_context: input.operationContext,
+    business_comment: input.businessComment?.trim() || null,
+    source_warehouse: input.sourceWarehouse?.trim() || null,
+    destination_warehouse: input.destinationWarehouse?.trim() || null,
+    operation_status: 'pending' as const,
+    success: false,
+    error_message: null,
+  }
+
+  try {
+    const { data, error } = await supabaseTable('sap_operation_logs')
+      .update(update)
+      .eq('id', operationId)
+      .select('*')
+      .single()
+    if (error) throw error
+    return parseSapOperationLog(data)
+  } catch (error) {
+    rethrowAuditError(error, 'preparar la modificación de la operación')
   }
 }
 

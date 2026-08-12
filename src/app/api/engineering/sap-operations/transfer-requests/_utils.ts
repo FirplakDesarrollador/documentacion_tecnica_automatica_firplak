@@ -6,6 +6,7 @@ import {
 } from '@/lib/sap/operationAudit'
 import {
   SapTransferRequestCreationAmbiguousError,
+  SapTransferRequestUpdateAmbiguousError,
   SapTransferRequestValidationError,
   type SapTransferRequestValidationIssue,
 } from '@/lib/sap/transferRequests'
@@ -55,6 +56,7 @@ export function serializeOperation(operation: SapOperationLog) {
     destinationWarehouse: operation.destinationWarehouse,
     businessComment: operation.businessComment,
     operationItems: operation.operationItems,
+    operationContext: operation.operationContext,
     errorMessage: operation.errorMessage,
   }
 }
@@ -79,7 +81,7 @@ export function transferRequestErrorResponse(error: unknown): NextResponse {
     }, { status: error.statusCode })
   }
 
-  if (error instanceof SapTransferRequestCreationAmbiguousError) {
+  if (error instanceof SapTransferRequestCreationAmbiguousError || error instanceof SapTransferRequestUpdateAmbiguousError) {
     return NextResponse.json({
       success: false,
       error: error.message,
