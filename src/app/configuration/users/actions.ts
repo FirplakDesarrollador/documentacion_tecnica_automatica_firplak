@@ -398,10 +398,26 @@ export async function sendUserRecoveryAction(input: { userId: string }) {
   const authUser = await fetchAuthUserById(admin, userId)
   const email = normalizeEmail(authUser.email)
   const redirectTo = await getAuthRedirectTo('accept-recovery')
-  const { error } = await admin.auth.resetPasswordForEmail(email, { redirectTo })
+  const { data: recoveryLink, error: generateLinkError } = await admin.auth.admin.generateLink({
+    type: 'recovery',
+    email,
+    options: { redirectTo },
+  })
 
-  if (error) {
-    throw new Error(`No se pudo enviar el correo de recuperación: ${readErrorMessage(error)}`)
+  if (generateLinkError || !recoveryLink.properties?.action_link) {
+    throw new Error(`No se pudo generar el enlace de recuperación: ${readErrorMessage(generateLinkError)}`)
+  }
+
+  const { error: deliveryError } = await admin.functions.invoke('samigen-auth-email', {
+    body: {
+      recipient: email,
+      actionType: 'recovery',
+      actionUrl: recoveryLink.properties.action_link,
+    },
+  })
+
+  if (deliveryError) {
+    throw new Error(`No se pudo enviar el correo de recuperación: ${readErrorMessage(deliveryError)}`)
   }
 
   return { success: true }

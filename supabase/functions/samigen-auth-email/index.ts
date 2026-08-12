@@ -11,11 +11,23 @@ type AuthEmailEvent = {
   email_data?: AuthEmailData
 }
 
+type InternalEmailRequest = {
+  recipient?: unknown
+  actionType?: unknown
+  actionUrl?: unknown
+}
+
 type AutomationMessage = {
   recipient: string
   subject: string
   html: string
   actionType: string
+}
+
+type EmailMessageInput = {
+  recipient: string
+  actionType: string
+  actionUrl: string | null
 }
 
 const htmlEscape = (value: string) => value
@@ -69,18 +81,10 @@ function buildVerificationUrl(event: AuthEmailEvent) {
   return url.toString()
 }
 
-function buildMessage(event: AuthEmailEvent): AutomationMessage {
-  const recipient = event.user?.email?.trim().toLowerCase()
-  const actionType = event.email_data?.email_action_type?.trim() || 'auth'
-  const verificationUrl = buildVerificationUrl(event)
-
-  if (!recipient) {
-    throw new Error('El evento de Auth no contiene un destinatario.')
-  }
-
+function buildMessage({ recipient, actionType, actionUrl }: EmailMessageInput): AutomationMessage {
   const copy = getMessageCopy(actionType)
-  const action = verificationUrl
-    ? `<p style="margin:28px 0"><a href="${htmlEscape(verificationUrl)}" style="display:inline-block;background:#27485a;color:#ffffff;padding:13px 20px;border-radius:8px;text-decoration:none;font-weight:700">${copy.buttonLabel}</a></p>`
+  const action = actionUrl
+    ? `<p style="margin:28px 0"><a href="${htmlEscape(actionUrl)}" style="display:inline-block;background:#27485a;color:#ffffff;padding:13px 20px;border-radius:8px;text-decoration:none;font-weight:700">${copy.buttonLabel}</a></p>`
     : ''
 
   return {
@@ -88,6 +92,56 @@ function buildMessage(event: AuthEmailEvent): AutomationMessage {
     subject: copy.subject,
     actionType,
     html: `<div style="font-family:Arial,sans-serif;color:#1f2937;line-height:1.55;max-width:600px;margin:0 auto"><h1 style="color:#27485a">${copy.heading}</h1><p>${copy.intro}</p>${action}<p style="font-size:13px;color:#64748b">Si no esperabas este correo, puedes ignorarlo.</p></div>`,
+  }
+}
+
+function getMessageFromAuthEvent(event: AuthEmailEvent) {
+  const recipient = event.user?.email?.trim().toLowerCase()
+
+  if (!recipient) {
+    throw new Error('El evento de Auth no contiene un destinatario.')
+  }
+
+  return buildMessage({
+    recipient,
+    actionType: event.email_data?.email_action_type?.trim() || 'auth',
+    actionUrl: buildVerificationUrl(event),
+  })
+}
+
+function getMessageFromInternalRequest(rawPayload: string): AutomationMessage {
+  const payload = JSON.parse(rawPayload) as InternalEmailRequest
+  const recipient = typeof payload.recipient === 'string' ? payload.recipient.trim().toLowerCase() : ''
+  const actionType = typeof payload.actionType === 'string' ? payload.actionType.trim() : ''
+  const actionUrl = typeof payload.actionUrl === 'string' ? payload.actionUrl.trim() : ''
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')
+
+  if (!recipient || !recipient.includes('@') || actionType !== 'recovery' || !actionUrl || !supabaseUrl) {
+    throw new Error('La solicitud interna de recuperación no es válida.')
+  }
+
+  const parsedActionUrl = new URL(actionUrl)
+  if (parsedActionUrl.origin !== supabaseUrl || parsedActionUrl.pathname !== '/auth/v1/verify') {
+    throw new Error('El enlace de recuperación no pertenece al proyecto de Supabase.')
+  }
+
+  return buildMessage({
+    recipient,
+    actionType,
+    actionUrl: parsedActionUrl.toString(),
+  })
+}
+
+async function sendToPowerAutomate(message: AutomationMessage, automationUrl: string) {
+  const automationResponse = await fetch(automationUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(message),
+    signal: AbortSignal.timeout(4_000),
+  })
+
+  if (!automationResponse.ok) {
+    throw new Error('Power Automate no confirmó el envío del correo.')
   }
 }
 
@@ -105,26 +159,24 @@ Deno.serve(async (request) => {
 
   const hookSecret = Deno.env.get('SAMIGEN_SEND_EMAIL_HOOK_SECRET')
   const automationUrl = Deno.env.get('POWER_AUTOMATE_AUTH_EMAIL_URL')
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
 
-  if (!hookSecret || !automationUrl) {
+  if (!hookSecret || !automationUrl || !serviceRoleKey) {
     return errorResponse('La función de correo no está configurada.', 503)
   }
 
   try {
     const rawPayload = await request.text()
-    const webhook = new Webhook(hookSecret.replace('v1,whsec_', ''))
-    const event = webhook.verify(rawPayload, Object.fromEntries(request.headers)) as AuthEmailEvent
-    const message = buildMessage(event)
-    const automationResponse = await fetch(automationUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(message),
-      signal: AbortSignal.timeout(4_000),
-    })
-
-    if (!automationResponse.ok) {
-      return errorResponse('Power Automate no confirmó el envío del correo.', 502)
-    }
+    const isInternalRequest = request.headers.get('authorization') === `Bearer ${serviceRoleKey}`
+    const message = isInternalRequest
+      ? getMessageFromInternalRequest(rawPayload)
+      : getMessageFromAuthEvent(
+        new Webhook(hookSecret.replace('v1,whsec_', '')).verify(
+          rawPayload,
+          Object.fromEntries(request.headers),
+        ) as AuthEmailEvent,
+      )
+    await sendToPowerAutomate(message, automationUrl)
 
     return new Response(JSON.stringify({}), {
       status: 200,
