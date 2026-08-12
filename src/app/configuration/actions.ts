@@ -3,12 +3,12 @@
 import { revalidatePath } from 'next/cache'
 
 import { dbQuery } from '@/lib/supabase'
-import { assertPermission } from '@/utils/auth/access'
+import { assertRole } from '@/utils/auth/access'
 
 const SAP_WRITES_SETTING_KEY = 'sap_writes_enabled'
 
 export async function saveSapWriteSettingsAction(input: { enabled: boolean }) {
-  await assertPermission('module:configuration')
+  await assertRole('admin')
 
   const enabled = input.enabled === true
   await dbQuery(`

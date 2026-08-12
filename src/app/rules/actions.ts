@@ -31,7 +31,7 @@ import {
     type NamingVariableField,
     type NamingVariableSource,
 } from '@/lib/engine/namingVariableCatalog'
-import { assertPermission } from '@/utils/auth/access'
+import { assertPermission, assertRole } from '@/utils/auth/access'
 
 async function assertAdminAccess() {
     await assertPermission('module:configuration')
@@ -523,7 +523,7 @@ export async function saveGlossaryTermsAction(terms: { es: string, en: string }[
 }
 
 export async function saveMassImportSettingsAction(input: { executeEnabled: boolean; safeMaxRows: number }) {
-    await assertAdminAccess()
+    await assertRole('admin')
 
     const executeEnabled = !!input.executeEnabled
     const safeMaxRows = Number(input.safeMaxRows)

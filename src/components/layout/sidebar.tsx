@@ -4,30 +4,22 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
     Package,
-    Home,
     Menu,
-    FileText,
-    Settings,
-    Image as ImageIcon,
-    LayoutTemplate,
-    AlertTriangle,
     ChevronLeft,
     ChevronRight,
-    Database,
     LogOut,
     Loader2,
-    Printer,
     RefreshCw,
-    Search,
-    Wrench,
 } from 'lucide-react'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import pkg from '../../../package.json'
 import { getNamingWorkStatusAction, processPendingNamingWorkAction, type NamingWorkStatus } from '@/app/naming/actions'
+import { SidebarNavigation } from '@/components/layout/sidebar-navigation'
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
 import { Toaster } from '@/components/ui/sonner'
+import { resolveModuleNavigationTree } from '@/lib/navigation/moduleHierarchy'
 import { cn } from '@/lib/utils'
 import { GENERATE_LAST_URL_STORAGE_KEY, normalizeGenerateLastUrl } from '@/lib/navigation/generateLastUrl'
 import { type Permission, type UserRole } from '@/types/auth'
@@ -42,29 +34,9 @@ type SidebarAccess = {
     roleLabel: string
     permissions: Permission[]
     isAuthenticated: boolean
+    isAdmin: boolean
+    homePath: string
 }
-
-type NavItem = {
-    name: string
-    href: string
-    icon: typeof Home
-    permission: Permission
-}
-
-const NAV_ITEMS: NavItem[] = [
-    { name: 'Inicio', href: '/', icon: Home, permission: 'module:dashboard' },
-    { name: 'Pendientes', href: '/pending', icon: AlertTriangle, permission: 'module:pending' },
-    { name: 'Plantillas', href: '/templates', icon: LayoutTemplate, permission: 'module:templates' },
-    { name: 'Bases de Datos', href: '/datasets', icon: Database, permission: 'module:datasets' },
-    { name: 'Recursos', href: '/assets', icon: ImageIcon, permission: 'module:assets' },
-    { name: 'Generar', href: '/generate', icon: FileText, permission: 'module:generate' },
-    { name: 'Impresion', href: '/print', icon: Printer, permission: 'module:print' },
-    { name: 'Diseño de producto', href: '/product-design', icon: Package, permission: 'module:product-design' },
-    { name: 'Modulos productivos', href: '/productive-modules', icon: Database, permission: 'module:productive-modules' },
-    { name: 'Ingeniería', href: '/engineering', icon: Wrench, permission: 'module:engineering' },
-    { name: 'Configuracion', href: '/configuration', icon: Settings, permission: 'module:configuration' },
-    { name: 'Consulta SAP', href: '/consulta-sap', icon: Search, permission: 'module:consulta-sap' },
-]
 
 function getUserInitials(email: string | null, roleLabel: string) {
     const source = (email || roleLabel).trim()
@@ -74,12 +46,6 @@ function getUserInitials(email: string | null, roleLabel: string) {
     const first = parts[0]?.[0] || 'S'
     const second = parts[1]?.[0] || parts[0]?.[1] || 'G'
     return `${first}${second}`.toUpperCase()
-}
-
-function isItemActive(pathname: string, href: string) {
-    return pathname === href
-        || (pathname.startsWith(href) && href !== '/')
-        || (href === '/' && (pathname === '/new' || pathname === '/mass-import'))
 }
 
 function isStandaloneRoute(pathname: string | null) {
@@ -105,7 +71,8 @@ export function Sidebar({
 
     const router = useRouter()
     const supabase = createClient()
-    const visibleNavItems = NAV_ITEMS.filter((item) => access.permissions.includes(item.permission))
+    const hasVisibleNavigation = resolveModuleNavigationTree(access.permissions, access.isAdmin).length > 0
+    const logoHref = access.homePath
     const roleLabel = access.roleLabel
     const userEmail = access.user?.email ?? null
     const userInitials = getUserInitials(userEmail, roleLabel)
@@ -239,7 +206,7 @@ export function Sidebar({
                 >
                     <div className="flex h-full max-h-screen flex-col">
                         <div className="flex h-16 items-center justify-between border-b border-white/10 px-6">
-                            <Link href={access.role === 'production' ? '/print' : '/'} className={cn('flex items-center gap-3 font-bold tracking-tight text-sidebar-foreground transition-opacity hover:opacity-85', isCollapsed && 'justify-center px-0')}>
+                            <Link href={logoHref} className={cn('flex items-center gap-3 font-bold tracking-tight text-sidebar-foreground transition-opacity hover:opacity-85', isCollapsed && 'justify-center px-0')}>
                                 <div className="shrink-0 rounded-lg bg-white/10 p-2 text-firplak-ivory ring-1 ring-white/15">
                                     <Package className="h-5 w-5" />
                                 </div>
@@ -267,7 +234,7 @@ export function Sidebar({
                         </div>
 
                         <div className="flex-1 overflow-y-auto py-6">
-                            {visibleNavItems.length > 0 && (
+                            {hasVisibleNavigation && (
                                 <>
                                     <div className={cn('px-4 mb-2', isCollapsed && 'px-0 text-center')}>
                                         {!isCollapsed ? (
@@ -276,31 +243,15 @@ export function Sidebar({
                                             <div className="mx-4 my-2 h-px bg-white/10" />
                                         )}
                                     </div>
-                                    <nav className="grid items-start px-3 text-sm font-medium gap-1">
-                                        {visibleNavItems.map((item) => {
-                                            const itemHref = item.permission === 'module:generate' ? generateHref : item.href
-                                            const isActive = isItemActive(pathname, item.href)
-                                            return (
-                                                <Link
-                                                    key={item.name}
-                                                    href={itemHref}
-                                                    title={isCollapsed ? item.name : undefined}
-                                                    className={cn(
-                                                        'group relative flex items-center rounded-lg px-3 py-2.5 transition-all duration-200',
-                                                        isActive
-                                                            ? 'bg-white/10 font-semibold text-white ring-1 ring-white/10'
-                                                            : 'text-white/65 hover:bg-white/10 hover:text-white',
-                                                        isCollapsed ? 'justify-center px-2' : 'gap-3'
-                                                    )}
-                                                >
-                                                    {isActive && (
-                                                        <div className="absolute bottom-1.5 left-0 top-1.5 w-1 rounded-r-full bg-firplak-green" />
-                                                    )}
-                                                    <item.icon className={cn('h-4 w-4 shrink-0 transition-colors', isActive ? 'text-firplak-ivory' : 'text-white/60 group-hover:text-white')} />
-                                                    {!isCollapsed && <span className="truncate">{item.name}</span>}
-                                                </Link>
-                                            )
-                                        })}
+                                    <nav className="grid items-start gap-1 px-3 text-sm font-medium">
+                                        <SidebarNavigation
+                                            permissions={access.permissions}
+                                            isAdmin={access.isAdmin}
+                                            pathname={pathname}
+                                            generateHref={generateHref}
+                                            isCollapsed={isCollapsed}
+                                            onExpandSidebar={isCollapsed ? toggleSidebar : undefined}
+                                        />
                                     </nav>
                                 </>
                             )}
@@ -398,7 +349,7 @@ export function Sidebar({
                             </SheetTrigger>
                             <SheetContent side="left" className="flex w-72 flex-col border-sidebar-border bg-sidebar p-0">
                                 <div className="flex h-16 items-center border-b border-white/10 px-6">
-                                    <Link href={access.role === 'production' ? '/print' : '/'} className="flex items-center gap-3 font-bold text-sidebar-foreground">
+                                    <Link href={logoHref} className="flex items-center gap-3 font-bold text-sidebar-foreground">
                                         <div className="rounded-lg bg-white/10 p-2 text-firplak-ivory ring-1 ring-white/15">
                                             <Package className="h-5 w-5" />
                                         </div>
@@ -406,28 +357,14 @@ export function Sidebar({
                                     </Link>
                                 </div>
                                 <nav className="grid gap-1 px-3 py-6 text-sm font-medium">
-                                    {visibleNavItems.map((item) => {
-                                        const itemHref = item.permission === 'module:generate' ? generateHref : item.href
-                                        const isActive = isItemActive(pathname, item.href)
-                                        return (
-                                            <Link
-                                                key={item.href}
-                                                href={itemHref}
-                                                className={cn(
-                                                    'flex items-center gap-3 rounded-lg px-3 py-3 transition-all relative',
-                                                    isActive
-                                                        ? 'bg-white/10 font-semibold text-white ring-1 ring-white/10'
-                                                        : 'text-white/65 hover:bg-white/10 hover:text-white'
-                                                )}
-                                            >
-                                                {isActive && (
-                                                    <div className="absolute bottom-2 left-0 top-2 w-1 rounded-r-full bg-firplak-green" />
-                                                )}
-                                                <item.icon className={cn('h-5 w-5', isActive ? 'text-firplak-ivory' : 'text-white/60')} />
-                                                {item.name}
-                                            </Link>
-                                        )
-                                    })}
+                                    <SidebarNavigation
+                                        permissions={access.permissions}
+                                        isAdmin={access.isAdmin}
+                                        pathname={pathname}
+                                        generateHref={generateHref}
+                                        isCollapsed={false}
+                                        mobile
+                                    />
                                 </nav>
                             </SheetContent>
                         </Sheet>

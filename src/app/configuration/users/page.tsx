@@ -1,6 +1,7 @@
 import UsersClient from './UsersClient'
 import { getRolesAction, getUsersAction } from './actions'
 import type { AdminRoleRow, AdminUserRow } from './types'
+import { requirePageRole } from '@/utils/auth/access'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,6 +12,7 @@ function getErrorMessage(error: unknown) {
 }
 
 export default async function UsersPage() {
+  await requirePageRole('admin')
   let initialUsers: AdminUserRow[] = []
   let initialRoles: AdminRoleRow[] = []
   let initialError: string | null = null

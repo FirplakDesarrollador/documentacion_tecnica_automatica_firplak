@@ -6,13 +6,15 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { 
   Package, AlertTriangle, LayoutTemplate, GitMerge, FileImage, 
-  FileText, PlusCircle, ArrowRight, Upload
+  FileText, PlusCircle, ArrowRight, Upload, Database, Printer
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { decodeGenerateLastUrl, GENERATE_LAST_URL_COOKIE } from '@/lib/navigation/generateLastUrl'
+import { TECHNICAL_DOCUMENTATION_MODULES } from '@/lib/navigation/moduleHierarchy'
 
 import { getPendingStructuralSummary } from '@/lib/engine/pendingStructural'
 import { requirePagePermission } from '@/utils/auth/access'
+import type { Permission } from '@/types/auth'
 
 interface RecentProduct {
   id: string
@@ -23,11 +25,14 @@ interface RecentProduct {
 }
 
 export default async function Home() {
+  const access = await requirePagePermission('module:dashboard')
   const cookieStore = await cookies()
   const generateHref =
     decodeGenerateLastUrl(cookieStore.get(GENERATE_LAST_URL_COOKIE)?.value) ?? '/generate'
 
-  await requirePagePermission('module:dashboard')
+  const canAccess = (permission: Permission) => access.permissions.includes(permission)
+  const canOpenProductivePrint = canAccess('module:productive-modules')
+    && canAccess('module:print')
 
   // Fetch real KPIs and validation state
   const pendingSummary = await getPendingStructuralSummary()
@@ -56,42 +61,75 @@ export default async function Home() {
   // Mock data for unconnected features
   const generatedDocs = 48
 
+  const documentationShortcuts = !canAccess('module:product-design')
+    ? TECHNICAL_DOCUMENTATION_MODULES
+      .filter((module) => canAccess(module.permission))
+      .map((module) => {
+        const visual = {
+          generate: {
+            icon: <FileText className="h-6 w-6 text-purple-500" />,
+            color: 'bg-purple-50 border-purple-100',
+          },
+          assets: {
+            icon: <FileImage className="h-6 w-6 text-amber-500" />,
+            color: 'bg-amber-50 border-amber-100',
+          },
+          datasets: {
+            icon: <Database className="h-6 w-6 text-sky-600" />,
+            color: 'bg-sky-50 border-sky-100',
+          },
+          templates: {
+            icon: <LayoutTemplate className="h-6 w-6 text-emerald-500" />,
+            color: 'bg-emerald-50 border-emerald-100',
+          },
+          pending: {
+            icon: <AlertTriangle className="h-6 w-6 text-amber-600" />,
+            color: 'bg-amber-50 border-amber-100',
+          },
+        }[module.id]
+
+        return {
+          title: module.label,
+          description: module.description,
+          icon: visual.icon,
+          href: module.id === 'generate' ? generateHref : module.directHref,
+          color: visual.color,
+        }
+      })
+    : []
+
   const modules = [
-    {
-      title: "Pendientes",
-      description: "Reporte de faltantes e incidencias",
-      icon: <AlertTriangle className="h-6 w-6 text-amber-600" />,
-      href: "/pending",
-      color: "bg-amber-50 border-amber-100"
-    },
-    {
-      title: "Plantillas",
-      description: "Disenador visual de documentos",
-      icon: <LayoutTemplate className="h-6 w-6 text-emerald-500" />,
-      href: "/templates",
-      color: "bg-emerald-50 border-emerald-100"
-    },
-    {
-      title: "Configuracion",
-      description: "Ajustes, diccionarios y reglas",
+    ...(canAccess('module:product-design') ? [{
+      title: 'Diseño de producto',
+      description: 'BOM, cotizaciones y hojas de ruta de diseño.',
+      icon: <Package className="h-6 w-6 text-indigo-600" />,
+      href: '/product-design',
+      color: 'bg-indigo-50 border-indigo-100',
+    }] : []),
+    ...documentationShortcuts,
+    ...(canAccess('module:productive-modules') ? [{
+      title: 'Módulos productivos',
+      description: canOpenProductivePrint
+        ? 'Hojas de ruta e impresión operativa para planta.'
+        : 'Consulta de hojas de ruta aprobadas para planta.',
+      icon: <Package className="h-6 w-6 text-emerald-600" />,
+      href: '/productive-modules',
+      color: 'bg-emerald-50 border-emerald-100',
+    }] : []),
+    ...(canAccess('module:print') && !canAccess('module:productive-modules') ? [{
+      title: 'Impresión de etiquetas',
+      description: 'Selecciona productos y envía las etiquetas a imprimir.',
+      icon: <Printer className="h-6 w-6 text-indigo-600" />,
+      href: '/print',
+      color: 'bg-indigo-50 border-indigo-100',
+    }] : []),
+    ...(canAccess('module:configuration') ? [{
+      title: 'Configuración',
+      description: 'Ajustes, diccionarios y reglas.',
       icon: <GitMerge className="h-6 w-6 text-blue-500" />,
-      href: "/configuration",
-      color: "bg-blue-50 border-blue-100"
-    },
-    {
-      title: "Recursos",
-      description: "Libreria de iconos, logos y SVG",
-      icon: <FileImage className="h-6 w-6 text-amber-500" />,
-      href: "/assets",
-      color: "bg-amber-50 border-amber-100"
-    },
-    {
-      title: "Generar",
-      description: "Exportacion masiva de documentos",
-      icon: <FileText className="h-6 w-6 text-purple-500" />,
-      href: generateHref,
-      color: "bg-purple-50 border-purple-100"
-    }
+      href: '/configuration',
+      color: 'bg-blue-50 border-blue-100',
+    }] : []),
   ]
 
   return (

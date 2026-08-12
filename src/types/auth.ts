@@ -33,6 +33,7 @@ export const PERMISSIONS = [
   'module:generate',
   'module:print',
   'module:product-design',
+  'module:sales',
   'module:productive-modules',
   'module:engineering',
   'module:configuration',
@@ -104,6 +105,12 @@ export const APP_MODULES: AppModuleDefinition[] = [
     assignable: true,
   },
   {
+    key: 'module:sales',
+    label: 'Ventas',
+    href: '/sales',
+    assignable: true,
+  },
+  {
     key: 'module:productive-modules',
     label: 'Módulos productivos',
     href: '/productive-modules',
@@ -124,7 +131,7 @@ export const APP_MODULES: AppModuleDefinition[] = [
   {
     key: 'module:consulta-sap',
     label: 'Consulta SAP',
-    href: '/consulta-sap',
+    href: '/engineering/sap-consulting',
     assignable: true,
   },
 ]
@@ -146,7 +153,7 @@ export const INTERNAL_PERMISSIONS: InternalPermissionDefinition[] = [
     key: SAP_CODE_MANAGEMENT_PERMISSION,
     label: 'Administrar códigos SAP',
     description: 'Crear, activar, inactivar y eliminar artículos SAP desde variantes.',
-    module: 'module:product-design',
+    module: 'module:engineering',
   },
 ]
 
@@ -189,8 +196,11 @@ const ROUTE_PERMISSION_PREFIXES: Array<{ prefix: string; permission: ModulePermi
   { prefix: '/assets', permission: 'module:assets' },
   { prefix: '/generate', permission: 'module:generate' },
   { prefix: '/print', permission: 'module:print' },
+  { prefix: '/product-design/sap-code-creation', permission: 'module:engineering' },
   { prefix: '/product-design', permission: 'module:product-design' },
+  { prefix: '/sales', permission: 'module:sales' },
   { prefix: '/productive-modules', permission: 'module:productive-modules' },
+  { prefix: '/engineering/sap-consulting', permission: 'module:consulta-sap' },
   { prefix: '/engineering', permission: 'module:engineering' },
   { prefix: '/configuration', permission: 'module:configuration' },
   { prefix: '/rules', permission: 'module:configuration' },
@@ -205,6 +215,7 @@ const HOME_PRIORITY: ModulePermission[] = [
   'module:dashboard',
   'module:print',
   'module:product-design',
+  'module:sales',
   'module:productive-modules',
   'module:engineering',
   'module:generate',
@@ -269,6 +280,7 @@ export function permissionsFromModules(role: UserRole, configuredPermissions: Pe
   if (role === ADMIN_ROLE) return [...PERMISSIONS]
 
   const permissions = new Set<Permission>(configuredPermissions)
+  if (permissions.has('module:engineering')) permissions.add('module:consulta-sap')
   if (permissions.has('module:print')) permissions.add('action:print')
 
   return Array.from(permissions)
@@ -276,7 +288,7 @@ export function permissionsFromModules(role: UserRole, configuredPermissions: Pe
 
 export function getDefaultPermissionsForRole(role: UserRole): Permission[] {
   const permissions = permissionsFromModules(role, getDefaultModulesForRole(role))
-  if (permissions.includes('module:product-design')) permissions.push(SAP_CODE_MANAGEMENT_PERMISSION)
+  if (permissions.includes('module:engineering')) permissions.push(SAP_CODE_MANAGEMENT_PERMISSION)
   return permissions
 }
 
@@ -370,6 +382,7 @@ const API_PERMISSION_PREFIXES: Array<{ prefix: string; permission: ModulePermiss
   { prefix: '/api/mass-import', permission: 'module:dashboard' },
   { prefix: '/api/families', permission: 'module:configuration' },
   { prefix: '/api/rules', permission: 'module:configuration' },
+  { prefix: '/api/product-design/sap-code-creation', permission: 'module:engineering' },
   { prefix: '/api/sap', permission: 'module:consulta-sap' },
   { prefix: '/api/engineering', permission: 'module:engineering' },
 ]
