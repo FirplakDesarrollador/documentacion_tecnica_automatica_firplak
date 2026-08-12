@@ -55,6 +55,7 @@ test('allows empty current warehouses when a non-empty consensus is selected', (
     childNum: 3,
     currentValue: '',
     expectedValue: 'MP-04',
+    decisionSource: 'majority',
   }])
 })
 
@@ -70,6 +71,7 @@ test('requires the LdM header identity when normalizing an output warehouse', ()
     childNum: null,
     currentValue: 'PT-02',
     expectedValue: 'PT-01',
+    decisionSource: 'majority',
   }])
   assert.equal(result.invalidItemKeys.length, 1)
 })
@@ -82,6 +84,18 @@ test('requires a valid issue method and the exact LdM line identity', () => {
   ])
   assert.equal(result.items.length, 1)
   assert.equal(result.invalidItemKeys.length, 2)
+})
+
+test('records whether a configuration target came from majority, minority, or no consensus', () => {
+  const result = normalizeSapAuditUpdateItems('issue_method', [{
+    itemCode: 'CMPD-01',
+    treeCode: 'VAAA-0001-000-0001',
+    childNum: 0,
+    currentValue: 'im_Manual',
+    expectedValue: 'im_Backflush',
+    decisionSource: 'minority',
+  }])
+  assert.equal(result.items[0]?.decisionSource, 'minority')
 })
 
 test('rejects empty or invalid colors and duplicate candidates', () => {

@@ -8,6 +8,7 @@ export type ColorAuditUpdateItem = {
 }
 
 export type SapAuditUpdateKind = 'color' | 'output_warehouse' | 'bom_warehouse' | 'issue_method'
+export type SapAuditDecisionSource = 'majority' | 'minority' | 'no_consensus'
 
 export type SapAuditUpdateItem = {
   auditKind: SapAuditUpdateKind
@@ -16,6 +17,7 @@ export type SapAuditUpdateItem = {
   childNum: number | null
   expectedValue: string
   currentValue: string
+  decisionSource: SapAuditDecisionSource
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -28,6 +30,10 @@ function readString(value: unknown): string {
 
 function readChildNum(value: unknown): number | null {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null
+}
+
+function readDecisionSource(value: unknown): SapAuditDecisionSource {
+  return value === 'minority' || value === 'no_consensus' ? value : 'majority'
 }
 
 function normalizeWarehouse(value: unknown): string {
@@ -119,6 +125,7 @@ export function normalizeSapAuditUpdateItems(auditKind: SapAuditUpdateKind, valu
     const itemCode = readString(rawItem.itemCode).toUpperCase()
     const treeCode = readString(rawItem.treeCode).toUpperCase() || null
     const childNum = readChildNum(rawItem.childNum)
+    const decisionSource = readDecisionSource(rawItem.decisionSource)
     const currentValue = auditKind === 'issue_method'
       ? normalizeIssueMethod(rawItem.currentValue)
       : auditKind === 'color'
@@ -147,7 +154,7 @@ export function normalizeSapAuditUpdateItems(auditKind: SapAuditUpdateKind, valu
       continue
     }
     seen.add(key)
-    items.push({ auditKind, itemCode, treeCode, childNum, expectedValue, currentValue })
+    items.push({ auditKind, itemCode, treeCode, childNum, expectedValue, currentValue, decisionSource })
   }
 
   return { items, invalidItemKeys }

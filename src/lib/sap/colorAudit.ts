@@ -114,6 +114,8 @@ export type SapAuditGroup = {
   status: 'discrepancy' | 'no_consensus'
   canNormalize: boolean
   rule: 'common_value' | 'tree_line_uniformity'
+  /** Todas las observaciones del mismo sujeto, para que una excepción a la mayoría pueda recalcular el impacto completo. */
+  allEvidence: SapAuditEvidence[]
   evidence: SapAuditEvidence[]
 }
 
@@ -402,7 +404,7 @@ function issueMethodIsNormalizable(value: string): boolean {
 
 function labelForIssueMethod(value: string): string {
   if (value === 'im_Manual') return 'Manual'
-  if (value === 'im_Backflush') return 'Backflush'
+  if (value === 'im_Backflush') return 'Notificación (Backflush)'
   return value || 'VACÍO'
 }
 
@@ -451,6 +453,7 @@ function groupObservations(
         status: 'no_consensus',
         canNormalize: false,
         rule: 'common_value',
+        allEvidence: subjectObservations.map(observation => ({ ...observation, expectedValue: null })),
         evidence: subjectObservations.map(observation => ({ ...observation, expectedValue: null })),
       })
       continue
@@ -476,6 +479,7 @@ function groupObservations(
         status: 'discrepancy',
         canNormalize: targetIsValid,
         rule: 'common_value',
+        allEvidence: subjectObservations.map(observation => ({ ...observation, expectedValue })),
         evidence,
       })
     }
@@ -538,6 +542,7 @@ function buildTreeLineUniformityGroups(items: ColorAuditItem[], trees: ColorAudi
         status: 'no_consensus',
         canNormalize: false,
         rule: 'tree_line_uniformity',
+        allEvidence: evidence.map(line => ({ ...line, expectedValue: null })),
         evidence: evidence.map(line => ({ ...line, expectedValue: null })),
       })
       continue
@@ -563,6 +568,7 @@ function buildTreeLineUniformityGroups(items: ColorAuditItem[], trees: ColorAudi
         status: 'discrepancy',
         canNormalize: true,
         rule: 'tree_line_uniformity',
+        allEvidence: evidence.map(line => ({ ...line, expectedValue })),
         evidence: outliers,
       })
     }

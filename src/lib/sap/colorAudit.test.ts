@@ -125,13 +125,15 @@ test('reutiliza las líneas directas y separa producto de kit al calcular mayor�
   assert.equal(warehouseReport.groups[0]?.currentValue, 'MP-12')
   assert.equal(warehouseReport.groups[0]?.expectedValue, 'MP-04')
   assert.equal(warehouseReport.groups[0]?.evidence[0]?.childNum, 0)
+  assert.equal(warehouseReport.groups[0]?.allEvidence.length, 3)
 
   const methodReport = buildSapAuditReport('issue_method', items, trees)
   assert.equal(methodReport.groups[0]?.currentValue, 'im_Backflush')
   assert.equal(methodReport.groups[0]?.expectedValue, 'im_Manual')
+  assert.deepEqual(methodReport.groups[0]?.allEvidence.map(evidence => evidence.currentValue).toSorted(), ['im_Backflush', 'im_Manual', 'im_Manual'])
 })
 
-test('marca empates como sin consenso y no los ofrece para normalizar', () => {
+test('marca empates como sin consenso y exige una selección explícita', () => {
   const items = ['VAAA-0010-000-0001', 'VAAA-0011-000-0001'].map(itemCode => {
     const item = normalizeColorAuditItem({ ItemCode: itemCode, ItemName: itemCode, U_Color: '0001', SalesItem: 'tYES', Valid: 'tYES', Frozen: 'tNO' })
     assert.ok(item)

@@ -50,6 +50,7 @@ type StoredRun = {
   scope: AuditScope
   familyFilter: string
   families: string[]
+  familyScopes: Record<string, AuditScope>
   familyIndex: number
   catalogSkip: number
   catalogCursor: string | null
@@ -106,6 +107,7 @@ type AuditUpdateItem = {
   childNum: number | null
   currentValue: string
   expectedValue: string
+  decisionSource: 'majority' | 'minority' | 'no_consensus'
 }
 
 type AuditUpdateResult = {
@@ -114,6 +116,7 @@ type AuditUpdateResult = {
   treeCode: string | null
   childNum: number | null
   expectedValue: string
+  decisionSource: AuditUpdateItem['decisionSource']
   beforeValue: string
   afterValue: string | null
   eligible: boolean
@@ -138,6 +141,7 @@ type MassUpdateState = {
   processed: number
   total: number
   confirmed: boolean
+  mode: UpdateMode | null
   message: string | null
 }
 
@@ -262,6 +266,20 @@ async function loadSnapshot(runId: string): Promise<AuditSnapshot> {
   }
 }
 
+async function clearFamilySnapshot(runId: string, family: string): Promise<void> {
+  const snapshot = await loadSnapshot(runId)
+  const itemCodes = new Set(snapshot.items.filter(item => item.familyCode === family).map(item => item.itemCode))
+  await withTransaction([ITEM_STORE, TREE_STORE], 'readwrite', transaction => {
+    const itemStore = transaction.objectStore(ITEM_STORE)
+    const treeStore = transaction.objectStore(TREE_STORE)
+    for (const itemCode of itemCodes) {
+      itemStore.delete(`${runId}:${itemCode}`)
+      treeStore.delete(`${runId}:${itemCode}`)
+    }
+    return Promise.resolve()
+  })
+}
+
 function mergeByKey<T>(current: T[], incoming: T[], keyFor: (value: T) => string): T[] {
   const byKey = new Map(current.map(value => [keyFor(value), value]))
   for (const value of incoming) byKey.set(keyFor(value), value)
@@ -320,6 +338,7 @@ function newRun(scope: AuditScope, familyFilter: string): StoredRun {
     scope,
     familyFilter,
     families: familyFilter ? [familyFilter] : [],
+    familyScopes: familyFilter ? { [familyFilter]: scope } : {},
     familyIndex: 0,
     catalogSkip: 0,
     catalogCursor: null,
@@ -347,7 +366,7 @@ function newRun(scope: AuditScope, familyFilter: string): StoredRun {
 }
 
 function initialMassUpdateState(): MassUpdateState {
-  return { phase: 'idle', auditKind: null, candidates: [], results: [], processed: 0, total: 0, confirmed: false, message: null }
+  return { phase: 'idle', auditKind: null, candidates: [], results: [], processed: 0, total: 0, confirmed: false, mode: null, message: null }
 }
 
 function chunks<T>(values: T[], size: number): T[][] {
@@ -411,15 +430,25 @@ function csvEscape(value: unknown): string {
   return `"${String(value ?? '').replace(/"/gu, '""')}"`
 }
 
-function updateItemsForGroup(group: SapAuditGroup, expectedValue: string | null = group.expectedValue): AuditUpdateItem[] {
+function updateItemsForGroup(
+  group: SapAuditGroup,
+  expectedValue: string | null = group.expectedValue,
+  options: { useAllEvidence?: boolean; decisionSource?: AuditUpdateItem['decisionSource'] } = {},
+): AuditUpdateItem[] {
   if (!expectedValue) return []
-  return group.evidence.filter(evidence => evidence.currentValue !== expectedValue).map(evidence => ({
-    itemCode: evidence.itemCode,
-    treeCode: evidence.treeCode,
-    childNum: group.auditKind === 'output_warehouse' ? null : evidence.childNum,
-    currentValue: evidence.currentValue,
+  const evidence = options.useAllEvidence ? group.allEvidence : group.evidence
+  return evidence.filter(item => item.currentValue !== expectedValue).map(item => ({
+    itemCode: item.itemCode,
+    treeCode: item.treeCode,
+    childNum: group.auditKind === 'output_warehouse' ? null : item.childNum,
+    currentValue: item.currentValue,
     expectedValue,
+    decisionSource: options.decisionSource ?? (group.status === 'no_consensus' ? 'no_consensus' : 'majority'),
   }))
+}
+
+function auditResultValueLabel(tab: AuditTab, value: string | null): string {
+  return tab === 'color' ? value || 'VACÍO' : sapAuditValueLabel(tab, value)
 }
 
 function auditUpdateItemKey(item: AuditUpdateItem, auditKind: AuditTab): string {
@@ -434,8 +463,15 @@ function selectedGroupCandidates(groups: SapAuditGroup[], selectedGroupIds: Read
   const conflictingKeys = new Set<string>()
   for (const group of groups) {
     if (!selectedGroupIds.has(group.id)) continue
-    const expectedValue = group.status === 'no_consensus' ? selectedTargets[group.id] ?? null : group.expectedValue
-    for (const candidate of updateItemsForGroup(group, expectedValue)) {
+    const selectedTarget = selectedTargets[group.id]
+    const expectedValue = selectedTarget ?? group.expectedValue
+    const decisionSource = group.status === 'no_consensus'
+      ? 'no_consensus'
+      : selectedTarget && selectedTarget !== group.expectedValue
+        ? 'minority'
+        : 'majority'
+    const useAllEvidence = decisionSource === 'minority' || group.status === 'no_consensus'
+    for (const candidate of updateItemsForGroup(group, expectedValue, { useAllEvidence, decisionSource })) {
       const key = auditUpdateItemKey(candidate, group.auditKind)
       const existing = candidatesByKey.get(key)
       if (existing && existing.expectedValue !== candidate.expectedValue) {
@@ -457,11 +493,25 @@ function selectionTargetIsValid(group: SapAuditGroup, value: string | null | und
 function updateItemsForColor(rows: ColorAuditRow[]): AuditUpdateItem[] {
   return rows
     .filter(row => row.differenceCategory === 'u_color_different' && /^[A-Z0-9]{4}$/u.test(row.declaredColor) && Boolean(row.correctionTarget))
-    .map(row => ({ itemCode: row.itemCode, treeCode: null, childNum: null, currentValue: row.declaredColor, expectedValue: row.correctionTarget ?? '' }))
+    .map(row => ({ itemCode: row.itemCode, treeCode: null, childNum: null, currentValue: row.declaredColor, expectedValue: row.correctionTarget ?? '', decisionSource: 'majority' as const }))
 }
 
 function reportForTab(tab: AuditTab, snapshot: AuditSnapshot, pendingTreeItemCodes: ReadonlySet<string>): SapAuditReport | null {
   return tab === 'color' ? null : buildSapAuditReport(tab, snapshot.items, snapshot.trees, { pendingTreeItemCodes })
+}
+
+function scopeCoversTab(scope: AuditScope, tab: AuditTab): boolean {
+  if (tab === 'color') return true
+  if (tab === 'output_warehouse') return scope === 'output_warehouse' || scope === 'components'
+  return scope === 'components'
+}
+
+function snapshotForAuditTab(run: StoredRun | null, snapshot: AuditSnapshot, tab: AuditTab): AuditSnapshot {
+  if (!run || tab === 'color') return snapshot
+  const eligibleFamilies = new Set(run.families.filter(family => scopeCoversTab(run.familyScopes[family] ?? run.scope, tab)))
+  const items = snapshot.items.filter(item => eligibleFamilies.has(item.familyCode))
+  const itemCodes = new Set(items.map(item => item.itemCode))
+  return { items, trees: snapshot.trees.filter(tree => itemCodes.has(tree.treeCode)) }
 }
 
 function ColorDiscrepancyTable({ rows, onCorrect }: { rows: ColorAuditRow[]; onCorrect: (items: AuditUpdateItem[]) => void }) {
@@ -490,7 +540,7 @@ function ConfigurationGroups({ report, expandedGroupId, selectedGroupIds, select
 }) {
   return (
     <section className="border border-slate-200 bg-white shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-4"><div><h2 className="font-semibold text-slate-900">Grupos con discrepancias detectadas ({report.groups.length})</h2><p className="mt-1 text-sm text-slate-600">La mayoría simple se calcula separando Productos y Kits. Los empates solo se reportan.</p></div></div>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-4"><div><h2 className="font-semibold text-slate-900">Grupos con discrepancias detectadas ({report.groups.length})</h2><p className="mt-1 text-sm text-slate-600">La mayoría simple se calcula separando Productos y Kits y se propone por defecto. Puedes elegir una minoría o resolver un empate: el dry-run relee todas las filas afectadas antes de escribir.</p></div></div>
       <div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Grupo</th><th className="px-4 py-3">Valor actual</th><th className="px-4 py-3">Valor común / opciones</th><th className="px-4 py-3">Coincidencias</th><th className="px-4 py-3">Afectados</th><th className="px-4 py-3">Selección</th></tr></thead><tbody className="divide-y divide-slate-100">{report.groups.map(group => <GroupRow key={group.id} group={group} expanded={expandedGroupId === group.id} selected={selectedGroupIds.has(group.id)} selectedTarget={selectedTargets[group.id]} selectionLocked={selectionLocked} onToggle={onToggle} onSelectionChange={onSelectionChange} onTargetChange={onTargetChange} />)}</tbody></table></div>
       {report.groups.length === 0 ? <p className="p-6 text-sm text-slate-500">No hay configuraciones atípicas ni grupos sin consenso en este snapshot.</p> : null}
     </section>
@@ -534,10 +584,43 @@ function GroupRow({ group, expanded, selected, selectedTarget, selectionLocked, 
   onTargetChange: (groupId: string, value: string) => void
 }) {
   const groupValue = (value: string | null) => sapAuditValueLabel(group.auditKind, value)
-  const selectedValue = group.status === 'no_consensus' ? selectedTarget : group.expectedValue
+  const selectedValue = selectedTarget ?? group.expectedValue
   const canSelect = group.canNormalize || selectionTargetIsValid(group, selectedValue)
   const optionLabels = group.valueOptions.map(option => `${groupValue(option.value)} (${option.count}/${group.totalObservations})`).join(' · ')
-  return <><tr className={expanded ? 'bg-emerald-50/50' : ''}><td className="px-4 py-3"><button type="button" onClick={() => onToggle(group.id)} className="inline-flex items-center gap-2 text-left font-semibold text-slate-900">{expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}<span>{group.subjectCode === 'SALIDA' ? 'Bodega de salida' : group.subjectCode}</span><span className="text-xs font-normal text-slate-500">· {treeCategoryLabel(group.treeCategory)}</span></button><p className="mt-1 pl-6 text-xs text-slate-500">{group.subjectName}</p></td><td className="px-4 py-3 font-mono text-xs">{groupValue(group.currentValue)}</td><td className="px-4 py-3 font-mono text-xs">{group.expectedValue ? groupValue(group.expectedValue) : <><span className="font-sans text-amber-700">Sin consenso</span><p className="mt-1 font-sans text-xs text-slate-600">{optionLabels}</p></>}</td><td className="px-4 py-3">{Math.round(group.support * 100)}% ({group.expectedCount}/{group.totalObservations})</td><td className="px-4 py-3">{group.evidence.length}</td><td className="px-4 py-3">{group.status === 'no_consensus' ? <select value={selectedTarget ?? ''} disabled={selectionLocked} onChange={event => onTargetChange(group.id, event.target.value)} className="mb-2 h-8 max-w-40 border border-slate-300 bg-white px-2 text-xs"><option value="">Elegir valor…</option>{group.valueOptions.map(option => <option key={option.value || 'EMPTY'} value={option.value}>{groupValue(option.value)} ({option.count})</option>)}</select> : null}<label className="flex items-center gap-2 text-xs font-semibold text-violet-800"><input type="checkbox" checked={selected} disabled={selectionLocked || !canSelect} onChange={event => onSelectionChange(group, event.target.checked)} /><span>{canSelect ? 'Incluir en corrección' : 'Elige un valor para incluir'}</span></label></td></tr>{expanded ? <tr><td colSpan={6} className="bg-slate-50 px-4 py-4"><p className="mb-2 text-sm font-semibold text-slate-900">Evidencia exacta ({group.evidence.length})</p><EvidenceTable auditKind={group.auditKind} evidence={group.evidence} /></td></tr> : null}</>
+  const isMinorityOverride = Boolean(selectedTarget && group.expectedValue && selectedTarget !== group.expectedValue)
+  const affectedCount = isMinorityOverride || group.status === 'no_consensus'
+    ? group.allEvidence.filter(evidence => evidence.currentValue !== selectedValue).length
+    : group.evidence.length
+  return <>
+    <tr className={expanded ? 'bg-emerald-50/50' : ''}>
+      <td className="px-4 py-3">
+        <button type="button" onClick={() => onToggle(group.id)} className="inline-flex items-center gap-2 text-left font-semibold text-slate-900">
+          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          <span>{group.subjectCode === 'SALIDA' ? 'Bodega de salida' : group.subjectCode}</span>
+          <span className="text-xs font-normal text-slate-500">· {treeCategoryLabel(group.treeCategory)}</span>
+        </button>
+        <p className="mt-1 pl-6 text-xs text-slate-500">{group.subjectName}</p>
+      </td>
+      <td className="px-4 py-3 font-mono text-xs">{groupValue(group.currentValue)}</td>
+      <td className="px-4 py-3 font-mono text-xs">
+        {group.expectedValue ? groupValue(group.expectedValue) : <><span className="font-sans text-amber-700">Sin consenso</span><p className="mt-1 font-sans text-xs text-slate-600">{optionLabels}</p></>}
+      </td>
+      <td className="px-4 py-3">{Math.round(group.support * 100)}% ({group.expectedCount}/{group.totalObservations})</td>
+      <td className="px-4 py-3">{group.evidence.length}</td>
+      <td className="px-4 py-3">
+        <select value={selectedTarget ?? ''} disabled={selectionLocked} onChange={event => onTargetChange(group.id, event.target.value)} className="mb-2 h-8 max-w-52 border border-slate-300 bg-white px-2 text-xs">
+          {group.expectedValue ? <option value="">Usar mayoría: {groupValue(group.expectedValue)}</option> : <option value="">Elegir valor…</option>}
+          {group.valueOptions.map(option => <option key={option.value || 'EMPTY'} value={option.value}>{groupValue(option.value)} ({option.count})</option>)}
+        </select>
+        {isMinorityOverride ? <p className="mb-2 max-w-52 text-xs text-amber-800">Excepción a la mayoría: se revisarán las {affectedCount} filas del sujeto antes del dry-run.</p> : null}
+        <label className="flex items-center gap-2 text-xs font-semibold text-violet-800">
+          <input type="checkbox" checked={selected} disabled={selectionLocked || !canSelect} onChange={event => onSelectionChange(group, event.target.checked)} />
+          <span>{canSelect ? `Incluir (${affectedCount})` : 'Elige un valor para incluir'}</span>
+        </label>
+      </td>
+    </tr>
+    {expanded ? <tr><td colSpan={6} className="bg-slate-50 px-4 py-4"><p className="mb-2 text-sm font-semibold text-slate-900">Evidencia de la discrepancia ({group.evidence.length} de {group.allEvidence.length})</p><EvidenceTable auditKind={group.auditKind} evidence={isMinorityOverride || group.status === 'no_consensus' ? group.allEvidence : group.evidence} /></td></tr> : null}
+  </>
 }
 
 function EvidenceTable({ auditKind, evidence }: { auditKind: SapConfigurationAuditKind; evidence: SapAuditEvidence[] }) {
@@ -546,10 +629,31 @@ function EvidenceTable({ auditKind, evidence }: { auditKind: SapConfigurationAud
 
 function MassUpdatePanel({ state, onConfirmedChange, onApply }: { state: MassUpdateState; onConfirmedChange: (confirmed: boolean) => void; onApply: () => void }) {
   if (state.phase === 'idle') return null
-  return <section className="border border-violet-200 bg-violet-50 p-4 text-sm text-violet-950"><div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="font-semibold">Corrección masiva controlada</h2><p className="mt-1">{state.total} fila(s) de {state.auditKind ? auditLabel(state.auditKind) : 'la auditoría'}; cada una se relee antes y después de la escritura.</p><p className="mt-1 text-xs text-violet-800">Los lotes son secuenciales, máximo 20 filas; un cambio desactualizado se omite y no se sobrescribe.</p></div><ShieldCheck className="h-6 w-6 text-violet-700" /></div>{state.total > 0 ? <><progress className="mt-3 h-2 w-full accent-violet-700" value={state.processed} max={state.total} /><p className="mt-2 text-xs">{state.processed}/{state.total} procesadas · {state.phase === 'dry-run' ? 'Ejecutando dry-run' : state.phase === 'applying' ? 'Aplicando y verificando' : 'Proceso detenido o terminado'}</p></> : null}{state.message ? <p className="mt-3 font-medium">{state.message}</p> : null}{state.phase === 'awaiting-confirmation' ? <label className="mt-4 flex cursor-pointer items-start gap-2 border border-violet-300 bg-white p-3"><input type="checkbox" checked={state.confirmed} onChange={event => onConfirmedChange(event.target.checked)} className="mt-1 h-4 w-4" /><span>Confirmo que deseo aplicar los {state.candidates.length} cambios verificados por el dry-run en SAP.</span></label> : null}{state.phase === 'awaiting-confirmation' ? <button type="button" onClick={onApply} disabled={!state.confirmed} className="mt-3 inline-flex h-9 items-center gap-2 bg-violet-700 px-3 text-sm font-semibold text-white disabled:opacity-40"><ShieldCheck className="h-4 w-4" />Aplicar y verificar en SAP</button> : null}{state.results.length > 0 ? <div className="mt-3 max-h-64 overflow-y-auto border border-violet-200 bg-white p-2 text-xs">{state.results.map(result => <div key={`${result.auditKind}:${result.treeCode ?? result.itemCode}:${result.childNum ?? '-'}:${result.itemCode}:${result.message}`} className="flex flex-wrap gap-2 border-b border-slate-100 py-1 last:border-0"><span className="font-mono font-semibold">{result.treeCode ?? result.itemCode}{result.childNum !== null ? ` · ${result.childNum}` : ''}</span><span>{result.success ? 'OK' : result.stale ? 'OMITIDO' : 'ERROR'}</span><span>{result.beforeValue || 'VACÍO'} → {result.afterValue || result.expectedValue}</span><span>{result.message}</span></div>)}</div> : null}</section>
+  const verificationLabel = state.mode === 'dry-run'
+    ? 'Dry-run: prelectura SAP; no se escribió.'
+    : 'Aplicación: valor releído y verificado en SAP.'
+  return <section className="border border-violet-200 bg-violet-50 p-4 text-sm text-violet-950">
+    <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="font-semibold">Corrección masiva controlada</h2><p className="mt-1">{state.total} fila(s) de {state.auditKind ? auditLabel(state.auditKind) : 'la auditoría'}; cada una se relee antes y después de la escritura.</p><p className="mt-1 text-xs text-violet-800">Los lotes son secuenciales, máximo 20 filas; un cambio desactualizado se omite y no se sobrescribe.</p></div><ShieldCheck className="h-6 w-6 text-violet-700" /></div>
+    {state.total > 0 ? <><progress className="mt-3 h-2 w-full accent-violet-700" value={state.processed} max={state.total} /><p className="mt-2 text-xs">{state.processed}/{state.total} procesadas · {state.phase === 'dry-run' ? 'Ejecutando dry-run' : state.phase === 'applying' ? 'Aplicando y verificando' : 'Proceso detenido o terminado'}</p></> : null}
+    {state.message ? <p className="mt-3 font-medium">{state.message}</p> : null}
+    {state.phase === 'awaiting-confirmation' ? <label className="mt-4 flex cursor-pointer items-start gap-2 border border-violet-300 bg-white p-3"><input type="checkbox" checked={state.confirmed} onChange={event => onConfirmedChange(event.target.checked)} className="mt-1 h-4 w-4" /><span>Confirmo que deseo aplicar los {state.candidates.length} cambios verificados por el dry-run en SAP.</span></label> : null}
+    {state.phase === 'awaiting-confirmation' ? <button type="button" onClick={onApply} disabled={!state.confirmed} className="mt-3 inline-flex h-9 items-center gap-2 bg-violet-700 px-3 text-sm font-semibold text-white disabled:opacity-40"><ShieldCheck className="h-4 w-4" />Aplicar y verificar en SAP</button> : null}
+    {state.results.length > 0 ? <div className="mt-3 max-h-64 overflow-y-auto border border-violet-200 bg-white p-2 text-xs">
+      <p className="mb-2 px-1 text-slate-600">{verificationLabel}</p>
+      {state.results.map(result => <div key={`${result.auditKind}:${result.treeCode ?? result.itemCode}:${result.childNum ?? '-'}:${result.itemCode}:${result.message}`} className="border-b border-slate-100 py-2 last:border-0">
+        <div className="flex flex-wrap gap-x-3 gap-y-1"><span className="font-mono font-semibold">LdM: {result.treeCode ?? '-'}</span><span>línea: {result.childNum ?? '-'}</span><span className="font-mono">componente: {result.itemCode}</span><span>{result.success ? 'OK' : result.stale ? 'OMITIDO' : 'ERROR'}</span></div>
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1"><span>{auditResultValueLabel(result.auditKind, result.beforeValue)} → {auditResultValueLabel(result.auditKind, result.afterValue || result.expectedValue)}</span><span>{result.decisionSource === 'minority' ? 'Decisión: minoría elegida' : result.decisionSource === 'no_consensus' ? 'Decisión: sin consenso' : 'Decisión: mayoría'}</span><span>{result.message}</span></div>
+      </div>)}
+    </div> : null}
+  </section>
 }
 
-export function ColorAuditClient() {
+type ColorAuditClientProps = {
+  apiBase?: string
+}
+
+export function ColorAuditClient({ apiBase = '/api/product-design/color-audit' }: ColorAuditClientProps) {
+  const auditApiBase = apiBase.replace(/\/+$/u, '')
   const [run, setRun] = useState<StoredRun | null>(null)
   const [snapshot, setSnapshot] = useState<AuditSnapshot>({ items: [], trees: [] })
   const [activeTab, setActiveTab] = useState<AuditTab>('color')
@@ -569,6 +673,7 @@ export function ColorAuditClient() {
   const pauseRequested = useRef(false)
   const cancelRequested = useRef(false)
   const controllerRef = useRef<AbortController | null>(null)
+  const executionIdRef = useRef(0)
 
   const persistRun = async (patch: Partial<StoredRun>): Promise<StoredRun> => {
     const current = runRef.current
@@ -595,6 +700,7 @@ export function ColorAuditClient() {
         scope: saved.scope ?? 'components',
         familyFilter: saved.familyFilter ?? '',
         families: saved.families ?? (saved.familyFilter ? [saved.familyFilter] : []),
+        familyScopes: saved.familyScopes ?? Object.fromEntries((saved.families ?? (saved.familyFilter ? [saved.familyFilter] : [])).map(family => [family, saved.scope ?? 'components'])),
         familyIndex: saved.familyIndex ?? 0,
         catalogSkip: saved.catalogSkip ?? 0,
         catalogCursor: saved.catalogCursor ?? null,
@@ -649,7 +755,8 @@ export function ColorAuditClient() {
       .map(item => item.itemCode)
     return new Set(currentFamilyCodes)
   }, [currentFamily, run?.phase, run?.resumePhase, run?.status, snapshot.items])
-  const report = useMemo(() => reportForTab(activeTab, snapshot, pendingTreeItemCodes), [activeTab, pendingTreeItemCodes, snapshot])
+  const auditSnapshot = useMemo(() => snapshotForAuditTab(run, snapshot, activeTab), [activeTab, run, snapshot])
+  const report = useMemo(() => reportForTab(activeTab, auditSnapshot, pendingTreeItemCodes), [activeTab, auditSnapshot, pendingTreeItemCodes])
   const selectedGroupIdSet = useMemo(() => new Set(selectedGroupIds), [selectedGroupIds])
   const bulkSelection = useMemo(() => report
     ? selectedGroupCandidates(report.groups, selectedGroupIdSet, selectedGroupTargets)
@@ -664,6 +771,8 @@ export function ColorAuditClient() {
   }, [run])
 
   async function execute(initial: StoredRun): Promise<void> {
+    const executionId = ++executionIdRef.current
+    const isCurrentExecution = () => executionIdRef.current === executionId
     pauseRequested.current = false
     cancelRequested.current = false
     let working = initial
@@ -683,8 +792,10 @@ export function ColorAuditClient() {
       }
       const nextFamilyIndex = working.familyIndex + 1
       if (nextFamilyIndex < working.families.length) {
+        const nextFamily = working.families[nextFamilyIndex]
         return persistRun({
           ...completedPatch,
+          scope: working.familyScopes[nextFamily] ?? working.scope,
           phase: 'items',
           resumePhase: 'items',
           familyIndex: nextFamilyIndex,
@@ -723,26 +834,32 @@ export function ColorAuditClient() {
 
     try {
       while (working.status === 'running') {
+        if (!isCurrentExecution()) return
         if (working.phase === 'families') {
           controllerRef.current = new AbortController()
           const legacyCatalogCursor = working.catalogCursor ?? (working.catalogSkip > 0
             ? latestFamilyItemCode(snapshotRef.current, working.families[Math.max(0, working.familyIndex - 1)] ?? '')
             : null)
-          const response = await fetch('/api/product-design/color-audit/items', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ skip: working.catalogSkip, afterItemCode: legacyCatalogCursor, prefix: 'V', catalogOnly: true }), signal: controllerRef.current.signal })
+          const response = await fetch(`${auditApiBase}/items`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ skip: working.catalogSkip, afterItemCode: legacyCatalogCursor, prefix: 'V', catalogOnly: true }), signal: controllerRef.current.signal })
           const payload = await response.json() as ItemsResponse
           if (!response.ok || !payload.success) throw new Error(payload.error || 'No se pudo leer el catálogo de familias desde SAP.')
           const families = appendUniqueFamilies(working.families, payload.families ?? [])
+          const familyScopes = { ...working.familyScopes }
+          for (const family of payload.families ?? []) familyScopes[family] ??= working.scope
           const nextCatalogSkip = payload.nextSkip ?? working.catalogSkip + (payload.rawItemsRead ?? 0)
           const nextCatalogCursor = payload.nextCatalogCursor ?? legacyCatalogCursor
           const catalogExhausted = payload.done === true
           if (!catalogExhausted && (!nextCatalogCursor || nextCatalogCursor === legacyCatalogCursor)) throw new Error('SAP no avanzó al buscar la siguiente familia. Pausa la corrida y vuelve a intentarlo para no repetir páginas.')
           if (pauseRequested.current) {
-            await persistRun({ phase: 'paused', resumePhase: 'families', status: 'paused', families, catalogSkip: nextCatalogSkip, catalogCursor: nextCatalogCursor, catalogExhausted })
+            await persistRun({ phase: 'paused', resumePhase: 'families', status: 'paused', families, familyScopes, catalogSkip: nextCatalogSkip, catalogCursor: nextCatalogCursor, catalogExhausted })
             return
           }
           if (families.length > working.familyIndex) {
+            const nextFamily = families[working.familyIndex]
             working = await persistRun({
               families,
+              familyScopes,
+              scope: familyScopes[nextFamily] ?? working.scope,
               catalogSkip: nextCatalogSkip,
               catalogCursor: nextCatalogCursor,
               catalogExhausted,
@@ -762,10 +879,10 @@ export function ColorAuditClient() {
             continue
           }
           if (catalogExhausted) {
-            await persistRun({ families, catalogSkip: nextCatalogSkip, catalogCursor: nextCatalogCursor, catalogExhausted, phase: 'complete', status: 'complete' })
+            await persistRun({ families, familyScopes, catalogSkip: nextCatalogSkip, catalogCursor: nextCatalogCursor, catalogExhausted, phase: 'complete', status: 'complete' })
             return
           }
-          working = await persistRun({ families, catalogSkip: nextCatalogSkip, catalogCursor: nextCatalogCursor, catalogExhausted })
+          working = await persistRun({ families, familyScopes, catalogSkip: nextCatalogSkip, catalogCursor: nextCatalogCursor, catalogExhausted })
           continue
         }
 
@@ -791,7 +908,7 @@ export function ColorAuditClient() {
 
         if (working.phase === 'items') {
           controllerRef.current = new AbortController()
-          const response = await fetch('/api/product-design/color-audit/items', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ skip: working.itemSkip, prefix: family }), signal: controllerRef.current.signal })
+          const response = await fetch(`${auditApiBase}/items`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ skip: working.itemSkip, prefix: family }), signal: controllerRef.current.signal })
           const payload = await response.json() as ItemsResponse
           if (!response.ok || !payload.success) throw new Error(payload.error || `No se pudieron leer los Items de ${family}.`)
           const incoming = payload.items ?? []
@@ -863,7 +980,7 @@ export function ColorAuditClient() {
             continue
           }
           controllerRef.current = new AbortController()
-          const response = await fetch('/api/product-design/color-audit/trees', {
+          const response = await fetch(`${auditApiBase}/trees`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ mode: 'headers_by_codes', skip: offset, itemCodes: batch }),
@@ -905,7 +1022,7 @@ export function ColorAuditClient() {
             if (!lineCursor) throw new Error(`No se pudo recuperar el cursor de líneas de ${family}; pausa y reinicia solo esta familia para evitar saltar datos.`)
             working = await persistRun({ lineCursor })
           }
-          const response = await fetch('/api/product-design/color-audit/trees', {
+          const response = await fetch(`${auditApiBase}/trees`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ family, mode, skip, cursor: lineCursor }),
@@ -924,7 +1041,7 @@ export function ColorAuditClient() {
           const nextSkip = payload.nextSkip ?? skip + payload.rowsRead
           const nextCursor = mode === 'lines' ? payload.nextCursor ?? null : null
           if (mode === 'lines' && !payload.done && !nextCursor) throw new Error(`SAP no devolvió un cursor válido al leer las líneas de ${family}.`)
-          if (mode === 'lines' && lineCursor && nextCursor && (nextCursor.treeCode < lineCursor.treeCode || (nextCursor.treeCode === lineCursor.treeCode && nextCursor.childNum <= lineCursor.childNum))) {
+          if (mode === 'lines' && !payload.done && lineCursor && nextCursor && (nextCursor.treeCode < lineCursor.treeCode || (nextCursor.treeCode === lineCursor.treeCode && nextCursor.childNum <= lineCursor.childNum))) {
             throw new Error(`SAP no avanzó el cursor de líneas de ${family}.`)
           }
           if (!payload.done && nextSkip <= skip) throw new Error(`SAP no avanzó al leer las LdM de ${family}. Pausa la corrida y vuelve a intentarlo para no repetir páginas.`)
@@ -971,10 +1088,10 @@ export function ColorAuditClient() {
         return
       }
     } catch (error) {
-      if (pauseRequested.current || cancelRequested.current) return
+      if (!isCurrentExecution() || pauseRequested.current || cancelRequested.current) return
       await persistRun({ phase: 'error', status: 'error', error: error instanceof Error ? error.message : 'No se pudo completar la auditoría SAP.' })
     } finally {
-      controllerRef.current = null
+      if (isCurrentExecution()) controllerRef.current = null
     }
   }
 
@@ -996,9 +1113,91 @@ export function ColorAuditClient() {
     await execute(next)
   }
 
+  async function addFamilyToSnapshot(): Promise<void> {
+    const current = runRef.current
+    const normalizedFamily = familyFilter.trim().toUpperCase()
+    if (!current || current.status === 'running' || !/^V[A-Z0-9]*$/u.test(normalizedFamily) || current.families.includes(normalizedFamily)) return
+    if (current.status !== 'complete') {
+      await persistRun({
+        familyFilter: normalizedFamily,
+        families: [...current.families, normalizedFamily],
+        familyScopes: { ...current.familyScopes, [normalizedFamily]: scanScope },
+      })
+      return
+    }
+    const next = await persistRun({
+      scope: scanScope,
+      familyFilter: normalizedFamily,
+      families: [...current.families, normalizedFamily],
+      familyScopes: { ...current.familyScopes, [normalizedFamily]: scanScope },
+      familyIndex: current.families.length,
+      phase: 'items',
+      resumePhase: 'items',
+      status: 'running',
+      itemSkip: 0,
+      headerSkip: 0,
+      headerReconciliationCodes: [],
+      headerReconciliationOffset: 0,
+      headerReconciliationCompleted: false,
+      familyTreesRead: 0,
+      lineSkip: 0,
+      lineCursor: null,
+      itemCount: 0,
+      familyStartedAt: new Date().toISOString(),
+      error: null,
+    })
+    pauseRequested.current = false
+    cancelRequested.current = false
+    setActiveTab(scanScope === 'components' ? 'color' : scanScope)
+    setExpandedGroupId(null)
+    setSelectedGroupIds([])
+    setSelectedGroupTargets({})
+    setMassUpdate(initialMassUpdateState())
+    await execute(next)
+  }
+
+  async function reanalyzeCurrentFamily(): Promise<void> {
+    const current = runRef.current
+    const family = current?.families[current.familyIndex]
+    if (!current || !family || current.status === 'running') return
+    await clearFamilySnapshot(current.runId, family)
+    const nextSnapshot = {
+      items: snapshotRef.current.items.filter(item => item.familyCode !== family),
+      trees: snapshotRef.current.trees.filter(tree => tree.treeCode !== family && !tree.treeCode.startsWith(`${family}-`)),
+    }
+    snapshotRef.current = nextSnapshot
+    setSnapshot(nextSnapshot)
+    const next = await persistRun({
+      scope: current.familyScopes[family] ?? current.scope,
+      phase: 'items',
+      resumePhase: 'items',
+      status: 'running',
+      itemSkip: 0,
+      headerSkip: 0,
+      headerReconciliationCodes: [],
+      headerReconciliationOffset: 0,
+      headerReconciliationCompleted: false,
+      familyTreesRead: 0,
+      lineSkip: 0,
+      lineCursor: null,
+      itemCount: 0,
+      familyStartedAt: new Date().toISOString(),
+      error: null,
+      completedFamilyCount: Math.min(current.completedFamilyCount, current.familyIndex),
+    })
+    pauseRequested.current = false
+    cancelRequested.current = false
+    setMassUpdate(initialMassUpdateState())
+    await execute(next)
+  }
+
   function requestNewRun(): void {
     if (!run) {
       void start()
+      return
+    }
+    if (run.status !== 'running' && run.status !== 'cancelled' && /^V[A-Z0-9]*$/u.test(familyFilter.trim().toUpperCase()) && !run.families.includes(familyFilter.trim().toUpperCase())) {
+      void addFamilyToSnapshot()
       return
     }
     setCancelConfirmationOpen(false)
@@ -1013,7 +1212,7 @@ export function ColorAuditClient() {
     await start()
   }
 
-  function pause(): void {
+  async function pause(): Promise<void> {
     pauseRequested.current = true
     controllerRef.current?.abort()
     const current = runRef.current
@@ -1021,7 +1220,7 @@ export function ColorAuditClient() {
     const resumePhase = current.phase === 'families' || current.phase === 'headers' || current.phase === 'header_reconciliation' || current.phase === 'tree_lines'
       ? current.phase
       : 'items'
-    void persistRun({ phase: 'paused', resumePhase, status: 'paused' }).catch(() => undefined)
+    await persistRun({ phase: 'paused', resumePhase, status: 'paused' })
   }
 
   function requestCancel(): void {
@@ -1031,14 +1230,14 @@ export function ColorAuditClient() {
     setCancelConfirmationOpen(true)
   }
 
-  function confirmCancel(): void {
+  async function confirmCancel(): Promise<void> {
     if (!cancelConfirmed) return
     cancelRequested.current = true
     controllerRef.current?.abort()
     const current = runRef.current
     if (!current || current.status !== 'running') return
     setCancelConfirmationOpen(false)
-    void persistRun({ phase: 'cancelled', status: 'cancelled' }).catch(() => undefined)
+    await persistRun({ phase: 'cancelled', status: 'cancelled' })
   }
 
   async function resume(): Promise<void> {
@@ -1058,7 +1257,7 @@ export function ColorAuditClient() {
   }
 
   async function postUpdate(auditKind: AuditTab, mode: UpdateMode, items: AuditUpdateItem[], confirmed: boolean): Promise<AuditUpdateResult[]> {
-    const response = await fetch('/api/product-design/color-audit/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auditKind, mode, items, confirmed }) })
+    const response = await fetch(`${auditApiBase}/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auditKind, mode, items, confirmed }) })
     const payload = await response.json() as AuditUpdateResponse
     if (!response.ok || !payload.results) throw new Error(payload.error || 'No se pudo procesar el lote SAP.')
     return payload.results
@@ -1066,7 +1265,7 @@ export function ColorAuditClient() {
 
   async function startMassUpdate(auditKind: AuditTab, candidates: AuditUpdateItem[]): Promise<void> {
     if (candidates.length === 0) return
-    setMassUpdate({ phase: 'dry-run', auditKind, candidates, results: [], processed: 0, total: candidates.length, confirmed: false, message: null })
+    setMassUpdate({ phase: 'dry-run', auditKind, candidates, results: [], processed: 0, total: candidates.length, confirmed: false, mode: 'dry-run', message: null })
     try {
       const results: AuditUpdateResult[] = []
       for (const batch of chunks(candidates, SAP_PAGE_BATCH_SIZE)) {
@@ -1110,7 +1309,7 @@ export function ColorAuditClient() {
 
   async function applyMassUpdate(): Promise<void> {
     if (massUpdate.phase !== 'awaiting-confirmation' || !massUpdate.auditKind || !massUpdate.confirmed) return
-    setMassUpdate(current => ({ ...current, phase: 'applying', processed: 0, results: [] }))
+    setMassUpdate(current => ({ ...current, phase: 'applying', processed: 0, results: [], mode: 'apply' }))
     try {
       const results: AuditUpdateResult[] = []
       for (const batch of chunks(massUpdate.candidates, SAP_PAGE_BATCH_SIZE)) {
@@ -1149,10 +1348,15 @@ export function ColorAuditClient() {
     : { reviewed: report?.reviewed ?? 0, discrepancies: report?.discrepancyCount ?? 0, common: Math.max(0, (report?.reviewed ?? 0) - (report?.discrepancyCount ?? 0) - (report?.noConsensusCount ?? 0)), contextLabel: 'Sin consenso', contextValue: report?.noConsensusCount ?? 0, eligible: report?.eligibleCount ?? 0 }
   const canStart = !run || run.status !== 'running'
   const canPause = run?.status === 'running'
-  const activeTabAvailable = !run
-    || run.scope === 'components'
-    || activeTab === run.scope
-    || (activeTab === 'color' && run.scope === 'output_warehouse')
+  const normalizedFamilyFilter = familyFilter.trim().toUpperCase()
+  const canAddFamily = Boolean(
+    run
+    && run.status !== 'running'
+    && run.status !== 'cancelled'
+    && /^V[A-Z0-9]*$/u.test(normalizedFamilyFilter)
+    && !run.families.includes(normalizedFamilyFilter),
+  )
+  const activeTabAvailable = !run || run.families.some(family => scopeCoversTab(run.familyScopes[family] ?? run.scope, activeTab))
   const elapsedMs = run ? Math.max(0, clock - Date.parse(run.startedAt)) : 0
   const familyElapsedMs = run ? Math.max(0, clock - Date.parse(run.familyStartedAt)) : 0
   const estimatedRemainingMs = run?.status === 'running'
@@ -1204,16 +1408,17 @@ export function ColorAuditClient() {
     <section className="border border-slate-200 bg-white shadow-sm"><nav aria-label="Auditorías SAP" className="flex overflow-x-auto border-b border-slate-200 px-1">{(['color', 'output_warehouse', 'bom_warehouse', 'issue_method'] as AuditTab[]).map(tab => <button key={tab} type="button" onClick={() => { setActiveTab(tab); setExpandedGroupId(null); setSelectedGroupIds([]); setSelectedGroupTargets({}); setMassUpdate(initialMassUpdateState()) }} className={`shrink-0 border-b-2 px-5 py-3 text-sm font-semibold ${activeTab === tab ? 'border-emerald-600 text-emerald-700' : 'border-transparent text-slate-600 hover:text-slate-900'}`}>{auditLabel(tab)}</button>)}</nav><p className="px-4 py-3 text-sm text-slate-600">{auditExplanation(activeTab)}</p></section>
 
     <section className="border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]"><label className="text-sm font-medium text-slate-700">Actividad<select value={scanScope} onChange={event => setScanScope(event.target.value as AuditScope)} disabled={!canStart} className="mt-1 h-9 w-full border border-slate-300 bg-white px-2"><option value="color">Solo color</option><option value="output_warehouse">Encabezado LdM: bodegas de salida (también color)</option><option value="components">Componentes LdM: destino y emisión (también color y salida)</option></select></label><label className="text-sm font-medium text-slate-700">Familia SAP (opcional)<input value={familyFilter} onChange={event => setFamilyFilter(event.target.value.toUpperCase())} disabled={!canStart} placeholder="Ej. VBAN05; vacío = todas" className="mt-1 h-9 w-full border border-slate-300 px-2 font-mono" /></label></div>
-      <div className="mt-4 flex flex-wrap items-center gap-2">{canStart ? <button type="button" onClick={requestNewRun} className="inline-flex h-9 items-center gap-2 bg-emerald-700 px-3 text-sm font-semibold text-white"><Play className="h-4 w-4" />Iniciar análisis sectorizado</button> : null}{canPause ? <button type="button" onClick={pause} className="inline-flex h-9 items-center gap-2 border border-amber-300 px-3 text-sm font-semibold text-amber-900"><Pause className="h-4 w-4" />Pausar</button> : null}{canPause ? <button type="button" onClick={requestCancel} className="inline-flex h-9 items-center gap-2 border border-rose-300 px-3 text-sm font-semibold text-rose-800"><XCircle className="h-4 w-4" />Cancelar</button> : null}{run?.status === 'paused' || run?.status === 'error' ? <button type="button" onClick={() => void resume()} className="inline-flex h-9 items-center gap-2 border border-sky-300 px-3 text-sm font-semibold text-sky-900"><RefreshCw className="h-4 w-4" />Reanudar</button> : null}{run?.status === 'complete' ? <button type="button" onClick={exportReport} className="inline-flex h-9 items-center gap-2 border border-slate-300 px-3 text-sm font-semibold text-slate-800"><Download className="h-4 w-4" />Exportar CSV</button> : null}<span className="text-sm text-slate-600">{runActivity}</span></div>
+      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]"><label className="text-sm font-medium text-slate-700">Actividad<select value={scanScope} onChange={event => setScanScope(event.target.value as AuditScope)} disabled={run?.status === 'running'} className="mt-1 h-9 w-full border border-slate-300 bg-white px-2"><option value="color">Solo color</option><option value="output_warehouse">Encabezado LdM: bodegas de salida (también color)</option><option value="components">Componentes LdM: destino y emisión (también color y salida)</option></select></label><label className="text-sm font-medium text-slate-700">Familia SAP{run ? ' para sumar' : ' (opcional)'}<input value={familyFilter} onChange={event => setFamilyFilter(event.target.value.toUpperCase())} disabled={run?.status === 'running'} placeholder={run ? 'Ej. VBAN05' : 'Ej. VBAN05; vacío = todas'} className="mt-1 h-9 w-full border border-slate-300 px-2 font-mono" /></label></div>
+      {run?.status === 'complete' ? <p className="mt-2 text-xs text-emerald-800">El snapshot se conserva. Escribe una familia nueva y usa <strong>Sumar familia al análisis</strong>; no se reemplaza la evidencia actual.</p> : null}
+      <div className="mt-4 flex flex-wrap items-center gap-2">{!run && canStart ? <button type="button" onClick={requestNewRun} className="inline-flex h-9 items-center gap-2 bg-emerald-700 px-3 text-sm font-semibold text-white"><Play className="h-4 w-4" />Iniciar análisis sectorizado</button> : null}{canAddFamily ? <button type="button" onClick={requestNewRun} className="inline-flex h-9 items-center gap-2 bg-emerald-700 px-3 text-sm font-semibold text-white"><Play className="h-4 w-4" />Sumar familia al análisis</button> : null}{run?.status === 'complete' && !canAddFamily ? <button type="button" onClick={requestNewRun} className="inline-flex h-9 items-center gap-2 border border-rose-300 px-3 text-sm font-semibold text-rose-800"><RefreshCw className="h-4 w-4" />Iniciar nueva corrida</button> : null}{canPause ? <button type="button" onClick={() => void pause()} className="inline-flex h-9 items-center gap-2 border border-amber-300 px-3 text-sm font-semibold text-amber-900"><Pause className="h-4 w-4" />Pausar</button> : null}{canPause ? <button type="button" onClick={requestCancel} className="inline-flex h-9 items-center gap-2 border border-rose-300 px-3 text-sm font-semibold text-rose-800"><XCircle className="h-4 w-4" />Cancelar</button> : null}{run?.status === 'paused' || run?.status === 'error' ? <button type="button" onClick={() => void resume()} className="inline-flex h-9 items-center gap-2 border border-sky-300 px-3 text-sm font-semibold text-sky-900"><RefreshCw className="h-4 w-4" />Reanudar</button> : null}{run?.status === 'error' && currentFamily ? <button type="button" onClick={() => void reanalyzeCurrentFamily()} className="inline-flex h-9 items-center gap-2 border border-amber-300 px-3 text-sm font-semibold text-amber-900"><RefreshCw className="h-4 w-4" />Reanalizar solo {currentFamily}</button> : null}{run?.status === 'complete' ? <button type="button" onClick={exportReport} className="inline-flex h-9 items-center gap-2 border border-slate-300 px-3 text-sm font-semibold text-slate-800"><Download className="h-4 w-4" />Exportar CSV</button> : null}<span className="text-sm text-slate-600">{runActivity}</span></div>
       {newRunConfirmationOpen ? <section className="mt-4 border border-rose-300 bg-rose-50 p-4 text-sm text-rose-950"><div className="flex items-start gap-2"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-rose-700" /><div><h2 className="font-semibold">Iniciar una nueva corrida borra el snapshot actual</h2><p className="mt-1">Se eliminarán las líneas, evidencia y avance de la auditoría pausada. Para conservarla, usa <strong>Reanudar</strong>.</p></div></div><label className="mt-3 flex cursor-pointer items-start gap-2 border border-rose-200 bg-white p-3"><input type="checkbox" checked={newRunConfirmed} onChange={event => setNewRunConfirmed(event.target.checked)} className="mt-1 h-4 w-4" /><span>Confirmo que deseo descartar el snapshot actual e iniciar una nueva auditoría.</span></label><div className="mt-3 flex gap-2"><button type="button" disabled={!newRunConfirmed} onClick={() => void confirmNewRun()} className="h-9 bg-rose-700 px-3 text-sm font-semibold text-white disabled:opacity-40">Descartar e iniciar nueva corrida</button><button type="button" onClick={() => { setNewRunConfirmationOpen(false); setNewRunConfirmed(false) }} className="h-9 border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800">Volver</button></div></section> : null}
-      {cancelConfirmationOpen ? <section className="mt-4 border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"><div className="flex items-start gap-2"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" /><div><h2 className="font-semibold">Cancelar detiene la lectura, pero conserva la evidencia</h2><p className="mt-1">No se borra el snapshot ni se modifica SAP. Podrás revisar los resultados parciales o iniciar otra corrida cuando lo decidas.</p></div></div><label className="mt-3 flex cursor-pointer items-start gap-2 border border-amber-200 bg-white p-3"><input type="checkbox" checked={cancelConfirmed} onChange={event => setCancelConfirmed(event.target.checked)} className="mt-1 h-4 w-4" /><span>Confirmo que deseo detener esta auditoría y conservar su evidencia parcial.</span></label><div className="mt-3 flex gap-2"><button type="button" disabled={!cancelConfirmed} onClick={confirmCancel} className="h-9 bg-amber-700 px-3 text-sm font-semibold text-white disabled:opacity-40">Detener auditoría</button><button type="button" onClick={() => { setCancelConfirmationOpen(false); setCancelConfirmed(false) }} className="h-9 border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800">Seguir analizando</button></div></section> : null}
+      {cancelConfirmationOpen ? <section className="mt-4 border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"><div className="flex items-start gap-2"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" /><div><h2 className="font-semibold">Cancelar detiene la lectura, pero conserva la evidencia</h2><p className="mt-1">No se borra el snapshot ni se modifica SAP. Podrás revisar los resultados parciales o iniciar otra corrida cuando lo decidas.</p></div></div><label className="mt-3 flex cursor-pointer items-start gap-2 border border-amber-200 bg-white p-3"><input type="checkbox" checked={cancelConfirmed} onChange={event => setCancelConfirmed(event.target.checked)} className="mt-1 h-4 w-4" /><span>Confirmo que deseo detener esta auditoría y conservar su evidencia parcial.</span></label><div className="mt-3 flex gap-2"><button type="button" disabled={!cancelConfirmed} onClick={() => void confirmCancel()} className="h-9 bg-amber-700 px-3 text-sm font-semibold text-white disabled:opacity-40">Detener auditoría</button><button type="button" onClick={() => { setCancelConfirmationOpen(false); setCancelConfirmed(false) }} className="h-9 border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800">Seguir analizando</button></div></section> : null}
       {run ? <>{progress === null ? <progress className="mt-3 h-2 w-full accent-emerald-700" /> : <progress className="mt-3 h-2 w-full accent-emerald-700" value={progress} max={100} />}<section className="mt-3 border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950"><p><strong>Familia actual:</strong> {currentFamily ?? (run.phase === 'families' ? 'buscando la siguiente' : 'sin familia pendiente')}</p><p className="mt-1"><strong>Familias completadas ({completedFamilies.length}):</strong> {completedFamilies.length > 0 ? completedFamilies.join(' · ') : 'ninguna todavía'}</p><p className="mt-1 text-xs text-emerald-800">Al pausar puedes reanudar desde este punto; si cancelas, esta lista indica desde qué familia iniciar una nueva corrida.</p></section><p className="mt-2 text-xs text-slate-500">{scanReadout} · {progressText} · transcurrido {durationLabel(elapsedMs)}{estimatedRemainingMs !== null ? ` · estimado restante ${durationLabel(estimatedRemainingMs)}` : ''}</p>{run.status === 'running' ? <p className="mt-1 text-xs text-slate-500">Los informes visibles son parciales. La estimación usa la duración media de las familias ya terminadas; las páginas se guardan antes de avanzar a la siguiente.</p> : null}</> : null}{run?.error ? <p className="mt-3 flex items-center gap-2 text-sm font-medium text-rose-700"><XCircle className="h-4 w-4" />{run.error}</p> : null}
     </section>
 
     <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><SummaryCard label="Discrepancias detectadas" value={summary.discrepancies} icon={<AlertTriangle className="h-5 w-5 text-amber-600" />} /><SummaryCard label="Configuración común" value={summary.common} icon={<CheckCircle2 className="h-5 w-5 text-emerald-600" />} /><SummaryCard label={summary.contextLabel} value={summary.contextValue} icon={<ClipboardCheck className="h-5 w-5 text-slate-500" />} /><SummaryCard label="Líneas revisadas" value={summary.reviewed} icon={<ClipboardCheck className="h-5 w-5 text-sky-600" />} /></section>
 
-    {activeTab !== 'color' ? <section className="border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><p><strong>Normalización segura:</strong> valores sin mayoría simple se muestran para revisión pero no se corrigen. Los valores vacíos solo se proponen cuando existe una configuración común válida.</p></section> : null}
+    {activeTab !== 'color' ? <section className="border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><p><strong>Normalización segura:</strong> la mayoría es la propuesta inicial. Si eliges una minoría o resuelves un empate, se recalcula el conjunto completo del sujeto, se relee cada línea en el dry-run y solo después se permite confirmar la escritura. Los valores vacíos solo se proponen cuando existe una configuración válida.</p></section> : null}
 
     {!activeTabAvailable ? <section className="border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">Esta pestaña no se calculó en la corrida actual. Ejecuta <strong>Componentes LdM</strong> para alimentar las cuatro auditorías, o la actividad específica para un análisis limitado.</section> : activeTab === 'color' ? <><ColorDiscrepancyTable rows={colorIssues} onCorrect={items => void startMassUpdate('color', items)} /><MassUpdatePanel state={massUpdate} onConfirmedChange={confirmed => setMassUpdate(current => ({ ...current, confirmed }))} onApply={() => void applyMassUpdate()} /></> : report ? <><ConfigurationGroups report={report} expandedGroupId={expandedGroupId} selectedGroupIds={selectedGroupIdSet} selectedTargets={selectedGroupTargets} selectionLocked={selectionLocked} onToggle={groupId => setExpandedGroupId(current => current === groupId ? null : groupId)} onSelectionChange={(group, selected) => setSelectedGroupIds(current => selected ? [...new Set([...current, group.id])] : current.filter(id => id !== group.id))} onTargetChange={(groupId, value) => { setSelectedGroupTargets(current => ({ ...current, [groupId]: value })); if (!value) setSelectedGroupIds(current => current.filter(id => id !== groupId)) }} /><ConfigurationBulkSelection selectedGroupCount={selectedGroupIds.length} candidateCount={bulkSelection.candidates.length} conflictCount={bulkSelection.conflictingKeys.length} selectionLocked={selectionLocked} onSelectAll={() => setSelectedGroupIds(current => [...new Set([...current, ...report.groups.filter(group => group.canNormalize).map(group => group.id)])])} onClear={() => { setSelectedGroupIds([]); setSelectedGroupTargets({}) }} onDryRun={() => void startMassUpdate(report.auditKind, bulkSelection.candidates)} /><MassUpdatePanel state={massUpdate} onConfirmedChange={confirmed => setMassUpdate(current => ({ ...current, confirmed }))} onApply={() => void applyMassUpdate()} /><ExcludedConfigurationItems items={report.excludedItems} /></> : null}
 

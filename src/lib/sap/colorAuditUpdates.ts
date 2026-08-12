@@ -186,6 +186,7 @@ export type SapAuditUpdateResult = {
   treeCode: string | null
   childNum: number | null
   expectedValue: string
+  decisionSource: SapAuditUpdateItem['decisionSource']
   beforeValue: string
   afterValue: string | null
   eligible: boolean
@@ -227,6 +228,7 @@ function updateResultFor(item: SapAuditUpdateItem, overrides: Partial<SapAuditUp
     treeCode: item.treeCode,
     childNum: item.childNum,
     expectedValue: item.expectedValue,
+    decisionSource: item.decisionSource,
     beforeValue: item.currentValue,
     afterValue: null,
     eligible: false,
@@ -283,7 +285,7 @@ async function logSapAuditOperation(input: {
   const operationType = {
     color: 'item_status_update',
     output_warehouse: 'product_tree_header_warehouse_update',
-    bom_warehouse: 'product_tree_issue_method_update',
+    bom_warehouse: 'product_tree_line_warehouse_update',
     issue_method: 'product_tree_issue_method_update',
   }[input.item.auditKind]
   const { error } = await supabaseTable('sap_operation_logs').insert({
@@ -299,10 +301,12 @@ async function logSapAuditOperation(input: {
       child_num: input.item.childNum,
       current_value: input.item.currentValue,
       expected_value: input.item.expectedValue,
+      decision_source: input.item.decisionSource,
     },
     sap_response: {
       before_value: input.result.beforeValue,
       after_value: input.result.afterValue,
+      verification: input.dryRun ? 'dry_run_pre_read' : 'sap_re_read_after_write',
       changed: input.result.changed,
       stale: input.result.stale,
       message: input.result.message,
