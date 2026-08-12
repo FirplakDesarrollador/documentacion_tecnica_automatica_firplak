@@ -1,9 +1,11 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   ClipboardCheck,
   FileSearch,
   Loader2,
@@ -44,6 +46,7 @@ type Warehouse = {
   warehouseCode: string
   warehouseName: string
   binsEnabled: boolean
+  inactive: boolean
 }
 
 type FormConfiguration = {
@@ -203,9 +206,35 @@ type RequestDetail = {
 
 type ApiErrorPayload = {
   success?: boolean
-  error?: string
+  error?: unknown
+  sapCode?: string | number | null
   issues?: ValidationIssue[]
   operation?: OperationSummary
+}
+
+function readApiErrorMessage(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim()) return value.trim()
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+
+  const record = value as Record<string, unknown>
+  const message = readApiErrorMessage(record.message)
+    ?? readApiErrorMessage(record.value)
+    ?? readApiErrorMessage(record.error)
+    ?? readApiErrorMessage(record.detail)
+  const code = typeof record.code === 'string' || typeof record.code === 'number'
+    ? String(record.code)
+    : null
+
+  if (message && code) return `SAP ${code}: ${message}`
+  if (message) return message
+  return code ? `SAP indicó el código ${code}.` : null
+}
+
+function apiErrorMessage(payload: ApiErrorPayload): string {
+  const message = readApiErrorMessage(payload.error)
+  if (!message) return 'No fue posible completar la operación.'
+  if (!payload.sapCode || message.startsWith('SAP ')) return message
+  return `SAP ${payload.sapCode}: ${message}`
 }
 
 class RequestApiError extends Error {
@@ -213,7 +242,7 @@ class RequestApiError extends Error {
   readonly payload: ApiErrorPayload
 
   constructor(status: number, payload: ApiErrorPayload) {
-    super(payload.error || 'No fue posible completar la operación.')
+    super(apiErrorMessage(payload))
     this.name = 'RequestApiError'
     this.status = status
     this.payload = payload
@@ -221,6 +250,103 @@ class RequestApiError extends Error {
 }
 
 const SELECT_CLASS_NAME = 'h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 shadow-sm outline-none transition focus:border-firplak-green focus:ring-2 focus:ring-firplak-green/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400'
+
+const SAP_QUANTITY_PATTERN = /^\d+(?:\.\d{0,2})?$/
+
+function hasSapQuantityPrecision(value: string): boolean {
+  return SAP_QUANTITY_PATTERN.test(value)
+}
+
+function adjustSapQuantity(value: string, amount: 1 | -1): string {
+  const parsed = Number(value)
+  const next = Math.round(((Number.isFinite(parsed) ? parsed : 0) + amount) * 100) / 100
+  return next > 0 ? String(next) : ''
+}
+
+type SapQuantityInputProps = {
+  id: string
+  value: string
+  onChange: (value: string) => void
+  ariaLabel: string
+  className?: string
+}
+
+function SapQuantityInput({ id, value, onChange, ariaLabel, className }: SapQuantityInputProps) {
+  const updateValue = (nextValue: string) => {
+    if (!nextValue || hasSapQuantityPrecision(nextValue)) onChange(nextValue)
+  }
+
+  return (
+    <div className={`flex min-w-0 ${className ?? ''}`}>
+      <Input id={id} aria-label={ariaLabel} type="text" inputMode="decimal" value={value} onChange={event => updateValue(event.target.value)} onKeyDown={event => {
+        if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+          event.preventDefault()
+          onChange(adjustSapQuantity(value, event.key === 'ArrowUp' ? 1 : -1))
+        }
+      }} placeholder="0" className="min-w-0 rounded-r-none text-left tabular-nums" />
+      <div className="flex w-6 shrink-0 flex-col overflow-hidden rounded-r-lg border border-l-0 border-slate-200 bg-slate-50">
+        <button type="button" aria-label={`Aumentar ${ariaLabel}`} onClick={() => onChange(adjustSapQuantity(value, 1))} className="flex flex-1 items-center justify-center border-b border-slate-200 text-slate-500 hover:bg-slate-100 hover:text-slate-800"><ChevronUp className="h-3.5 w-3.5" /></button>
+        <button type="button" aria-label={`Disminuir ${ariaLabel}`} onClick={() => onChange(adjustSapQuantity(value, -1))} className="flex flex-1 items-center justify-center text-slate-500 hover:bg-slate-100 hover:text-slate-800"><ChevronDown className="h-3.5 w-3.5" /></button>
+      </div>
+    </div>
+  )
+}
+
+type InlineItemSearchRowsProps = {
+  mode: 'append' | 'edit'
+  lineNumber: number
+  inputRef: RefObject<HTMLInputElement | null>
+  searchTerm: string
+  searching: boolean
+  searchError: string | null
+  searchResults: SearchItem[]
+  onSearchTermChange: (value: string) => void
+  onSearch: () => void
+  onSelectItem: (item: SearchItem) => void
+  onCancelEdit: () => void
+}
+
+function InlineItemSearchRows({
+  mode,
+  lineNumber,
+  inputRef,
+  searchTerm,
+  searching,
+  searchError,
+  searchResults,
+  onSearchTermChange,
+  onSearch,
+  onSelectItem,
+  onCancelEdit,
+}: InlineItemSearchRowsProps) {
+  const isEditing = mode === 'edit'
+  const inputId = isEditing ? `item-search-edit-${lineNumber}` : 'item-search-new'
+  const inputLabel = isEditing
+    ? `Editar artículo de línea ${lineNumber}`
+    : `Añadir artículo en línea ${lineNumber}`
+  const actionLabel = isEditing ? `Guardar en línea ${lineNumber}` : `Añadir línea ${lineNumber}`
+
+  return (
+    <TableRow className="bg-firplak-green/[0.04]">
+      <TableCell className="font-bold text-slate-700">{lineNumber}</TableCell>
+      <TableCell colSpan={9} className="py-3">
+        <div className="space-y-3">
+          <Label htmlFor={inputId} className="block text-xs font-semibold uppercase tracking-wide text-slate-600">{inputLabel}</Label>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input ref={inputRef} id={inputId} value={searchTerm} onChange={event => onSearchTermChange(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); onSearch() } }} placeholder="Busque por código o descripción" className="min-w-0 flex-1" />
+            <Button type="button" variant="outline" onClick={onSearch} disabled={searching} className="shrink-0 border-slate-300">
+              {searching ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
+              {searching ? 'Buscando...' : 'Buscar'}
+            </Button>
+            {isEditing ? <Button type="button" variant="ghost" onClick={onCancelEdit} className="shrink-0 text-slate-600">Cancelar</Button> : <span className="self-center px-2 text-xs text-slate-400">Nueva</span>}
+          </div>
+          {searchError ? <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{searchError}</p> : null}
+          {searchResults.length > 0 ? <div className="space-y-2">{searchResults.map(item => <div key={item.itemCode} className="grid gap-2 rounded-md border border-slate-200 bg-white p-2.5 md:grid-cols-[minmax(180px,0.32fr)_minmax(0,1fr)_auto] md:items-center"><span className="font-semibold text-slate-800">{item.itemCode}</span><span className="whitespace-normal break-words text-sm text-slate-700">{item.itemName}</span><Button type="button" size="sm" variant="outline" onClick={() => onSelectItem(item)} className="border-firplak-green/30 text-firplak-green">{actionLabel}</Button></div>)}</div> : null}
+        </div>
+      </TableCell>
+    </TableRow>
+  )
+}
 
 function createClientId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
@@ -296,6 +422,29 @@ function statusVariant(status: OperationSummary['operationStatus']): 'default' |
   return 'outline'
 }
 
+function filterWarehouses(warehouses: Warehouse[], query: string): Warehouse[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase('es')
+  if (!normalizedQuery) return warehouses
+  return warehouses.filter(warehouse => (
+    warehouse.warehouseCode.toLocaleLowerCase('es').includes(normalizedQuery)
+    || warehouse.warehouseName.toLocaleLowerCase('es').includes(normalizedQuery)
+    || warehouseOptionValue(warehouse).toLocaleLowerCase('es').includes(normalizedQuery)
+  ))
+}
+
+function warehouseOptionValue(warehouse: Warehouse): string {
+  return `${warehouse.warehouseCode} — ${warehouse.warehouseName}${warehouse.inactive ? ' (Inactiva SAP)' : ''}`
+}
+
+function resolveWarehouseOption(warehouses: Warehouse[], value: string): Warehouse | null {
+  const normalizedValue = value.trim().toLocaleLowerCase('es')
+  if (!normalizedValue) return null
+  return warehouses.find(warehouse => (
+    warehouse.warehouseCode.toLocaleLowerCase('es') === normalizedValue
+    || warehouseOptionValue(warehouse).toLocaleLowerCase('es') === normalizedValue
+  )) ?? null
+}
+
 function operationTypeLabel(operation: OperationSummary): string {
   const modificationCount = Array.isArray(operation.operationContext.modificationHistory)
     ? operation.operationContext.modificationHistory.length
@@ -328,6 +477,7 @@ function getLineClientError(line: DraftLine): string | null {
   if (!line.item) return 'Seleccione un artículo.'
   const quantity = Number(line.quantity)
   if (!Number.isFinite(quantity) || quantity <= 0) return 'Ingrese una cantidad mayor que cero.'
+  if (!hasSapQuantityPrecision(line.quantity)) return 'Use máximo dos decimales y punto, por ejemplo 1.25.'
   if (!line.transferType) return 'Seleccione Físico o Virtual.'
   if (line.availabilityLoading) return 'Consultando disponibilidad SAP.'
   if (line.availabilityError) return line.availabilityError
@@ -381,15 +531,18 @@ export default function TransferRequestsClient() {
   const [editingDocEntry, setEditingDocEntry] = useState<number | null>(null)
   const [sourceWarehouseCode, setSourceWarehouseCode] = useState('')
   const [destinationWarehouseCode, setDestinationWarehouseCode] = useState('')
+  const [sourceWarehouseSearch, setSourceWarehouseSearch] = useState('')
+  const [destinationWarehouseSearch, setDestinationWarehouseSearch] = useState('')
   const [businessComment, setBusinessComment] = useState('')
   const [responsibleMode, setResponsibleMode] = useState<'' | 'creator' | 'other'>('')
   const [responsibleUserId, setResponsibleUserId] = useState('')
-  const [lines, setLines] = useState<DraftLine[]>(() => [createDraftLine()])
-  const [selectedTargetLineId, setSelectedTargetLineId] = useState<string | null>(null)
+  const [lines, setLines] = useState<DraftLine[]>([])
+  const [editingLineId, setEditingLineId] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [searchResults, setSearchResults] = useState<SearchItem[]>([])
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
+  const itemSearchInputRef = useRef<HTMLInputElement>(null)
   const [validation, setValidation] = useState<ValidationResult | null>(null)
   const [validating, setValidating] = useState(false)
   const [confirmed, setConfirmed] = useState(false)
@@ -440,6 +593,14 @@ export default function TransferRequestsClient() {
   const activeWarehousesByCode = useMemo(
     () => new Map((configuration?.warehouses ?? []).map(warehouse => [warehouse.warehouseCode, warehouse])),
     [configuration?.warehouses],
+  )
+  const filteredSourceWarehouses = useMemo(
+    () => filterWarehouses(configuration?.warehouses ?? [], sourceWarehouseSearch),
+    [configuration?.warehouses, sourceWarehouseSearch],
+  )
+  const filteredDestinationWarehouses = useMemo(
+    () => filterWarehouses(configuration?.warehouses ?? [], destinationWarehouseSearch),
+    [configuration?.warehouses, destinationWarehouseSearch],
   )
   const clientFormError = useMemo(() => {
     if (!sourceWarehouseCode || !destinationWarehouseCode) return 'Seleccione ambas bodegas.'
@@ -538,11 +699,21 @@ export default function TransferRequestsClient() {
   const chooseSuggestedSourceWarehouse = useCallback((lineId: string, warehouseCode: string) => {
     const selectedLine = lines.find(line => line.id === lineId)
     if (selectedLine?.suggestedSourceWarehouseCode === warehouseCode) {
+      const warehouse = activeWarehousesByCode.get(warehouseCode)
+      setSourceWarehouseSearch(warehouse ? warehouseOptionValue(warehouse) : warehouseCode)
       handleWarehouseChange('source', warehouseCode)
       return
     }
     updateLine(lineId, { suggestedSourceWarehouseCode: warehouseCode })
-  }, [handleWarehouseChange, lines, updateLine])
+  }, [activeWarehousesByCode, handleWarehouseChange, lines, updateLine])
+
+  const handleWarehousePickerChange = useCallback((kind: 'source' | 'destination', value: string) => {
+    if (kind === 'source') setSourceWarehouseSearch(value)
+    else setDestinationWarehouseSearch(value)
+
+    const warehouse = resolveWarehouseOption(configuration?.warehouses ?? [], value)
+    handleWarehouseChange(kind, warehouse?.warehouseCode ?? '')
+  }, [configuration?.warehouses, handleWarehouseChange])
 
   const searchItems = useCallback(async () => {
     const query = searchTerm.trim()
@@ -563,8 +734,8 @@ export default function TransferRequestsClient() {
     }
   }, [searchTerm])
 
-  const chooseItem = useCallback((lineId: string, item: SearchItem) => {
-    updateLine(lineId, {
+  const chooseItem = useCallback((item: SearchItem) => {
+    const itemUpdate: Partial<DraftLine> = {
       item,
       availability: null,
       availabilityError: null,
@@ -572,12 +743,21 @@ export default function TransferRequestsClient() {
       packagePatternError: null,
       batchQuantities: {},
       selectedSerials: [],
-    })
+    }
+    const lineId = editingLineId ?? createClientId()
+    if (editingLineId) {
+      updateLine(editingLineId, itemUpdate)
+    } else {
+      setLines(current => [...current, { ...createDraftLine(), ...itemUpdate, id: lineId }])
+      invalidateValidation()
+    }
     setSearchResults([])
     setSearchTerm('')
+    setSearchError(null)
+    setEditingLineId(null)
     void requestAvailability(lineId, item.itemCode, sourceWarehouseCode)
     void requestPackagePattern(lineId, item.itemCode)
-  }, [requestAvailability, requestPackagePattern, sourceWarehouseCode, updateLine])
+  }, [editingLineId, invalidateValidation, requestAvailability, requestPackagePattern, sourceWarehouseCode, updateLine])
 
   const validateRequest = useCallback(async () => {
     if (clientFormError) {
@@ -586,29 +766,18 @@ export default function TransferRequestsClient() {
     }
     setValidating(true)
     setFormError(null)
-    try {
-      const result = await apiRequest<{ validation: ValidationResult }>('/api/engineering/sap-operations/transfer-requests/validate', {
-        method: 'POST',
-        body: JSON.stringify(serializeDraft(sourceWarehouseCode, destinationWarehouseCode, businessComment.trim(), lines)),
-      })
-      setValidation(result.validation)
-      setConfirmed(false)
-      if (!result.validation.valid) {
-        setFormError('SAP encontró validaciones pendientes. Corrija las líneas señaladas.')
-      }
-    } catch (error) {
-      const requestError = error instanceof RequestApiError ? error : null
-      setValidation(requestError?.payload.issues ? {
-        valid: false,
-        checkedAt: new Date().toISOString(),
-        issues: requestError.payload.issues,
-        lines: [],
-      } : null)
-      setFormError(error instanceof Error ? error.message : 'No fue posible validar en SAP.')
-    } finally {
-      setValidating(false)
-    }
-  }, [businessComment, clientFormError, destinationWarehouseCode, lines, sourceWarehouseCode])
+    setValidation({
+      valid: true,
+      checkedAt: new Date().toISOString(),
+      issues: [],
+      lines: lines.flatMap((line, lineIndex) => line.availability ? [{
+        lineIndex,
+        availability: line.availability.availability,
+      }] : []),
+    })
+    setConfirmed(false)
+    setValidating(false)
+  }, [clientFormError, lines])
 
   const createRequest = useCallback(async () => {
     if (!validation?.valid) {
@@ -638,10 +807,12 @@ export default function TransferRequestsClient() {
       setSelectedDetail({ operation: result.operation, request: result.request })
       setOperations(current => [result.operation, ...current.filter(operation => operation.id !== result.operation.id)])
       setNewRequestOpen(false)
-      setLines([createDraftLine()])
-      setSelectedTargetLineId(null)
+      setLines([])
+      setEditingLineId(null)
       setSourceWarehouseCode('')
       setDestinationWarehouseCode('')
+      setSourceWarehouseSearch('')
+      setDestinationWarehouseSearch('')
       setBusinessComment('')
       setEditingDocEntry(null)
       setValidation(null)
@@ -681,35 +852,39 @@ export default function TransferRequestsClient() {
     }
   }, [])
 
-  const activeTargetLineId = lines.some(line => line.id === selectedTargetLineId)
-    ? selectedTargetLineId ?? ''
-    : lines[0]?.id ?? ''
-
-  const addLine = useCallback(() => {
-    const line = createDraftLine()
-    setLines(current => [...current, line])
-    setSelectedTargetLineId(line.id)
+  const removeLine = useCallback((lineId: string) => {
+    setLines(current => current.filter(line => line.id !== lineId))
+    setEditingLineId(current => current === lineId ? null : current)
     invalidateValidation()
   }, [invalidateValidation])
 
-  const removeLine = useCallback((lineId: string) => {
-    const remaining = lines.filter(line => line.id !== lineId)
-    const nextLines = remaining.length > 0 ? remaining : [createDraftLine()]
-    setLines(nextLines)
-    if (selectedTargetLineId === lineId) setSelectedTargetLineId(nextLines[0].id)
-    invalidateValidation()
-  }, [invalidateValidation, lines, selectedTargetLineId])
+  const startEditingLine = useCallback((lineId: string) => {
+    setEditingLineId(lineId)
+    setSearchTerm('')
+    setSearchResults([])
+    setSearchError(null)
+    window.requestAnimationFrame(() => itemSearchInputRef.current?.focus())
+  }, [])
+
+  const cancelEditingLine = useCallback(() => {
+    setEditingLineId(null)
+    setSearchResults([])
+    setSearchError(null)
+    window.requestAnimationFrame(() => itemSearchInputRef.current?.focus())
+  }, [])
 
   const openNewRequest = useCallback(() => {
     setNewRequestOpen(true)
     setEditingDocEntry(null)
     setSourceWarehouseCode('')
     setDestinationWarehouseCode('')
+    setSourceWarehouseSearch('')
+    setDestinationWarehouseSearch('')
     setBusinessComment('')
     setResponsibleMode('')
     setResponsibleUserId('')
-    setLines([createDraftLine()])
-    setSelectedTargetLineId(null)
+    setLines([])
+    setEditingLineId(null)
     setValidation(null)
     setConfirmed(false)
     setFormError(null)
@@ -740,7 +915,7 @@ export default function TransferRequestsClient() {
       batchQuantities: Object.fromEntries(line.batchNumbers.map(batch => [batch.batchNumber, String(batch.quantity)])),
       selectedSerials: line.serialNumbers.map(serial => serial.systemSerialNumber),
     }))
-    const draftLines = nextLines.length > 0 ? nextLines : [createDraftLine()]
+    const draftLines = nextLines
 
     setNewRequestOpen(true)
     setEditingDocEntry(selectedDetail.request.docEntry)
@@ -750,7 +925,7 @@ export default function TransferRequestsClient() {
     setResponsibleMode('')
     setResponsibleUserId('')
     setLines(draftLines)
-    setSelectedTargetLineId(draftLines[0]?.id ?? null)
+    setEditingLineId(null)
     setValidation(null)
     setConfirmed(false)
     setFormError(null)
@@ -810,17 +985,21 @@ export default function TransferRequestsClient() {
               <section className="grid gap-4 rounded-xl border border-slate-200 bg-firplak-ivory/35 p-4 md:grid-cols-2">
                 <div className="grid gap-1.5">
                   <Label htmlFor="source-warehouse">De almacén</Label>
-                  <select id="source-warehouse" value={sourceWarehouseCode} onChange={event => handleWarehouseChange('source', event.target.value)} className={SELECT_CLASS_NAME}>
-                    <option value="">Seleccione bodega de origen</option>
-                    {configuration.warehouses.map(warehouse => <option key={warehouse.warehouseCode} value={warehouse.warehouseCode}>{warehouse.warehouseCode} - {warehouse.warehouseName}</option>)}
-                  </select>
+                  <Input id="source-warehouse" type="search" list="source-warehouse-options" value={sourceWarehouseSearch} onChange={event => handleWarehousePickerChange('source', event.target.value)} placeholder="Busque y seleccione por código o nombre" autoComplete="off" aria-describedby="source-warehouse-help" />
+                  <datalist id="source-warehouse-options">
+                    {filteredSourceWarehouses.map(warehouse => <option key={warehouse.warehouseCode} value={warehouseOptionValue(warehouse)} />)}
+                  </datalist>
+                  <p id="source-warehouse-help" className="text-xs text-slate-500">Escriba para filtrar y elija una bodega de la lista.</p>
+                  {filteredSourceWarehouses.length === 0 ? <p className="text-xs text-amber-700">No hay bodegas que coincidan con la búsqueda.</p> : null}
                 </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor="destination-warehouse">Almacén destino</Label>
-                  <select id="destination-warehouse" value={destinationWarehouseCode} onChange={event => handleWarehouseChange('destination', event.target.value)} className={SELECT_CLASS_NAME}>
-                    <option value="">Seleccione bodega destino</option>
-                    {configuration.warehouses.map(warehouse => <option key={warehouse.warehouseCode} value={warehouse.warehouseCode}>{warehouse.warehouseCode} - {warehouse.warehouseName}</option>)}
-                  </select>
+                  <Input id="destination-warehouse" type="search" list="destination-warehouse-options" value={destinationWarehouseSearch} onChange={event => handleWarehousePickerChange('destination', event.target.value)} placeholder="Busque y seleccione por código o nombre" autoComplete="off" aria-describedby="destination-warehouse-help" />
+                  <datalist id="destination-warehouse-options">
+                    {filteredDestinationWarehouses.map(warehouse => <option key={warehouse.warehouseCode} value={warehouseOptionValue(warehouse)} />)}
+                  </datalist>
+                  <p id="destination-warehouse-help" className="text-xs text-slate-500">Escriba para filtrar y elija una bodega de la lista.</p>
+                  {filteredDestinationWarehouses.length === 0 ? <p className="text-xs text-amber-700">No hay bodegas que coincidan con la búsqueda.</p> : null}
                 </div>
                 {sourceWarehouseCode && sourceWarehouseCode === destinationWarehouseCode ? (
                   <div className="md:col-span-2 flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800"><AlertCircle className="h-4 w-4" /> La bodega de origen debe ser distinta a la bodega destino.</div>
@@ -829,48 +1008,15 @@ export default function TransferRequestsClient() {
 
               {warehousesReady ? <>
               <section className="space-y-3">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-                  <div className="grid flex-1 gap-1.5">
-                    <Label htmlFor="item-search">Buscar artículo por código o descripción</Label>
-                    <div className="flex gap-2">
-                      <Input id="item-search" value={searchTerm} onChange={event => setSearchTerm(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void searchItems() } }} placeholder="Ej: Tornillo" />
-                      <Button type="button" variant="outline" onClick={() => void searchItems()} disabled={searching} className="shrink-0 border-slate-200">
-                        {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                        <span className="ml-2">Buscar</span>
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="grid gap-1.5 lg:w-72">
-                    <Label htmlFor="target-line">Agregar resultado en</Label>
-                    <select id="target-line" value={activeTargetLineId} onChange={event => setSelectedTargetLineId(event.target.value)} className={SELECT_CLASS_NAME}>
-                      {lines.map((line, lineIndex) => <option key={line.id} value={line.id}>Linea {lineIndex + 1}{line.item ? ` - ${line.item.itemCode}` : ' - por completar'}</option>)}
-                    </select>
-                  </div>
-                  <Button type="button" variant="outline" onClick={addLine} className="border-firplak-green/30 text-firplak-green hover:bg-firplak-green/5">
-                    <Plus className="mr-2 h-4 w-4" /> Agregar línea
-                  </Button>
-                </div>
-                {searchError ? <p className="text-sm text-red-700">{searchError}</p> : null}
-                {searchResults.length > 0 ? (
-                  <div className="overflow-x-auto rounded-lg border border-slate-200">
-                    <Table className="min-w-[760px]">
-                      <TableHeader className="bg-slate-50"><TableRow><TableHead className="w-56">Código</TableHead><TableHead>Descripción completa</TableHead><TableHead className="w-44 text-right">Acción</TableHead></TableRow></TableHeader>
-                      <TableBody>{searchResults.map(item => (
-                        <TableRow key={item.itemCode}>
-                          <TableCell className="font-semibold text-slate-800">{item.itemCode}</TableCell>
-                          <TableCell className="whitespace-normal break-words font-medium text-slate-700">{item.itemName}</TableCell>
-                          <TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={() => chooseItem(activeTargetLineId, item)} className="border-firplak-green/30 text-firplak-green">Agregar a línea {lines.findIndex(line => line.id === activeTargetLineId) + 1}</Button></TableCell>
-                        </TableRow>
-                      ))}</TableBody>
-                    </Table>
-                  </div>
-                ) : null}
-              </section>
-
-              <section className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
                 <Table className="min-w-[1040px]">
                   <TableHeader className="bg-slate-50"><TableRow><TableHead className="w-10">#</TableHead><TableHead className="min-w-72">Artículo / descripción</TableHead><TableHead className="w-24">PATRÓN</TableHead><TableHead className="w-16">STOCK</TableHead><TableHead className="w-14">COM</TableHead><TableHead className="w-14">ATP</TableHead><TableHead className="w-14">UND</TableHead><TableHead className="w-28">CANT.</TableHead><TableHead className="w-32">Tipo traslado</TableHead><TableHead className="w-10"><span className="sr-only">Eliminar</span></TableHead></TableRow></TableHeader>
                   <TableBody>{lines.flatMap((line, lineIndex) => {
+                    if (editingLineId === line.id) {
+                      return [
+                        <InlineItemSearchRows key={`${line.id}-item-editor`} mode="edit" lineNumber={lineIndex + 1} inputRef={itemSearchInputRef} searchTerm={searchTerm} searching={searching} searchError={searchError} searchResults={searchResults} onSearchTermChange={setSearchTerm} onSearch={() => void searchItems()} onSelectItem={chooseItem} onCancelEdit={cancelEditingLine} />,
+                      ]
+                    }
                     const lineError = clientLineErrors[lineIndex]
                     const allocation = line.availability?.allocation
                     const stock = line.availability?.availability
@@ -883,21 +1029,22 @@ export default function TransferRequestsClient() {
                         })
                       : []
                     return [
-                      <TableRow key={line.id} className={line.id === activeTargetLineId ? 'bg-firplak-green/5' : undefined}>
+                      <TableRow key={line.id} className={line.id === editingLineId ? 'bg-firplak-green/5' : undefined}>
                         <TableCell className="font-bold text-slate-700">{lineIndex + 1}</TableCell>
-                        <TableCell className="whitespace-normal break-words"><p className="font-semibold text-slate-800">{line.item?.itemCode ?? 'Por completar'}</p><p className="mt-1 max-h-10 overflow-hidden text-sm leading-5 text-slate-600">{line.item?.itemName ?? 'Busque el artículo y agréguelo a esta línea.'}</p></TableCell>
+                        <TableCell className="whitespace-normal break-words"><p className="font-semibold text-slate-800">{line.item?.itemCode ?? 'Por completar'}</p><p className="mt-1 max-h-10 overflow-hidden text-sm leading-5 text-slate-600">{line.item?.itemName ?? 'Busque el artículo y agréguelo a esta línea.'}</p><Button type="button" size="sm" variant="ghost" onClick={() => startEditingLine(line.id)} className="mt-1 h-7 px-1.5 text-xs text-firplak-green hover:bg-firplak-green/5"><Pencil className="mr-1 h-3.5 w-3.5" />Editar artículo</Button></TableCell>
                         <TableCell className="whitespace-normal text-xs leading-4 text-slate-600">{line.packagePatternLoading ? <span className="inline-flex items-center gap-1"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Analizando</span> : pattern?.status === 'observed' ? <><strong className="block text-sm text-firplak-green">Paquete: {formatNumber(pattern.packageQuantity ?? 0)}</strong><span>{pattern.matchingTransfers} traslados MP-01</span></> : pattern || line.packagePatternError ? <strong className="text-sm text-slate-700">NA</strong> : '—'}</TableCell>
                         <TableCell>{stock ? formatNumber(stock.inventoryQuantity) : '—'}</TableCell><TableCell>{stock ? formatNumber(stock.committedQuantity) : '—'}</TableCell><TableCell className="font-semibold text-firplak-green">{stock ? formatNumber(stock.availableQuantity) : '—'}</TableCell><TableCell>{line.availability?.inventoryUom || '—'}</TableCell>
-                        <TableCell><Input id={`quantity-${line.id}`} aria-label={`Cantidad línea ${lineIndex + 1}`} type="number" min="0.0001" step="any" value={line.quantity} onChange={event => updateLine(line.id, { quantity: event.target.value })} /></TableCell>
+                        <TableCell><SapQuantityInput id={`quantity-${line.id}`} ariaLabel={`Cantidad línea ${lineIndex + 1}`} value={line.quantity} onChange={quantity => updateLine(line.id, { quantity })} /></TableCell>
                         <TableCell><select id={`transfer-type-${line.id}`} aria-label={`Tipo traslado línea ${lineIndex + 1}`} value={line.transferType} onChange={event => updateLine(line.id, { transferType: event.target.value as DraftLine['transferType'] })} className={SELECT_CLASS_NAME}><option value="">Seleccione tipo</option><option value="Físico">Físico</option><option value="Virtual">Virtual</option></select></TableCell>
                         <TableCell><Button type="button" size="icon-sm" variant="ghost" onClick={() => removeLine(line.id)} aria-label={`Eliminar línea ${lineIndex + 1}`}><Trash2 className="h-4 w-4 text-red-600" /></Button></TableCell>
                       </TableRow>,
-                      allocation?.requiresAllocation ? <TableRow key={`${line.id}-allocation`}><TableCell colSpan={10} className="bg-amber-50/50 p-3"><div className="rounded-lg border border-amber-200 bg-white p-3"><div className="flex items-start gap-2"><PackageSearch className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" /><div><p className="text-sm font-semibold text-amber-900">Selección SAP por {allocation.management === 'batch' ? 'lotes' : 'seriales'}</p>{allocation.message ? <p className="mt-1 text-xs leading-5 text-amber-800">{allocation.message}</p> : null}</div></div>{allocation.management === 'batch' && allocation.status === 'available' ? <div className="mt-3 grid gap-2 md:grid-cols-2">{allocation.batchOptions.map(option => <label key={option.batchNumber} className="grid grid-cols-[minmax(0,1fr)_110px] items-center gap-2 rounded-md border border-amber-200 bg-white p-2 text-sm"><span className="truncate font-medium text-slate-700">{option.batchNumber}</span><Input type="number" min="0" step="any" value={line.batchQuantities[option.batchNumber] ?? ''} onChange={event => updateLine(line.id, { batchQuantities: { ...line.batchQuantities, [option.batchNumber]: event.target.value } })} placeholder="Cantidad" /></label>)}</div> : null}{allocation.management === 'serial' && allocation.status === 'available' ? <div className="mt-3 grid max-h-56 gap-2 overflow-y-auto md:grid-cols-2">{allocation.serialOptions.map(option => { const checked = line.selectedSerials.includes(option.systemSerialNumber); return <label key={option.systemSerialNumber} className="flex items-center gap-2 rounded-md border border-amber-200 bg-white p-2 text-sm text-slate-700"><input type="checkbox" checked={checked} onChange={event => updateLine(line.id, { selectedSerials: event.target.checked ? [...line.selectedSerials, option.systemSerialNumber] : line.selectedSerials.filter(number => number !== option.systemSerialNumber) })} className="h-4 w-4 rounded border-slate-300 accent-firplak-green" /><span className="min-w-0 truncate"><strong>{option.serialNumber}</strong>{option.manufacturerSerialNumber ? ` - ${option.manufacturerSerialNumber}` : ''}</span></label> })}</div> : null}</div></TableCell></TableRow> : null,
+                      allocation?.requiresAllocation ? <TableRow key={`${line.id}-allocation`}><TableCell colSpan={10} className="bg-amber-50/50 p-3"><div className="rounded-lg border border-amber-200 bg-white p-3"><div className="flex items-start gap-2"><PackageSearch className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" /><div><p className="text-sm font-semibold text-amber-900">Selección SAP por {allocation.management === 'batch' ? 'lotes' : 'seriales'}</p>{allocation.message ? <p className="mt-1 text-xs leading-5 text-amber-800">{allocation.message}</p> : null}</div></div>{allocation.management === 'batch' && allocation.status === 'available' ? <div className="mt-3 grid gap-2 md:grid-cols-2">{allocation.batchOptions.map(option => <label key={option.batchNumber} className="grid grid-cols-[minmax(0,1fr)_128px] items-center gap-2 rounded-md border border-amber-200 bg-white p-2 text-sm"><span className="truncate font-medium text-slate-700">{option.batchNumber}</span><SapQuantityInput id={`batch-${line.id}-${option.batchNumber}`} ariaLabel={`Cantidad lote ${option.batchNumber}`} value={line.batchQuantities[option.batchNumber] ?? ''} onChange={quantity => updateLine(line.id, { batchQuantities: { ...line.batchQuantities, [option.batchNumber]: quantity } })} /></label>)}</div> : null}{allocation.management === 'serial' && allocation.status === 'available' ? <div className="mt-3 grid max-h-56 gap-2 overflow-y-auto md:grid-cols-2">{allocation.serialOptions.map(option => { const checked = line.selectedSerials.includes(option.systemSerialNumber); return <label key={option.systemSerialNumber} className="flex items-center gap-2 rounded-md border border-amber-200 bg-white p-2 text-sm text-slate-700"><input type="checkbox" checked={checked} onChange={event => updateLine(line.id, { selectedSerials: event.target.checked ? [...line.selectedSerials, option.systemSerialNumber] : line.selectedSerials.filter(number => number !== option.systemSerialNumber) })} className="h-4 w-4 rounded border-slate-300 accent-firplak-green" /><span className="min-w-0 truncate"><strong>{option.serialNumber}</strong>{option.manufacturerSerialNumber ? ` - ${option.manufacturerSerialNumber}` : ''}</span></label> })}</div> : null}</div></TableCell></TableRow> : null,
                       alternativeWarehouses.length > 0 ? <TableRow key={`${line.id}-alternative-warehouses`}><TableCell colSpan={10} className="bg-sky-50/70 p-3"><div className="rounded-lg border border-sky-200 bg-white p-3"><p className="text-sm font-semibold text-sky-950">Este artículo no tiene disponible en {sourceWarehouseCode}. Disponible en:</p><div className="mt-2 flex flex-wrap items-center gap-2">{alternativeWarehouses.map(warehouse => { const selected = line.suggestedSourceWarehouseCode === warehouse.warehouseCode; return <Button key={warehouse.warehouseCode} type="button" size="sm" variant="outline" onClick={() => chooseSuggestedSourceWarehouse(line.id, warehouse.warehouseCode)} className={selected ? 'h-auto border-firplak-green bg-firplak-green px-3 py-2 text-left text-white hover:bg-firplak-green/90' : 'h-auto border-sky-300 bg-sky-50 px-3 py-2 text-left text-sky-900 hover:bg-sky-100'}><span className="block font-semibold">{warehouse.warehouseCode} · {warehouse.warehouseName}</span><span className="block text-xs opacity-85">Disponible: {formatNumber(warehouse.availableQuantity)} {line.availability?.inventoryUom || ''}</span></Button> })}{line.suggestedSourceWarehouseCode ? <span className="text-xs font-medium text-firplak-green">Vuelve a dar clic para configurar esta bodega como origen.</span> : null}</div></div></TableCell></TableRow> : null,
                       <TableRow key={`${line.id}-status`}><TableCell colSpan={10} className={lineError ? 'bg-red-50 text-red-700' : 'bg-firplak-green/5 text-firplak-green'}><div className="flex items-center gap-2 text-sm font-medium">{line.availabilityLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : lineError ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}{lineError ?? 'Línea lista para validar.'}</div></TableCell></TableRow>,
                     ]
-                  })}</TableBody>
+                  })}{editingLineId === null ? <InlineItemSearchRows mode="append" lineNumber={lines.length + 1} inputRef={itemSearchInputRef} searchTerm={searchTerm} searching={searching} searchError={searchError} searchResults={searchResults} onSearchTermChange={setSearchTerm} onSearch={() => void searchItems()} onSelectItem={chooseItem} onCancelEdit={cancelEditingLine} /> : null}</TableBody>
                 </Table>
+              </div>
               </section>
               </> : null}
 
@@ -917,6 +1064,7 @@ export default function TransferRequestsClient() {
                 </div> : null}
               </section> : null}
 
+              {hasSelectedResponsible && validating ? <div role="status" aria-live="polite" className="flex items-center gap-3 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-medium text-sky-900"><Loader2 className="h-5 w-5 animate-spin" /><span>Verificando los datos ya consultados de la solicitud...</span></div> : null}
               {hasSelectedResponsible && formError ? <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-800"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{formError}</span></div> : null}
               {hasSelectedResponsible && validation ? (
                 <div className={`rounded-lg border px-4 py-3 ${validation.valid ? 'border-firplak-green/30 bg-firplak-green/5' : 'border-red-200 bg-red-50'}`}>
@@ -926,7 +1074,7 @@ export default function TransferRequestsClient() {
               ) : null}
 
               {hasSelectedResponsible ? <div className="grid gap-3 border-t border-slate-100 pt-5 lg:grid-cols-3">
-                <div className="rounded-lg border border-slate-200 p-3"><p className="mb-2 text-sm font-semibold text-slate-800">1. Validar en SAP</p><Button type="button" variant="outline" onClick={() => void validateRequest()} disabled={validating || creating || Boolean(clientFormError)} className="w-full border-slate-300">{validating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileSearch className="mr-2 h-4 w-4" />}{validating ? 'Validando...' : 'Validar en SAP'}</Button></div>
+                <div className="rounded-lg border border-slate-200 p-3"><p className="mb-2 text-sm font-semibold text-slate-800">1. Validar solicitud</p><Button type="button" variant="outline" onClick={() => void validateRequest()} disabled={validating || creating || Boolean(clientFormError)} className="w-full border-slate-300">{validating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileSearch className="mr-2 h-4 w-4" />}{validating ? 'Verificando...' : 'Validar solicitud'}</Button><p className="mt-2 text-xs text-slate-500">Usa la disponibilidad consultada al añadir cada línea.</p></div>
                 <label className="rounded-lg border border-slate-200 p-3 text-sm text-slate-700"><span className="mb-2 block font-semibold text-slate-800">2. Confirmar</span><span className="flex items-start gap-2"><input type="checkbox" checked={confirmed} disabled={!validation?.valid || creating} onChange={event => setConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-firplak-green disabled:opacity-50" /><span>{editingRequest ? 'Confirmo la modificación en SAP.' : 'Confirmo la creación en SAP.'}</span></span></label>
                 <div className="rounded-lg border border-firplak-green/25 bg-firplak-green/5 p-3"><p className="mb-2 text-sm font-semibold text-slate-800">3. {editingRequest ? 'Guardar modificación' : 'Crear solicitud'}</p><Button type="button" onClick={() => void createRequest()} disabled={creating || !validation?.valid || !confirmed} className="w-full bg-firplak-green text-white hover:bg-firplak-green/90"><Truck className="mr-2 h-4 w-4" />{creating ? (editingRequest ? 'Modificando en SAP...' : 'Creando en SAP...') : (editingRequest ? 'Modificar solicitud' : 'Crear solicitud')}</Button></div>
               </div> : null}
@@ -998,6 +1146,7 @@ export default function TransferRequestsClient() {
                 <div className="transfer-print-brand">FIRPLAK</div>
                 <div className="transfer-print-company">Firplak S.A.</div>
               </div>
+              <div className="transfer-print-destination"><strong>Almacén de entrada:</strong> {selectedDetail.request.toWarehouse || selectedDetail.operation.destinationWarehouse || '-'}</div>
               <div className="transfer-print-title-block">
                 <h1>Solicitud de traslado</h1>
                 <div className="transfer-print-document-data">
@@ -1008,7 +1157,6 @@ export default function TransferRequestsClient() {
               </div>
             </header>
 
-            <div className="transfer-print-destination"><strong>Almacén de entrada:</strong> {selectedDetail.request.toWarehouse || selectedDetail.operation.destinationWarehouse || '-'}</div>
             <div className="transfer-print-meta">
               <span><strong>Solicitó:</strong> {selectedDetail.operation.actorEmail || 'No registrado'}</span>
               <span><strong>Responsable:</strong> {detailResponsible?.email || 'No registrado'}</span>
@@ -1021,7 +1169,7 @@ export default function TransferRequestsClient() {
             </table>
 
             <footer className="transfer-print-footer">
-              <div className="transfer-print-total"><strong>Total:</strong> {formatNumber(detailTotalQuantity)}</div>
+              <div className="transfer-print-total"><strong>Total:</strong><span>{formatNumber(detailTotalQuantity)}</span></div>
               <div className="transfer-print-comment"><strong>Comentarios</strong><span>{selectedDetail.request.businessComment || selectedDetail.operation.businessComment || 'Sin comentario'}</span></div>
             </footer>
           </div>
@@ -1033,32 +1181,33 @@ export default function TransferRequestsClient() {
           [data-transfer-print-sheet], [data-transfer-print-sheet] * { visibility: visible !important; }
           [data-transfer-print-sheet] { display: block !important; position: absolute; left: 0; top: 0; width: 100%; }
           .transfer-print-sheet { box-sizing: border-box; color: #1f3442; font-family: Arial, sans-serif; font-size: 9pt; line-height: 1.22; max-width: 192mm; }
-          .transfer-print-header { align-items: end; border-bottom: 1px solid #79b8df; display: grid; gap: 12mm; grid-template-columns: 1fr 1.65fr; padding-bottom: 4mm; }
+          .transfer-print-header { align-items: end; border-bottom: 1px solid #79b8df; display: grid; gap: 5mm; grid-template-columns: .82fr .62fr 1.65fr; padding-bottom: 3mm; }
           .transfer-print-brand { color: #294a5c; font-size: 24pt; font-weight: 500; letter-spacing: .06em; line-height: 1; }
-          .transfer-print-company { font-size: 10pt; font-weight: 700; margin-top: 5mm; }
+          .transfer-print-company { font-size: 10pt; font-weight: 700; margin-top: 3mm; }
           .transfer-print-title-block h1 { border-left: 3mm solid #f4b000; color: #12202b; font-size: 16pt; line-height: 1.05; margin: 0 0 3mm; padding-left: 3mm; }
-          .transfer-print-document-data { display: grid; gap: 3mm; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+          .transfer-print-document-data { display: grid; gap: 2mm; grid-template-columns: repeat(3, minmax(0, 1fr)); }
           .transfer-print-document-data span { color: #6f8290; display: block; font-size: 7.5pt; }
           .transfer-print-document-data strong { color: #14232e; display: block; font-size: 9pt; margin-top: 1mm; }
-          .transfer-print-destination { border-bottom: 1px dotted #79b8df; color: #13222c; font-size: 10pt; margin-top: 5mm; padding-bottom: 4mm; }
-          .transfer-print-meta { color: #526673; display: flex; flex-wrap: wrap; font-size: 7.5pt; gap: 2mm 7mm; margin: 3mm 0; }
+          .transfer-print-destination { align-self: end; color: #13222c; font-size: 9pt; line-height: 1.2; padding-bottom: 1mm; }
+          .transfer-print-meta { color: #526673; display: flex; flex-wrap: wrap; font-size: 7.5pt; gap: 1mm 5mm; margin: 2mm 0; }
           .transfer-print-meta strong { color: #263b48; }
           .transfer-print-table { border-collapse: collapse; table-layout: fixed; width: 100%; }
-          .transfer-print-table th { background: #f4f7f8; border-bottom: 1px solid #3e9dd5; color: #314957; font-size: 7.5pt; font-weight: 700; padding: 2mm 1.5mm; text-align: left; }
-          .transfer-print-table td { border-bottom: 1px dotted #79b8df; padding: 2mm 1.5mm; vertical-align: top; word-break: break-word; }
+          .transfer-print-table th { background: #f4f7f8; border-bottom: 1px solid #3e9dd5; color: #314957; font-size: 7.5pt; font-weight: 700; padding: 1.4mm 1.2mm; text-align: left; }
+          .transfer-print-table td { border-bottom: 1px dotted #79b8df; padding: 1.25mm 1.2mm; vertical-align: top; word-break: break-word; }
           .transfer-print-table th:nth-child(1), .transfer-print-table td:nth-child(1) { text-align: center; width: 5%; }
-          .transfer-print-table th:nth-child(2), .transfer-print-table td:nth-child(2) { width: 63%; }
-          .transfer-print-table th:nth-child(3), .transfer-print-table td:nth-child(3) { width: 9%; }
-          .transfer-print-table th:nth-child(4), .transfer-print-table td:nth-child(4) { text-align: right; width: 11%; }
-          .transfer-print-table th:nth-child(5), .transfer-print-table td:nth-child(5) { width: 12%; }
-          .transfer-print-table td:nth-child(2) strong { display: block; font-size: 8.5pt; }
-          .transfer-print-table td:nth-child(2) span { color: #526673; display: block; font-size: 7.5pt; margin-top: .5mm; }
-          .transfer-print-footer { margin-top: 3mm; }
-          .transfer-print-total { border-bottom: 1px solid #3e9dd5; font-size: 10pt; padding: 2mm 1.5mm; text-align: right; }
-          .transfer-print-total strong { margin-right: 8mm; }
-          .transfer-print-comment { margin-top: 3mm; }
+          .transfer-print-table th:nth-child(2), .transfer-print-table td:nth-child(2) { width: 72%; }
+          .transfer-print-table th:nth-child(3), .transfer-print-table td:nth-child(3) { width: 5%; }
+          .transfer-print-table th:nth-child(4), .transfer-print-table td:nth-child(4) { text-align: right; width: 8%; }
+          .transfer-print-table th:nth-child(5), .transfer-print-table td:nth-child(5) { width: 10%; }
+          .transfer-print-table td:nth-child(2) strong { display: inline; font-size: 8.5pt; }
+          .transfer-print-table td:nth-child(2) span { color: #526673; display: inline; font-size: 7.5pt; margin-left: 2mm; }
+          .transfer-print-footer { display: grid; grid-template-columns: 5% 72% 5% 8% 10%; margin-top: 1.5mm; }
+          .transfer-print-total { border-bottom: 1px solid #3e9dd5; font-size: 9pt; grid-column: 4; padding: 1.25mm 1.2mm; text-align: right; }
+          .transfer-print-total strong { display: block; font-size: 7.5pt; }
+          .transfer-print-total span { display: block; font-size: 10pt; font-weight: 700; margin-top: .5mm; }
+          .transfer-print-comment { grid-column: 1 / -1; margin-top: 2mm; }
           .transfer-print-comment strong { display: block; font-size: 8pt; margin-bottom: 1mm; }
-          .transfer-print-comment span { display: block; min-height: 6mm; white-space: pre-wrap; }
+          .transfer-print-comment span { display: block; min-height: 4mm; white-space: pre-wrap; }
         }`}</style> : null}
     </div>
   )
