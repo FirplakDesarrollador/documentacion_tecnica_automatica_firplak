@@ -114,15 +114,19 @@ function getMessageFromInternalRequest(rawPayload: string): AutomationMessage {
   const recipient = typeof payload.recipient === 'string' ? payload.recipient.trim().toLowerCase() : ''
   const actionType = typeof payload.actionType === 'string' ? payload.actionType.trim() : ''
   const actionUrl = typeof payload.actionUrl === 'string' ? payload.actionUrl.trim() : ''
-  const supabaseUrl = Deno.env.get('SUPABASE_URL')
 
-  if (!recipient || !recipient.includes('@') || actionType !== 'recovery' || !actionUrl || !supabaseUrl) {
+  if (!recipient || !recipient.includes('@') || !['invite', 'recovery'].includes(actionType) || !actionUrl) {
     throw new Error('La solicitud interna de recuperación no es válida.')
   }
 
   const parsedActionUrl = new URL(actionUrl)
-  if (parsedActionUrl.origin !== supabaseUrl || parsedActionUrl.pathname !== '/auth/v1/verify') {
-    throw new Error('El enlace de recuperación no pertenece al proyecto de Supabase.')
+  if (
+    parsedActionUrl.protocol !== 'https:'
+    || parsedActionUrl.pathname !== '/auth/set-password'
+    || !parsedActionUrl.searchParams.get('user')
+    || !parsedActionUrl.searchParams.get('token')
+  ) {
+    throw new Error('El enlace de recuperación no tiene el formato esperado.')
   }
 
   return buildMessage({

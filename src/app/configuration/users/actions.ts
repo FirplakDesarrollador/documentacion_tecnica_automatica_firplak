@@ -17,6 +17,12 @@ import {
 } from '@/types/auth'
 import { assertRole } from '@/utils/auth/access'
 import { createSupabaseAdminClient } from '@/utils/supabase/admin'
+import {
+  createPasswordSetupToken,
+  createTemporaryPassword,
+  hasActivePasswordSetupChallenge,
+  passwordSetupMetadata,
+} from '@/lib/auth/passwordSetup'
 
 import type { AdminRoleRow, AdminUserAuthStatus, AdminUserRow, InviteUserResult, SaveRoleInput } from './types'
 
@@ -69,6 +75,7 @@ function normalizeRoleDescription(value: unknown) {
 function getAuthStatus(user: User): AdminUserAuthStatus {
   if (user.banned_until) return 'blocked'
   if (user.last_sign_in_at) return 'active'
+  if (hasActivePasswordSetupChallenge(user.app_metadata)) return 'invited'
   if (user.email_confirmed_at || user.confirmed_at) return 'confirmed'
   if (user.invited_at) return 'invited'
   return 'pending'
@@ -253,7 +260,7 @@ async function countUserQuotations(admin: SupabaseAdminClient, userId: string) {
   return count ?? 0
 }
 
-async function getAuthRedirectTo(destination: 'accept-invite' | 'accept-recovery') {
+async function getPasswordSetupUrl(userId: string, token: string) {
   const headerStore = await headers()
   const origin = headerStore.get('origin')
   const host = headerStore.get('x-forwarded-host') ?? headerStore.get('host')
@@ -264,11 +271,41 @@ async function getAuthRedirectTo(destination: 'accept-invite' | 'accept-recovery
     throw new Error('No se pudo resolver el origen de la aplicacion para el enlace de autenticacion.')
   }
 
-  if (destination === 'accept-invite') {
-    return `${baseUrl}/auth/accept-invite`
+  const actionUrl = new URL('/auth/set-password', baseUrl)
+  actionUrl.searchParams.set('user', userId)
+  actionUrl.searchParams.set('token', token)
+  return actionUrl.toString()
+}
+
+async function sendPasswordSetupEmail(
+  admin: SupabaseAdminClient,
+  user: User,
+  actionType: 'invite' | 'recovery',
+) {
+  const email = normalizeEmail(user.email)
+  const { token, challenge } = createPasswordSetupToken()
+  const { data, error: metadataError } = await admin.auth.admin.updateUserById(user.id, {
+    app_metadata: passwordSetupMetadata(user.app_metadata, challenge),
+  })
+
+  if (metadataError || !data.user) {
+    throw new Error(`No se pudo preparar el acceso del usuario: ${readErrorMessage(metadataError)}`)
   }
 
-  return `${baseUrl}/auth/accept-recovery`
+  const actionUrl = await getPasswordSetupUrl(user.id, token)
+  const { error: deliveryError } = await admin.functions.invoke('samigen-auth-email', {
+    body: {
+      recipient: email,
+      actionType,
+      actionUrl,
+    },
+  })
+
+  if (deliveryError) {
+    throw new Error(`No se pudo enviar el correo de acceso: ${readErrorMessage(deliveryError)}`)
+  }
+
+  return data.user
 }
 
 function revalidateUsers() {
@@ -328,21 +365,27 @@ export async function inviteUserAction(input: { email: string; role: UserRole })
   let status: InviteUserResult['status'] = 'existing'
 
   if (!authUser) {
-    const redirectTo = await getAuthRedirectTo('accept-invite')
-    const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
-      redirectTo,
-      data: { app_role: role },
+    const { data, error } = await admin.auth.admin.createUser({
+      email,
+      password: createTemporaryPassword(),
+      email_confirm: true,
+      user_metadata: { app_role: role },
     })
 
     if (error) {
-      throw new Error(`No se pudo enviar la invitación: ${readErrorMessage(error)}`)
+      throw new Error(`No se pudo crear el usuario invitado: ${readErrorMessage(error)}`)
     }
 
     if (!data.user) {
-      throw new Error('Supabase no retorno el usuario invitado.')
+      throw new Error('Supabase no retornó el usuario invitado.')
     }
 
-    authUser = data.user
+    try {
+      authUser = await sendPasswordSetupEmail(admin, data.user, 'invite')
+    } catch (sendError) {
+      await admin.auth.admin.deleteUser(data.user.id)
+      throw sendError
+    }
     status = 'invited'
   }
 
@@ -396,29 +439,7 @@ export async function sendUserRecoveryAction(input: { userId: string }) {
 
   const admin = createSupabaseAdminClient()
   const authUser = await fetchAuthUserById(admin, userId)
-  const email = normalizeEmail(authUser.email)
-  const redirectTo = await getAuthRedirectTo('accept-recovery')
-  const { data: recoveryLink, error: generateLinkError } = await admin.auth.admin.generateLink({
-    type: 'recovery',
-    email,
-    options: { redirectTo },
-  })
-
-  if (generateLinkError || !recoveryLink.properties?.action_link) {
-    throw new Error(`No se pudo generar el enlace de recuperación: ${readErrorMessage(generateLinkError)}`)
-  }
-
-  const { error: deliveryError } = await admin.functions.invoke('samigen-auth-email', {
-    body: {
-      recipient: email,
-      actionType: 'recovery',
-      actionUrl: recoveryLink.properties.action_link,
-    },
-  })
-
-  if (deliveryError) {
-    throw new Error(`No se pudo enviar el correo de recuperación: ${readErrorMessage(deliveryError)}`)
-  }
+  await sendPasswordSetupEmail(admin, authUser, 'recovery')
 
   return { success: true }
 }
