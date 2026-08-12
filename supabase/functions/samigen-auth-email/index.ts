@@ -163,15 +163,15 @@ Deno.serve(async (request) => {
 
   const hookSecret = Deno.env.get('SAMIGEN_SEND_EMAIL_HOOK_SECRET')
   const automationUrl = Deno.env.get('POWER_AUTOMATE_AUTH_EMAIL_URL')
-  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+  const internalEmailSecret = Deno.env.get('SAMIGEN_INTERNAL_EMAIL_SECRET')
 
-  if (!hookSecret || !automationUrl || !serviceRoleKey) {
+  if (!hookSecret || !automationUrl || !internalEmailSecret) {
     return errorResponse('La función de correo no está configurada.', 503)
   }
 
   try {
     const rawPayload = await request.text()
-    const isInternalRequest = request.headers.get('authorization') === `Bearer ${serviceRoleKey}`
+    const isInternalRequest = request.headers.get('x-samigen-internal-email-secret') === internalEmailSecret
     const message = isInternalRequest
       ? getMessageFromInternalRequest(rawPayload)
       : getMessageFromAuthEvent(

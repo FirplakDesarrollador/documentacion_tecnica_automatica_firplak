@@ -282,6 +282,11 @@ async function sendPasswordSetupEmail(
   user: User,
   actionType: 'invite' | 'recovery',
 ) {
+  const internalEmailSecret = process.env.SAMIGEN_INTERNAL_EMAIL_SECRET
+  if (!internalEmailSecret) {
+    throw new Error('Falta configurar SAMIGEN_INTERNAL_EMAIL_SECRET para enviar correos de acceso.')
+  }
+
   const email = normalizeEmail(user.email)
   const { token, challenge } = createPasswordSetupToken()
   const { data, error: metadataError } = await admin.auth.admin.updateUserById(user.id, {
@@ -294,6 +299,9 @@ async function sendPasswordSetupEmail(
 
   const actionUrl = await getPasswordSetupUrl(user.id, token)
   const { error: deliveryError } = await admin.functions.invoke('samigen-auth-email', {
+    headers: {
+      'x-samigen-internal-email-secret': internalEmailSecret,
+    },
     body: {
       recipient: email,
       actionType,
