@@ -7,7 +7,7 @@ import { requirePagePermission } from '@/utils/auth/access'
 export const dynamic = 'force-dynamic'
 
 export default async function ProductDesignEstimationPage({ params }: { params: Promise<{ id: string }> }) {
-  await requirePagePermission('module:product-design')
+  await requirePagePermission('module:product-design:estimations')
   const { id } = await params
   const [estimation, colors] = await Promise.all([
     getProductDesignEstimationAction(id),

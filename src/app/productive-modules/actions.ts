@@ -88,12 +88,12 @@ async function getCabinetRouteBomLines(skuComplete: string): Promise<CabinetBomR
 }
 
 export async function getProductivePilotSkusAction() {
-  await assertPermission('module:productive-modules')
+  await assertPermission('module:productive-modules:route-sheets')
   return PILOT_SKUS
 }
 
 export async function getProductiveRouteSheetAction(skuComplete: string): Promise<{ sheet: ProductiveRouteSheet | null; error: string | null }> {
-  await assertPermission('module:productive-modules')
+  await assertPermission('module:productive-modules:route-sheets')
 
   try {
     const sku = normalizeSku(skuComplete)

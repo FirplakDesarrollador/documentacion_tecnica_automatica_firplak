@@ -33,10 +33,29 @@ export const PERMISSIONS = [
   'module:generate',
   'module:print',
   'module:product-design',
+  'module:product-design:estimations',
+  'module:product-design:bom',
+  'module:product-design:route-sheets',
   'module:sales',
+  'module:sales:estimations',
   'module:productive-modules',
+  'module:productive-modules:route-sheets',
   'module:engineering',
+  'module:engineering:transfer-requests',
+  'module:engineering:measurements',
+  'module:engineering:sap-auditories',
+  'module:engineering:estimations',
+  'module:engineering:sap-code-creation',
   'module:configuration',
+  'module:configuration:families',
+  'module:configuration:references',
+  'module:configuration:versioning',
+  'module:configuration:skus',
+  'module:configuration:glossary',
+  'module:configuration:nomenclature',
+  'module:configuration:versions',
+  'module:configuration:colors',
+  'module:configuration:clients',
   'module:consulta-sap',
   'action:print',
   'action:naming:manage',
@@ -48,11 +67,19 @@ export type ModulePermission = Extract<Permission, `module:${string}`>
 export type InternalPermission = Extract<Permission, `action:${string}`>
 export const SAP_CODE_MANAGEMENT_PERMISSION = 'action:sap-code:manage' as const
 
+export type AppModuleChildDefinition = {
+  key: ModulePermission
+  label: string
+  href: string
+  description: string
+}
+
 export type AppModuleDefinition = {
   key: ModulePermission
   label: string
   href: string
   assignable: boolean
+  children?: readonly AppModuleChildDefinition[]
 }
 
 export const APP_MODULES: AppModuleDefinition[] = [
@@ -103,30 +130,66 @@ export const APP_MODULES: AppModuleDefinition[] = [
     label: 'Diseño de producto',
     href: '/product-design',
     assignable: true,
+    children: [
+      { key: 'module:product-design:estimations', label: 'Cotizaciones', href: '/product-design/estimations', description: 'Calcula consumos y cotizaciones de producto.' },
+      { key: 'module:product-design:bom', label: 'Importacion y alineacion LdM/BOM', href: '/product-design/bom', description: 'Importa, relaciona y alinea estructuras de producto.' },
+      { key: 'module:product-design:route-sheets', label: 'Hojas de ruta - Cabinets', href: '/product-design/route-sheets/cabinets', description: 'Edita hojas de ruta productivas.' },
+      { key: 'module:generate', label: 'Generar', href: '/generate', description: 'Genera documentacion tecnica.' },
+      { key: 'module:assets', label: 'Recursos', href: '/assets', description: 'Administra imagenes, logos e isometricos.' },
+      { key: 'module:datasets', label: 'Bases de datos', href: '/datasets', description: 'Carga y relaciona fuentes externas.' },
+      { key: 'module:templates', label: 'Plantillas', href: '/templates', description: 'Disena plantillas de documentacion.' },
+      { key: 'module:pending', label: 'Pendientes', href: '/pending', description: 'Revisa faltantes de documentacion.' },
+    ],
   },
   {
     key: 'module:sales',
     label: 'Ventas',
     href: '/sales',
     assignable: true,
+    children: [
+      { key: 'module:sales:estimations', label: 'Cotizaciones compartidas', href: '/sales/estimations', description: 'Consulta cotizaciones compartidas con Ventas.' },
+    ],
   },
   {
     key: 'module:productive-modules',
     label: 'Módulos productivos',
     href: '/productive-modules',
     assignable: true,
+    children: [
+      { key: 'module:productive-modules:route-sheets', label: 'Hojas de ruta - Cabinets', href: '/productive-modules/route-sheets/cabinets', description: 'Consulta hojas de ruta aprobadas para planta.' },
+      { key: 'module:print', label: 'Impresion', href: '/print', description: 'Imprime etiquetas operativas.' },
+    ],
   },
   {
     key: 'module:engineering',
     label: 'Ingeniería',
     href: '/engineering',
     assignable: true,
+    children: [
+      { key: 'module:consulta-sap', label: 'Consulta SAP', href: '/engineering/sap-consulting', description: 'Consulta articulos, LdM, ordenes e inventario.' },
+      { key: 'module:engineering:transfer-requests', label: 'Solicitudes de traslado', href: '/engineering/sap-operations/transfer-requests', description: 'Crea y consulta solicitudes de traslado.' },
+      { key: 'module:engineering:measurements', label: 'Mediciones de ingenieria', href: '/engineering/measurements', description: 'Registra geometria CAD y consumos.' },
+      { key: 'module:engineering:sap-auditories', label: 'Auditorias SAP', href: '/engineering/sap-auditories', description: 'Audita color, bodegas y metodos SAP.' },
+      { key: 'module:engineering:estimations', label: 'Revision tecnica de cotizaciones', href: '/engineering/estimations', description: 'Registra criterios tecnicos de cotizaciones.' },
+      { key: 'module:engineering:sap-code-creation', label: 'Codigos SAP', href: '/engineering/sap-operations/sap-code-creation', description: 'Prepara y administra codigos SAP.' },
+    ],
   },
   {
     key: 'module:configuration',
     label: 'Configuración',
     href: '/configuration',
     assignable: true,
+    children: [
+      { key: 'module:configuration:families', label: 'Familias', href: '/configuration/families', description: 'Administra familias y atributos tecnicos.' },
+      { key: 'module:configuration:references', label: 'Referencias', href: '/configuration/reference-editor', description: 'Edita referencias de producto.' },
+      { key: 'module:configuration:versioning', label: 'Versionamiento', href: '/configuration/version-editor', description: 'Gestiona estructura y atributos de versiones.' },
+      { key: 'module:configuration:skus', label: 'SKU', href: '/configuration/sku-editor', description: 'Edita SKU y datos derivados.' },
+      { key: 'module:configuration:glossary', label: 'Glosario', href: '/configuration/glossary', description: 'Mantiene terminos tecnicos.' },
+      { key: 'module:configuration:nomenclature', label: 'Nomenclatura', href: '/configuration/nomenclature', description: 'Configura reglas de nomenclatura.' },
+      { key: 'module:configuration:versions', label: 'Versiones', href: '/configuration/versions', description: 'Consulta y administra versiones.' },
+      { key: 'module:configuration:colors', label: 'Colores', href: '/configuration/colors', description: 'Administra colores y equivalencias SAP.' },
+      { key: 'module:configuration:clients', label: 'Clientes', href: '/configuration/clients', description: 'Gestiona clientes y alcance de marca.' },
+    ],
   },
   {
     key: 'module:consulta-sap',
@@ -136,10 +199,17 @@ export const APP_MODULES: AppModuleDefinition[] = [
   },
 ]
 
-export const MODULE_PERMISSIONS = APP_MODULES.map((module) => module.key) as ModulePermission[]
-export const ASSIGNABLE_MODULE_PERMISSIONS = APP_MODULES
-  .filter((module) => module.assignable)
-  .map((module) => module.key) as ModulePermission[]
+export const MODULE_PERMISSIONS = PERMISSIONS.filter((permission): permission is ModulePermission => (
+  permission.startsWith('module:')
+))
+export const ASSIGNABLE_MODULE_PERMISSIONS = [
+  ...APP_MODULES.filter((module) => module.assignable).map((module) => module.key),
+  ...APP_MODULES.flatMap((module) => module.children?.map((child) => child.key) ?? []),
+] as ModulePermission[]
+
+export const MODULE_CHILDREN_BY_PARENT: ReadonlyMap<ModulePermission, readonly ModulePermission[]> = new Map(
+  APP_MODULES.map((module) => [module.key, module.children?.map((child) => child.key) ?? []])
+)
 
 export type InternalPermissionDefinition = {
   key: InternalPermission
@@ -150,12 +220,30 @@ export type InternalPermissionDefinition = {
 
 export const INTERNAL_PERMISSIONS: InternalPermissionDefinition[] = [
   {
+    key: 'action:print',
+    label: 'ImpresiÃ³n operativa',
+    description: 'EnvÃ­a etiquetas a la impresora configurada.',
+    module: 'module:print',
+  },
+  {
+    key: 'action:naming:manage',
+    label: 'Administrar nomenclatura',
+    description: 'Crea y administra reglas de nomenclatura.',
+    module: 'module:configuration:nomenclature',
+  },
+  {
     key: SAP_CODE_MANAGEMENT_PERMISSION,
     label: 'Administrar códigos SAP',
     description: 'Crear, activar, inactivar y eliminar artículos SAP desde variantes.',
     module: 'module:engineering',
   },
 ]
+
+export const PERMISSION_DEPENDENCIES: ReadonlyMap<Permission, readonly InternalPermission[]> = new Map([
+  ['module:print', ['action:print']],
+  ['module:configuration:nomenclature', ['action:naming:manage']],
+  ['module:engineering:sap-code-creation', [SAP_CODE_MANAGEMENT_PERMISSION]],
+])
 
 export const ASSIGNABLE_PERMISSION_KEYS = [
   ...ASSIGNABLE_MODULE_PERMISSIONS,
@@ -196,38 +284,75 @@ const ROUTE_PERMISSION_PREFIXES: Array<{ prefix: string; permission: ModulePermi
   { prefix: '/assets', permission: 'module:assets' },
   { prefix: '/generate', permission: 'module:generate' },
   { prefix: '/print', permission: 'module:print' },
-  { prefix: '/product-design/sap-code-creation', permission: 'module:engineering' },
+  { prefix: '/product-design/sap-code-creation', permission: 'module:engineering:sap-code-creation' },
+  { prefix: '/product-design/estimations', permission: 'module:product-design:estimations' },
+  { prefix: '/product-design/bom', permission: 'module:product-design:bom' },
+  { prefix: '/product-design/route-sheets', permission: 'module:product-design:route-sheets' },
   { prefix: '/product-design', permission: 'module:product-design' },
+  { prefix: '/sales/estimations', permission: 'module:sales:estimations' },
   { prefix: '/sales', permission: 'module:sales' },
+  { prefix: '/productive-modules/route-sheets', permission: 'module:productive-modules:route-sheets' },
   { prefix: '/productive-modules', permission: 'module:productive-modules' },
+  { prefix: '/engineering/sap-operations/transfer-requests', permission: 'module:engineering:transfer-requests' },
+  { prefix: '/engineering/sap-operations/sap-code-creation', permission: 'module:engineering:sap-code-creation' },
+  { prefix: '/engineering/measurements', permission: 'module:engineering:measurements' },
+  { prefix: '/engineering/sap-auditories', permission: 'module:engineering:sap-auditories' },
+  { prefix: '/engineering/estimations', permission: 'module:engineering:estimations' },
   { prefix: '/engineering/sap-consulting', permission: 'module:consulta-sap' },
   { prefix: '/engineering', permission: 'module:engineering' },
+  { prefix: '/configuration/families', permission: 'module:configuration:families' },
+  { prefix: '/configuration/reference-editor', permission: 'module:configuration:references' },
+  { prefix: '/configuration/version-editor', permission: 'module:configuration:versioning' },
+  { prefix: '/configuration/sku-editor', permission: 'module:configuration:skus' },
+  { prefix: '/configuration/glossary', permission: 'module:configuration:glossary' },
+  { prefix: '/configuration/nomenclature', permission: 'module:configuration:nomenclature' },
+  { prefix: '/configuration/versions', permission: 'module:configuration:versions' },
+  { prefix: '/configuration/colors', permission: 'module:configuration:colors' },
+  { prefix: '/configuration/clients', permission: 'module:configuration:clients' },
   { prefix: '/configuration', permission: 'module:configuration' },
-  { prefix: '/rules', permission: 'module:configuration' },
+  { prefix: '/rules/colors', permission: 'module:configuration:colors' },
+  { prefix: '/rules', permission: 'module:configuration:nomenclature' },
   { prefix: '/consulta-sap', permission: 'module:consulta-sap' },
   { prefix: '/new', permission: 'module:dashboard' },
   { prefix: '/mass-import', permission: 'module:dashboard' },
-  { prefix: '/families', permission: 'module:configuration' },
+  { prefix: '/families', permission: 'module:configuration:families' },
   { prefix: '/exceptions', permission: 'module:dashboard' },
 ]
 
 const HOME_PRIORITY: ModulePermission[] = [
   'module:dashboard',
   'module:print',
-  'module:product-design',
-  'module:sales',
-  'module:productive-modules',
-  'module:engineering',
+  'module:product-design:estimations',
+  'module:product-design:bom',
+  'module:product-design:route-sheets',
+  'module:sales:estimations',
+  'module:productive-modules:route-sheets',
+  'module:engineering:transfer-requests',
+  'module:engineering:measurements',
+  'module:engineering:sap-auditories',
+  'module:engineering:estimations',
+  'module:engineering:sap-code-creation',
+  'module:consulta-sap',
   'module:generate',
   'module:templates',
   'module:datasets',
   'module:assets',
   'module:pending',
-  'module:configuration',
-  'module:consulta-sap',
+  'module:configuration:families',
+  'module:configuration:references',
+  'module:configuration:versioning',
+  'module:configuration:skus',
+  'module:configuration:glossary',
+  'module:configuration:nomenclature',
+  'module:configuration:versions',
+  'module:configuration:colors',
+  'module:configuration:clients',
 ]
 
-const MODULE_HREF_BY_KEY = new Map(APP_MODULES.map((module) => [module.key, module.href]))
+const MODULE_HREF_BY_KEY = new Map([
+  ...APP_MODULES.map((module) => [module.key, module.href] as const),
+  ...APP_MODULES.flatMap((module) => module.children?.map((child) => [child.key, child.href] as const) ?? []),
+])
 
 export function normalizeUserRole(value: unknown): UserRole {
   const normalized = String(value ?? '').trim().toLowerCase()
@@ -280,16 +405,22 @@ export function permissionsFromModules(role: UserRole, configuredPermissions: Pe
   if (role === ADMIN_ROLE) return [...PERMISSIONS]
 
   const permissions = new Set<Permission>(configuredPermissions)
-  if (permissions.has('module:engineering')) permissions.add('module:consulta-sap')
-  if (permissions.has('module:print')) permissions.add('action:print')
+  for (const [parent, children] of MODULE_CHILDREN_BY_PARENT) {
+    if (permissions.has(parent)) {
+      children.forEach((child) => permissions.add(child))
+    }
+  }
+  for (const [permission, dependencies] of PERMISSION_DEPENDENCIES) {
+    if (permissions.has(permission)) {
+      dependencies.forEach((dependency) => permissions.add(dependency))
+    }
+  }
 
   return Array.from(permissions)
 }
 
 export function getDefaultPermissionsForRole(role: UserRole): Permission[] {
-  const permissions = permissionsFromModules(role, getDefaultModulesForRole(role))
-  if (permissions.includes('module:engineering')) permissions.push(SAP_CODE_MANAGEMENT_PERMISSION)
-  return permissions
+  return permissionsFromModules(role, getDefaultModulesForRole(role))
 }
 
 export function getRoleHomePath(role: UserRole, permissions: Permission[]): string {
@@ -344,6 +475,12 @@ export function hasPermission(accessOrRole: Permission[] | UserRole, permission:
   return permissionsFromModules(accessOrRole, getDefaultModulesForRole(accessOrRole)).includes(permission)
 }
 
+/** A parent module is a navigational container when at least one child is allowed. */
+export function hasModuleAccess(permissions: readonly Permission[], module: ModulePermission): boolean {
+  if (permissions.includes(module)) return true
+  return (MODULE_CHILDREN_BY_PARENT.get(module) ?? []).some((child) => permissions.includes(child))
+}
+
 export function isPendingLikeRole(role: UserRole): boolean {
   return role === PENDING_ROLE
 }
@@ -380,11 +517,16 @@ const API_PERMISSION_PREFIXES: Array<{ prefix: string; permission: ModulePermiss
   { prefix: '/api/assets', permission: 'module:assets' },
   { prefix: '/api/isometrics', permission: 'module:assets' },
   { prefix: '/api/mass-import', permission: 'module:dashboard' },
-  { prefix: '/api/families', permission: 'module:configuration' },
-  { prefix: '/api/rules', permission: 'module:configuration' },
-  { prefix: '/api/product-design/sap-code-creation', permission: 'module:engineering' },
+  { prefix: '/api/families', permission: 'module:configuration:families' },
+  { prefix: '/api/rules/colors', permission: 'module:configuration:colors' },
+  { prefix: '/api/rules', permission: 'module:configuration:nomenclature' },
+  { prefix: '/api/product-design/sap-code-creation', permission: 'module:engineering:sap-code-creation' },
+  { prefix: '/api/product-design/bom', permission: 'module:product-design:bom' },
+  { prefix: '/api/product-design/color-audit', permission: 'module:engineering:sap-auditories' },
   { prefix: '/api/sap', permission: 'module:consulta-sap' },
-  { prefix: '/api/engineering', permission: 'module:engineering' },
+  { prefix: '/api/engineering/sap-operations/transfer-requests', permission: 'module:engineering:transfer-requests' },
+  { prefix: '/api/engineering/sap-operations/sap-code-creation', permission: 'module:engineering:sap-code-creation' },
+  { prefix: '/api/engineering/sap-auditories', permission: 'module:engineering:sap-auditories' },
 ]
 
 export function isAllowedUserApi(pathname: string, role: UserRole, permissions: Permission[] = []): boolean {
@@ -394,7 +536,7 @@ export function isAllowedUserApi(pathname: string, role: UserRole, permissions: 
     pathname === prefix || pathname.startsWith(`${prefix}/`)
   ))
 
-  return match ? permissions.includes(match.permission) : false
+  return match ? hasPermission(permissions, match.permission) : false
 }
 
 export function getRoutePermission(pathname: string): ModulePermission | null {

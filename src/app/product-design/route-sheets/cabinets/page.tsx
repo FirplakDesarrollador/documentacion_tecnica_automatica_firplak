@@ -3,7 +3,7 @@ import { listCabinetBomReferencesAction } from '../../actions'
 import { CabinetsRouteDesignClient } from './CabinetsRouteDesignClient'
 
 export default async function CabinetsRouteDesignPage() {
-  await requirePagePermission('module:product-design')
+  await requirePagePermission('module:product-design:route-sheets')
   const { references } = await listCabinetBomReferencesAction()
 
   return (

@@ -6,7 +6,6 @@ import type { User } from '@supabase/supabase-js'
 
 import {
   ADMIN_ROLE,
-  APP_MODULES,
   assertUserRole,
   getDefaultPermissionsForRole,
   getRoleLabel,
@@ -101,12 +100,7 @@ function toAdminUserRow(user: User, profile: UserProfileRow | null, currentUserI
 function toAdminRoleRow(row: AppRoleDbRow, userCount: number): AdminRoleRow {
   const roleKey = normalizeUserRole(row.key)
   const permissions: Permission[] = roleKey === ADMIN_ROLE
-    ? [
-        ...APP_MODULES.map((module) => module.key as Permission),
-        'action:print',
-        'action:naming:manage',
-        'action:sap-code:manage',
-      ]
+    ? getDefaultPermissionsForRole(ADMIN_ROLE)
     : sanitizeAllowedPermissions(row.allowed_modules)
 
   return {

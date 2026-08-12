@@ -34,7 +34,7 @@ type RpcResult = {
 type SupabaseRpc = (fn: string, args: JsonRecord) => Promise<RpcResult>;
 
 async function assertAdminAccess() {
-  await assertPermission('module:configuration');
+  await assertPermission('module:configuration:skus');
 }
 
 function esc(value: string) {

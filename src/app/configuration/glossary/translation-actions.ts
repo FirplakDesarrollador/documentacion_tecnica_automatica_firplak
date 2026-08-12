@@ -7,7 +7,7 @@ import type { ProductPayload } from '@/lib/engine/translator'
 import { assertPermission } from '@/utils/auth/access'
 
 async function assertAdminAccess() {
-    await assertPermission('module:configuration')
+    await assertPermission('module:configuration:glossary')
 }
 
 const SCAN_PRODUCT_PAGE_SIZE = 500

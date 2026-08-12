@@ -19,6 +19,8 @@ type TreesRequest = {
   cursor: SapProductTreeLineCursor | null
 }
 
+type ColorAuditPermission = 'module:product-design' | 'module:engineering' | 'module:engineering:sap-auditories'
+
 function readRequestBody(value: unknown): TreesRequest | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
   const record = value as Record<string, unknown>
@@ -86,8 +88,8 @@ function lineTrees(rows: Awaited<ReturnType<typeof getSapProductTreeLinePageByPr
   return [...treesByCode.values()]
 }
 
-export async function POST(request: NextRequest): Promise<Response> {
-  const guard = await apiGuard('module:product-design')
+export async function handleColorAuditTreesRequest(request: NextRequest, permission: ColorAuditPermission): Promise<Response> {
+  const guard = await apiGuard(permission)
   if (guard.response) return guard.response
 
   let body: TreesRequest | null = null
@@ -124,17 +126,22 @@ export async function POST(request: NextRequest): Promise<Response> {
       cursor: body.cursor,
     })
     const lastRow = page.rows.at(-1)
+    const done = page.sourceRowCount < SAP_PAGE_SIZE
     return NextResponse.json({
       success: true,
       mode: body.mode,
       trees: lineTrees(page.rows),
       rowsRead: page.sourceRowCount,
       nextSkip: body.skip + page.sourceRowCount,
-      nextCursor: lastRow ? { treeCode: lastRow.treeCode, childNum: lastRow.childNum } : body.cursor,
-      done: page.sourceRowCount < SAP_PAGE_SIZE,
+      nextCursor: done || !lastRow ? null : { treeCode: lastRow.treeCode, childNum: lastRow.childNum },
+      done,
     })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'No se pudieron leer las LdM desde SAP.'
     return NextResponse.json({ success: false, error: message }, { status: 502 })
   }
+}
+
+export async function POST(request: NextRequest): Promise<Response> {
+  return handleColorAuditTreesRequest(request, 'module:engineering:sap-auditories')
 }

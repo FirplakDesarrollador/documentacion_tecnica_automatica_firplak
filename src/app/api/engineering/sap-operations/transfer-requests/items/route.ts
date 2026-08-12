@@ -8,7 +8,7 @@ import { transferRequestErrorResponse } from '../_utils'
 export const runtime = 'nodejs'
 
 export async function GET(request: NextRequest) {
-  const guard = await apiGuard('module:engineering')
+  const guard = await apiGuard('module:engineering:transfer-requests')
   if (guard.response) return guard.response
 
   try {

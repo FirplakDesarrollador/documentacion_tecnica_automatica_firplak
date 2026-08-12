@@ -28,7 +28,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 
-import type { ModulePermission, Permission } from '@/types/auth'
+import { hasModuleAccess, type ModulePermission, type Permission } from '@/types/auth'
 
 export type TechnicalDocumentationModule = {
   id: 'generate' | 'assets' | 'datasets' | 'templates' | 'pending'
@@ -172,7 +172,7 @@ export const PRODUCT_DESIGN_NAVIGATION: ModuleNavigationNode = {
       icon: Calculator,
       tone: 'bg-sky-50 text-sky-700',
       href: '/product-design/estimations',
-      permission: 'module:product-design',
+      permission: 'module:product-design:estimations',
     },
     {
       id: 'product-design-bom',
@@ -181,7 +181,7 @@ export const PRODUCT_DESIGN_NAVIGATION: ModuleNavigationNode = {
       icon: GitBranch,
       tone: 'bg-indigo-50 text-indigo-700',
       href: '/product-design/bom',
-      permission: 'module:product-design',
+      permission: 'module:product-design:bom',
     },
     {
       id: 'product-design-route-sheets',
@@ -190,7 +190,7 @@ export const PRODUCT_DESIGN_NAVIGATION: ModuleNavigationNode = {
       icon: ClipboardList,
       tone: 'bg-emerald-50 text-emerald-700',
       href: '/product-design/route-sheets/cabinets',
-      permission: 'module:product-design',
+      permission: 'module:product-design:route-sheets',
     },
     TECHNICAL_DOCUMENTATION_NAVIGATION,
   ],
@@ -214,7 +214,7 @@ export const SALES_NAVIGATION: ModuleNavigationNode = {
       icon: Calculator,
       tone: 'bg-sky-50 text-sky-700',
       href: '/sales/estimations',
-      permission: 'module:sales',
+      permission: 'module:sales:estimations',
     },
   ],
 }
@@ -237,7 +237,7 @@ export const PRODUCTIVE_MODULES_NAVIGATION: ModuleNavigationNode = {
       icon: ClipboardList,
       tone: 'bg-emerald-50 text-emerald-700',
       href: '/productive-modules/route-sheets/cabinets',
-      permission: 'module:productive-modules',
+      permission: 'module:productive-modules:route-sheets',
     },
     {
       id: 'print',
@@ -279,7 +279,7 @@ export const ENGINEERING_NAVIGATION: ModuleNavigationNode = {
       icon: ClipboardList,
       tone: 'bg-emerald-50 text-emerald-700',
       href: '/engineering/sap-operations/transfer-requests',
-      permission: 'module:engineering',
+      permission: 'module:engineering:transfer-requests',
     },
     {
       id: 'engineering-measurements',
@@ -288,7 +288,7 @@ export const ENGINEERING_NAVIGATION: ModuleNavigationNode = {
       icon: Ruler,
       tone: 'bg-sky-50 text-sky-700',
       href: '/engineering/measurements',
-      permission: 'module:engineering',
+      permission: 'module:engineering:measurements',
     },
     {
       id: 'sap-auditories',
@@ -297,7 +297,7 @@ export const ENGINEERING_NAVIGATION: ModuleNavigationNode = {
       icon: ClipboardCheck,
       tone: 'bg-emerald-50 text-emerald-700',
       href: '/engineering/sap-auditories',
-      permission: 'module:engineering',
+      permission: 'module:engineering:sap-auditories',
     },
     {
       id: 'engineering-estimations',
@@ -306,7 +306,7 @@ export const ENGINEERING_NAVIGATION: ModuleNavigationNode = {
       icon: ClipboardCheck,
       tone: 'bg-amber-50 text-amber-700',
       href: '/engineering/estimations',
-      permission: 'module:engineering',
+      permission: 'module:engineering:estimations',
     },
     {
       id: 'sap-code-creation',
@@ -315,7 +315,7 @@ export const ENGINEERING_NAVIGATION: ModuleNavigationNode = {
       icon: WandSparkles,
       tone: 'bg-violet-50 text-violet-700',
       href: '/engineering/sap-operations/sap-code-creation',
-      permission: 'module:engineering',
+      permission: 'module:engineering:sap-code-creation',
     },
   ],
 }
@@ -338,7 +338,7 @@ export const CONFIGURATION_NAVIGATION: ModuleNavigationNode = {
       icon: Package,
       tone: 'bg-slate-100 text-slate-700',
       href: '/configuration/families',
-      permission: 'module:configuration',
+      permission: 'module:configuration:families',
     },
     {
       id: 'configuration-references',
@@ -347,7 +347,7 @@ export const CONFIGURATION_NAVIGATION: ModuleNavigationNode = {
       icon: DatabaseZap,
       tone: 'bg-indigo-50 text-indigo-700',
       href: '/configuration/reference-editor',
-      permission: 'module:configuration',
+      permission: 'module:configuration:references',
     },
     {
       id: 'configuration-versioning',
@@ -356,7 +356,7 @@ export const CONFIGURATION_NAVIGATION: ModuleNavigationNode = {
       icon: Layers,
       tone: 'bg-orange-50 text-orange-700',
       href: '/configuration/version-editor',
-      permission: 'module:configuration',
+      permission: 'module:configuration:versioning',
     },
     {
       id: 'configuration-skus',
@@ -365,7 +365,7 @@ export const CONFIGURATION_NAVIGATION: ModuleNavigationNode = {
       icon: DatabaseZap,
       tone: 'bg-emerald-50 text-emerald-700',
       href: '/configuration/sku-editor',
-      permission: 'module:configuration',
+      permission: 'module:configuration:skus',
     },
     {
       id: 'configuration-glossary',
@@ -374,7 +374,7 @@ export const CONFIGURATION_NAVIGATION: ModuleNavigationNode = {
       icon: BookOpen,
       tone: 'bg-blue-50 text-blue-700',
       href: '/configuration/glossary',
-      permission: 'module:configuration',
+      permission: 'module:configuration:glossary',
     },
     {
       id: 'configuration-nomenclature',
@@ -383,7 +383,7 @@ export const CONFIGURATION_NAVIGATION: ModuleNavigationNode = {
       icon: Tags,
       tone: 'bg-indigo-50 text-indigo-700',
       href: '/configuration/nomenclature',
-      permission: 'module:configuration',
+      permission: 'module:configuration:nomenclature',
     },
     {
       id: 'configuration-versions',
@@ -392,7 +392,7 @@ export const CONFIGURATION_NAVIGATION: ModuleNavigationNode = {
       icon: Layers,
       tone: 'bg-violet-50 text-violet-700',
       href: '/configuration/versions',
-      permission: 'module:configuration',
+      permission: 'module:configuration:versions',
     },
     {
       id: 'configuration-colors',
@@ -401,7 +401,7 @@ export const CONFIGURATION_NAVIGATION: ModuleNavigationNode = {
       icon: Palette,
       tone: 'bg-emerald-50 text-emerald-700',
       href: '/configuration/colors',
-      permission: 'module:configuration',
+      permission: 'module:configuration:colors',
     },
     {
       id: 'configuration-clients',
@@ -410,7 +410,7 @@ export const CONFIGURATION_NAVIGATION: ModuleNavigationNode = {
       icon: Users,
       tone: 'bg-slate-100 text-slate-700',
       href: '/configuration/clients',
-      permission: 'module:configuration',
+      permission: 'module:configuration:clients',
     },
     {
       id: 'configuration-users',
@@ -440,7 +440,7 @@ function canNavigateNode(
   isAdmin: boolean
 ): boolean {
   if (!node.href || (node.requiresAdmin && !isAdmin)) return false
-  return !node.permission || permissionSet.has(node.permission)
+  return !node.permission || hasModuleAccess([...permissionSet], node.permission)
 }
 
 export function resolveModuleNavigationNode(

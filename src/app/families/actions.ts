@@ -12,7 +12,7 @@ import { redirect } from 'next/navigation';
 import { assertPermission } from '@/utils/auth/access';
 
 async function assertAdminAccess() {
-  await assertPermission('module:configuration');
+  await assertPermission('module:configuration:families');
 }
 
 type FamilyFilterOptionsRow = {

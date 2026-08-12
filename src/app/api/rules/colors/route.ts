@@ -28,7 +28,7 @@ function normalizeColorApiPayload(payload: ColorApiPayload) {
 }
 
 export async function GET() {
-  const guard = await apiGuard('module:configuration');
+  const guard = await apiGuard('module:configuration:colors');
   if (guard.response) return guard.response;
 
   try {
@@ -40,7 +40,7 @@ export async function GET() {
 }
 
 export async function PATCH(req: Request) {
-  const guard = await apiGuard('module:configuration');
+  const guard = await apiGuard('module:configuration:colors');
   if (guard.response) return guard.response;
 
   try {
@@ -56,7 +56,7 @@ export async function PATCH(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const guard = await apiGuard('module:configuration');
+  const guard = await apiGuard('module:configuration:colors');
   if (guard.response) return guard.response;
 
   try {

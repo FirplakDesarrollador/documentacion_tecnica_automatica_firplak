@@ -5,18 +5,22 @@ import { revalidatePath } from 'next/cache'
 
 import { dbQuery } from '@/lib/supabase'
 import { supabaseTable } from '@/lib/supabaseDynamic'
-import { assertPermission } from '@/utils/auth/access'
-import { getSapItem, getSapItemBom, updateSapProductTreeLines, updateSapItem, type SapEntityPayload, type SapProductTreeLineInput } from '@/lib/sap/serviceLayer'
-import {
-  isSapLifecycleState,
-  readSapItemLifecycleState,
-  sapPayloadForTargetStatus,
-  statusConfirmation,
-  type SapItemTargetStatus,
-} from '@/lib/sap/itemLifecycle'
-import { SAP_CODE_MANAGEMENT_PERMISSION } from '@/types/auth'
+import { assertPermission as assertRawPermission } from '@/utils/auth/access'
+import type { Permission } from '@/types/auth'
+
+async function assertPermission(permission: Permission) {
+  return assertRawPermission(permission === 'module:product-design' ? 'module:product-design:route-sheets' : permission)
+}
+import { getSapItemBom, updateSapProductTreeLines, type SapProductTreeLineInput } from '@/lib/sap/serviceLayer'
 import { parseCabinetRouteWorkbook } from '@/lib/routeSheets/cabinetRouteExcel'
 import { contrastSapVsApp, type ContrastReport, type SkuCoverageIssue } from '@/lib/routeSheets/cabinetContrastSap'
+import {
+  updateSapItemStatusAction as updateEngineeringSapItemStatusAction,
+} from '@/app/engineering/sap-operations/sap-code-creation/actions'
+import type {
+  SapStatusUpdateInput,
+  SapStatusUpdateResult,
+} from '@/app/engineering/sap-operations/sap-code-creation/types'
 import {
   CABINET_ROUTE_SCHEMA_VERSION,
   buildCabinetRouteMatchReport,

@@ -7,7 +7,7 @@ import { EngineeringEstimationReviewsClient } from './EngineeringEstimationRevie
 export const dynamic = 'force-dynamic'
 
 export default async function EngineeringEstimationsPage() {
-  await requirePagePermission('module:engineering')
+  await requirePagePermission('module:engineering:estimations')
   const estimations = await listEngineeringEstimationReviewsAction()
 
   return (

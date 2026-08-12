@@ -3,7 +3,7 @@ import { getProductivePilotSkusAction } from '../../actions'
 import { CabinetsRouteViewClient } from './CabinetsRouteViewClient'
 
 export default async function CabinetsRouteViewPage() {
-  await requirePagePermission('module:productive-modules')
+  await requirePagePermission('module:productive-modules:route-sheets')
   const pilotSkus = await getProductivePilotSkusAction()
 
   return (

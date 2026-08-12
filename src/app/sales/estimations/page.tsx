@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 export default async function SalesEstimationsPage() {
-  await requirePagePermission('module:sales')
+  await requirePagePermission('module:sales:estimations')
   const estimations = await listSharedSalesEstimationsAction()
 
   return (

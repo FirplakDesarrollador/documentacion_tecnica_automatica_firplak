@@ -19,7 +19,7 @@ type ClientPickerRow = {
 }
 
 async function assertAdminAccess() {
-  await assertPermission('module:configuration')
+  await assertPermission('module:configuration:clients')
 }
 
 function normalizeClientName(raw: string) {

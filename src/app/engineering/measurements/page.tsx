@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 export default async function EngineeringMeasurementsPage() {
-  await requirePagePermission('module:engineering')
+  await requirePagePermission('module:engineering:measurements')
   const initial = await listEngineeringMeasurementsAction()
 
   return (

@@ -244,7 +244,7 @@ function requireServiceRoleConfiguration(): void {
 }
 
 async function requireEngineeringAccess(): Promise<EngineeringAccess> {
-  const access = await assertPermission('module:engineering')
+  const access = await assertPermission('module:engineering:measurements')
   requireServiceRoleConfiguration()
   if (!access.user) throw new Error('No se pudo identificar al usuario de Ingeniería.')
   return { ...access, user: access.user }

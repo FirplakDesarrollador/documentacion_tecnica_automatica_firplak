@@ -6,7 +6,7 @@ import { revalidatePath } from 'next/cache'
 import { assertPermission } from '@/utils/auth/access'
 
 async function assertAdminAccess() {
-    await assertPermission('module:configuration')
+    await assertPermission('module:configuration:versions')
 }
 
 export async function upsertVersionAction(data: {

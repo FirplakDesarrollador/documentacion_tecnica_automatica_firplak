@@ -56,7 +56,7 @@ function streamEvent(encoder: TextEncoder, event: MatrixVerificationEvent): Uint
 }
 
 export async function POST(request: NextRequest): Promise<Response> {
-  const guard = await apiGuard('module:product-design')
+  const guard = await apiGuard('module:product-design:bom')
   if (guard.response) return guard.response
 
   let selections: DirectColorRuleMatrixSelection[] = []

@@ -3,7 +3,7 @@ import { listTransientReferenceBomImportCandidatesAction } from './transientRefe
 import { ReferenceBomImportClient } from './ReferenceBomImportClient'
 
 export default async function ProductBomPage() {
-  await requirePagePermission('module:product-design')
+  await requirePagePermission('module:product-design:bom')
   const candidates = await listTransientReferenceBomImportCandidatesAction()
 
   return (

@@ -12,7 +12,7 @@ import { markNamingStaleForVersions, processNamingJobsInline } from '@/lib/engin
 import { assertPermission } from '@/utils/auth/access';
 
 async function assertAdminAccess() {
-  await assertPermission('module:configuration');
+  await assertPermission('module:configuration:versioning');
 }
 
 function esc(value: string) {

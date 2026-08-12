@@ -22,7 +22,12 @@ import { deleteSapItem, deleteSapProductTree, getSapItem, getSapItemBom, getSapP
 import { buildSapItemCode, parseSapItemCode, readSapFrozen, readSapUom, readSapValid } from '@/lib/bom/sapMapping'
 import { syncMissingSapComponentsToCatalog } from '@/lib/sap/componentCatalogSync'
 import { getColorsAction, upsertColorAction, type ColorEntry } from '@/app/rules/colors/actions'
-import { assertPermission } from '@/utils/auth/access'
+import { assertPermission as assertRawPermission } from '@/utils/auth/access'
+import type { Permission } from '@/types/auth'
+
+async function assertPermission(permission: Permission) {
+  return assertRawPermission(permission === 'module:product-design' ? 'module:product-design:bom' : permission)
+}
 
 type ActionResult = {
   success: boolean

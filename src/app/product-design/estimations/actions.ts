@@ -135,7 +135,7 @@ function requireServiceRoleConfiguration(): void {
 }
 
 async function requireProductDesignAccess(): Promise<ProductDesignAccess> {
-  const access = await assertPermission('module:product-design')
+  const access = await assertPermission('module:product-design:estimations')
   requireServiceRoleConfiguration()
   if (!access.user) throw new Error('No se pudo identificar al usuario de Diseño.')
   return { ...access, user: access.user }

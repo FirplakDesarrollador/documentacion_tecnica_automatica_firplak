@@ -21,6 +21,8 @@ type UpdateRequest = {
   confirmed: boolean
 }
 
+type ColorAuditPermission = 'module:product-design' | 'module:engineering' | 'module:engineering:sap-auditories'
+
 function readRequestBody(value: unknown): UpdateRequest {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return { auditKind: 'color', mode: 'dry-run', items: [], confirmed: false }
@@ -39,8 +41,8 @@ function readRequestBody(value: unknown): UpdateRequest {
   }
 }
 
-export async function POST(request: NextRequest): Promise<Response> {
-  const guard = await apiGuard('module:product-design')
+export async function handleColorAuditUpdateRequest(request: NextRequest, permission: ColorAuditPermission): Promise<Response> {
+  const guard = await apiGuard(permission)
   if (guard.response) return guard.response
 
   try {
@@ -69,4 +71,8 @@ export async function POST(request: NextRequest): Promise<Response> {
   } catch (error: unknown) {
     return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'No se pudo procesar el lote SAP.' }, { status: colorAuditUpdateErrorStatus(error) })
   }
+}
+
+export async function POST(request: NextRequest): Promise<Response> {
+  return handleColorAuditUpdateRequest(request, 'module:engineering:sap-auditories')
 }

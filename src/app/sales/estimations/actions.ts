@@ -86,7 +86,7 @@ function requireServiceRoleConfiguration(): void {
 }
 
 async function requireSalesAccess(): Promise<void> {
-  await assertPermission('module:sales')
+  await assertPermission('module:sales:estimations')
   requireServiceRoleConfiguration()
 }
 

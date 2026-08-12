@@ -6,7 +6,9 @@ import { NextResponse } from 'next/server'
 
 import {
   hasPermission,
+  hasModuleAccess,
   isPermission,
+  isModulePermission,
   normalizeUserRole,
   resolveRoleAccess,
   type AppRoleRecord,
@@ -141,7 +143,10 @@ export async function requirePagePermission(permission: Permission): Promise<Acc
     redirect('/login')
   }
 
-  if (!hasPermission(access.permissions, permission)) {
+  const allowed = isModulePermission(permission)
+    ? hasModuleAccess(access.permissions, permission)
+    : hasPermission(access.permissions, permission)
+  if (!allowed) {
     redirect(access.homePath)
   }
 

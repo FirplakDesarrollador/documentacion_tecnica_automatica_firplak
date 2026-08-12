@@ -18,7 +18,7 @@ function serializeValidation(prepared: Awaited<ReturnType<typeof prepareSapTrans
 }
 
 export async function POST(request: Request) {
-  const guard = await apiGuard('module:engineering')
+  const guard = await apiGuard('module:engineering:transfer-requests')
   if (guard.response) return guard.response
 
   try {

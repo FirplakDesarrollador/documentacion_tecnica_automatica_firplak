@@ -3,7 +3,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import {
   type AppRoleRecord,
   getRoutePermission,
-  hasPermission,
+  hasModuleAccess,
   isAllowedUserApi,
   isPublicRoute,
   isSystemSecretApi,
@@ -135,7 +135,7 @@ export const updateSession = async (request: NextRequest) => {
     fallbackToDefaults: Boolean(appRoleError),
   });
   const homePath = roleAccess.homePath;
-  const hasModuleAccess = roleAccess.permissions.some((permission) => permission.startsWith("module:"));
+  const hasAnyModuleAccess = roleAccess.permissions.some((permission) => permission.startsWith("module:"));
 
   if (isLoginPage) {
     return redirectTo(request, homePath);
@@ -145,7 +145,7 @@ export const updateSession = async (request: NextRequest) => {
     return response;
   }
 
-  if (!hasModuleAccess) {
+  if (!hasAnyModuleAccess) {
     if (pathname === ACCESS_PENDING_PATH) {
       return response;
     }
@@ -162,11 +162,13 @@ export const updateSession = async (request: NextRequest) => {
   }
 
   if (isApiRoute) {
-    return isAllowedUserApi(pathname, roleAccess.role, roleAccess.permissions) ? response : jsonError("Forbidden", 403);
+    return isAllowedUserApi(pathname, roleAccess.role, roleAccess.permissions)
+      ? response
+      : jsonError("Forbidden", 403);
   }
 
   const routePermission = getRoutePermission(pathname);
-  if (routePermission && !hasPermission(roleAccess.permissions, routePermission)) {
+  if (routePermission && !hasModuleAccess(roleAccess.permissions, routePermission)) {
     return redirectTo(request, homePath);
   }
 

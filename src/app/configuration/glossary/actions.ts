@@ -7,7 +7,7 @@ import { revalidatePath, revalidateTag } from 'next/cache'
 import { assertPermission } from '@/utils/auth/access'
 
 async function assertAdminAccess() {
-    await assertPermission('module:configuration')
+    await assertPermission('module:configuration:glossary')
 }
 
 export async function getGlossaryAction() {

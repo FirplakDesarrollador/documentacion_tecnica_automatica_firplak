@@ -34,7 +34,7 @@ import {
 import { assertPermission, assertRole } from '@/utils/auth/access'
 
 async function assertAdminAccess() {
-    await assertPermission('module:configuration')
+    await assertPermission('module:configuration:nomenclature')
 }
 
 function esc(v: unknown) {

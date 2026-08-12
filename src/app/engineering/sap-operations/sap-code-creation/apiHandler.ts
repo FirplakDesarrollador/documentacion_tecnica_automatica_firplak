@@ -556,7 +556,7 @@ async function logOperation(
 }
 
 export async function getSapCodeCreation() {
-  const guard = await apiGuard('module:engineering')
+  const guard = await apiGuard('module:engineering:sap-code-creation')
   if (guard.response) return guard.response
   try {
     const rows = await dbQuery(
@@ -573,7 +573,7 @@ export async function getSapCodeCreation() {
 }
 
 export async function postSapCodeCreation(request: Request) {
-  const guard = await apiGuard('module:engineering')
+  const guard = await apiGuard('module:engineering:sap-code-creation')
   if (guard.response) return guard.response
   try {
     const input = parseRequest(await request.json())

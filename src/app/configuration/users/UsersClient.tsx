@@ -1,14 +1,14 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { toast } from 'sonner'
 import {
   ArrowLeft,
   CheckCircle2,
   KeyRound,
-  Loader2,
   Lock,
+  Loader2,
   MailPlus,
   PlusCircle,
   RefreshCw,
@@ -29,7 +29,7 @@ import {
   ADMIN_ROLE,
   APP_MODULES,
   INTERNAL_PERMISSIONS,
-  SAP_CODE_MANAGEMENT_PERMISSION,
+  PERMISSION_DEPENDENCIES,
   getRoleLabel,
   type Permission,
   type ModulePermission,
@@ -151,6 +151,45 @@ function buildRoleInput(form: RoleFormState): SaveRoleInput {
     active: form.active,
     allowedModules: form.allowedModules,
   }
+}
+
+function getModuleSelectionState(allowedPermissions: readonly Permission[], module: typeof APP_MODULES[number]) {
+  const children = module.children?.map((child) => child.key) ?? []
+  const hasParent = allowedPermissions.includes(module.key)
+  const selectedChildren = children.filter((child) => allowedPermissions.includes(child))
+
+  return {
+    children,
+    isFull: hasParent || (children.length > 0 && selectedChildren.length === children.length),
+    isPartial: !hasParent && selectedChildren.length > 0 && selectedChildren.length < children.length,
+  }
+}
+
+function ModuleAccessCheckbox({
+  checked,
+  partial,
+  onChange,
+}: {
+  checked: boolean
+  partial: boolean
+  onChange: () => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (inputRef.current) inputRef.current.indeterminate = partial
+  }, [partial])
+
+  return (
+    <input
+      ref={inputRef}
+      type="checkbox"
+      checked={checked}
+      aria-checked={partial ? 'mixed' : checked}
+      onChange={onChange}
+      className="h-4 w-4 shrink-0 rounded border-slate-300"
+    />
+  )
 }
 
 export default function UsersClient({
@@ -289,30 +328,41 @@ export default function UsersClient({
 
   const toggleRoleModule = (moduleKey: ModulePermission) => {
     setRoleForm((current) => {
-      const exists = current.allowedModules.includes(moduleKey)
-      const nextAllowed = exists
-        ? current.allowedModules.filter((item) => item !== moduleKey)
-        : [...current.allowedModules, moduleKey]
-      const withInternalDefaults = moduleKey === 'module:product-design' && !exists
-        ? [...nextAllowed, SAP_CODE_MANAGEMENT_PERMISSION]
-        : moduleKey === 'module:product-design' && exists
-          ? nextAllowed.filter((item) => item !== SAP_CODE_MANAGEMENT_PERMISSION)
-          : nextAllowed
+      const moduleDefinition = APP_MODULES.find((item) => item.key === moduleKey)
+      if (!moduleDefinition) return current
+
+      const { children, isFull } = getModuleSelectionState(current.allowedModules, moduleDefinition)
+      const nextAllowed = isFull
+        ? current.allowedModules.filter((item) => item !== moduleKey && !children.includes(item as ModulePermission))
+        : [...current.allowedModules.filter((item) => !children.includes(item as ModulePermission)), moduleKey]
       return {
         ...current,
-        allowedModules: [...new Set(withInternalDefaults)],
+        allowedModules: [...new Set(nextAllowed)],
       }
     })
   }
 
-  const toggleInternalPermission = (permission: Permission) => {
+  const toggleRoleSubmodule = (moduleKey: ModulePermission, childKey: ModulePermission) => {
     setRoleForm((current) => {
-      const exists = current.allowedModules.includes(permission)
+      const moduleDefinition = APP_MODULES.find((item) => item.key === moduleKey)
+      if (!moduleDefinition) return current
+
+      const children = moduleDefinition.children?.map((child) => child.key) ?? []
+      const currentChildren = current.allowedModules.includes(moduleKey)
+        ? children
+        : children.filter((child) => current.allowedModules.includes(child))
+      const nextChildren = currentChildren.includes(childKey)
+        ? currentChildren.filter((child) => child !== childKey)
+        : [...currentChildren, childKey]
+      const withoutModule = current.allowedModules.filter((item) => (
+        item !== moduleKey && !children.includes(item as ModulePermission)
+      ))
+
       return {
         ...current,
-        allowedModules: exists
-          ? current.allowedModules.filter((item) => item !== permission)
-          : [...current.allowedModules, permission],
+        allowedModules: nextChildren.length === children.length
+          ? [...withoutModule, moduleKey]
+          : [...withoutModule, ...nextChildren],
       }
     })
   }
@@ -735,31 +785,43 @@ export default function UsersClient({
 
               <div className="grid gap-2">
                 <Label className="text-xs font-bold uppercase text-slate-700">Módulos permitidos</Label>
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {APP_MODULES.map((module) => {
-                    const checked = roleForm.allowedModules.includes(module.key)
-                    const disabled = !module.assignable
+                <p className="text-xs text-slate-500">
+                  Selecciona un mÃ³dulo completo o sus subaccesos. Las dependencias necesarias se conceden automÃ¡ticamente.
+                </p>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  {APP_MODULES.filter((module) => module.key === 'module:dashboard' || Boolean(module.children?.length)).map((module) => {
+                    const { children, isFull, isPartial } = getModuleSelectionState(roleForm.allowedModules, module)
                     return (
-                      <label
+                      <div
                         key={module.key}
-                        className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-sm ${
-                          disabled
-                            ? 'border-slate-200 bg-slate-50 text-slate-400'
-                            : 'border-slate-200 bg-white text-slate-700'
-                        }`}
+                        className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700"
                       >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={disabled}
-                          onChange={() => toggleRoleModule(module.key)}
-                          className="h-4 w-4 shrink-0 rounded border-slate-300 disabled:opacity-50"
-                        />
-                        <span className="min-w-0 truncate font-semibold">
-                          {module.label}
-                          {disabled ? <Lock className="ml-1 inline h-3 w-3 shrink-0" /> : null}
-                        </span>
-                      </label>
+                        <label className="flex cursor-pointer items-center gap-2 font-semibold">
+                          <ModuleAccessCheckbox checked={isFull} partial={isPartial} onChange={() => toggleRoleModule(module.key)} />
+                          <span>{module.label}</span>
+                          {isPartial ? <Badge variant="outline" className="ml-auto border-amber-200 bg-amber-50 text-amber-700">Acceso parcial</Badge> : null}
+                        </label>
+                        {children.length > 0 ? (
+                          <div className="mt-3 grid gap-2 border-l border-slate-200 pl-3">
+                            {module.children?.map((child) => {
+                              const checked = isFull || roleForm.allowedModules.includes(child.key)
+                              const dependencyLabels = (PERMISSION_DEPENDENCIES.get(child.key) ?? [])
+                                .map((dependency) => INTERNAL_PERMISSIONS.find((item) => item.key === dependency)?.label)
+                                .filter((label): label is string => Boolean(label))
+                              return (
+                                <label key={child.key} className="flex cursor-pointer items-start gap-2">
+                                  <input type="checkbox" checked={checked} onChange={() => toggleRoleSubmodule(module.key, child.key)} className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300" />
+                                  <span className="min-w-0">
+                                    <span className="block font-medium">{child.label}</span>
+                                    <span className="block text-xs text-slate-500">{child.description}</span>
+                                    {dependencyLabels.length > 0 ? <span className="mt-1 block text-xs font-medium text-indigo-700">Incluye: {dependencyLabels.join(', ')}.</span> : null}
+                                  </span>
+                                </label>
+                              )
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
                     )
                   })}
                 </div>
@@ -768,30 +830,9 @@ export default function UsersClient({
               <div className="grid gap-2">
                 <Label className="text-xs font-bold uppercase text-slate-700">Permisos internos</Label>
                 <div className="grid gap-2">
-                  {INTERNAL_PERMISSIONS.map((permission) => {
-                    const moduleEnabled = roleForm.allowedModules.includes(permission.module)
-                    const checked = roleForm.allowedModules.includes(permission.key)
-                    return (
-                      <label
-                        key={permission.key}
-                        className={`flex items-start gap-2 rounded-lg border px-2.5 py-2 text-sm ${
-                          moduleEnabled ? 'border-indigo-200 bg-indigo-50/40 text-slate-700' : 'border-slate-200 bg-slate-50 text-slate-400'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={!moduleEnabled}
-                          onChange={() => toggleInternalPermission(permission.key)}
-                          className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 disabled:opacity-50"
-                        />
-                        <span className="min-w-0">
-                          <span className="block font-semibold">{permission.label}</span>
-                          <span className="block text-xs text-slate-500">{permission.description}</span>
-                        </span>
-                      </label>
-                    )
-                  })}
+                  <p className="rounded-lg border border-indigo-100 bg-indigo-50/40 px-3 py-2 text-sm text-slate-600">
+                    Las acciones internas se activan cuando se selecciona el subacceso que las requiere.
+                  </p>
                 </div>
               </div>
             </div>

@@ -3,7 +3,7 @@ import { BackLink } from '@/components/navigation/BackLink'
 import { requirePagePermission } from '@/utils/auth/access'
 
 export default async function SapAuditoriesPage() {
-  await requirePagePermission('module:engineering')
+  await requirePagePermission('module:engineering:sap-auditories')
 
   return (
     <main className="min-h-screen bg-slate-50 p-6">

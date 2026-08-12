@@ -27,6 +27,8 @@ type ItemsRequest = {
   catalogOnly?: boolean
 }
 
+type ColorAuditPermission = 'module:product-design' | 'module:engineering' | 'module:engineering:sap-auditories'
+
 function readRequestBody(value: unknown): ItemsRequest {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
   const record = value as Record<string, unknown>
@@ -42,8 +44,8 @@ function readRequestBody(value: unknown): ItemsRequest {
   return { skip, afterItemCode, prefix, catalogOnly: record.catalogOnly === true }
 }
 
-export async function POST(request: NextRequest): Promise<Response> {
-  const guard = await apiGuard('module:product-design')
+export async function handleColorAuditItemsRequest(request: NextRequest, permission: ColorAuditPermission): Promise<Response> {
+  const guard = await apiGuard(permission)
   if (guard.response) return guard.response
 
   try {
@@ -100,5 +102,9 @@ export async function POST(request: NextRequest): Promise<Response> {
     const message = error instanceof Error ? error.message : 'No se pudo leer la población de SKU desde SAP.'
     return NextResponse.json({ success: false, error: message }, { status: 502 })
   }
+}
+
+export async function POST(request: NextRequest): Promise<Response> {
+  return handleColorAuditItemsRequest(request, 'module:engineering:sap-auditories')
 }
 

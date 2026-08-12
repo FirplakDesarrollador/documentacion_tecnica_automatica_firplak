@@ -61,7 +61,7 @@ const REMOVE_MANAGED_APPLICATION_SCOPES_SQL = COLOR_APPLICATION_SCOPE_KEYS
   .join('')
 
 async function assertAdminAccess() {
-  await assertPermission('module:configuration')
+  await assertPermission('module:configuration:colors')
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

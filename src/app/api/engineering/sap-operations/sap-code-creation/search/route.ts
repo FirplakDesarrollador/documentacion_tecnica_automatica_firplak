@@ -15,7 +15,7 @@ function parseNonNegativeInteger(value: string | null): number {
 }
 
 export async function GET(request: NextRequest) {
-  const guard = await apiGuard('module:engineering')
+  const guard = await apiGuard('module:engineering:sap-code-creation')
   if (guard.response) return guard.response
 
   try {

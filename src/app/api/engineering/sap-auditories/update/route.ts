@@ -6,5 +6,5 @@ export const runtime = 'nodejs'
 export const maxDuration = 300
 
 export async function POST(request: NextRequest): Promise<Response> {
-  return handleColorAuditUpdateRequest(request, 'module:engineering')
+  return handleColorAuditUpdateRequest(request, 'module:engineering:sap-auditories')
 }

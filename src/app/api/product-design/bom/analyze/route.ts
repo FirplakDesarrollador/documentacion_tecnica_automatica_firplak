@@ -35,7 +35,7 @@ function parseRetryRequest(record: Record<string, unknown>): RetryRequest | null
 }
 
 export async function POST(request: NextRequest): Promise<Response> {
-  const guard = await apiGuard('module:product-design')
+  const guard = await apiGuard('module:product-design:bom')
   if (guard.response) return guard.response
 
   let referenceId = ''

@@ -6,7 +6,7 @@ import { normalizeDocumentSlot, normalizeSlugPrefix } from '@/lib/documentLinks'
 import { assertPermission } from '@/utils/auth/access'
 
 async function assertAdminAccess() {
-    await assertPermission('module:configuration')
+    await assertPermission('module:configuration:nomenclature')
 }
 
 function escapeSql(value: unknown) {

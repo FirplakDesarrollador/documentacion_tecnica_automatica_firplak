@@ -140,7 +140,7 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ docEntry: string }> },
 ) {
-  const guard = await apiGuard('module:engineering')
+  const guard = await apiGuard('module:engineering:transfer-requests')
   if (guard.response) return guard.response
 
   const auditState: { pendingOperation: SapOperationLog | null } = { pendingOperation: null }
