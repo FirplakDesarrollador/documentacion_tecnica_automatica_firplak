@@ -11,9 +11,10 @@ import { completePasswordSetupAction } from './actions'
 type PasswordSetupFormProps = {
   userId: string
   token: string
+  mode: 'invite' | 'recovery'
 }
 
-export default function PasswordSetupForm({ userId, token }: PasswordSetupFormProps) {
+export default function PasswordSetupForm({ userId, token, mode }: PasswordSetupFormProps) {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -49,6 +50,16 @@ export default function PasswordSetupForm({ userId, token }: PasswordSetupFormPr
   }
 
   const hasValidLink = Boolean(userId && token)
+  const isRecovery = mode === 'recovery'
+  const pageTitle = isRecovery ? 'Actualizar contraseña' : 'Crear contraseña'
+  const pageDescription = isRecovery
+    ? 'Define una nueva contraseña para recuperar el acceso a SamiGen.'
+    : 'Define tu contraseña para activar el acceso a SamiGen.'
+  const successTitle = isRecovery ? 'Contraseña actualizada correctamente' : 'Contraseña creada correctamente'
+  const successDescription = isRecovery
+    ? 'Tu contraseña se actualizó. Ingresa a SamiGen con tu correo y la nueva contraseña.'
+    : 'Tu acceso ya está activo. Ingresa a SamiGen con tu correo y la contraseña que acabas de crear.'
+  const submitLabel = isRecovery ? 'Actualizar contraseña' : 'Crear contraseña'
 
   return (
     <div className="relative flex min-h-screen w-full items-center justify-center overflow-hidden bg-background font-sans">
@@ -62,9 +73,9 @@ export default function PasswordSetupForm({ userId, token }: PasswordSetupFormPr
           <div className="mb-6 rounded-2xl bg-primary p-4 text-white shadow-premium ring-1 ring-primary/15">
             <Package className="h-10 w-10" />
           </div>
-          <h1 className="mb-2 text-center text-3xl font-bold tracking-tight text-primary">Crear contraseña</h1>
+          <h1 className="mb-2 text-center text-3xl font-bold tracking-tight text-primary">{pageTitle}</h1>
           <p className="max-w-[320px] text-center text-sm text-slate-600">
-            Define tu contraseña para activar o recuperar el acceso a SamiGen.
+            {pageDescription}
           </p>
         </div>
 
@@ -73,8 +84,8 @@ export default function PasswordSetupForm({ userId, token }: PasswordSetupFormPr
             <div className="space-y-5 text-center">
               <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600" />
               <div>
-                <h2 className="text-xl font-bold text-primary">Contraseña actualizada correctamente</h2>
-                <p className="mt-2 text-sm text-slate-600">Tu acceso ya está activo. Ingresa a SamiGen con tu correo y la nueva contraseña.</p>
+                <h2 className="text-xl font-bold text-primary">{successTitle}</h2>
+                <p className="mt-2 text-sm text-slate-600">{successDescription}</p>
               </div>
               <Link
                 href="/login"
@@ -148,7 +159,7 @@ export default function PasswordSetupForm({ userId, token }: PasswordSetupFormPr
                     <span>Actualizando...</span>
                   </>
                 ) : (
-                  'Guardar contraseña'
+                  submitLabel
                 )}
               </button>
             </form>

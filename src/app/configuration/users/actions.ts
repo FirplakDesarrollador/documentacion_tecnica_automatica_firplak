@@ -260,7 +260,11 @@ async function countUserQuotations(admin: SupabaseAdminClient, userId: string) {
   return count ?? 0
 }
 
-async function getPasswordSetupUrl(userId: string, token: string) {
+async function getPasswordSetupUrl(
+  userId: string,
+  token: string,
+  actionType: 'invite' | 'recovery',
+) {
   const headerStore = await headers()
   const origin = headerStore.get('origin')
   const host = headerStore.get('x-forwarded-host') ?? headerStore.get('host')
@@ -274,6 +278,7 @@ async function getPasswordSetupUrl(userId: string, token: string) {
   const actionUrl = new URL('/auth/set-password', baseUrl)
   actionUrl.searchParams.set('user', userId)
   actionUrl.searchParams.set('token', token)
+  actionUrl.searchParams.set('mode', actionType)
   return actionUrl.toString()
 }
 
@@ -297,7 +302,7 @@ async function sendPasswordSetupEmail(
     throw new Error(`No se pudo preparar el acceso del usuario: ${readErrorMessage(metadataError)}`)
   }
 
-  const actionUrl = await getPasswordSetupUrl(user.id, token)
+  const actionUrl = await getPasswordSetupUrl(user.id, token, actionType)
   const { error: deliveryError } = await admin.functions.invoke('samigen-auth-email', {
     headers: {
       'x-samigen-internal-email-secret': internalEmailSecret,
