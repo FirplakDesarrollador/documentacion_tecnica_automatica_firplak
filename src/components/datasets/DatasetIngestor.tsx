@@ -39,10 +39,15 @@ import {
 } from 'lucide-react'
 import Papa from 'papaparse'
 import { toast } from 'sonner'
-import { linkDatasetToTemplatesAction, revalidateDatasetsPathsAction } from '@/app/datasets/actions'
+import { createClient } from '@/utils/supabase/client'
+import {
+    createDatasetImportAction,
+    getDatasetsAction,
+    linkDatasetToTemplatesAction,
+    revalidateDatasetsPathsAction,
+} from '@/app/datasets/actions'
 import { getDatasetModeTemplatesAction } from '@/app/templates/actions'
 import { extractTemplateVariables } from '@/lib/templates/templateVariables'
-import { createClient } from '@/utils/supabase/client'
 
 interface ExistingDataset {
     id: string
@@ -58,9 +63,21 @@ interface DatasetIngestorProps {
 
 type Step = 'name_file' | 'strategy' | 'mapping' | 'associate_templates' | 'preview'
 
+function getImportErrorMessage(error: unknown) {
+    if (error instanceof Error) return error.message
+    if (typeof error === 'object' && error !== null) {
+        const candidate = error as { message?: unknown; details?: unknown; code?: unknown }
+        const message = typeof candidate.message === 'string' ? candidate.message : ''
+        const details = typeof candidate.details === 'string' ? candidate.details : ''
+        const code = typeof candidate.code === 'string' ? candidate.code : ''
+        return [message, details, code ? `(${code})` : ''].filter(Boolean).join(' ')
+    }
+    return String(error)
+}
+
 export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: DatasetIngestorProps) {
-    const supabase = useMemo(() => createClient(), [])
     const isNew = mode === 'new'
+    const supabase = useMemo(() => createClient(), [])
     
     const [step, setStep] = useState<Step>('name_file')
     const [datasetName, setDatasetName] = useState(isNew ? '' : mode.name)
@@ -119,7 +136,7 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
     const autoMap = (headers: string[]) => {
         const newMap: Record<string, string> = { code: '', final_name_es: '' }
         headers.forEach(header => {
-            const hLower = header.toLowerCase()
+            const hLower = stripDiacritics(header).toLowerCase()
             if (!newMap.code && (hLower.includes('codigo') || hLower.includes('sku') || hLower === 'id' || hLower === 'code' || hLower.includes('sap'))) {
                 newMap.code = header
             }
@@ -230,7 +247,16 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
             skipEmptyLines: true,
             encoding: enc, 
             complete: (results) => {
-                const headers = results.meta.fields || []
+                const headers = (results.meta.fields || []).filter((header) => {
+                    if (!String(header).trim()) return false
+                    return results.data.some((row) => String((row as Record<string, unknown>)[header] ?? '').trim())
+                })
+                if (headers.length === 0) {
+                    toast.error('El archivo no contiene columnas con datos para importar.')
+                    setCsvHeaders([])
+                    setCsvRows([])
+                    return
+                }
                 setCsvHeaders(headers)
                 setCsvRows(results.data as Record<string, string>[])
                 autoMap(headers)
@@ -355,7 +381,7 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
     const handleFinish = async () => {
         setLoading(true)
         try {
-            let workingDatasetId = mode === 'new' ? null : mode.id
+            const workingDatasetId = mode === 'new' ? null : mode.id
 
             // Apply template mappings (canonical keys) before persisting rows/schema.
             let effectiveColumnConfigs = columnConfigs
@@ -382,51 +408,57 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                 uniqueKeys.add(k)
             }
 
-            // 1. Crear dataset si es nuevo
             if (isNew) {
-                const finalColumns = selectedColumns.map(h => ({
-                    original: h,
-                    key: effectiveColumnConfigs[h]?.key || h,
-                    label: effectiveColumnConfigs[h]?.label || h,
-                    is_identifier: h === fieldMap.code
+                const finalColumns = selectedColumns.map((header) => ({
+                    original: header,
+                    key: effectiveColumnConfigs[header]?.key || header,
+                    label: effectiveColumnConfigs[header]?.label || header,
+                    is_identifier: header === fieldMap.code,
                 }))
+                const rowsToImport = csvRows.map((row) => {
+                    const data: Record<string, string> = {}
+                    if (fieldMap.code) data.code = String(row[fieldMap.code] ?? '').trim()
+                    if (fieldMap.final_name_es) data.final_name_es = String(row[fieldMap.final_name_es] ?? '').trim()
+                    for (const header of selectedColumns) {
+                        const targetKey = effectiveColumnConfigs[header]?.key || header
+                        data[targetKey] = String(row[header] ?? '').trim()
+                    }
+                    return data
+                })
 
-                const { data: newDS, error: dsErr } = await supabase
-                    .from('custom_datasets')
-                    .insert({ 
-                        name: datasetName, 
-                        schema_json: { 
-                            fieldMap, 
-                            selectedColumns,
-                            columns: finalColumns
-                        } 
-                    })
-                    .select()
-                    .single()
-                if (dsErr) {
-                    if (dsErr.code === '23505') throw new Error(`El nombre "${datasetName}" ya existe. Por favor, elige otro.`)
-                    throw dsErr
-                }
-                workingDatasetId = newDS.id
+                const result = await createDatasetImportAction({
+                    name: datasetName,
+                    schema: { fieldMap, selectedColumns, columns: finalColumns },
+                    rows: rowsToImport,
+                    templateIds: selectedTemplateIds,
+                })
+                if (!result.success) throw new Error(result.error || 'No se pudo crear la base de datos.')
+
+                const updated = await getDatasetsAction()
+                onDone(updated as unknown as Record<string, unknown>[])
+                toast.success('Base de datos procesada y verificada con éxito')
+                onClose()
+                return
             }
 
+            // 1. Crear dataset si es nuevo
             // 2. Preparar filas
-            const rowsToInsert = csvRows.map(row => {
+            const rowsToInsert = csvRows.map((row) => {
                 const data: Record<string, string> = {}
                 
                 // Campos técnicos internos (copia redundante para compatibilidad del motor)
                 if (fieldMap.code) {
-                    data.code = row[fieldMap.code]
+                    data.code = String(row[fieldMap.code] ?? '').trim()
                 }
                 if (fieldMap.final_name_es) {
-                    data.final_name_es = row[fieldMap.final_name_es]
+                    data.final_name_es = String(row[fieldMap.final_name_es] ?? '').trim()
                 }
                 
                 // Conservar TODOS los campos seleccionados
-                selectedColumns.forEach(h => {
+                selectedColumns.forEach((h) => {
                     const config = effectiveColumnConfigs[h]
                     const targetKey = config?.key || h
-                    data[targetKey] = row[h]
+                    data[targetKey] = String(row[h] ?? '').trim()
                     
                     // Si el nombre original es distinto al key, también guardamos el original para respaldo
                     // No duplicar llaves con el header original (evita columnas duplicadas en exportación).
@@ -434,7 +466,7 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
 
                 return {
                     dataset_id: workingDatasetId,
-                    data_json: data
+                    data_json: data,
                 }
             })
 
@@ -477,7 +509,7 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
             onDone(normalized)
             onClose()
         } catch (error: unknown) {
-            toast.error(error instanceof Error ? error.message : 'Error al procesar datos')
+            toast.error(getImportErrorMessage(error) || 'Error al procesar datos')
         } finally {
             setLoading(false)
         }

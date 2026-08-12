@@ -26,6 +26,19 @@ export type CustomDataset = {
     row_count?: number
 }
 
+type DatasetSchemaColumn = {
+    original: string
+    key: string
+    label: string
+    is_identifier: boolean
+}
+
+type DatasetImportSchema = {
+    fieldMap: Record<string, string>
+    selectedColumns: string[]
+    columns: DatasetSchemaColumn[]
+}
+
 export async function revalidateDatasetsPathsAction() {
     await assertAdminAccess()
 
@@ -38,6 +51,115 @@ export async function revalidateDatasetsPathsAction() {
 type TemplateLinkRow = { template_id: string; dataset_id: string }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function sqlLiteral(value: string) {
+    return value.replace(/'/g, "''")
+}
+
+function errorMessage(error: unknown) {
+    if (error instanceof Error) return error.message
+    if (typeof error === 'object' && error !== null) {
+        const candidate = error as { message?: unknown; details?: unknown; code?: unknown }
+        const message = typeof candidate.message === 'string' ? candidate.message : ''
+        const details = typeof candidate.details === 'string' ? candidate.details : ''
+        const code = typeof candidate.code === 'string' ? candidate.code : ''
+        return [message, details, code ? `(${code})` : ''].filter(Boolean).join(' ')
+    }
+    return String(error)
+}
+
+export async function createDatasetImportAction(input: {
+    name: string
+    schema: DatasetImportSchema
+    rows: Record<string, string>[]
+    templateIds: string[]
+}): Promise<{ success: boolean; datasetId?: string; rowCount?: number; error?: string }> {
+    await assertAdminAccess()
+
+    const name = String(input.name || '').trim()
+    const columns = input.schema?.columns || []
+    const rows = input.rows || []
+    const templateIds = Array.from(new Set((input.templateIds || []).map(String).filter((id) => UUID_RE.test(id))))
+    if (!name) return { success: false, error: 'El nombre de la base de datos es obligatorio.' }
+    if (columns.length === 0 || rows.length === 0) return { success: false, error: 'Selecciona al menos una columna y una fila válida para importar.' }
+
+    const keys = columns.map((column) => String(column.key || '').trim())
+    if (keys.some((key) => !key) || new Set(keys).size !== keys.length) {
+        return { success: false, error: 'Las variables internas deben ser únicas y no pueden estar vacías.' }
+    }
+
+    let datasetId: string | null = null
+    try {
+        const schema = JSON.stringify(input.schema).replace(/'/g, "''")
+        const created = await dbQuery(`
+            INSERT INTO public.custom_datasets (name, schema_json)
+            VALUES ('${sqlLiteral(name)}', '${schema}'::jsonb)
+            RETURNING id
+        `)
+        datasetId = String(created?.[0]?.id || '')
+        if (!UUID_RE.test(datasetId)) throw new Error('La base de datos no devolvió un identificador válido.')
+
+        const persistedDatasetId = datasetId
+
+        if (templateIds.length > 0) {
+            const availableTemplates = await dbQuery(`
+                SELECT id
+                FROM public.plantillas_doc_tec
+                WHERE active = true
+                  AND data_source = 'custom_datasets'
+                  AND id IN (${templateIds.map((id) => `'${sqlLiteral(id)}'`).join(', ')})
+            `) as Array<{ id?: string | null }>
+            const availableTemplateIds = new Set(availableTemplates.map((template) => String(template.id || '')))
+            if (templateIds.some((id) => !availableTemplateIds.has(id))) {
+                throw new Error('Una de las plantillas seleccionadas ya no admite bases de datos personalizadas.')
+            }
+        }
+
+        await _bulkInsertRows(persistedDatasetId, rows)
+
+        if (templateIds.length > 0) {
+            const values = templateIds
+                .map((templateId) => `('${sqlLiteral(templateId)}', '${sqlLiteral(persistedDatasetId)}')`)
+                .join(', ')
+            await dbQuery(`
+                INSERT INTO public.template_dataset_links (template_id, dataset_id)
+                VALUES ${values}
+                ON CONFLICT (template_id, dataset_id) DO NOTHING
+            `)
+
+            const linkedRows = await dbQuery(`
+                SELECT template_id
+                FROM public.template_dataset_links
+                WHERE dataset_id = '${sqlLiteral(persistedDatasetId)}'
+                  AND template_id IN (${templateIds.map((id) => `'${sqlLiteral(id)}'`).join(', ')})
+            `)
+            const linkedTemplateIds = new Set(
+                (linkedRows as Array<{ template_id?: string | null }>).map((row) => String(row.template_id || ''))
+            )
+            if (templateIds.some((id) => !linkedTemplateIds.has(id))) {
+                throw new Error('No se pudo verificar el relacionamiento con todas las plantillas seleccionadas.')
+            }
+        }
+
+        const verification = await dbQuery(`
+            SELECT COUNT(*)::int AS row_count
+            FROM public.custom_dataset_rows
+            WHERE dataset_id = '${sqlLiteral(persistedDatasetId)}'
+        `)
+        const rowCount = Number(verification?.[0]?.row_count ?? -1)
+        if (rowCount !== rows.length) throw new Error(`La carga quedó incompleta: se esperaban ${rows.length} filas y se encontraron ${rowCount}.`)
+
+        revalidatePath('/datasets')
+        revalidatePath('/templates')
+        revalidatePath('/generate')
+        return { success: true, datasetId, rowCount }
+    } catch (error) {
+        if (datasetId) {
+            await dbQuery(`DELETE FROM public.custom_datasets WHERE id = '${sqlLiteral(datasetId)}'`).catch(() => undefined)
+        }
+        return { success: false, error: errorMessage(error) || 'No se pudo crear la base de datos.' }
+    }
+}
 
 export async function linkDatasetToTemplatesAction(datasetId: string, templateIds: string[]) {
     await assertAdminAccess()
