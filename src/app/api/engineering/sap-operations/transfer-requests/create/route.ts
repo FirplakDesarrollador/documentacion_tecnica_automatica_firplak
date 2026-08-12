@@ -11,12 +11,12 @@ import {
   type SapOperationLog,
 } from '@/lib/sap/operationAudit'
 import {
-  createAndVerifySapTransferRequest,
+  createAndVerifySapTransferRequestWithoutRefresh,
   getSapTransferRequestByDocEntry,
   SapTransferRequestCreationAmbiguousError,
   SapTransferRequestValidationError,
   type SapTransferRequestDocument,
-  type SapTransferRequestValidationSuccess,
+  type SapTransferRequestPreparedDraft,
 } from '@/lib/sap/transferRequests'
 import { SapServiceLayerError } from '@/lib/sap/serviceLayer'
 import { dbQuery } from '@/lib/supabase'
@@ -100,17 +100,13 @@ async function resolveResponsibleUser(userId: string): Promise<ResponsibleUser> 
   }
 }
 
-function operationItemsFromValidation(validation: SapTransferRequestValidationSuccess): Array<Record<string, unknown>> {
-  return validation.lines.map(line => ({
+function operationItemsFromPreparedDraft(prepared: SapTransferRequestPreparedDraft): Array<Record<string, unknown>> {
+  return prepared.lines.map(line => ({
     itemCode: line.itemCode,
-    itemName: line.itemName,
     quantity: line.quantity,
-    inventoryUom: line.inventoryUom,
     transferType: line.transferType,
-    sourceWarehouseCode: line.sourceWarehouseCode,
-    destinationWarehouseCode: line.destinationWarehouseCode,
-    availableQuantityAtValidation: line.availability.availableQuantity,
-    itemManagement: line.management,
+    sourceWarehouseCode: prepared.sourceWarehouseCode,
+    destinationWarehouseCode: prepared.destinationWarehouseCode,
     batchNumbers: line.batchNumbers,
     serialNumbers: line.serialNumbers,
   }))
@@ -203,37 +199,37 @@ export async function POST(request: Request) {
     if (existing) return responseForExistingOperation(existing)
     const responsible = await resolveResponsibleUser(input.responsibleUserId)
 
-    const result = await createAndVerifySapTransferRequest(input.draft, {
-      beforeCreate: async ({ validation, payload }) => {
+    const result = await createAndVerifySapTransferRequestWithoutRefresh(input.draft, {
+      beforeCreate: async ({ prepared, payload }) => {
         operationContext = {
           workflow: 'engineering.sap-operations.transfer-requests',
           workflowVersion: 1,
-          validatedAt: validation.checkedAt,
+          validationSource: 'availability-consulted-while-adding-lines',
           automaticComment: payload.Comments,
-          cardCode: validation.defaults.cardCode,
-          contactPerson: validation.defaults.contactPerson,
-          shipToCode: validation.defaults.shipToCode,
-          series: validation.defaults.series,
-          priceList: validation.defaults.priceList,
+          cardCode: prepared.defaults.cardCode,
+          contactPerson: prepared.defaults.contactPerson,
+          shipToCode: prepared.defaults.shipToCode,
+          series: prepared.defaults.series,
+          priceList: prepared.defaults.priceList,
           responsible,
         }
         const started = await startSapOperation({
           operationType: SAP_TRANSFER_REQUEST_CREATE_OPERATION_TYPE,
           idempotencyKey: input.idempotencyKey,
           subjectType: SAP_TRANSFER_REQUEST_SUBJECT_TYPE,
-          itemCode: validation.lines.length === 1 ? validation.lines[0]?.itemCode ?? null : null,
+          itemCode: prepared.lines.length === 1 ? prepared.lines[0]?.itemCode ?? null : null,
           confirmationText: 'CHECKED',
           sapPayload: payload,
-          operationItems: operationItemsFromValidation(validation),
+          operationItems: operationItemsFromPreparedDraft(prepared),
           operationContext,
-          businessComment: validation.businessComment,
+          businessComment: prepared.businessComment,
           actor: {
             id: guard.access?.user?.id ?? null,
             email: guard.access?.user?.email ?? null,
             role: guard.access?.role ?? null,
           },
-          sourceWarehouse: validation.sourceWarehouseCode,
-          destinationWarehouse: validation.destinationWarehouseCode,
+          sourceWarehouse: prepared.sourceWarehouseCode,
+          destinationWarehouse: prepared.destinationWarehouseCode,
         })
         if (!started.created) throw new ExistingIdempotentOperationError(started.operation)
         auditState.pendingOperation = started.operation

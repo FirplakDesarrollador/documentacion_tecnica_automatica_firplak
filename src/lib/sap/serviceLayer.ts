@@ -460,22 +460,55 @@ function recordsFromSapCollection(value: unknown): SapEntityPayload[] {
     : []
 }
 
-/**
- * Retrieves the active warehouse master data needed by the transfer-request
- * workflow. It deliberately does not expose a generic Service Layer endpoint.
- */
-export async function getSapActiveWarehouses(options?: { timeoutMs?: number }): Promise<SapEntityPayload[]> {
-  const query = buildCollectionQuery({
-    select: ['WarehouseCode', 'WarehouseName', 'Inactive', 'EnableBinLocations'],
-    filter: "Inactive eq 'tNO'",
-    orderby: 'WarehouseCode asc',
-    top: 500,
-  })
-  const response = await sapServiceLayerRequest<unknown>(`/Warehouses${query}`, {
-    timeoutMs: options?.timeoutMs,
-  })
+function isInactiveSapWarehouse(value: unknown): boolean {
+  return value === true || (typeof value === 'string' && ['tyes', 'yes', 'true', '1'].includes(value.trim().toLowerCase()))
+}
 
-  return recordsFromSapCollection(response)
+/** Retrieves all warehouse master records without exposing a generic SAP endpoint. */
+export async function getSapWarehouses(options?: { timeoutMs?: number }): Promise<SapEntityPayload[]> {
+  const warehousesByCode = new Map<string, SapEntityPayload>()
+
+  // Some SAP installations authorize warehouse reads only when their active
+  // flag is explicit. Reading both states still presents every warehouse.
+  for (const inactiveFilter of ["Inactive eq 'tNO'", "Inactive eq 'tYES'"]) {
+    const pageSize = 500
+    let skip = 0
+    while (true) {
+      const query = buildCollectionQuery({
+        select: ['WarehouseCode', 'WarehouseName', 'Inactive', 'EnableBinLocations'],
+        filter: inactiveFilter,
+        orderby: 'WarehouseCode asc',
+        top: pageSize,
+        skip: skip === 0 ? undefined : skip,
+      })
+      const response = await sapServiceLayerRequest<unknown>(`/Warehouses${query}`, {
+        timeoutMs: options?.timeoutMs,
+      })
+      const page = recordsFromSapCollection(response)
+      const warehouseCountBeforePage = warehousesByCode.size
+
+      for (const warehouse of page) {
+        const warehouseCode = typeof warehouse.WarehouseCode === 'string'
+          ? warehouse.WarehouseCode.trim()
+          : ''
+        if (warehouseCode) warehousesByCode.set(warehouseCode, warehouse)
+      }
+
+      if (page.length === 0 || warehousesByCode.size === warehouseCountBeforePage) break
+      // SAP may enforce a smaller server-side page size than the requested
+      // $top. Advance by what it actually returned so warehouses after the
+      // first page (such as PT-07) remain reachable.
+      skip += page.length
+    }
+  }
+
+  return [...warehousesByCode.values()]
+}
+
+/** Returns only SAP-active warehouses for read-only inventory views. */
+export async function getSapActiveWarehouses(options?: { timeoutMs?: number }): Promise<SapEntityPayload[]> {
+  const warehouses = await getSapWarehouses(options)
+  return warehouses.filter(warehouse => !isInactiveSapWarehouse(warehouse.Inactive))
 }
 
 /**

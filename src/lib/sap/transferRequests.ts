@@ -4,6 +4,7 @@ import { dbQuery } from '@/lib/supabase'
 import {
   createSapInventoryTransferRequest,
   getSapActiveWarehouses,
+  getSapWarehouses,
   getSapBatchNumberDetails,
   getSapInventoryTransferRequest,
   getSapItem,
@@ -79,6 +80,10 @@ function readNumberField(record: SapRecord, field: string): number | null {
 function readPositiveInteger(value: unknown): number | null {
   const parsed = readNumber(value)
   return parsed !== null && Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
+}
+
+function hasSapTransferRequestQuantityPrecision(value: number): boolean {
+  return Math.abs(value * 100 - Math.round(value * 100)) < 0.0000001
 }
 
 function readRecordArray(value: unknown): SapRecord[] {
@@ -199,24 +204,26 @@ export type SapTransferRequestWarehouse = {
   warehouseCode: string
   warehouseName: string
   binsEnabled: boolean
+  inactive: boolean
 }
 
-/** Lists every active warehouse, with MP-09 and MP-06 first by default. */
+/** Lists every SAP warehouse, with MP-09 and MP-06 first by default. */
 export async function listSapTransferRequestWarehouses(): Promise<SapTransferRequestWarehouse[]> {
   const [defaults, rawWarehouses] = await Promise.all([
     getSapTransferRequestDefaults(),
-    getSapActiveWarehouses(),
+    getSapWarehouses(),
   ])
   const priority = new Map(defaults.preferredWarehouseCodes.map((code, index) => [code.toUpperCase(), index]))
   const byCode = new Map<string, SapTransferRequestWarehouse>()
 
   for (const rawWarehouse of rawWarehouses) {
     const warehouseCode = normalizeWarehouseCode(rawWarehouse.WarehouseCode)
-    if (!warehouseCode || readSapYes(rawWarehouse.Inactive)) continue
+    if (!warehouseCode) continue
     byCode.set(warehouseCode, {
       warehouseCode,
       warehouseName: readStringField(rawWarehouse, 'WarehouseName') ?? warehouseCode,
       binsEnabled: readSapYes(rawWarehouse.EnableBinLocations),
+      inactive: readSapYes(rawWarehouse.Inactive),
     })
   }
 
@@ -730,6 +737,7 @@ export type SapTransferRequestValidationIssueCode =
   | 'LINES_REQUIRED'
   | 'ITEM_CODE_REQUIRED'
   | 'QUANTITY_INVALID'
+  | 'QUANTITY_PRECISION_INVALID'
   | 'TRANSFER_TYPE_REQUIRED'
   | 'BATCH_ALLOCATIONS_INVALID'
   | 'SERIAL_ALLOCATIONS_INVALID'
@@ -797,6 +805,10 @@ function parseBatchAllocations(
     const quantity = readNumberField(allocation, 'quantity')
     if (!batchNumber || quantity === null || quantity <= 0) {
       addIssue(issues, 'BATCH_ALLOCATIONS_INVALID', 'Cada lote debe incluir un número y una cantidad mayor que cero.', { lineIndex })
+      continue
+    }
+    if (!hasSapTransferRequestQuantityPrecision(quantity)) {
+      addIssue(issues, 'BATCH_ALLOCATIONS_INVALID', 'Las cantidades por lote admiten máximo dos decimales y deben usar punto.', { lineIndex })
       continue
     }
     allocations.push({ batchNumber, quantity })
@@ -881,12 +893,15 @@ function normalizeTransferRequestDraft(value: unknown): {
     if (quantity === null || quantity <= 0) {
       addIssue(issues, 'QUANTITY_INVALID', 'La cantidad debe ser mayor que cero.', { lineIndex })
     }
+    if (quantity !== null && quantity > 0 && !hasSapTransferRequestQuantityPrecision(quantity)) {
+      addIssue(issues, 'QUANTITY_PRECISION_INVALID', 'La cantidad admite máximo dos decimales y debe usar punto, por ejemplo 1.25.', { lineIndex })
+    }
     if (!isTransferType(transferType)) {
       addIssue(issues, 'TRANSFER_TYPE_REQUIRED', 'Seleccione Físico o Virtual para la línea.', { lineIndex })
     }
     const batchNumbers = parseBatchAllocations(rawLine.batchNumbers, lineIndex, issues)
     const serialNumbers = parseSerialAllocations(rawLine.serialNumbers, lineIndex, issues)
-    if (!itemCode || quantity === null || quantity <= 0 || !isTransferType(transferType)) continue
+    if (!itemCode || quantity === null || quantity <= 0 || !hasSapTransferRequestQuantityPrecision(quantity) || !isTransferType(transferType)) continue
     lines.push({
       itemCode,
       quantity,
@@ -947,6 +962,14 @@ export type SapTransferRequestValidationFailure = {
 }
 
 export type SapTransferRequestValidationResult = SapTransferRequestValidationSuccess | SapTransferRequestValidationFailure
+
+export type SapTransferRequestPreparedDraft = {
+  defaults: SapTransferRequestDefaults
+  sourceWarehouseCode: string
+  destinationWarehouseCode: string
+  businessComment: string
+  lines: NormalizedSapTransferRequestDraftLine[]
+}
 
 function emptyAvailability(warehouseCode: string): SapTransferRequestWarehouseAvailability {
   return {
@@ -1192,6 +1215,35 @@ export type SapTransferRequestPayload = SapEntityPayload & {
   StockTransferLines: SapTransferRequestPayloadLine[]
 }
 
+/**
+ * Checks only the request shape and SAP-fixed defaults. Availability, lots and
+ * serials have already been read while each line was added in the UI, so this
+ * path deliberately performs no additional item or warehouse read.
+ */
+export async function prepareSapTransferRequestWithoutRefresh(input: unknown): Promise<SapTransferRequestPreparedDraft> {
+  const [defaults, normalized] = await Promise.all([
+    getSapTransferRequestDefaults(),
+    Promise.resolve(normalizeTransferRequestDraft(input)),
+  ])
+  if (!normalized.draft) {
+    throw new SapTransferRequestValidationError({
+      valid: false,
+      checkedAt: currentColombiaTimestamp(),
+      defaults,
+      lines: [],
+      issues: normalized.issues,
+    })
+  }
+
+  return {
+    defaults,
+    sourceWarehouseCode: normalized.draft.sourceWarehouseCode,
+    destinationWarehouseCode: normalized.draft.destinationWarehouseCode,
+    businessComment: normalized.draft.businessComment,
+    lines: normalized.draft.lines,
+  }
+}
+
 export type SapTransferRequestUpdatePayload = SapEntityPayload & {
   FromWarehouse: string
   ToWarehouse: string
@@ -1201,23 +1253,29 @@ export type SapTransferRequestUpdatePayload = SapEntityPayload & {
 
 /** Converts a successful no-write validation into the exact SAP POST body. */
 export function buildSapTransferRequestPayload(validation: SapTransferRequestValidationSuccess): SapTransferRequestPayload {
+  return buildSapTransferRequestPayloadFromPreparedDraft(validation)
+}
+
+export function buildSapTransferRequestPayloadFromPreparedDraft(
+  prepared: SapTransferRequestPreparedDraft,
+): SapTransferRequestPayload {
   const documentDate = currentColombiaDate()
-  const stockTransferLines = validation.lines.map((line, lineIndex): SapTransferRequestPayloadLine => {
+  const stockTransferLines = prepared.lines.map((line, lineIndex): SapTransferRequestPayloadLine => {
     const payload: SapTransferRequestPayloadLine = {
       ItemCode: line.itemCode,
       Quantity: line.quantity,
-      FromWarehouseCode: line.sourceWarehouseCode,
-      WarehouseCode: line.destinationWarehouseCode,
+      FromWarehouseCode: prepared.sourceWarehouseCode,
+      WarehouseCode: prepared.destinationWarehouseCode,
       U_TipoTraslado: line.transferType,
     }
-    if (line.management === 'batch') {
+    if (line.batchNumbers.length > 0) {
       payload.BatchNumbers = line.batchNumbers.map(allocation => ({
         BatchNumber: allocation.batchNumber,
         Quantity: allocation.quantity,
         BaseLineNumber: lineIndex,
       }))
     }
-    if (line.management === 'serial') {
+    if (line.serialNumbers.length > 0) {
       payload.SerialNumbers = line.serialNumbers.map(allocation => ({
         SystemSerialNumber: allocation.systemSerialNumber,
         Quantity: 1,
@@ -1228,19 +1286,19 @@ export function buildSapTransferRequestPayload(validation: SapTransferRequestVal
   })
 
   return {
-    CardCode: validation.defaults.cardCode,
-    ContactPerson: validation.defaults.contactPerson,
-    ShipToCode: validation.defaults.shipToCode,
-    Address: validation.defaults.shipToAddress,
-    Series: validation.defaults.series,
-    PriceList: validation.defaults.priceList,
-    FromWarehouse: validation.sourceWarehouseCode,
-    ToWarehouse: validation.destinationWarehouseCode,
+    CardCode: prepared.defaults.cardCode,
+    ContactPerson: prepared.defaults.contactPerson,
+    ShipToCode: prepared.defaults.shipToCode,
+    Address: prepared.defaults.shipToAddress,
+    Series: prepared.defaults.series,
+    PriceList: prepared.defaults.priceList,
+    FromWarehouse: prepared.sourceWarehouseCode,
+    ToWarehouse: prepared.destinationWarehouseCode,
     DocDate: documentDate,
     DueDate: documentDate,
     TaxDate: documentDate,
     Comments: SAP_TRANSFER_REQUEST_AUTOMATIC_COMMENT,
-    U_Comentarios: validation.businessComment,
+    U_Comentarios: prepared.businessComment,
     StockTransferLines: stockTransferLines,
   }
 }
@@ -1429,10 +1487,64 @@ export type SapTransferRequestCreateResult = {
   document: SapTransferRequestDocument
 }
 
+export type SapTransferRequestDirectCreateResult = {
+  prepared: SapTransferRequestPreparedDraft
+  payload: SapTransferRequestPayload
+  document: SapTransferRequestDocument
+}
+
 export type SapTransferRequestBeforeCreateHook = (context: {
   validation: SapTransferRequestValidationSuccess
   payload: SapTransferRequestPayload
 }) => Promise<void>
+
+export type SapTransferRequestBeforeDirectCreateHook = (context: {
+  prepared: SapTransferRequestPreparedDraft
+  payload: SapTransferRequestPayload
+}) => Promise<void>
+
+/**
+ * Posts the draft using availability and allocation data already consulted when
+ * the user added each line. It intentionally avoids re-reading every item.
+ */
+export async function createAndVerifySapTransferRequestWithoutRefresh(
+  input: unknown,
+  options: { beforeCreate?: SapTransferRequestBeforeDirectCreateHook } = {},
+): Promise<SapTransferRequestDirectCreateResult> {
+  const prepared = await prepareSapTransferRequestWithoutRefresh(input)
+  const payload = buildSapTransferRequestPayloadFromPreparedDraft(prepared)
+  await options.beforeCreate?.({ prepared, payload })
+  let createResponse: SapEntityPayload
+  try {
+    createResponse = await createSapInventoryTransferRequest(payload)
+  } catch (error) {
+    if (isPotentiallyAmbiguousSapWriteError(error)) {
+      throw new SapTransferRequestCreationAmbiguousError(
+        'SAP no confirmó si la solicitud de traslado fue creada. Consulte el historial antes de reintentar.',
+        null,
+      )
+    }
+    throw error
+  }
+
+  const docEntry = readPositiveInteger(createResponse.DocEntry)
+  if (docEntry === null) {
+    throw new SapTransferRequestCreationAmbiguousError(
+      'SAP respondió a la creación sin DocEntry. Consulte el historial antes de reintentar.',
+      null,
+    )
+  }
+
+  try {
+    const document = await getSapTransferRequestByDocEntry(docEntry)
+    return { prepared, payload, document }
+  } catch {
+    throw new SapTransferRequestCreationAmbiguousError(
+      'SAP recibió la creación, pero no fue posible releer la solicitud. Consulte el historial antes de reintentar.',
+      docEntry,
+    )
+  }
+}
 
 /**
  * Revalidates immediately before the only SAP write, posts exclusively to

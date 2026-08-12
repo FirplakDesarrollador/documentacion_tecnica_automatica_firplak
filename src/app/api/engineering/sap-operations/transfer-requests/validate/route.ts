@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 
-import { validateSapTransferRequest } from '@/lib/sap/transferRequests'
+import { prepareSapTransferRequestWithoutRefresh } from '@/lib/sap/transferRequests'
 import { apiGuard } from '@/utils/auth/access'
 
 import { transferRequestErrorResponse } from '../_utils'
@@ -8,21 +8,12 @@ import { transferRequestErrorResponse } from '../_utils'
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
-function serializeValidation(validation: Awaited<ReturnType<typeof validateSapTransferRequest>>) {
+function serializeValidation(prepared: Awaited<ReturnType<typeof prepareSapTransferRequestWithoutRefresh>>) {
   return {
-    valid: validation.valid,
-    checkedAt: validation.checkedAt,
-    issues: validation.issues.map(issue => ({
-      code: issue.code,
-      message: issue.message,
-      lineIndex: issue.lineIndex ?? null,
-      ...(issue.availableQuantity === undefined ? {} : { availableQuantity: issue.availableQuantity }),
-      ...(issue.requestedQuantity === undefined ? {} : { requestedQuantity: issue.requestedQuantity }),
-    })),
-    lines: validation.lines.map(line => ({
-      lineIndex: line.lineIndex,
-      availability: line.availability,
-    })),
+    valid: true,
+    checkedAt: new Date().toISOString(),
+    issues: [],
+    lines: prepared.lines.map((_, lineIndex) => ({ lineIndex })),
   }
 }
 
@@ -32,8 +23,8 @@ export async function POST(request: Request) {
 
   try {
     const raw = await request.json().catch(() => null)
-    const validation = await validateSapTransferRequest(raw)
-    return NextResponse.json({ success: true, validation: serializeValidation(validation) })
+    const prepared = await prepareSapTransferRequestWithoutRefresh(raw)
+    return NextResponse.json({ success: true, validation: serializeValidation(prepared) })
   } catch (error) {
     return transferRequestErrorResponse(error)
   }
