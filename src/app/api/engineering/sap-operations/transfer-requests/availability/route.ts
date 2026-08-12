@@ -25,6 +25,7 @@ export async function POST(request: Request) {
         inventoryUom: result.item.inventoryUom,
         management: result.item.management,
         availability: result.sourceAvailability,
+        warehouseAvailability: result.item.warehouseAvailability,
         allocation: result.item.allocation,
       },
     })

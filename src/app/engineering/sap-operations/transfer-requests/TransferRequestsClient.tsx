@@ -85,6 +85,13 @@ type ItemAvailability = {
     orderedQuantity: number
     availableQuantity: number
   }
+  warehouseAvailability: Array<{
+    warehouseCode: string
+    inventoryQuantity: number
+    committedQuantity: number
+    orderedQuantity: number
+    availableQuantity: number
+  }>
   allocation: {
     requiresAllocation: boolean
     management: 'none' | 'batch' | 'serial'
@@ -119,6 +126,7 @@ type DraftLine = {
   packagePatternError: string | null
   batchQuantities: Record<string, string>
   selectedSerials: number[]
+  suggestedSourceWarehouseCode: string | null
 }
 
 type ValidationIssue = {
@@ -233,6 +241,7 @@ function createDraftLine(): DraftLine {
     packagePatternError: null,
     batchQuantities: {},
     selectedSerials: [],
+    suggestedSourceWarehouseCode: null,
   }
 }
 
@@ -373,9 +382,8 @@ export default function TransferRequestsClient() {
   const [sourceWarehouseCode, setSourceWarehouseCode] = useState('')
   const [destinationWarehouseCode, setDestinationWarehouseCode] = useState('')
   const [businessComment, setBusinessComment] = useState('')
-  const [responsibleMode, setResponsibleMode] = useState<'creator' | 'other'>('creator')
+  const [responsibleMode, setResponsibleMode] = useState<'' | 'creator' | 'other'>('')
   const [responsibleUserId, setResponsibleUserId] = useState('')
-  const [responsibleConfirmed, setResponsibleConfirmed] = useState(false)
   const [lines, setLines] = useState<DraftLine[]>(() => [createDraftLine()])
   const [selectedTargetLineId, setSelectedTargetLineId] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
@@ -428,17 +436,21 @@ export default function TransferRequestsClient() {
   const warehousesReady = Boolean(sourceWarehouseCode && destinationWarehouseCode && sourceWarehouseCode !== destinationWarehouseCode)
   const hasReadyTransferLine = useMemo(() => lines.some(line => getLineClientError(line) === null), [lines])
   const hasBusinessComment = businessComment.trim().length > 0
-  const hasSelectedResponsible = responsibleConfirmed && (responsibleMode !== 'other' || Boolean(responsibleUserId))
+  const hasSelectedResponsible = responsibleMode === 'creator' || (responsibleMode === 'other' && Boolean(responsibleUserId))
+  const activeWarehousesByCode = useMemo(
+    () => new Map((configuration?.warehouses ?? []).map(warehouse => [warehouse.warehouseCode, warehouse])),
+    [configuration?.warehouses],
+  )
   const clientFormError = useMemo(() => {
     if (!sourceWarehouseCode || !destinationWarehouseCode) return 'Seleccione ambas bodegas.'
     if (sourceWarehouseCode === destinationWarehouseCode) return 'La bodega de origen y la bodega destino deben ser diferentes.'
     const commentLength = Array.from(businessComment.trim()).length
     if (commentLength < 1 || commentLength > 50) return 'El comentario contextual debe tener entre 1 y 50 caracteres.'
-    if (!responsibleConfirmed) return 'Marque la persona responsable de la solicitud.'
+    if (!responsibleMode) return 'Seleccione la persona responsable de la solicitud.'
     if (responsibleMode === 'other' && !responsibleUserId) return 'Seleccione la persona responsable.'
     if (lines.length === 0) return 'Agregue al menos una línea.'
     return clientLineErrors.find(Boolean) ?? null
-  }, [businessComment, clientLineErrors, destinationWarehouseCode, lines.length, responsibleConfirmed, responsibleMode, responsibleUserId, sourceWarehouseCode])
+  }, [businessComment, clientLineErrors, destinationWarehouseCode, lines.length, responsibleMode, responsibleUserId, sourceWarehouseCode])
 
   const invalidateValidation = useCallback(() => {
     setValidation(null)
@@ -465,6 +477,7 @@ export default function TransferRequestsClient() {
       availability: null,
       availabilityError: null,
       availabilityLoading: true,
+      suggestedSourceWarehouseCode: null,
       ...(preserveAllocations ? {} : { batchQuantities: {}, selectedSerials: [] }),
     })
     try {
@@ -512,6 +525,7 @@ export default function TransferRequestsClient() {
   const handleWarehouseChange = useCallback((kind: 'source' | 'destination', warehouseCode: string) => {
     if (kind === 'source') {
       setSourceWarehouseCode(warehouseCode)
+      setLines(current => current.map(line => ({ ...line, suggestedSourceWarehouseCode: null })))
       for (const line of lines) {
         if (line.item) void requestAvailability(line.id, line.item.itemCode, warehouseCode)
       }
@@ -520,6 +534,15 @@ export default function TransferRequestsClient() {
     }
     invalidateValidation()
   }, [invalidateValidation, lines, requestAvailability])
+
+  const chooseSuggestedSourceWarehouse = useCallback((lineId: string, warehouseCode: string) => {
+    const selectedLine = lines.find(line => line.id === lineId)
+    if (selectedLine?.suggestedSourceWarehouseCode === warehouseCode) {
+      handleWarehouseChange('source', warehouseCode)
+      return
+    }
+    updateLine(lineId, { suggestedSourceWarehouseCode: warehouseCode })
+  }, [handleWarehouseChange, lines, updateLine])
 
   const searchItems = useCallback(async () => {
     const query = searchTerm.trim()
@@ -621,7 +644,6 @@ export default function TransferRequestsClient() {
       setDestinationWarehouseCode('')
       setBusinessComment('')
       setEditingDocEntry(null)
-      setResponsibleConfirmed(false)
       setValidation(null)
       setConfirmed(false)
       setIdempotencyKey(createClientId())
@@ -684,9 +706,8 @@ export default function TransferRequestsClient() {
     setSourceWarehouseCode('')
     setDestinationWarehouseCode('')
     setBusinessComment('')
-    setResponsibleMode('creator')
+    setResponsibleMode('')
     setResponsibleUserId('')
-    setResponsibleConfirmed(false)
     setLines([createDraftLine()])
     setSelectedTargetLineId(null)
     setValidation(null)
@@ -726,9 +747,8 @@ export default function TransferRequestsClient() {
     setSourceWarehouseCode(sourceWarehouseCode)
     setDestinationWarehouseCode(destinationWarehouseCode)
     setBusinessComment(selectedDetail.request.businessComment || '')
-    setResponsibleMode('creator')
+    setResponsibleMode('')
     setResponsibleUserId('')
-    setResponsibleConfirmed(false)
     setLines(draftLines)
     setSelectedTargetLineId(draftLines[0]?.id ?? null)
     setValidation(null)
@@ -774,19 +794,18 @@ export default function TransferRequestsClient() {
         <CardContent className="space-y-7 pt-5">
            {configuration ? (
             <>
-              <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                <div className="grid gap-1.5"><Label>Socio de negocios</Label><Input readOnly value={`${configuration.defaults.cardCode} - ${configuration.defaults.cardName}`} /></div>
-                <div className="grid gap-1.5"><Label>Persona de contacto</Label><Input readOnly value={configuration.defaults.contactLabel} /></div>
-                <div className="grid gap-1.5"><Label>Destino</Label><Input readOnly value={configuration.defaults.shipToCode} /></div>
-                <div className="grid gap-1.5"><Label>Serie SAP</Label><Input readOnly value={`${configuration.defaults.series} - ${configuration.defaults.seriesLabel}`} /></div>
-                <div className="grid gap-1.5"><Label>Lista de precios</Label><Input readOnly value={configuration.defaults.priceListLabel} /></div>
-                <div className="grid gap-1.5"><Label>Comentarios SAP</Label><Input readOnly value={configuration.defaults.automaticComment} /></div>
+              <section className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm md:grid-cols-2 xl:grid-cols-3">
+                <div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Socio de negocios</span><span className="mt-1 block font-medium text-slate-800">{configuration.defaults.cardCode} - {configuration.defaults.cardName}</span></div>
+                <div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Persona de contacto</span><span className="mt-1 block font-medium text-slate-800">{configuration.defaults.contactLabel}</span></div>
+                <div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Destino</span><span className="mt-1 block font-medium text-slate-800">{configuration.defaults.shipToCode}</span></div>
+                <div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Serie SAP</span><span className="mt-1 block font-medium text-slate-800">{configuration.defaults.series} - {configuration.defaults.seriesLabel}</span></div>
+                <div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Lista de precios</span><span className="mt-1 block font-medium text-slate-800">{configuration.defaults.priceListLabel}</span></div>
+                <div><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Comentarios SAP</span><span className="mt-1 block font-medium text-slate-800">{configuration.defaults.automaticComment}</span></div>
+                <div className="border-t border-slate-200 pt-3 text-xs leading-5 text-slate-600 md:col-span-2 xl:col-span-3">
+                  <span className="font-bold text-slate-700">Dirección configurada:</span>
+                  {configuration.defaults.shipToAddress.split(/\r?\n/).map(line => <span key={line} className="block">{line}</span>)}
+                </div>
               </section>
-
-              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-600">
-                <span className="font-bold text-slate-700">Dirección configurada:</span><br />
-                {configuration.defaults.shipToAddress.split(/\r?\n/).map(line => <span key={line} className="block">{line}</span>)}
-              </div>
 
               <section className="grid gap-4 rounded-xl border border-slate-200 bg-firplak-ivory/35 p-4 md:grid-cols-2">
                 <div className="grid gap-1.5">
@@ -856,6 +875,13 @@ export default function TransferRequestsClient() {
                     const allocation = line.availability?.allocation
                     const stock = line.availability?.availability
                     const pattern = line.packagePattern
+                    const alternativeWarehouses = stock?.availableQuantity === 0
+                      ? (line.availability?.warehouseAvailability ?? []).flatMap(availability => {
+                          const warehouse = activeWarehousesByCode.get(availability.warehouseCode)
+                          if (!warehouse || availability.warehouseCode === sourceWarehouseCode || availability.warehouseCode === destinationWarehouseCode || availability.availableQuantity <= 0) return []
+                          return [{ ...availability, warehouseName: warehouse.warehouseName }]
+                        })
+                      : []
                     return [
                       <TableRow key={line.id} className={line.id === activeTargetLineId ? 'bg-firplak-green/5' : undefined}>
                         <TableCell className="font-bold text-slate-700">{lineIndex + 1}</TableCell>
@@ -867,7 +893,8 @@ export default function TransferRequestsClient() {
                         <TableCell><Button type="button" size="icon-sm" variant="ghost" onClick={() => removeLine(line.id)} aria-label={`Eliminar línea ${lineIndex + 1}`}><Trash2 className="h-4 w-4 text-red-600" /></Button></TableCell>
                       </TableRow>,
                       allocation?.requiresAllocation ? <TableRow key={`${line.id}-allocation`}><TableCell colSpan={10} className="bg-amber-50/50 p-3"><div className="rounded-lg border border-amber-200 bg-white p-3"><div className="flex items-start gap-2"><PackageSearch className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" /><div><p className="text-sm font-semibold text-amber-900">Selección SAP por {allocation.management === 'batch' ? 'lotes' : 'seriales'}</p>{allocation.message ? <p className="mt-1 text-xs leading-5 text-amber-800">{allocation.message}</p> : null}</div></div>{allocation.management === 'batch' && allocation.status === 'available' ? <div className="mt-3 grid gap-2 md:grid-cols-2">{allocation.batchOptions.map(option => <label key={option.batchNumber} className="grid grid-cols-[minmax(0,1fr)_110px] items-center gap-2 rounded-md border border-amber-200 bg-white p-2 text-sm"><span className="truncate font-medium text-slate-700">{option.batchNumber}</span><Input type="number" min="0" step="any" value={line.batchQuantities[option.batchNumber] ?? ''} onChange={event => updateLine(line.id, { batchQuantities: { ...line.batchQuantities, [option.batchNumber]: event.target.value } })} placeholder="Cantidad" /></label>)}</div> : null}{allocation.management === 'serial' && allocation.status === 'available' ? <div className="mt-3 grid max-h-56 gap-2 overflow-y-auto md:grid-cols-2">{allocation.serialOptions.map(option => { const checked = line.selectedSerials.includes(option.systemSerialNumber); return <label key={option.systemSerialNumber} className="flex items-center gap-2 rounded-md border border-amber-200 bg-white p-2 text-sm text-slate-700"><input type="checkbox" checked={checked} onChange={event => updateLine(line.id, { selectedSerials: event.target.checked ? [...line.selectedSerials, option.systemSerialNumber] : line.selectedSerials.filter(number => number !== option.systemSerialNumber) })} className="h-4 w-4 rounded border-slate-300 accent-firplak-green" /><span className="min-w-0 truncate"><strong>{option.serialNumber}</strong>{option.manufacturerSerialNumber ? ` - ${option.manufacturerSerialNumber}` : ''}</span></label> })}</div> : null}</div></TableCell></TableRow> : null,
-                      <TableRow key={`${line.id}-status`}><TableCell colSpan={10} className={lineError ? 'bg-red-50 text-red-700' : 'bg-firplak-green/5 text-firplak-green'}><div className="flex items-center gap-2 text-sm font-medium">{lineError ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}{lineError ?? 'Línea lista para validar.'}</div></TableCell></TableRow>,
+                      alternativeWarehouses.length > 0 ? <TableRow key={`${line.id}-alternative-warehouses`}><TableCell colSpan={10} className="bg-sky-50/70 p-3"><div className="rounded-lg border border-sky-200 bg-white p-3"><p className="text-sm font-semibold text-sky-950">Este artículo no tiene disponible en {sourceWarehouseCode}. Disponible en:</p><div className="mt-2 flex flex-wrap items-center gap-2">{alternativeWarehouses.map(warehouse => { const selected = line.suggestedSourceWarehouseCode === warehouse.warehouseCode; return <Button key={warehouse.warehouseCode} type="button" size="sm" variant="outline" onClick={() => chooseSuggestedSourceWarehouse(line.id, warehouse.warehouseCode)} className={selected ? 'h-auto border-firplak-green bg-firplak-green px-3 py-2 text-left text-white hover:bg-firplak-green/90' : 'h-auto border-sky-300 bg-sky-50 px-3 py-2 text-left text-sky-900 hover:bg-sky-100'}><span className="block font-semibold">{warehouse.warehouseCode} · {warehouse.warehouseName}</span><span className="block text-xs opacity-85">Disponible: {formatNumber(warehouse.availableQuantity)} {line.availability?.inventoryUom || ''}</span></Button> })}{line.suggestedSourceWarehouseCode ? <span className="text-xs font-medium text-firplak-green">Vuelve a dar clic para configurar esta bodega como origen.</span> : null}</div></div></TableCell></TableRow> : null,
+                      <TableRow key={`${line.id}-status`}><TableCell colSpan={10} className={lineError ? 'bg-red-50 text-red-700' : 'bg-firplak-green/5 text-firplak-green'}><div className="flex items-center gap-2 text-sm font-medium">{line.availabilityLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : lineError ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}{lineError ?? 'Línea lista para validar.'}</div></TableCell></TableRow>,
                     ]
                   })}</TableBody>
                 </Table>
@@ -880,16 +907,14 @@ export default function TransferRequestsClient() {
                   <Textarea id="business-comment" value={businessComment} onChange={event => { setBusinessComment(event.target.value); invalidateValidation() }} maxLength={50} placeholder="Indique a quién se relaciona y por qué se solicita el traslado." className="min-h-24" />
                   <p className="text-xs text-slate-500">Se guarda en U_Comentarios de cabecera.</p>
                 </div>
-              </section> : null}
-
-              {hasBusinessComment ? <section className="grid gap-4 md:grid-cols-2">
-                <div className="grid content-start gap-2">
+                {hasBusinessComment ? <div className="grid content-start gap-2">
                   <Label>Responsable de solicitud</Label>
-                  <p className="text-xs text-slate-500">Marque quién responderá por esta solicitud.</p>
-                  <label className="flex items-center gap-2 text-sm text-slate-700"><input type="radio" name="responsible-mode" checked={responsibleMode === 'creator'} onChange={() => { setResponsibleMode('creator'); setResponsibleConfirmed(true); invalidateValidation() }} className="h-4 w-4 accent-firplak-green" />La persona que {editingRequest ? 'modifica' : 'crea'} la solicitud</label>
-                  <label className="flex items-center gap-2 text-sm text-slate-700"><input type="radio" name="responsible-mode" checked={responsibleMode === 'other'} onChange={() => { setResponsibleMode('other'); setResponsibleConfirmed(true); invalidateValidation() }} className="h-4 w-4 accent-firplak-green" />El responsable es otro</label>
-                  {responsibleMode === 'other' ? <select value={responsibleUserId} onChange={event => { setResponsibleUserId(event.target.value); invalidateValidation() }} className={SELECT_CLASS_NAME} aria-label="Seleccionar responsable"><option value="">Seleccione una persona</option>{configuration.responsibleUsers.map(user => <option key={user.id} value={user.id}>{user.email}{user.role ? ` - ${user.role}` : ''}</option>)}</select> : <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">{configuration.creator.email || 'Usuario autenticado'}</p>}
-                </div>
+                  <p className="text-xs text-slate-500">Seleccione quién responderá por esta solicitud.</p>
+                  <label className="flex items-center gap-2 text-sm text-slate-700"><input type="radio" name="responsible-mode" checked={responsibleMode === 'creator'} onChange={() => { setResponsibleMode('creator'); setResponsibleUserId(''); invalidateValidation() }} className="h-4 w-4 accent-firplak-green" />La persona que {editingRequest ? 'modifica' : 'crea'} la solicitud</label>
+                  <label className="flex items-center gap-2 text-sm text-slate-700"><input type="radio" name="responsible-mode" checked={responsibleMode === 'other'} onChange={() => { setResponsibleMode('other'); invalidateValidation() }} className="h-4 w-4 accent-firplak-green" />El responsable es otro</label>
+                  {responsibleMode === 'other' ? <select value={responsibleUserId} onChange={event => { setResponsibleUserId(event.target.value); invalidateValidation() }} className={SELECT_CLASS_NAME} aria-label="Seleccionar responsable"><option value="">Seleccione una persona</option>{configuration.responsibleUsers.map(user => <option key={user.id} value={user.id}>{user.email}{user.role ? ` - ${user.role}` : ''}</option>)}</select> : null}
+                  {responsibleMode === 'creator' ? <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">{configuration.creator.email || 'Usuario autenticado'}</p> : null}
+                </div> : null}
               </section> : null}
 
               {hasSelectedResponsible && formError ? <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-800"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{formError}</span></div> : null}
@@ -901,7 +926,7 @@ export default function TransferRequestsClient() {
               ) : null}
 
               {hasSelectedResponsible ? <div className="grid gap-3 border-t border-slate-100 pt-5 lg:grid-cols-3">
-                <div className="rounded-lg border border-slate-200 p-3"><p className="mb-2 text-sm font-semibold text-slate-800">1. Validar en SAP</p><Button type="button" variant="outline" onClick={() => void validateRequest()} disabled={validating || creating || Boolean(clientFormError)} className="w-full border-slate-300"><FileSearch className="mr-2 h-4 w-4" />{validating ? 'Validando...' : 'Validar en SAP'}</Button></div>
+                <div className="rounded-lg border border-slate-200 p-3"><p className="mb-2 text-sm font-semibold text-slate-800">1. Validar en SAP</p><Button type="button" variant="outline" onClick={() => void validateRequest()} disabled={validating || creating || Boolean(clientFormError)} className="w-full border-slate-300">{validating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileSearch className="mr-2 h-4 w-4" />}{validating ? 'Validando...' : 'Validar en SAP'}</Button></div>
                 <label className="rounded-lg border border-slate-200 p-3 text-sm text-slate-700"><span className="mb-2 block font-semibold text-slate-800">2. Confirmar</span><span className="flex items-start gap-2"><input type="checkbox" checked={confirmed} disabled={!validation?.valid || creating} onChange={event => setConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-firplak-green disabled:opacity-50" /><span>{editingRequest ? 'Confirmo la modificación en SAP.' : 'Confirmo la creación en SAP.'}</span></span></label>
                 <div className="rounded-lg border border-firplak-green/25 bg-firplak-green/5 p-3"><p className="mb-2 text-sm font-semibold text-slate-800">3. {editingRequest ? 'Guardar modificación' : 'Crear solicitud'}</p><Button type="button" onClick={() => void createRequest()} disabled={creating || !validation?.valid || !confirmed} className="w-full bg-firplak-green text-white hover:bg-firplak-green/90"><Truck className="mr-2 h-4 w-4" />{creating ? (editingRequest ? 'Modificando en SAP...' : 'Creando en SAP...') : (editingRequest ? 'Modificar solicitud' : 'Crear solicitud')}</Button></div>
               </div> : null}
