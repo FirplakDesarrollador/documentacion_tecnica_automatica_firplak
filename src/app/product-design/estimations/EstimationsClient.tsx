@@ -64,21 +64,23 @@ function formatDate(value: string): string {
 function dimensionsLabel(estimation: ProductDesignEstimationSummary): string {
   const dimensions = [estimation.widthMm, estimation.depthMm, estimation.heightMm]
   return dimensions.some((dimension) => dimension !== null)
-    ? dimensions.map((dimension) => dimension === null ? '—' : `${dimension} mm`).join(' × ')
+    ? dimensions.map((dimension) => dimension === null ? '—' : `${dimension} cm`).join(' × ')
     : 'Medidas pendientes'
 }
 
 function dimensionDistance(candidate: EstimationHomologueCandidate, widthMm: string, depthMm: string): number {
+  // Las dimensiones comerciales (p. ej. 40 × 50) se expresan en cm. Los
+  // nombres SAP usan la misma convención; no se convierten a milímetros.
   const requestedWidthCm = optionalNumber(widthMm)
   const requestedDepthCm = optionalNumber(depthMm)
   if (requestedWidthCm === null || requestedDepthCm === null) return Number.POSITIVE_INFINITY
   const match = candidate.itemName.toUpperCase().match(/(?:^|\D)(\d{2,3})\s*[X×]\s*(\d{2,3})(?:\D|$)/u)
   if (!match) return Number.POSITIVE_INFINITY
-  const firstMm = Number(match[1]) * 10
-  const secondMm = Number(match[2]) * 10
+  const firstCm = Number(match[1])
+  const secondCm = Number(match[2])
   return Math.min(
-    Math.abs(firstMm - requestedWidthCm) + Math.abs(secondMm - requestedDepthCm),
-    Math.abs(secondMm - requestedWidthCm) + Math.abs(firstMm - requestedDepthCm),
+    Math.abs(firstCm - requestedWidthCm) + Math.abs(secondCm - requestedDepthCm),
+    Math.abs(secondCm - requestedWidthCm) + Math.abs(firstCm - requestedDepthCm),
   )
 }
 
@@ -241,7 +243,7 @@ export function EstimationsClient({
           <div className="grid grid-cols-3 gap-2">
             {(['widthMm', 'depthMm', 'heightMm'] as const).map((field, index) => (
               <div key={field} className="space-y-2">
-                <Label htmlFor={field}>{['Ancho', 'Fondo', 'Alto'][index]} mm</Label>
+                <Label htmlFor={field}>{['Ancho', 'Fondo', 'Alto'][index]} (cm)</Label>
                 <Input id={field} inputMode="decimal" value={form[field]} onChange={(event) => updateForm(field, event.target.value)} />
               </div>
             ))}

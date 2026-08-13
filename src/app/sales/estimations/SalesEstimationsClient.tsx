@@ -1,234 +1,46 @@
 'use client'
 
-import { useState } from 'react'
-import { AlertCircle, Calculator, ChevronRight, FileText, Package, Ruler } from 'lucide-react'
+import { useMemo, useState, useTransition } from 'react'
+import { AlertCircle, Calculator, Save, Settings2 } from 'lucide-react'
+import { toast } from 'sonner'
 
-import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import type { SalesEstimationView } from './actions'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { evaluateSalesPricing, type SalesPricingFormulaConfig } from '@/lib/productDesign/salesPricingFormulas'
+import { saveSalesEstimationCommercialResponseAction, saveSalesEstimationPricingAction, saveSalesPricingFormulaConfigAction, type SalesEstimationView } from './actions'
 
-function formatCurrency(value: number, currency: string): string {
-  return new Intl.NumberFormat('es-CO', {
-    style: 'currency',
-    currency,
-    maximumFractionDigits: 0,
-  }).format(value)
-}
+function money(value: number, currency: string) { return new Intl.NumberFormat('es-CO', { style: 'currency', currency, maximumFractionDigits: 0 }).format(value) }
+function number(value: number | null, digits = 2) { return value === null ? '—' : new Intl.NumberFormat('es-CO', { maximumFractionDigits: digits }).format(value) }
+function percentInput(value: number | null) { return value === null ? '' : String(value * 100) }
+function date(value: string | null) { return value ? new Date(value).toLocaleDateString('es-CO') : 'Sin fecha' }
+function dimensions(estimation: SalesEstimationView) { const values = [estimation.dimensions.widthMm, estimation.dimensions.depthMm, estimation.dimensions.heightMm]; return values.some(value => value !== null) ? values.map(value => value === null ? '—' : `${number(value)} cm`).join(' × ') : 'Medidas pendientes' }
+function status(value: string) { return ({ pending: 'Pendiente', approved: 'Aprobada', rejected: 'Rechazada', not_pursued: 'No continuó', reviewed: 'Revisada', observed: 'Con observaciones', not_requested: 'No solicitada' } as Record<string, string>)[value] ?? value }
+function Metric({ label, value }: { label: string; value: string }) { return <div className="rounded-lg border border-slate-100 bg-slate-50 p-3"><p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p><p className="mt-1 text-sm font-semibold text-slate-900">{value}</p></div> }
 
-function formatNumber(value: number | null, maximumFractionDigits = 2): string {
-  if (value === null) return '—'
-  return new Intl.NumberFormat('es-CO', { maximumFractionDigits }).format(value)
-}
-
-function formatDate(value: string | null): string {
-  if (!value) return 'Sin fecha'
-  const date = new Date(value)
-  return Number.isNaN(date.getTime())
-    ? 'Sin fecha'
-    : date.toLocaleDateString('es-CO', { year: 'numeric', month: 'short', day: '2-digit' })
-}
-
-function dimensionsLabel(estimation: SalesEstimationView): string {
-  const dimensions = [
-    estimation.dimensions.widthMm,
-    estimation.dimensions.depthMm,
-    estimation.dimensions.heightMm,
-  ]
-  return dimensions.some((dimension) => dimension !== null)
-    ? dimensions.map((dimension) => dimension === null ? '—' : `${formatNumber(dimension)} mm`).join(' × ')
-    : 'Medidas pendientes'
-}
-
-function statusLabel(value: string): string {
-  const labels: Record<string, string> = {
-    draft: 'Borrador',
-    active: 'Activa',
-    closed: 'Cerrada',
-    archived: 'Archivada',
-    not_requested: 'No solicitada',
-    pending: 'Pendiente',
-    reviewed: 'Revisada',
-    observed: 'Con observaciones',
-    approved: 'Aprobada',
-    rejected: 'Rechazada',
-    not_pursued: 'No continuó',
-  }
-  return labels[value] ?? value
-}
-
-function outcomeVariant(value: string): 'default' | 'secondary' | 'destructive' | 'outline' {
-  if (value === 'approved') return 'secondary'
-  if (value === 'rejected') return 'destructive'
-  return 'outline'
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-1 text-sm font-semibold text-slate-900">{value}</p>
-    </div>
-  )
-}
-
-function PricingSummary({ estimation }: { estimation: SalesEstimationView }) {
-  const { pricing, commercialScenario } = estimation
-  if (pricing.state === 'pending') {
-    return (
-      <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
-        <p>{pricing.message}</p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-      <Metric label="Materiales y empaque" value={formatCurrency(pricing.materialsAndPackaging, pricing.currency)} />
-      <Metric label="Total ampliado (MO/CIF)" value={formatCurrency(pricing.expandedTotal, pricing.currency)} />
-      <Metric label="PVP propuesto" value={commercialScenario.pvp === null ? 'Pendiente' : formatCurrency(commercialScenario.pvp, commercialScenario.currency)} />
-      <Metric label="Precio mínimo" value={commercialScenario.minimumPrice === null ? 'Pendiente' : formatCurrency(commercialScenario.minimumPrice, commercialScenario.currency)} />
-      <Metric label="Precio máximo" value={commercialScenario.maximumPrice === null ? 'Pendiente' : formatCurrency(commercialScenario.maximumPrice, commercialScenario.currency)} />
-      <Metric label="MC" value={commercialScenario.contributionMarginPct === null ? 'Pendiente' : `${formatNumber(commercialScenario.contributionMarginPct)} %`} />
-    </div>
-  )
-}
-
-function EstimationDetail({ estimation }: { estimation: SalesEstimationView }) {
-  const { geometry, commercialScenario } = estimation
-
-  return (
-    <section className="space-y-4" aria-live="polite">
-      <Card>
-        <CardHeader>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <CardTitle>{estimation.provisionalName}</CardTitle>
-              <CardDescription>
-                {estimation.sapPrefix} · {estimation.proposedReferenceCode ?? 'Consecutivo pendiente'} · {dimensionsLabel(estimation)}
-              </CardDescription>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Badge variant="outline">{statusLabel(estimation.status)}</Badge>
-              <Badge variant={outcomeVariant(estimation.commercialResponse.outcome)}>
-                {statusLabel(estimation.commercialResponse.outcome)}
-              </Badge>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="flex items-center gap-2 text-sm text-slate-600">
-            <FileText className="h-4 w-4 text-sky-700" />
-            Compartida por Diseño el {formatDate(estimation.sharedAt)}. Actualizada el {formatDate(estimation.updatedAt)}.
-          </div>
-
-          <div className="space-y-2">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><Calculator className="h-4 w-4 text-sky-700" />Costo y escenario comercial</h2>
-            <PricingSummary estimation={estimation} />
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div className="space-y-2">
-              <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><Package className="h-4 w-4 text-sky-700" />Producto y color</h2>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Metric label="Homólogo SAP" value={estimation.homologueSapItemCode ?? 'Pendiente'} />
-                <Metric label="Familia local" value={estimation.familyCode ?? 'Pendiente'} />
-                <Metric label="Color comercial" value={[estimation.color.commercialCode, estimation.color.commercialName].filter(Boolean).join(' · ') || 'Pendiente'} />
-                <Metric label="Gelcoat seleccionado" value={[estimation.color.gelcoatItemCode, estimation.color.gelcoatItemName].filter(Boolean).join(' · ') || 'Pendiente'} />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><Ruler className="h-4 w-4 text-sky-700" />Modelo y consumos</h2>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Metric label="Volumen CAD" value={geometry.volumeMm3 === null ? 'Pendiente' : `${formatNumber(geometry.volumeMm3, 0)} mm³`} />
-                <Metric label="Área de pintura" value={geometry.paintAreaMm2 === null ? 'Pendiente' : `${formatNumber(geometry.paintAreaMm2, 0)} mm²`} />
-                <Metric label="Mezcla estimada" value={geometry.estimatedMixtureKg === null ? 'Pendiente' : `${formatNumber(geometry.estimatedMixtureKg, 3)} kg`} />
-                <Metric label="Gelcoat estimado" value={geometry.estimatedGelcoatKg === null ? 'Pendiente' : `${formatNumber(geometry.estimatedGelcoatKg, 3)} kg`} />
-              </div>
-              {geometry.calibrationSampleCount !== null && (
-                <p className="text-xs text-slate-500">Estimación de Mármol Sintético congelada con {geometry.calibrationSampleCount} muestras válidas.</p>
-              )}
-            </div>
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div className="rounded-lg border border-slate-200 p-4">
-              <h2 className="text-sm font-semibold text-slate-900">Revisión técnica</h2>
-              <p className="mt-1 text-sm text-slate-600">{statusLabel(estimation.technicalReview.status)}{estimation.technicalReview.reviewedAt ? ` · ${formatDate(estimation.technicalReview.reviewedAt)}` : ''}</p>
-              <p className="mt-3 whitespace-pre-wrap text-sm text-slate-700">{estimation.technicalReview.note ?? 'Sin observaciones registradas.'}</p>
-            </div>
-            <div className="rounded-lg border border-slate-200 p-4">
-              <h2 className="text-sm font-semibold text-slate-900">Respuesta comercial externa</h2>
-              <p className="mt-1 text-sm text-slate-600">{statusLabel(estimation.commercialResponse.outcome)}{estimation.commercialResponse.outcomeAt ? ` · ${formatDate(estimation.commercialResponse.outcomeAt)}` : ''}</p>
-              {estimation.commercialResponse.contactName && <p className="mt-2 text-sm text-slate-700">Contacto: {estimation.commercialResponse.contactName}</p>}
-              <p className="mt-3 whitespace-pre-wrap text-sm text-slate-700">{estimation.commercialResponse.note ?? 'Sin respuesta externa registrada.'}</p>
-            </div>
-          </div>
-
-          {commercialScenario.notes && (
-            <div className="rounded-lg border border-sky-100 bg-sky-50 p-4 text-sm text-sky-950">
-              <p className="font-semibold">Notas del escenario comercial</p>
-              <p className="mt-1 whitespace-pre-wrap">{commercialScenario.notes}</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </section>
-  )
-}
-
-export function SalesEstimationsClient({ initialEstimations }: { initialEstimations: SalesEstimationView[] }) {
-  const [selectedId, setSelectedId] = useState<string | null>(() => initialEstimations[0]?.id ?? null)
-  const selectedEstimation = initialEstimations.find((estimation) => estimation.id === selectedId) ?? null
-
-  if (initialEstimations.length === 0) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5 text-sky-700" />No hay cotizaciones compartidas</CardTitle>
-          <CardDescription>Cuando Diseño comparta una cotización, aparecerá aquí para consulta interna.</CardDescription>
-        </CardHeader>
-      </Card>
-    )
-  }
-
-  return (
-    <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
-      <aside className="space-y-3" aria-label="Cotizaciones compartidas">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-lg font-semibold text-slate-900">Compartidas</h2>
-          <Badge variant="outline">{initialEstimations.length}</Badge>
-        </div>
-        <div className="grid gap-2">
-          {initialEstimations.map((estimation) => {
-            const selected = estimation.id === selectedId
-            return (
-              <button
-                key={estimation.id}
-                type="button"
-                onClick={() => setSelectedId(estimation.id)}
-                aria-pressed={selected}
-                className={`w-full rounded-xl border p-4 text-left transition ${selected ? 'border-sky-300 bg-sky-50 shadow-sm' : 'border-slate-200 bg-white hover:border-sky-200 hover:bg-slate-50'}`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate font-semibold text-slate-900">{estimation.provisionalName}</p>
-                    <p className="mt-1 text-xs text-slate-600">{estimation.sapPrefix} · {estimation.proposedReferenceCode ?? 'Pendiente'}</p>
-                    <p className="mt-1 text-xs text-slate-500">{dimensionsLabel(estimation)}</p>
-                  </div>
-                  <ChevronRight className={`mt-1 h-4 w-4 shrink-0 ${selected ? 'text-sky-700' : 'text-slate-400'}`} />
-                </div>
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  <Badge variant="outline">{statusLabel(estimation.status)}</Badge>
-                  <Badge variant={outcomeVariant(estimation.commercialResponse.outcome)}>{statusLabel(estimation.commercialResponse.outcome)}</Badge>
-                </div>
-              </button>
-            )
-          })}
-        </div>
-      </aside>
-      {selectedEstimation && <EstimationDetail estimation={selectedEstimation} />}
-    </div>
-  )
+export function SalesEstimationsClient({ initialEstimations, initialFormulas }: { initialEstimations: SalesEstimationView[]; initialFormulas: SalesPricingFormulaConfig }) {
+  const [estimations, setEstimations] = useState(initialEstimations)
+  const [selectedId, setSelectedId] = useState(() => initialEstimations[0]?.id ?? null)
+  const [formulas, setFormulas] = useState(initialFormulas)
+  const [editingFormulas, setEditingFormulas] = useState(false)
+  const [mc, setMc] = useState(() => percentInput(initialEstimations[0]?.commercialScenario.contributionMarginPct ?? null))
+  const [discount, setDiscount] = useState(() => percentInput(initialEstimations[0]?.commercialScenario.discountPct ?? null))
+  const [contact, setContact] = useState(() => initialEstimations[0]?.commercialResponse.contactName ?? '')
+  const [outcome, setOutcome] = useState<'pending' | 'approved' | 'rejected' | 'not_pursued'>(() => (initialEstimations[0]?.commercialResponse.outcome as 'pending' | 'approved' | 'rejected' | 'not_pursued' | undefined) ?? 'pending')
+  const [note, setNote] = useState(() => initialEstimations[0]?.commercialResponse.note ?? '')
+  const [isPending, startTransition] = useTransition()
+  const selected = estimations.find(item => item.id === selectedId) ?? null
+  const pricing = useMemo(() => {
+    if (!selected || selected.pricing.state !== 'available' || selected.commercialScenario.contributionMarginPct === null || selected.commercialScenario.discountPct === null) return null
+    try { return evaluateSalesPricing(formulas, { materialCost: selected.pricing.materialsAndPackaging, expandedCost: selected.pricing.expandedTotal, mcPct: selected.commercialScenario.contributionMarginPct, discountPct: selected.commercialScenario.discountPct }) } catch { return null }
+  }, [formulas, selected])
+  const select = (estimation: SalesEstimationView) => { setSelectedId(estimation.id); setMc(percentInput(estimation.commercialScenario.contributionMarginPct)); setDiscount(percentInput(estimation.commercialScenario.discountPct)); setContact(estimation.commercialResponse.contactName ?? ''); setOutcome(estimation.commercialResponse.outcome as typeof outcome); setNote(estimation.commercialResponse.note ?? '') }
+  const replace = (saved: SalesEstimationView) => setEstimations(current => current.map(item => item.id === saved.id ? saved : item))
+  const savePricing = () => { if (!selected) return; startTransition(async () => { try { const saved = await saveSalesEstimationPricingAction({ id: selected.id, contributionMarginPct: Number(mc), discountPct: Number(discount) }); replace(saved); toast.success('MC y descuento guardados.'); } catch (error) { toast.error(error instanceof Error ? error.message : 'No fue posible guardar los porcentajes.') } }) }
+  const saveResponse = () => { if (!selected) return; startTransition(async () => { try { const saved = await saveSalesEstimationCommercialResponseAction({ id: selected.id, outcome, contactName: contact, note }); replace(saved); toast.success('Respuesta comercial guardada.'); } catch (error) { toast.error(error instanceof Error ? error.message : 'No fue posible guardar la respuesta.') } }) }
+  const saveFormulas = () => startTransition(async () => { try { setFormulas(await saveSalesPricingFormulaConfigAction(formulas)); setEditingFormulas(false); toast.success('Fórmulas globales actualizadas.'); } catch (error) { toast.error(error instanceof Error ? error.message : 'Las fórmulas no son válidas.') } })
+  if (!selected) return <Card><CardHeader><CardTitle>No hay cotizaciones compartidas</CardTitle><CardDescription>Cuando Diseño comparta una cotización totalizable aparecerá aquí.</CardDescription></CardHeader></Card>
+  return <div className="grid gap-6 xl:grid-cols-[300px_minmax(0,1fr)]"><aside className="space-y-2"><h2 className="text-lg font-semibold">Compartidas ({estimations.length})</h2>{estimations.map(item => <button key={item.id} type="button" onClick={() => select(item)} className={`w-full rounded-xl border p-4 text-left ${item.id === selected.id ? 'border-sky-300 bg-sky-50' : 'border-slate-200 bg-white'}`}><p className="truncate font-semibold">{item.provisionalName}</p><p className="mt-1 text-xs text-slate-600">{item.sapPrefix} · {dimensions(item)}</p></button>)}</aside><section className="space-y-5"><Card><CardHeader><CardTitle>{selected.provisionalName}</CardTitle><CardDescription>{selected.sapPrefix} · {selected.proposedReferenceCode ?? 'Consecutivo pendiente'} · {dimensions(selected)}</CardDescription></CardHeader><CardContent className="space-y-5"><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4"><Metric label="Materiales + empaque" value={selected.pricing.state === 'available' ? money(selected.pricing.materialsAndPackaging, selected.pricing.currency) : 'Pendiente'} /><Metric label="Total ampliado" value={selected.pricing.state === 'available' ? money(selected.pricing.expandedTotal, selected.pricing.currency) : 'Pendiente'} /><Metric label="Peso neto" value={`${number(selected.weights.netKg)} kg`} /><Metric label="Peso bruto" value={`${number(selected.weights.grossKg)} kg`} /></div>{selected.pricing.state === 'pending' && <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"><AlertCircle className="h-4 w-4 shrink-0" />{selected.pricing.message}</div>}<div className="grid gap-4 lg:grid-cols-2"><div className="space-y-3 rounded-lg border p-4"><h2 className="flex items-center gap-2 font-semibold"><Calculator className="h-4 w-4" />Precio comercial</h2><div className="grid grid-cols-2 gap-3"><div><Label>MC %</Label><Input inputMode="decimal" value={mc} onChange={event => setMc(event.target.value)} placeholder="67" /></div><div><Label>Descuento %</Label><Input inputMode="decimal" value={discount} onChange={event => setDiscount(event.target.value)} placeholder="40" /></div></div><Button type="button" onClick={savePricing} disabled={isPending || selected.pricing.state !== 'available'}><Save className="h-4 w-4" />Guardar porcentajes</Button><div className="grid grid-cols-3 gap-2"><Metric label="Precio mínimo" value={pricing ? money(pricing.minimumPrice, selected.pricing.currency) : 'Pendiente'} /><Metric label="Precio máximo" value={pricing ? money(pricing.maximumPrice, selected.pricing.currency) : 'Pendiente'} /><Metric label="PVP" value={pricing ? money(pricing.pvp, selected.pricing.currency) : 'Pendiente'} /></div></div><div className="space-y-3 rounded-lg border p-4"><h2 className="font-semibold">Respuesta comercial externa</h2><Label>Contacto o cuenta comercial</Label><Input value={contact} onChange={event => setContact(event.target.value)} /><Label>Resultado</Label><select value={outcome} onChange={event => setOutcome(event.target.value as typeof outcome)} className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm"><option value="pending">Pendiente</option><option value="approved">Aprobada</option><option value="rejected">Rechazada</option><option value="not_pursued">No continuó</option></select><Textarea value={note} onChange={event => setNote(event.target.value)} placeholder="Observación comercial" /><Button type="button" variant="outline" onClick={saveResponse} disabled={isPending}>Guardar respuesta</Button></div></div><div className="rounded-lg border border-slate-200 p-4"><p className="font-semibold">Revisión técnica</p><p className="mt-1 text-sm text-slate-600">{status(selected.technicalReview.status)} · {date(selected.technicalReview.reviewedAt)}</p><p className="mt-2 text-sm">{selected.technicalReview.note ?? 'Sin observaciones.'}</p></div></CardContent></Card><Card><CardHeader><CardTitle className="flex items-center gap-2"><Settings2 className="h-4 w-4" />Editar fórmulas de cálculo de precios</CardTitle><CardDescription>Aplican globalmente a todas las cotizaciones compartidas. Variables permitidas: costo_materia_prima, costo_ampliado, mc_pct, descuento_pct, precio_minimo y precio_maximo.</CardDescription></CardHeader><CardContent>{editingFormulas ? <div className="space-y-3"><div><Label>Precio mínimo</Label><Input value={formulas.minimumPrice} onChange={event => setFormulas(current => ({ ...current, minimumPrice: event.target.value }))} /></div><div><Label>Precio máximo</Label><Input value={formulas.maximumPrice} onChange={event => setFormulas(current => ({ ...current, maximumPrice: event.target.value }))} /></div><div><Label>PVP</Label><Input value={formulas.pvp} onChange={event => setFormulas(current => ({ ...current, pvp: event.target.value }))} /></div><div className="flex gap-2"><Button type="button" onClick={saveFormulas} disabled={isPending}>Guardar fórmulas</Button><Button type="button" variant="outline" onClick={() => setEditingFormulas(false)}>Cancelar</Button></div></div> : <Button type="button" variant="outline" onClick={() => setEditingFormulas(true)}>Editar fórmulas de cálculo de precios</Button>}</CardContent></Card></section></div>
 }

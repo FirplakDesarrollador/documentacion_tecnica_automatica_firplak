@@ -75,6 +75,13 @@ export type EstimationDraftCommercialColor = {
   extensions: EstimationDraftExtensions
 }
 
+/** Technical identity data belongs to the quotation canvas, not to Sales. */
+export type EstimationDraftProvisionalIdentity = {
+  netWeightKg: number | null
+  grossWeightKg: number | null
+  extensions: EstimationDraftExtensions
+}
+
 export type EstimationDraftGelcoatItem = {
   itemCode: string | null
   itemName: string | null
@@ -135,6 +142,7 @@ export type EstimationDraft = {
   homologue: EstimationDraftHomologue | null
   syntheticMarbleCalibration: FrozenSyntheticMarbleCalibration | null
   geometry: EstimationDraftGeometry
+  provisionalIdentity: EstimationDraftProvisionalIdentity
   commercialColor: EstimationDraftCommercialColor
   gelcoatItem: EstimationDraftGelcoatItem
   bomLines: EstimationDraftBomLine[]
@@ -170,6 +178,7 @@ const ROOT_KEYS = [
   'homologue',
   'syntheticMarbleCalibration',
   'geometry',
+  'provisionalIdentity',
   'commercialColor',
   'gelcoatItem',
   'bomLines',
@@ -218,6 +227,7 @@ const GEOMETRY_KEYS = [
 ] as const
 
 const COMMERCIAL_COLOR_KEYS = ['colorCode', 'colorName', 'selectedAt', 'extensions'] as const
+const PROVISIONAL_IDENTITY_KEYS = ['netWeightKg', 'grossWeightKg', 'extensions'] as const
 const GELCOAT_ITEM_KEYS = ['itemCode', 'itemName', 'uom', 'selectedAt', 'extensions'] as const
 
 const COST_EVIDENCE_KEYS = [
@@ -425,6 +435,16 @@ function normalizeCommercialColor(value: unknown): EstimationDraftCommercialColo
   }
 }
 
+function normalizeProvisionalIdentity(value: unknown, legacyScenario?: unknown): EstimationDraftProvisionalIdentity {
+  const record = readRecord(value) ?? {}
+  const legacy = readRecord(legacyScenario) ?? {}
+  return {
+    netWeightKg: readFiniteNumber(record, 'netWeightKg') ?? readFiniteNumber(legacy, 'netWeightKg'),
+    grossWeightKg: readFiniteNumber(record, 'grossWeightKg') ?? readFiniteNumber(legacy, 'grossWeightKg'),
+    extensions: collectExtensions(record, PROVISIONAL_IDENTITY_KEYS),
+  }
+}
+
 function normalizeGelcoatItem(value: unknown): EstimationDraftGelcoatItem {
   const record = readRecord(value) ?? {}
   return {
@@ -532,6 +552,7 @@ export function createEmptyEstimationDraft(): EstimationDraft {
     homologue: null,
     syntheticMarbleCalibration: null,
     geometry: normalizeGeometry(null),
+    provisionalIdentity: normalizeProvisionalIdentity(null),
     commercialColor: normalizeCommercialColor(null),
     gelcoatItem: normalizeGelcoatItem(null),
     bomLines: [],
@@ -553,6 +574,7 @@ export function normalizeEstimationDraft(value: unknown): EstimationDraft {
     homologue: normalizeHomologue(record.homologue),
     syntheticMarbleCalibration: normalizeSyntheticMarbleCalibration(record.syntheticMarbleCalibration),
     geometry: normalizeGeometry(record.geometry),
+    provisionalIdentity: normalizeProvisionalIdentity(record.provisionalIdentity, record.commercialScenario),
     commercialColor: normalizeCommercialColor(record.commercialColor),
     gelcoatItem: normalizeGelcoatItem(record.gelcoatItem),
     bomLines: normalizeBomLines(record.bomLines),
@@ -615,6 +637,14 @@ function serializeCommercialColor(value: EstimationDraftCommercialColor): Estima
     colorCode: value.colorCode,
     colorName: value.colorName,
     selectedAt: value.selectedAt,
+  }
+}
+
+function serializeProvisionalIdentity(value: EstimationDraftProvisionalIdentity): EstimationDraftJsonObject {
+  return {
+    ...value.extensions,
+    netWeightKg: value.netWeightKg,
+    grossWeightKg: value.grossWeightKg,
   }
 }
 
@@ -687,6 +717,7 @@ export function serializeEstimationDraft(draft: EstimationDraft): EstimationDraf
       ? serializeSyntheticMarbleCalibration(draft.syntheticMarbleCalibration)
       : null,
     geometry: serializeGeometry(draft.geometry),
+    provisionalIdentity: serializeProvisionalIdentity(draft.provisionalIdentity),
     commercialColor: serializeCommercialColor(draft.commercialColor),
     gelcoatItem: serializeGelcoatItem(draft.gelcoatItem),
     bomLines: draft.bomLines.map(serializeBomLine),
