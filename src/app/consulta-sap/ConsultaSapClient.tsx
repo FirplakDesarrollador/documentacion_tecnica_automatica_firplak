@@ -1,7 +1,7 @@
 'use client'
 
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, ChevronDown, ChevronRight, Layers, Loader2, RefreshCw, Search, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronRight, Copy, Download, Layers, Loader2, RefreshCw, Search, X } from 'lucide-react'
 import { OrderConsultaPanel } from './OrderConsultaPanel'
 
 type SapItem = Record<string, unknown>
@@ -62,6 +62,18 @@ type SapApiColorsResponse =
   | { success: true; colors: ColorOption[] }
   | { success: false; error: string }
 
+type CostSource = 'last_purchase_receipt_warehouse_average' | 'mp01_warehouse_average' | 'unavailable' | 'bom_rollup'
+
+type DirectSapCost = {
+  unitCost: number | null
+  source: Exclude<CostSource, 'bom_rollup'>
+  warehouseCode: string | null
+  documentEntry: number | null
+  documentNumber: number | null
+  documentDate: string | null
+  warning: string | null
+}
+
 type BomNode = {
   itemCode: string
   itemName: string
@@ -69,22 +81,72 @@ type BomNode = {
   inventoryUom: string | null
   level: number
   lines: BomNode[]
-  loaded: boolean
+  bomQuantity: number | null
+  componentWarehouse: string | null
+  outputWarehouse: string | null
+  directCost: DirectSapCost
+  structuralUnitCost: number | null
+  knownStructuralUnitCost: number
+  lineSubtotalCost: number | null
+  knownLineSubtotalCost: number
+  pendingCostCount: number
+  isPartial: boolean
+  costSource: CostSource
 }
 
 type BomApiResponse =
-  | { success: true; hasBom: true; tree: BomNode }
+  | { success: true; hasBom: true; tree: BomNode; rows: CostedBomExportRow[]; costsAsOf: string; costCacheTtlSeconds: number }
   | { success: true; hasBom: false }
   | { success: false; error: string }
 
-type BomChildrenResponse =
-  | { success: true; lines: BomNode[] }
+type FastBomNode = {
+  itemCode: string
+  itemName: string
+  quantity: number
+  inventoryUom: string | null
+  level: number
+  lines: FastBomNode[]
+}
+
+type FastBomApiResponse =
+  | { success: true; hasBom: true; tree: FastBomNode }
+  | { success: true; hasBom: false }
   | { success: false; error: string }
+
+type CostedBomExportRow = {
+  level: number
+  itemCode: string
+  itemName: string
+  quantity: number
+  accumulatedQuantity: number
+  inventoryUom: string | null
+  componentWarehouse: string | null
+  outputWarehouse: string | null
+  warehouseCode: string | null
+  receiptDate: string | null
+  receiptDocument: number | null
+  costSource: CostSource
+  unitCost: number | null
+  subtotalCost: number | null
+  knownSubtotalCost: number
+  isPartial: boolean
+  pendingCostCount: number
+  warning: string | null
+}
 
 type PriceRow = {
   priceList: string
   price: number | null
   currency: string
+}
+
+type WarehouseInventoryRow = {
+  warehouseCode: string
+  warehouseName: string | null
+  inStock: number | null
+  committed: number | null
+  ordered: number | null
+  available: number | null
 }
 
 const USER_FIELDS: FieldDefinition[] = [
@@ -361,21 +423,111 @@ function getPriceRows(item: SapItem | null): PriceRow[] {
   return rowsWithPrice.length > 0 ? rowsWithPrice : rows.slice(0, 1)
 }
 
+function numberValue(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string' || !value.trim()) return null
+
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function getWarehouseInventoryRows(item: SapItem): WarehouseInventoryRow[] {
+  if (!Array.isArray(item.ItemWarehouseInfoCollection)) return []
+
+  return item.ItemWarehouseInfoCollection.flatMap((entry): WarehouseInventoryRow[] => {
+    if (!isRecord(entry)) return []
+
+    const warehouseCode = displayValue(entry.WarehouseCode).trim()
+    if (!warehouseCode) return []
+
+    const warehouseName = displayValue(entry.WarehouseName).trim() || null
+
+    const inStock = numberValue(entry.InStock)
+    const committed = numberValue(entry.Committed)
+    const ordered = numberValue(entry.Ordered)
+    if ([inStock, committed, ordered].every(value => value === null || value === 0)) return []
+
+    return [{
+      warehouseCode,
+      warehouseName,
+      inStock,
+      committed,
+      ordered,
+      available: inStock === null || committed === null ? null : inStock - committed,
+    }]
+  }).toSorted((left, right) => left.warehouseCode.localeCompare(right.warehouseCode, 'es-CO'))
+}
+
 function countBomComponents(node: BomNode): number {
   return node.lines.reduce((total, child) => total + 1 + countBomComponents(child), 0)
 }
 
-function replaceBomNodeAtPath(node: BomNode, path: number[], updated: BomNode): BomNode {
-  if (path.length === 0) return updated
+function costSourceLabel(source: CostSource): string {
+  switch (source) {
+    case 'last_purchase_receipt_warehouse_average':
+      return 'Promedio de última entrada'
+    case 'mp01_warehouse_average':
+      return 'Promedio vigente MP-01'
+    case 'bom_rollup':
+      return 'Sub-LdM calculada'
+    default:
+      return 'Costo pendiente'
+  }
+}
 
-  const [childIndex, ...remainingPath] = path
-  if (!node.lines[childIndex]) return node
+function formatCost(value: number | null, isPartial: boolean, knownValue: number, maximumFractionDigits = 6): string {
+  if (value !== null) return formatNumber(value, maximumFractionDigits)
+  if (isPartial && knownValue > 0) return formatNumber(knownValue, maximumFractionDigits) + ' parcial'
+  return 'Pendiente'
+}
 
+function formatDuration(durationMs: number | null): string | null {
+  if (durationMs === null) return null
+  return new Intl.NumberFormat('es-CO', { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(durationMs / 1000) + ' s'
+}
+
+function formatCostSnapshotDate(value: string | null): string | null {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return new Intl.DateTimeFormat('es-CO', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+  }).format(date)
+}
+
+function formatCacheTtl(seconds: number | null): string | null {
+  if (!seconds || seconds < 1) return null
+  if (seconds % 86_400 === 0) return String(seconds / 86_400) + ' días'
+  if (seconds % 3_600 === 0) return String(seconds / 3_600) + ' h'
+  return String(Math.round(seconds / 60)) + ' min'
+}
+
+function createPendingCostBomNode(node: FastBomNode): BomNode {
+  const lines = node.lines.map(createPendingCostBomNode)
+  const pendingCostCount = lines.length === 0 ? 1 : lines.reduce((total, line) => total + line.pendingCostCount, 0)
   return {
     ...node,
-    lines: node.lines.map((child, index) => (
-      index === childIndex ? replaceBomNodeAtPath(child, remainingPath, updated) : child
-    )),
+    lines,
+    bomQuantity: null,
+    componentWarehouse: null,
+    outputWarehouse: null,
+    directCost: {
+      unitCost: null,
+      source: 'unavailable',
+      warehouseCode: null,
+      documentEntry: null,
+      documentNumber: null,
+      documentDate: null,
+      warning: null,
+    },
+    structuralUnitCost: null,
+    knownStructuralUnitCost: 0,
+    lineSubtotalCost: null,
+    knownLineSubtotalCost: 0,
+    pendingCostCount,
+    isPartial: true,
+    costSource: 'unavailable',
   }
 }
 
@@ -462,6 +614,62 @@ function PriceListTable({ rows }: { rows: PriceRow[] }) {
             </tr>
           ))}
         </tbody>
+      </table>
+    </div>
+  )
+}
+
+function WarehouseInventoryTable({ item }: { item: SapItem }) {
+  const rows = getWarehouseInventoryRows(item)
+  const totals = rows.reduce(
+    (current, row) => ({
+      inStock: current.inStock + (row.inStock ?? 0),
+      committed: current.committed + (row.committed ?? 0),
+      ordered: current.ordered + (row.ordered ?? 0),
+      available: current.available + (row.available ?? 0),
+    }),
+    { inStock: 0, committed: 0, ordered: 0, available: 0 },
+  )
+
+  if (rows.length === 0) {
+    return <EmptyPanel>SAP no reporta existencias, comprometidos ni pedidos pendientes por bodega para este artículo.</EmptyPanel>
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-lg border border-slate-200">
+      <table className="w-full min-w-[680px] text-left text-sm">
+        <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+          <tr>
+            <th className="px-3 py-2">Bodega</th>
+            <th className="px-3 py-2 text-right">En existencia</th>
+            <th className="px-3 py-2 text-right">Comprometido</th>
+            <th className="px-3 py-2 text-right">Solicitado</th>
+            <th className="px-3 py-2 text-right">Disponible</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map(row => (
+            <tr key={row.warehouseCode} className="bg-white">
+              <td className="px-3 py-2 text-slate-800">
+                <div className="font-mono font-medium">{row.warehouseCode}</div>
+                {row.warehouseName ? <div className="mt-0.5 text-xs font-normal text-slate-500">{row.warehouseName}</div> : null}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums text-slate-900">{formatSapQuantity(row.inStock)}</td>
+              <td className="px-3 py-2 text-right tabular-nums text-slate-700">{formatSapQuantity(row.committed)}</td>
+              <td className="px-3 py-2 text-right tabular-nums text-slate-700">{formatSapQuantity(row.ordered)}</td>
+              <td className="px-3 py-2 text-right font-semibold tabular-nums text-emerald-700">{formatSapQuantity(row.available)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot className="border-t border-slate-200 bg-slate-50 font-semibold text-slate-900">
+          <tr>
+            <td className="px-3 py-2">Total por bodegas</td>
+            <td className="px-3 py-2 text-right tabular-nums">{formatSapQuantity(totals.inStock)}</td>
+            <td className="px-3 py-2 text-right tabular-nums">{formatSapQuantity(totals.committed)}</td>
+            <td className="px-3 py-2 text-right tabular-nums">{formatSapQuantity(totals.ordered)}</td>
+            <td className="px-3 py-2 text-right tabular-nums text-emerald-700">{formatSapQuantity(totals.available)}</td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   )
@@ -608,6 +816,9 @@ function ItemTabContent({
           <SectionCard title="Inventario" description="Existencias y parámetros de inventario de la consulta actual.">
             <FieldGrid item={item} fields={INVENTORY_FIELDS} />
           </SectionCard>
+          <SectionCard title="Existencias por bodega" description="Saldo actual distribuido por bodega. Disponible = existencia menos comprometido.">
+            <WarehouseInventoryTable item={item} />
+          </SectionCard>
           <SectionCard title="Costos">
             <FieldGrid item={item} fields={INVENTORY_COST_FIELDS} />
           </SectionCard>
@@ -734,68 +945,26 @@ function MasterDataPanel({
 
 function BomRowView({
   node,
-  path,
   depth = 0,
-  onLoadChildren,
-  onNodeUpdated,
 }: {
   node: BomNode
-  path: number[]
   depth?: number
-  onLoadChildren: (itemCode: string) => Promise<BomNode[] | null>
-  onNodeUpdated: (path: number[], updated: BomNode) => void
 }) {
-  const [loading, setLoading] = useState(false)
-  const [localError, setLocalError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(depth === 0)
-  const canExpand = !node.loaded || node.lines.length > 0
-
-  async function handleToggle() {
-    if (!node.loaded && !loading) {
-      setLoading(true)
-      setLocalError(null)
-      try {
-        const children = await onLoadChildren(node.itemCode)
-        if (children === null) {
-          setLocalError('No se pudo consultar la sub-LDM')
-          return
-        }
-
-        onNodeUpdated(path, {
-          ...node,
-          lines: children,
-          loaded: true,
-        })
-
-        if (children.length === 0) {
-          setLocalError('Sin sub-LDM')
-          return
-        }
-
-        setExpanded(true)
-      } finally {
-        setLoading(false)
-      }
-      return
-    }
-
-    setExpanded(previous => !previous)
-  }
+  const canExpand = node.lines.length > 0
 
   return (
     <div>
       <div className={[
-        'grid min-w-[680px] grid-cols-[minmax(175px,0.9fr)_minmax(220px,2fr)_96px_72px] items-center border-b border-slate-100 text-sm',
+        'grid min-w-[1080px] grid-cols-[minmax(250px,1.05fr)_minmax(320px,2.25fr)_82px_64px_150px_160px] items-center border-b border-slate-100 text-sm',
         depth === 0 ? 'bg-indigo-50 font-semibold' : 'bg-white hover:bg-slate-50',
       ].join(' ')}>
         <div className="flex min-w-0 items-center gap-1.5 py-2" style={{ paddingLeft: 16 + depth * 18 }}>
           <span className="flex size-5 shrink-0 items-center justify-center">
-            {loading ? (
-              <Loader2 className="size-4 animate-spin text-slate-400" />
-            ) : canExpand ? (
+            {canExpand ? (
               <button
                 type="button"
-                onClick={() => void handleToggle()}
+                onClick={() => setExpanded(previous => !previous)}
                 aria-label={expanded ? 'Contraer ' + node.itemCode : 'Expandir ' + node.itemCode}
                 className="flex size-5 items-center justify-center rounded text-slate-500 transition hover:bg-slate-200 hover:text-slate-800"
               >
@@ -803,30 +972,19 @@ function BomRowView({
               </button>
             ) : null}
           </span>
-          <span title={node.itemCode} className="min-w-0 truncate font-mono text-xs text-slate-800">{node.itemCode}</span>
+          <span title={node.itemCode} className="shrink-0 whitespace-nowrap font-mono text-xs text-slate-800">{node.itemCode}</span>
         </div>
-        <div title={node.itemName} className="min-w-0 truncate px-3 py-2 text-slate-600">
+        <div title={node.itemName} className="min-w-0 break-words px-3 py-2 leading-5 text-slate-600">
           {node.itemName || 'Sin descripción en SAP'}
-          {localError ? <span className="ml-2 text-xs font-medium text-amber-700">({localError})</span> : null}
         </div>
         <div className="px-3 py-2 text-right tabular-nums text-slate-800">{formatSapQuantity(node.quantity)}</div>
         <div className="px-3 py-2 text-center text-slate-600">{node.inventoryUom || '—'}</div>
+        <div className={['px-3 py-2 text-right tabular-nums', node.isPartial ? 'text-amber-700' : 'text-slate-900'].join(' ')}>{formatCost(node.structuralUnitCost, node.isPartial, node.knownStructuralUnitCost, depth === 0 ? 2 : 6)}</div>
+        <div className={['px-3 py-2 text-right font-semibold tabular-nums', node.isPartial ? 'text-amber-700' : 'text-emerald-700'].join(' ')}>{formatCost(node.lineSubtotalCost, node.isPartial, node.knownLineSubtotalCost, depth === 0 ? 2 : 6)}</div>
       </div>
-      {expanded && node.loaded && node.lines.length > 0 ? (
+      {expanded && node.lines.length > 0 ? (
         <div>
-          {node.lines.map((child, index) => {
-            const childPath = [...path, index]
-            return (
-              <BomRowView
-                key={childPath.join('-')}
-                node={child}
-                path={childPath}
-                depth={depth + 1}
-                onLoadChildren={onLoadChildren}
-                onNodeUpdated={onNodeUpdated}
-              />
-            )
-          })}
+          {node.lines.map((child, index) => <BomRowView key={child.itemCode + '-' + String(index)} node={child} depth={depth + 1} />)}
         </div>
       ) : null}
     </div>
@@ -838,16 +996,38 @@ function BomPanel({
   bomTree,
   bomLoading,
   bomError,
-  onLoadChildren,
-  onNodeUpdated,
+  structureDurationMs,
+  costDurationMs,
+  costsAsOf,
+  costCacheTtlSeconds,
+  costLoading,
+  exportLoading,
+  copyFeedback,
+  onDownload,
+  onCopy,
 }: {
   activeCode: string
   bomTree: BomNode | null
   bomLoading: boolean
   bomError: string | null
-  onLoadChildren: (itemCode: string) => Promise<BomNode[] | null>
-  onNodeUpdated: (path: number[], updated: BomNode) => void
+  structureDurationMs: number | null
+  costDurationMs: number | null
+  costsAsOf: string | null
+  costCacheTtlSeconds: number | null
+  costLoading: boolean
+  exportLoading: boolean
+  copyFeedback: string | null
+  onDownload: () => void
+  onCopy: () => void
 }) {
+  const componentWarehouses = bomTree
+    ? [...new Set(bomTree.lines.flatMap(line => line.componentWarehouse ? [line.componentWarehouse] : []))]
+    : []
+  const structureDuration = formatDuration(structureDurationMs)
+  const costDuration = formatDuration(costDurationMs)
+  const costSnapshotDate = formatCostSnapshotDate(costsAsOf)
+  const costCacheTtl = formatCacheTtl(costCacheTtlSeconds)
+
   return (
     <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-4 sm:px-6">
@@ -855,11 +1035,11 @@ function BomPanel({
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Lista de materiales</p>
           <h1 className="mt-1 text-lg font-bold tracking-tight text-slate-900">{activeCode}</h1>
         </div>
-        {bomTree ? (
-          <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
-            {String(countBomComponents(bomTree)) + ' componentes cargados'}
-          </span>
-        ) : null}
+        {bomTree ? <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">{String(countBomComponents(bomTree)) + ' componentes cargados'}</span>
+          <button type="button" onClick={onCopy} disabled={exportLoading || costLoading} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"><Copy className="size-3.5" /> Copiar para Excel</button>
+          <button type="button" onClick={onDownload} disabled={exportLoading || costLoading} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-indigo-600 px-3 text-xs font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60">{exportLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />} Descargar Excel</button>
+        </div> : null}
       </div>
 
       {bomLoading && !bomTree ? (
@@ -876,22 +1056,36 @@ function BomPanel({
         </div>
       ) : null}
 
-      {bomTree ? (
+      {bomTree ? <>
+        <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 sm:px-6">
+          {costLoading ? <><Loader2 className="mr-2 inline size-4 animate-spin text-indigo-600" /><span className="font-semibold text-slate-900">Calculando costos con MP-01...</span></> : <>
+            <span className="font-semibold text-slate-900">Costo {bomTree.isPartial ? 'parcial' : 'total'} por unidad final: </span>
+            <span className={bomTree.isPartial ? 'font-semibold text-amber-700' : 'font-semibold text-emerald-700'}>{formatCost(bomTree.structuralUnitCost, bomTree.isPartial, bomTree.knownStructuralUnitCost, 2)}</span>
+            {bomTree.isPartial ? <span className="ml-2 text-xs text-amber-700">({bomTree.pendingCostCount} costos pendientes)</span> : null}
+          </>}
+          {structureDuration ? <span className="ml-3 text-xs text-slate-500">LdM: {structureDuration}</span> : null}
+          {costDuration ? <span className="ml-3 text-xs text-slate-500">Costos: {costDuration}</span> : null}
+          {copyFeedback ? <span role="status" className="ml-3 text-xs font-medium text-emerald-700">{copyFeedback}</span> : null}
+        </div>
+        <div className="flex flex-wrap gap-x-5 gap-y-1 border-b border-slate-200 bg-white px-4 py-2.5 text-xs text-slate-600 sm:px-6">
+          <span><span className="font-semibold text-slate-800">Componentes descargan de:</span> {componentWarehouses.length > 0 ? componentWarehouses.join(', ') : costLoading ? 'cargando configuración SAP...' : 'Sin bodega configurada en SAP'}</span>
+          <span><span className="font-semibold text-slate-800">Unidad final se registra en:</span> {bomTree.outputWarehouse ?? (costLoading ? 'cargando configuración SAP...' : 'Sin bodega configurada en SAP')}</span>
+          <span className="text-slate-500">{costSnapshotDate
+            ? <>Costos temporales: promedio MP-01 consultado el {costSnapshotDate}{costCacheTtl ? `; caché máximo ${costCacheTtl}.` : '.'}</>
+            : costLoading ? 'Costos temporales: consultando promedio MP-01...' : 'Costos temporales: promedio vigente de MP-01.'}</span>
+        </div>
         <div className="overflow-x-auto">
-          <div className="grid min-w-[680px] grid-cols-[minmax(175px,0.9fr)_minmax(220px,2fr)_96px_72px] border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+          <div className="grid min-w-[1080px] grid-cols-[minmax(250px,1.05fr)_minmax(320px,2.25fr)_82px_64px_150px_160px] border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
             <span className="px-4 py-2.5">Código</span>
             <span className="px-3 py-2.5">Descripción</span>
-            <span className="px-3 py-2.5 text-right">Cantidad SAP</span>
+            <span className="px-3 py-2.5 text-right">CANT.</span>
             <span className="px-3 py-2.5 text-center">UN</span>
+            <span className="px-3 py-2.5 text-right">COSTO UND.</span>
+            <span className="px-3 py-2.5 text-right">Subtotal</span>
           </div>
-          <BomRowView
-            node={bomTree}
-            path={[]}
-            onLoadChildren={onLoadChildren}
-            onNodeUpdated={onNodeUpdated}
-          />
+          <BomRowView node={bomTree} />
         </div>
-      ) : null}
+      </> : null}
     </section>
   )
 }
@@ -921,7 +1115,15 @@ function SearchResultsPanel({
         </span>
       </div>
 
-      {results.length === 0 ? (
+      {loading && results.length === 0 ? (
+        <div role="status" aria-live="polite" className="flex min-h-40 flex-col items-center justify-center gap-3 p-6 text-center text-sm text-slate-600">
+          <Loader2 className="size-7 animate-spin text-indigo-600" />
+          <div>
+            <p className="font-semibold text-slate-800">Buscando resultado en SAP...</p>
+            <p className="mt-1 text-xs text-slate-500">La consulta puede tardar unos segundos según los criterios ingresados.</p>
+          </div>
+        </div>
+      ) : results.length === 0 ? (
         <div className="p-6 text-sm text-slate-500">SAP no devolvió artículos que coincidan con la búsqueda.</div>
       ) : (
         <div role="listbox" aria-label="Artículos encontrados en SAP" className="divide-y divide-slate-100">
@@ -989,7 +1191,15 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
   const [loading, setLoading] = useState(false)
   const [bomTree, setBomTree] = useState<BomNode | null>(null)
   const [bomLoading, setBomLoading] = useState(false)
+  const [bomCostLoading, setBomCostLoading] = useState(false)
   const [bomError, setBomError] = useState<string | null>(null)
+  const [bomStructureDurationMs, setBomStructureDurationMs] = useState<number | null>(null)
+  const [bomCostDurationMs, setBomCostDurationMs] = useState<number | null>(null)
+  const [bomCostsAsOf, setBomCostsAsOf] = useState<string | null>(null)
+  const [bomCostCacheTtlSeconds, setBomCostCacheTtlSeconds] = useState<number | null>(null)
+  const [bomExportRows, setBomExportRows] = useState<CostedBomExportRow[]>([])
+  const [bomExportLoading, setBomExportLoading] = useState(false)
+  const [bomCopyFeedback, setBomCopyFeedback] = useState<string | null>(null)
   const [showBom, setShowBom] = useState(false)
   const [activeTab, setActiveTab] = useState<SapTabId>('general')
   const [customFieldsVisible, setCustomFieldsVisible] = useState(false)
@@ -1041,7 +1251,14 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
   function resetBom() {
     setShowBom(false)
     setBomTree(null)
+    setBomCostLoading(false)
     setBomError(null)
+    setBomStructureDurationMs(null)
+    setBomCostDurationMs(null)
+    setBomCostsAsOf(null)
+    setBomCostCacheTtlSeconds(null)
+    setBomExportRows([])
+    setBomCopyFeedback(null)
   }
 
   async function loadItem(result: SearchResult, preserveSelection: boolean) {
@@ -1065,7 +1282,7 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
     resetBom()
 
     try {
-      const response = await fetch('/api/sap/items/' + encodeURIComponent(normalizedCode), {
+      const response = await fetch('/api/sap/items/' + encodeURIComponent(normalizedCode) + '?includeWarehouseNames=true', {
         method: 'GET',
         headers: { Accept: 'application/json' },
       })
@@ -1159,14 +1376,21 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
     const codeToFetch = activeCode
     if (!codeToFetch) return
 
+    const structureStartedAt = performance.now()
     setBomLoading(true)
+    setBomCostLoading(false)
     setBomError(null)
+    setBomStructureDurationMs(null)
+    setBomCostDurationMs(null)
+    setBomCostsAsOf(null)
+    setBomCostCacheTtlSeconds(null)
+    setBomExportRows([])
 
     try {
       const response = await fetch('/api/sap/items/' + encodeURIComponent(codeToFetch) + '/bom', {
         headers: { Accept: 'application/json' },
       })
-      const payload = await response.json() as BomApiResponse
+      const payload = await response.json() as FastBomApiResponse
 
       if (!response.ok || !payload.success) {
         setBomTree(null)
@@ -1180,30 +1404,37 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
         return
       }
 
-      setBomTree(payload.tree)
+      setBomTree(createPendingCostBomNode(payload.tree))
+      setBomStructureDurationMs(Math.round(performance.now() - structureStartedAt))
+      setBomLoading(false)
+      setBomCostLoading(true)
+
+      const costStartedAt = performance.now()
+      try {
+        const costResponse = await fetch('/api/sap/items/' + encodeURIComponent(codeToFetch) + '/bom-costed', {
+          headers: { Accept: 'application/json' },
+        })
+        const costPayload = await costResponse.json() as BomApiResponse
+        if (!costResponse.ok || !costPayload.success || !costPayload.hasBom) {
+          setBomError(costPayload.success ? 'La LdM se cargó, pero no fue posible calcular sus costos.' : costPayload.error)
+          return
+        }
+        setBomTree(costPayload.tree)
+        setBomExportRows(costPayload.rows)
+        setBomCostsAsOf(costPayload.costsAsOf)
+        setBomCostCacheTtlSeconds(costPayload.costCacheTtlSeconds)
+        setBomCostDurationMs(Math.round(performance.now() - costStartedAt))
+      } catch (costError: unknown) {
+        setBomError(costError instanceof Error ? 'La LdM se cargó, pero no fue posible calcular sus costos: ' + costError.message : 'La LdM se cargó, pero no fue posible calcular sus costos.')
+      } finally {
+        setBomCostLoading(false)
+      }
     } catch (fetchError: unknown) {
       setBomTree(null)
       setBomError(fetchError instanceof Error ? fetchError.message : 'No se pudo consultar la lista de materiales.')
     } finally {
       setBomLoading(false)
     }
-  }
-
-  async function loadBomChildren(itemCode: string): Promise<BomNode[] | null> {
-    try {
-      const response = await fetch('/api/sap/items/' + encodeURIComponent(itemCode) + '/bom?children=true', {
-        headers: { Accept: 'application/json' },
-      })
-      const payload = await response.json() as BomChildrenResponse
-      if (!response.ok || !payload.success) return null
-      return payload.lines
-    } catch {
-      return null
-    }
-  }
-
-  function updateBomNode(path: number[], updated: BomNode) {
-    setBomTree(previous => previous ? replaceBomNodeAtPath(previous, path, updated) : previous)
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -1238,6 +1469,62 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
 
     setShowBom(true)
     void fetchBom()
+  }
+
+  async function handleDownloadBom() {
+    if (!activeCode) return
+    setBomExportLoading(true)
+    setBomCopyFeedback(null)
+    try {
+      const response = await fetch('/api/sap/items/' + encodeURIComponent(activeCode) + '/bom-costed/export')
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: string } | null
+        throw new Error(payload?.error ?? 'No se pudo generar el Excel de la LdM.')
+      }
+      const blob = await response.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = objectUrl
+      link.download = `LDM_COSTADA_${activeCode}.xlsx`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(objectUrl)
+      setBomCopyFeedback('Excel descargado.')
+    } catch (downloadError: unknown) {
+      setBomCopyFeedback(downloadError instanceof Error ? downloadError.message : 'No se pudo descargar el Excel.')
+    } finally {
+      setBomExportLoading(false)
+    }
+  }
+
+  async function handleCopyBom() {
+    if (bomExportRows.length === 0) return
+    const header = ['Nivel', 'Código', 'Descripción', 'Cantidad', 'Cantidad acumulada', 'Unidad', 'Bodega descarga componente', 'Bodega destino LdM', 'Bodega costo', 'Fecha última entrada', 'Documento entrada', 'Fuente costo', 'Costo unitario', 'Subtotal', 'Estado', 'Advertencia']
+    const text = [header.join('\t'), ...bomExportRows.map(row => [
+      row.level,
+      row.itemCode,
+      row.itemName,
+      row.quantity,
+      row.accumulatedQuantity,
+      row.inventoryUom ?? '',
+      row.componentWarehouse ?? '',
+      row.outputWarehouse ?? '',
+      row.warehouseCode ?? '',
+      row.receiptDate ?? '',
+      row.receiptDocument ?? '',
+      costSourceLabel(row.costSource),
+      row.unitCost ?? '',
+      row.subtotalCost ?? row.knownSubtotalCost,
+      row.isPartial ? 'Parcial' : 'Completo',
+      row.warning ?? '',
+    ].map(value => String(value).replace(/[\t\r\n]+/g, ' ')).join('\t'))].join('\n')
+    try {
+      await navigator.clipboard.writeText(text)
+      setBomCopyFeedback('LdM copiada. Pégala directamente en Excel.')
+    } catch {
+      setBomCopyFeedback('El navegador no permitió copiar automáticamente. Usa Descargar Excel.')
+    }
   }
 
   return (
@@ -1333,7 +1620,7 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
               ) : null}
               <button
                 type="button"
-                disabled={!item || bomLoading || loading}
+                disabled={!item || bomLoading || bomCostLoading || loading}
                 onClick={handleBomToggle}
                 className={[
                   'inline-flex h-10 items-center gap-2 rounded-md border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60',
@@ -1385,8 +1672,15 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
             bomTree={bomTree}
             bomLoading={bomLoading}
             bomError={bomError}
-            onLoadChildren={loadBomChildren}
-            onNodeUpdated={updateBomNode}
+            structureDurationMs={bomStructureDurationMs}
+            costDurationMs={bomCostDurationMs}
+            costsAsOf={bomCostsAsOf}
+            costCacheTtlSeconds={bomCostCacheTtlSeconds}
+            costLoading={bomCostLoading}
+            exportLoading={bomExportLoading}
+            copyFeedback={bomCopyFeedback}
+            onDownload={() => void handleDownloadBom()}
+            onCopy={() => void handleCopyBom()}
           />
         ) : (
           <MasterDataPanel

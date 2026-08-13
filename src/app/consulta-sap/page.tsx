@@ -1,17 +1,8 @@
-import { requirePagePermission } from '@/utils/auth/access'
-import { ConsultaSapClient } from './ConsultaSapClient'
+import { permanentRedirect } from 'next/navigation'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 export default async function ConsultaSapPage() {
-  await requirePagePermission('module:consulta-sap')
-
-  return (
-    <ConsultaSapClient
-      initialCode=""
-      initialItem={null}
-      initialError={null}
-    />
-  )
+  permanentRedirect('/engineering/sap-consulting')
 }

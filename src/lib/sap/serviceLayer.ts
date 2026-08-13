@@ -454,6 +454,213 @@ export async function getSapItem(itemCode: string, select?: string[]): Promise<S
   return item
 }
 
+function readSapYesFlag(value: unknown): boolean {
+  return value === true || (typeof value === 'string' && ['tyes', 'yes', 'true', '1'].includes(value.trim().toLowerCase()))
+}
+
+export type SapInventoryGenEntryCostCandidate = {
+  documentEntry: number | null
+  documentNumber: number | null
+  documentDate: string | null
+  itemCode: string
+  warehouseCode: string
+  quantity: number | null
+  lineTotal: number | null
+  price: number | null
+  unitPrice: number | null
+  currency: string | null
+  comments: string | null
+  journalMemo: string | null
+  reference2: string | null
+  baseType: number | null
+  baseEntry: number | null
+  baseLine: number | null
+}
+
+export type SapWarehouseAverageCost = {
+  itemCode: string
+  warehouseCode: string
+  inventoryUom: string | null
+  standardAveragePrice: number | null
+}
+
+export type SapItemWarehouseAverage = {
+  itemCode: string
+  itemName: string | null
+  inventoryUom: string | null
+  warehouseCode: string
+  standardAveragePrice: number | null
+}
+
+export type SapPurchaseReceiptWarehouse = {
+  itemCode: string
+  warehouseCode: string
+  documentEntry: number | null
+  documentNumber: number | null
+  documentDate: string | null
+}
+
+function normalizeWarehouseCode(value: string, fieldName: string): string {
+  return normalizeRequiredCode(value, fieldName).toUpperCase()
+}
+
+function normalizeSapCostCandidateLimit(value: number | undefined): number {
+  const requested = value ?? 10
+  if (!Number.isInteger(requested) || requested < 1 || requested > 50) {
+    throw new SapServiceLayerError('limit must be an integer between 1 and 50', {
+      statusCode: 400,
+      sapCode: 'SAP_VALIDATION_ERROR',
+    })
+  }
+  return requested
+}
+
+/**
+ * Reads a bounded set of InventoryGenEntries for one item and warehouse. SAP
+ * exposes this read through QueryService_PostQuery, which is a POST-shaped
+ * query endpoint; this helper never creates or changes a SAP document.
+ *
+ * An InventoryGenEntry is not a purchase receipt. Callers must classify its
+ * purpose and preserve it as temporary evidence before using its cost.
+ */
+export async function getSapInventoryGenEntryCostCandidates(
+  itemCode: string,
+  options: { warehouseCode?: string; limit?: number; timeoutMs?: number } = {},
+): Promise<SapInventoryGenEntryCostCandidate[]> {
+  const normalizedItemCode = normalizeRequiredCode(itemCode, 'itemCode').toUpperCase()
+  const warehouseCode = normalizeWarehouseCode(options.warehouseCode ?? 'MP-01', 'warehouseCode')
+  const limit = normalizeSapCostCandidateLimit(options.limit)
+  const lineEntity = 'InventoryGenEntries/DocumentLines'
+  const queryOption = [
+    '$expand=InventoryGenEntries($select=DocEntry,DocNum,DocDate,Comments,JournalMemo,Reference2),InventoryGenEntries/DocumentLines($select=ItemCode,WarehouseCode,Quantity,LineTotal,Price,UnitPrice,Currency,BaseType,BaseEntry,BaseLine)',
+    `$filter=InventoryGenEntries/DocEntry eq ${lineEntity}/DocEntry and ${lineEntity}/ItemCode eq ${encodeODataString(normalizedItemCode)} and ${lineEntity}/WarehouseCode eq ${encodeODataString(warehouseCode)}`,
+    '$orderby=InventoryGenEntries/DocDate desc,InventoryGenEntries/DocEntry desc',
+    `$top=${limit}`,
+  ].join('&')
+  const response = await sapServiceLayerRequest<unknown>('/QueryService_PostQuery', {
+    method: 'POST',
+    body: {
+      QueryPath: '$crossjoin(InventoryGenEntries,InventoryGenEntries/DocumentLines)',
+      QueryOption: queryOption,
+    },
+    timeoutMs: options.timeoutMs,
+  })
+
+  return recordsFromCollectionResponse(response).flatMap((row): SapInventoryGenEntryCostCandidate[] => {
+    const header = isRecord(row.InventoryGenEntries) ? row.InventoryGenEntries : null
+    const line = isRecord(row[lineEntity]) ? row[lineEntity] : null
+    const candidateItemCode = readStringField(line, 'ItemCode')?.toUpperCase()
+    const candidateWarehouseCode = readStringField(line, 'WarehouseCode')?.toUpperCase()
+    if (candidateItemCode !== normalizedItemCode || candidateWarehouseCode !== warehouseCode) return []
+
+    return [{
+      documentEntry: readNumberField(header, 'DocEntry'),
+      documentNumber: readNumberField(header, 'DocNum'),
+      documentDate: readStringField(header, 'DocDate'),
+      itemCode: candidateItemCode,
+      warehouseCode: candidateWarehouseCode,
+      quantity: readNumberField(line, 'Quantity'),
+      lineTotal: readNumberField(line, 'LineTotal'),
+      price: readNumberField(line, 'Price'),
+      unitPrice: readNumberField(line, 'UnitPrice'),
+      currency: readStringField(line, 'Currency'),
+      comments: readStringField(header, 'Comments'),
+      journalMemo: readStringField(header, 'JournalMemo'),
+      reference2: readStringField(header, 'Reference2'),
+      baseType: readNumberField(line, 'BaseType'),
+      baseEntry: readNumberField(line, 'BaseEntry'),
+      baseLine: readNumberField(line, 'BaseLine'),
+    }]
+  })
+}
+
+/**
+ * Reads SAP's current standard/average value for one warehouse. It is a
+ * labelled fallback only; it intentionally does not claim to be a purchase
+ * receipt or the latest provider price.
+ */
+export async function getSapWarehouseAverageCost(
+  itemCode: string,
+  warehouseCode = 'MP-01',
+): Promise<SapWarehouseAverageCost> {
+  const normalizedItemCode = normalizeRequiredCode(itemCode, 'itemCode').toUpperCase()
+  const normalizedWarehouseCode = normalizeWarehouseCode(warehouseCode, 'warehouseCode')
+  const item = await getSapItem(normalizedItemCode)
+  const warehouseRows = Array.isArray(item.ItemWarehouseInfoCollection)
+    ? item.ItemWarehouseInfoCollection.filter(isRecord)
+    : []
+  const warehouse = warehouseRows.find(row => readStringField(row, 'WarehouseCode')?.toUpperCase() === normalizedWarehouseCode)
+
+  return {
+    itemCode: readStringField(item, 'ItemCode')?.toUpperCase() ?? normalizedItemCode,
+    warehouseCode: normalizedWarehouseCode,
+    inventoryUom: readStringField(item, 'InventoryUOM'),
+    standardAveragePrice: readNumberField(warehouse, 'StandardAveragePrice'),
+  }
+}
+
+/**
+ * Finds the warehouse used by the newest non-cancelled goods receipt for each
+ * requested item. This is evidence of replenishment only; callers must still
+ * read the current warehouse average separately instead of treating a receipt
+ * line price as the current negotiated cost.
+ */
+export async function getSapLatestPurchaseReceiptWarehouses(
+  itemCodes: string[],
+): Promise<Map<string, SapPurchaseReceiptWarehouse>> {
+  const normalizedCodes = [...new Set(itemCodes.map(code => normalizeRequiredCode(code, 'itemCode').toUpperCase()))]
+  if (normalizedCodes.length === 0) return new Map()
+
+  const latestByItem = new Map<string, SapPurchaseReceiptWarehouse>()
+  const lineEntity = 'PurchaseDeliveryNotes/DocumentLines'
+  const chunkSize = 25
+
+  for (let index = 0; index < normalizedCodes.length; index += chunkSize) {
+    const chunk = normalizedCodes.slice(index, index + chunkSize)
+    const itemFilter = chunk.map(code => `${lineEntity}/ItemCode eq ${encodeODataString(code)}`).join(' or ')
+    const queryOption = [
+      '$expand=PurchaseDeliveryNotes($select=DocEntry,DocNum,DocDate,Canceled),PurchaseDeliveryNotes/DocumentLines($select=ItemCode,WarehouseCode,Quantity,InvQty)',
+      `$filter=PurchaseDeliveryNotes/DocEntry eq ${lineEntity}/DocEntry and (${itemFilter})`,
+      '$orderby=PurchaseDeliveryNotes/DocDate desc,PurchaseDeliveryNotes/DocEntry desc',
+      '$top=1000',
+    ].join('&')
+    const response: unknown = await sapServiceLayerRequest<unknown>('/QueryService_PostQuery', {
+      method: 'POST',
+      body: {
+        QueryPath: '$crossjoin(PurchaseDeliveryNotes,PurchaseDeliveryNotes/DocumentLines)',
+        QueryOption: queryOption,
+      },
+    })
+
+    for (const row of recordsFromCollectionResponse(response)) {
+      const header = isRecord(row.PurchaseDeliveryNotes) ? row.PurchaseDeliveryNotes : null
+      const line = isRecord(row[lineEntity]) ? row[lineEntity] : null
+      if (!header || !line || readSapYesFlag(header.Canceled)) continue
+
+      const itemCode = readStringField(line, 'ItemCode')?.toUpperCase()
+      const warehouseCode = readStringField(line, 'WarehouseCode')?.toUpperCase()
+      const receivedQuantity = readNumberField(line, 'InvQty') ?? readNumberField(line, 'Quantity')
+      if (!itemCode || !warehouseCode || receivedQuantity === null || receivedQuantity <= 0) continue
+
+      const candidate: SapPurchaseReceiptWarehouse = {
+        itemCode,
+        warehouseCode,
+        documentEntry: readNumberField(header, 'DocEntry'),
+        documentNumber: readNumberField(header, 'DocNum'),
+        documentDate: readStringField(header, 'DocDate'),
+      }
+      const current = latestByItem.get(itemCode)
+      const candidateTime = candidate.documentDate ? Date.parse(candidate.documentDate) : Number.NEGATIVE_INFINITY
+      const currentTime = current?.documentDate ? Date.parse(current.documentDate) : Number.NEGATIVE_INFINITY
+      if (!current || candidateTime > currentTime || (candidateTime === currentTime && (candidate.documentEntry ?? 0) > (current.documentEntry ?? 0))) {
+        latestByItem.set(itemCode, candidate)
+      }
+    }
+  }
+
+  return latestByItem
+}
+
 function recordsFromSapCollection(value: unknown): SapEntityPayload[] {
   return isRecord(value) && Array.isArray(value.value)
     ? value.value.filter(isRecord)
@@ -709,6 +916,89 @@ export async function getSapItemsByCodes(
   }
 
   return items
+}
+
+/**
+ * Reads the minimal item master data required to cost a whole LdM from a
+ * warehouse average, avoiding one full item request per component.
+ */
+export async function getSapItemsWithWarehouseAverages(itemCodes: string[]): Promise<Map<string, SapEntityPayload>> {
+  const normalizedCodes = [...new Set(itemCodes.map(code => normalizeRequiredCode(code, 'itemCode').toUpperCase()))]
+  if (normalizedCodes.length === 0) return new Map()
+
+  const chunks = Array.from({ length: Math.ceil(normalizedCodes.length / 20) }, (_, index) => normalizedCodes.slice(index * 20, index * 20 + 20))
+  const pages = await Promise.all(chunks.map(async chunk => {
+    const filter = chunk.map(code => `ItemCode eq ${encodeODataString(code)}`).join(' or ')
+    const queryOption = [
+      '$select=ItemCode,ItemName,InventoryUOM',
+      '$expand=ItemWarehouseInfoCollection($select=WarehouseCode,StandardAveragePrice)',
+      `$filter=(${filter})`,
+      `$top=${chunk.length}`,
+    ].join('&')
+    const response = await sapServiceLayerRequest<unknown>(`/Items?${queryOption}`)
+    return recordsFromSapCollection(response)
+  }))
+
+  const items = new Map<string, SapEntityPayload>()
+  for (const item of pages.flat()) {
+    const itemCode = readStringField(item, 'ItemCode')?.toUpperCase()
+    if (itemCode && normalizedCodes.includes(itemCode)) items.set(itemCode, item)
+  }
+  return items
+}
+
+/**
+ * Reads MP-01 averages for a bounded set of items through QueryService. Even
+ * though Service Layer exposes this query endpoint as POST, it only evaluates
+ * the supplied OData query and never creates or changes a SAP document.
+ */
+export async function getSapItemsWithWarehouseAverage(
+  itemCodes: string[],
+  warehouseCode = 'MP-01',
+): Promise<Map<string, SapItemWarehouseAverage>> {
+  const normalizedCodes = [...new Set(itemCodes.map(code => normalizeRequiredCode(code, 'itemCode').toUpperCase()))]
+  const normalizedWarehouseCode = normalizeWarehouseCode(warehouseCode, 'warehouseCode')
+  if (normalizedCodes.length === 0) return new Map()
+
+  const chunks = Array.from({ length: Math.ceil(normalizedCodes.length / 20) }, (_, index) => normalizedCodes.slice(index * 20, index * 20 + 20))
+  const pages = await Promise.all(chunks.map(async chunk => {
+    const itemFilter = chunk.map(code => `Items/ItemCode eq ${encodeODataString(code)}`).join(' or ')
+    const warehouseEntity = 'Items/ItemWarehouseInfoCollection'
+    const queryOption = [
+      '$expand=Items($select=ItemCode,ItemName,InventoryUOM),Items/ItemWarehouseInfoCollection($select=ItemCode,WarehouseCode,StandardAveragePrice)',
+      `$filter=Items/ItemCode eq ${warehouseEntity}/ItemCode and ${warehouseEntity}/WarehouseCode eq ${encodeODataString(normalizedWarehouseCode)} and (${itemFilter})`,
+      '$orderby=Items/ItemCode asc',
+      `$top=${chunk.length}`,
+    ].join('&')
+    const response = await sapServiceLayerRequest<unknown>('/QueryService_PostQuery', {
+      method: 'POST',
+      body: {
+        QueryPath: '$crossjoin(Items,Items/ItemWarehouseInfoCollection)',
+        QueryOption: queryOption,
+      },
+    })
+    return recordsFromCollectionResponse(response)
+  }))
+
+  const averages = new Map<string, SapItemWarehouseAverage>()
+  for (const row of pages.flat()) {
+    const item = isRecord(row.Items) ? row.Items : null
+    const warehouse = isRecord(row['Items/ItemWarehouseInfoCollection']) ? row['Items/ItemWarehouseInfoCollection'] : null
+    const itemCode = readStringField(item, 'ItemCode')?.toUpperCase()
+    const rowWarehouseCode = readStringField(warehouse, 'WarehouseCode')?.toUpperCase()
+    const warehouseItemCode = readStringField(warehouse, 'ItemCode')?.toUpperCase()
+    if (!itemCode || itemCode !== warehouseItemCode || !normalizedCodes.includes(itemCode) || rowWarehouseCode !== normalizedWarehouseCode) continue
+
+    averages.set(itemCode, {
+      itemCode,
+      itemName: readStringField(item, 'ItemName'),
+      inventoryUom: readStringField(item, 'InventoryUOM'),
+      warehouseCode: rowWarehouseCode,
+      standardAveragePrice: readNumberField(warehouse, 'StandardAveragePrice'),
+    })
+  }
+
+  return averages
 }
 
 export async function getSapItemsByPrefix(
@@ -1367,14 +1657,16 @@ async function resolveBomLineInventoryUoms(lines: BomLine[]): Promise<Map<string
   return uoms
 }
 
-export async function getSapItemBom(itemCode: string): Promise<{
+export type SapItemBom = {
   treeCode: string
   productDescription: string | null
   treeType: string | null
   warehouse: string | null
   quantity: number
   lines: BomLine[]
-} | null> {
+}
+
+export async function getSapItemBom(itemCode: string): Promise<SapItemBom | null> {
   const normalizedCode = normalizeRequiredCode(itemCode, 'itemCode')
   try {
     const tree = await sapServiceLayerRequest<Record<string, unknown>>(
@@ -1395,6 +1687,99 @@ export async function getSapItemBom(itemCode: string): Promise<{
     }
     throw error
   }
+}
+
+/**
+ * Reads multiple complete ProductTrees through one QueryService request per
+ * small batch. QueryService is POST-shaped but read-only: it only evaluates
+ * the OData crossjoin and never changes SAP master data or documents.
+ */
+export async function getSapItemBomsByCodes(itemCodes: string[]): Promise<Map<string, SapItemBom>> {
+  const normalizedCodes = [...new Set(itemCodes.map(code => normalizeRequiredCode(code, 'itemCode').toUpperCase()))]
+  if (normalizedCodes.length === 0) return new Map()
+
+  const chunks = Array.from({ length: Math.ceil(normalizedCodes.length / 20) }, (_, index) => normalizedCodes.slice(index * 20, index * 20 + 20))
+  const pages = await Promise.all(chunks.map(async chunk => {
+    const treeFilter = chunk.map(code => `ProductTrees/TreeCode eq ${encodeODataString(code)}`).join(' or ')
+    const lineEntity = 'ProductTrees/ProductTreeLines'
+    const queryOption = [
+      '$expand=ProductTrees($select=TreeCode,ProductDescription,TreeType,Warehouse,Quantity),ProductTrees/ProductTreeLines($select=ParentItem,ChildNum,ItemCode,ItemName,Quantity,Warehouse,IssueMethod,InventoryUOM)',
+      `$filter=ProductTrees/TreeCode eq ${lineEntity}/ParentItem and (${treeFilter})`,
+      '$orderby=ProductTrees/TreeCode asc,ProductTrees/ProductTreeLines/ChildNum asc',
+      '$top=1000',
+    ].join('&')
+    const response = await sapServiceLayerRequest<unknown>('/QueryService_PostQuery', {
+      method: 'POST',
+      body: {
+        QueryPath: '$crossjoin(ProductTrees,ProductTrees/ProductTreeLines)',
+        QueryOption: queryOption,
+      },
+    })
+    return recordsFromCollectionResponse(response)
+  }))
+
+  const boms = new Map<string, SapItemBom>()
+  for (const row of pages.flat()) {
+    const tree = isRecord(row.ProductTrees) ? row.ProductTrees : null
+    const line = isRecord(row['ProductTrees/ProductTreeLines']) ? row['ProductTrees/ProductTreeLines'] : null
+    const treeCode = readStringField(tree, 'TreeCode')?.toUpperCase()
+    const parentItem = readStringField(line, 'ParentItem')?.toUpperCase()
+    const itemCode = readStringField(line, 'ItemCode')?.toUpperCase()
+    const childNum = readNumberField(line, 'ChildNum')
+    if (!treeCode || parentItem !== treeCode || !normalizedCodes.includes(treeCode) || !itemCode || childNum === null || !Number.isInteger(childNum) || childNum < 0) continue
+
+    const bom = boms.get(treeCode) ?? {
+      treeCode,
+      productDescription: readStringField(tree, 'ProductDescription'),
+      treeType: readStringField(tree, 'TreeType'),
+      warehouse: readStringField(tree, 'Warehouse'),
+      quantity: readNumberField(tree, 'Quantity') ?? 1,
+      lines: [],
+    }
+    bom.lines.push({
+      ItemCode: itemCode,
+      ItemName: readStringField(line, 'ItemName') ?? '',
+      Quantity: readNumberField(line, 'Quantity') ?? 0,
+      Price: 0,
+      Currency: '',
+      IssueMethod: readStringField(line, 'IssueMethod') ?? '',
+      InventoryUOM: readStringField(line, 'InventoryUOM'),
+      ChildNum: childNum,
+      ParentItem: parentItem,
+      Warehouse: readStringField(line, 'Warehouse'),
+      Comment: null,
+    })
+    boms.set(treeCode, bom)
+  }
+
+  for (const bom of boms.values()) bom.lines.sort((left, right) => left.ChildNum - right.ChildNum)
+  return boms
+}
+
+/**
+ * Resolves only the item codes that own a ProductTree. This avoids issuing a
+ * slow 404 request to ProductTrees for every leaf of a costed LdM.
+ */
+export async function getSapItemBomCodes(itemCodes: string[]): Promise<Set<string>> {
+  const normalizedCodes = [...new Set(itemCodes.map(code => normalizeRequiredCode(code, 'itemCode').toUpperCase()))]
+  if (normalizedCodes.length === 0) return new Set()
+
+  const chunks = Array.from({ length: Math.ceil(normalizedCodes.length / 20) }, (_, index) => normalizedCodes.slice(index * 20, index * 20 + 20))
+  const pages = await Promise.all(chunks.map(async chunk => {
+    const filter = chunk.map(code => `TreeCode eq ${encodeODataString(code)}`).join(' or ')
+    const query = buildCollectionQuery({
+      select: ['TreeCode'],
+      filter: `(${filter})`,
+      top: chunk.length,
+    })
+    const response = await sapServiceLayerRequest<unknown>(`/ProductTrees${query}`)
+    return recordsFromSapCollection(response).flatMap(row => {
+      const treeCode = readStringField(row, 'TreeCode')?.toUpperCase()
+      return treeCode && chunk.includes(treeCode) ? [treeCode] : []
+    })
+  }))
+
+  return new Set(pages.flat())
 }
 
 export function productTreeLineFingerprint(line: BomLine): SapProductTreeLineFingerprint {

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { apiGuard } from '@/utils/auth/access'
-import { getSapItem, SapServiceLayerError } from '@/lib/sap/serviceLayer'
+import { getSapActiveWarehouses, getSapItem, SapEntityPayload, SapServiceLayerError } from '@/lib/sap/serviceLayer'
 import { sapApiErrorResponse } from '../../_utils'
 
 export const runtime = 'nodejs'
@@ -26,6 +26,33 @@ function parseSelectParam(request: Request): string[] | undefined {
   return fields.length > 0 ? fields : undefined
 }
 
+function shouldIncludeWarehouseNames(request: Request): boolean {
+  return new URL(request.url).searchParams.get('includeWarehouseNames') === 'true'
+}
+
+function withWarehouseNames(item: SapEntityPayload, warehouses: SapEntityPayload[]): SapEntityPayload {
+  if (!Array.isArray(item.ItemWarehouseInfoCollection)) return item
+
+  const namesByCode = new Map(warehouses.flatMap(warehouse => {
+    const code = typeof warehouse.WarehouseCode === 'string' ? warehouse.WarehouseCode.trim().toUpperCase() : ''
+    const name = typeof warehouse.WarehouseName === 'string' ? warehouse.WarehouseName.trim() : ''
+    return code && name ? [[code, name] as const] : []
+  }))
+
+  if (namesByCode.size === 0) return item
+
+  return {
+    ...item,
+    ItemWarehouseInfoCollection: item.ItemWarehouseInfoCollection.map(entry => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+      const warehouse = entry as SapEntityPayload
+      const code = typeof warehouse.WarehouseCode === 'string' ? warehouse.WarehouseCode.trim().toUpperCase() : ''
+      const name = code ? namesByCode.get(code) : undefined
+      return name ? { ...warehouse, WarehouseName: name } : warehouse
+    }),
+  }
+}
+
 export async function GET(
   request: Request,
   { params: paramsPromise }: { params: Promise<{ itemCode: string }> }
@@ -36,7 +63,10 @@ export async function GET(
   try {
     const params = await paramsPromise
     const item = await getSapItem(params.itemCode, parseSelectParam(request))
-    return NextResponse.json({ success: true, item })
+    const warehouses = shouldIncludeWarehouseNames(request) && Array.isArray(item.ItemWarehouseInfoCollection)
+      ? await getSapActiveWarehouses()
+      : []
+    return NextResponse.json({ success: true, item: withWarehouseNames(item, warehouses) })
   } catch (error: unknown) {
     return sapApiErrorResponse(error)
   }
