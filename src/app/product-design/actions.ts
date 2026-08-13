@@ -42,6 +42,10 @@ import {
   type CabinetRouteStatus,
 } from '@/lib/routeSheets/cabinets'
 
+export async function updateSapItemStatusAction(input: SapStatusUpdateInput): Promise<SapStatusUpdateResult> {
+  return updateEngineeringSapItemStatusAction(input)
+}
+
 export type CabinetBomReferenceSummary = {
   reference_id: string
   family_code: string | null
@@ -93,13 +97,6 @@ export type CabinetRouteWorkspace = {
   error: string | null
 }
 
-export type SapStatusUpdateInput = {
-  itemCode: string
-  targetStatus: SapItemTargetStatus
-  dryRun: boolean
-  confirmationText: string
-}
-
 type SkuScope = {
   referenceId: string
   referenceCode: string | null
@@ -112,22 +109,12 @@ type CabinetBomReadResult = {
   warning: string | null
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {}
-}
-
 function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
 function normalizeSkuInput(value: string): string {
   return value.trim().toUpperCase()
-}
-
-function confirmationFor(input: SapStatusUpdateInput): string {
-  return statusConfirmation(input.itemCode, input.targetStatus)
 }
 
 async function getCabinetRouteBomLines(skuComplete: string): Promise<CabinetBomReadResult> {
@@ -693,100 +680,6 @@ export async function saveRouteDocumentAction(input: {
     return { success: true, message: 'Hoja de ruta guardada.' }
   } catch (error) {
     return { success: false, message: error instanceof Error ? error.message : 'No se pudo guardar hoja de ruta' }
-  }
-}
-
-export async function updateSapItemStatusAction(input: SapStatusUpdateInput): Promise<{
-  success: boolean
-  dryRun: boolean
-  confirmationRequired: string
-  message: string
-  payload: SapEntityPayload
-  before: ReturnType<typeof readSapItemLifecycleState> | null
-  after: ReturnType<typeof readSapItemLifecycleState> | null
-  supabaseMirror: { found: boolean; status: string | null }
-}> {
-  const access = await assertPermission(SAP_CODE_MANAGEMENT_PERMISSION)
-  const itemCode = normalizeSkuInput(input.itemCode)
-  const payload = sapPayloadForTargetStatus(input.targetStatus)
-  const expectedConfirmation = confirmationFor(input)
-  let sapResponse: unknown = null
-  let success = false
-  let errorMessage: string | null = null
-  let beforeState: ReturnType<typeof readSapItemLifecycleState> | null = null
-  let afterState: ReturnType<typeof readSapItemLifecycleState> | null = null
-  let supabaseMirror: { found: boolean; status: string | null } = { found: false, status: null }
-
-  try {
-    const before = await getSapItem(itemCode, ['ItemCode', 'ItemName', 'Valid', 'Frozen'])
-    beforeState = readSapItemLifecycleState(before)
-
-    if (!input.dryRun && input.confirmationText.trim() !== expectedConfirmation) {
-      throw new Error(`Confirmación inválida. Escribe exactamente: ${expectedConfirmation}`)
-    }
-
-    if (!input.dryRun) {
-      const current = await getSapItem(itemCode, ['ItemCode', 'ItemName', 'Valid', 'Frozen'])
-      beforeState = readSapItemLifecycleState(current)
-      sapResponse = await updateSapItem(itemCode, payload)
-      const after = await getSapItem(itemCode, ['ItemCode', 'ItemName', 'Valid', 'Frozen'])
-      afterState = readSapItemLifecycleState(after)
-      if (!isSapLifecycleState(afterState, input.targetStatus)) {
-        throw new Error(`SAP no confirmÃ³ el estado ${input.targetStatus} para ${itemCode}.`)
-      }
-      const { error: mirrorError } = await supabaseTable('product_skus')
-        .update({ status: input.targetStatus })
-        .eq('sku_complete', itemCode)
-      if (mirrorError) throw new Error(`SAP quedÃ³ actualizado, pero no se pudo sincronizar el SKU espejo: ${mirrorError.message}`)
-      const mirrorRows = await dbQuery(
-        `SELECT sku_complete, status FROM public.product_skus WHERE sku_complete = $1 LIMIT 1`,
-        [itemCode],
-      )
-      supabaseMirror = {
-        found: mirrorRows.length > 0,
-        status: readString(mirrorRows[0]?.status),
-      }
-    }
-
-    success = true
-    return {
-      success: true,
-      dryRun: input.dryRun,
-      confirmationRequired: expectedConfirmation,
-      message: input.dryRun
-        ? `Dry-run listo. SAP actual: Valid=${String(beforeState?.valid)} Frozen=${String(beforeState?.frozen)}.`
-        : `${itemCode} actualizado y verificado en SAP${supabaseMirror.found ? ' y en su SKU espejo.' : '; no existe SKU espejo en Supabase.'}`,
-      payload,
-      before: beforeState,
-      after: afterState,
-      supabaseMirror,
-    }
-  } catch (error) {
-    errorMessage = error instanceof Error ? error.message : 'No se pudo actualizar estado SAP'
-    return {
-      success: false,
-      dryRun: input.dryRun,
-      confirmationRequired: expectedConfirmation,
-      message: errorMessage,
-      payload,
-      before: beforeState,
-      after: afterState,
-      supabaseMirror,
-    }
-  } finally {
-    await supabaseTable('sap_operation_logs')
-      .insert({
-        operation_type: 'item_status_update',
-        item_code: itemCode,
-        requested_status: input.targetStatus,
-        dry_run: input.dryRun,
-        confirmation_text: input.confirmationText,
-        sap_payload: payload,
-        sap_response: asRecord(sapResponse),
-        success,
-        error_message: errorMessage,
-        created_by: access.user?.id ?? null,
-      })
   }
 }
 

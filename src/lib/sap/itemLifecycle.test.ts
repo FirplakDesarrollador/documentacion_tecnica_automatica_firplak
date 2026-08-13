@@ -3,12 +3,9 @@ import test from 'node:test'
 
 import {
   classifySapDeletionBlockReason,
-  createConfirmation,
-  deleteConfirmation,
   isSapLifecycleState,
   readSapItemLifecycleState,
   sapPayloadForTargetStatus,
-  statusConfirmation,
 } from './itemLifecycle'
 
 test('reads SAP active and frozen flags into the lifecycle state', () => {
@@ -32,12 +29,6 @@ test('reads SAP active and frozen flags into the lifecycle state', () => {
 test('builds the exact status payloads required by SAP', () => {
   assert.deepEqual(sapPayloadForTargetStatus('ACTIVO'), { Valid: 'tYES', Frozen: 'tNO' })
   assert.deepEqual(sapPayloadForTargetStatus('INACTIVO'), { Valid: 'tNO', Frozen: 'tYES' })
-})
-
-test('builds textual confirmations from the final ItemCode', () => {
-  assert.equal(statusConfirmation(' sku-001 ', 'INACTIVO'), 'ACTUALIZAR SKU-001 INACTIVO')
-  assert.equal(deleteConfirmation(' sku-001 '), 'ELIMINAR SAP SKU-001')
-  assert.equal(createConfirmation(' sku-001 '), 'CREAR SAP SKU-001')
 })
 
 test('classifies deletion blocks from SAP association messages', () => {

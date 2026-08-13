@@ -45,18 +45,6 @@ export function isSapLifecycleState(state: SapItemLifecycleState, targetStatus: 
     : state.valid === false && state.frozen === true
 }
 
-export function statusConfirmation(itemCode: string, targetStatus: SapItemTargetStatus): string {
-  return `ACTUALIZAR ${itemCode.trim().toUpperCase()} ${targetStatus}`
-}
-
-export function deleteConfirmation(itemCode: string): string {
-  return `ELIMINAR SAP ${itemCode.trim().toUpperCase()}`
-}
-
-export function createConfirmation(itemCode: string): string {
-  return `CREAR SAP ${itemCode.trim().toUpperCase()}`
-}
-
 export function classifySapDeletionBlockReason(message: string): SapDeletionBlockReason {
   const normalized = message.trim().toLowerCase()
   if (/(producttree|bom|lista de materiales|ldm|estructura)/.test(normalized)) return 'SUPERIOR_BOM'
