@@ -248,10 +248,13 @@ export default function MassEditClient() {
       }
       setVersions(resultData);
       setSelectedIds([]);
+      setLoading(false);
+      return true;
     } else {
       toast.error('Error al buscar versiones: ' + (res as any).error);
+      setLoading(false);
+      return false;
     }
-    setLoading(false);
   };
 
   const handleSelectAll = (checked: boolean) => {
@@ -348,9 +351,10 @@ export default function MassEditClient() {
         setExecutionProgress({ processed: Math.min(start + batchIds.length, total), total });
       }
 
-      toast.success('Versiones actualizadas con éxito');
       setShowPreview(false);
-      handleSearch();
+      const rereadSucceeded = await handleSearch();
+      if (!rereadSucceeded) throw new Error('La actualización se guardó, pero no se pudo verificar al recargar los resultados');
+      toast.success('Versiones actualizadas y verificadas');
     } catch (e) {
       toast.error('Error ejecutando actualización: ' + (e instanceof Error ? e.message : String(e) || 'Error desconocido'));
     } finally {

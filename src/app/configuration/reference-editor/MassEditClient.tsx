@@ -400,10 +400,13 @@ export default function MassEditClient() {
       setSelectedIds([]);
       setPackageBoxCountInput('');
       setPackageWeightInputs([]);
+      setLoading(false);
+      return true;
     } else {
       toast.error('Error al buscar referencias: ' + res.error);
+      setLoading(false);
+      return false;
     }
-    setLoading(false);
   };
 
   const handleSelectAll = (checked: boolean) => {
@@ -508,9 +511,10 @@ export default function MassEditClient() {
         setExecutionProgress({ processed: Math.min(start + batchIds.length, total), total });
       }
 
-      toast.success('Referencias actualizadas con éxito');
       setShowPreview(false);
-      handleSearch();
+      const rereadSucceeded = await handleSearch();
+      if (!rereadSucceeded) throw new Error('La actualización se guardó, pero no se pudo verificar al recargar los resultados');
+      toast.success('Referencias actualizadas y verificadas');
       // To keep schemas updated in case we bypassed validation (not possible directly, but good to refresh)
       const schemaRes = await getFamiliesWithSchema();
       if (schemaRes.success) setSchemasData((schemaRes.data || []) as SchemaData[]);

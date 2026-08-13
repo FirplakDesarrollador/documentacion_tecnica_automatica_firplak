@@ -238,15 +238,18 @@ export default function MassEditClient() {
       }
       setSkus(resultData);
       setSelectedIds([]);
+      setLoading(false);
+      return true;
     } else {
       toast.error('Error al buscar SKUs: ' + (res as any).error);
+      setLoading(false);
+      return false;
     }
-    setLoading(false);
   };
 
   const handleSelectAll = (checked: boolean) => {
-    const exportableIds = skus.filter(s => s.is_exportable !== false).map(s => s.id);
-    if (checked) setSelectedIds(exportableIds);
+    const selectableIds = skus.map(s => s.id);
+    if (checked) setSelectedIds(selectableIds);
     else setSelectedIds([]);
   };
 
@@ -338,9 +341,10 @@ export default function MassEditClient() {
         setExecutionProgress({ processed: Math.min(start + batchIds.length, total), total });
       }
 
-      toast.success('SKUs actualizados con éxito');
       setShowPreview(false);
-      handleSearch();
+      const rereadSucceeded = await handleSearch();
+      if (!rereadSucceeded) throw new Error('La actualización se guardó, pero no se pudo verificar al recargar los resultados');
+      toast.success('SKUs actualizados y verificados');
     } catch (e) {
       toast.error('Error ejecutando actualización: ' + (e instanceof Error ? e.message : String(e) || 'Error desconocido'));
     } finally {
@@ -513,7 +517,7 @@ export default function MassEditClient() {
                   <th className="p-2 border-b w-10 text-center">
                     <input 
                       type="checkbox" 
-                      checked={skus.length > 0 && skus.filter(s => s.is_exportable !== false).every(s => selectedIds.includes(s.id))}
+                      checked={skus.length > 0 && skus.every(s => selectedIds.includes(s.id))}
                       onChange={(e) => handleSelectAll(e.target.checked)}
                       className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
                     />
@@ -549,7 +553,6 @@ export default function MassEditClient() {
                           type="checkbox" 
                           checked={selectedIds.includes(s.id)}
                           onChange={(e) => handleSelectRef(s.id, e.target.checked)}
-                          disabled={s.is_exportable === false}
                           className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
                         />
                       </td>
@@ -645,7 +648,16 @@ export default function MassEditClient() {
                   </select>
                 )}
                 {/* Custom input */}
-                {(customValueMode || editType === 'normal') && (
+                {editField === 'status' && editType === 'normal' ? (
+                  <select
+                    value={editValue}
+                    onChange={e => setEditValue(e.target.value)}
+                    className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white"
+                  >
+                    <option value="ACTIVO">ACTIVO</option>
+                    <option value="INACTIVO">INACTIVO</option>
+                  </select>
+                ) : (customValueMode || editType === 'normal') && (
                   <input
                     type="text"
                     value={editValue}
@@ -653,9 +665,6 @@ export default function MassEditClient() {
                     placeholder={currentFieldDef?.type === 'number' ? 'Ingresa un número...' : 'Escribe el nuevo valor...'}
                     className="w-full p-2 border rounded-md text-sm outline-none focus:ring-2 bg-white"
                   />
-                )}
-                {editField === 'status' && editType === 'normal' && (
-                  <p className="text-[11px] text-slate-500 mt-1">Valores: ACTIVO, INACTIVO</p>
                 )}
             </div>
 
