@@ -454,6 +454,39 @@ export async function getSapItem(itemCode: string, select?: string[]): Promise<S
   return item
 }
 
+export type SapItemGroup = {
+  groupCode: number
+  groupName: string
+}
+
+/** Reads the SAP article-group master used to name product families. */
+export async function getSapItemGroup(groupCode: number): Promise<SapItemGroup> {
+  if (!Number.isSafeInteger(groupCode) || groupCode < 0) {
+    throw new SapServiceLayerError('groupCode must be a non-negative integer', {
+      statusCode: 400,
+      sapCode: 'SAP_VALIDATION_ERROR',
+    })
+  }
+  // SAP Business One exposes the OITB key as `Number` in Service Layer,
+  // unlike the `ItemsGroupCode` field on an item master record.
+  const group = await sapServiceLayerRequest<unknown>(`/ItemGroups(${groupCode})?$select=Number,GroupName`)
+  if (!isRecord(group)) {
+    throw new SapServiceLayerError('SAP returned an invalid item-group payload', {
+      statusCode: 502,
+      sapCode: 'SAP_INVALID_ITEM_GROUP_PAYLOAD',
+    })
+  }
+  const resolvedGroupCode = readNumberField(group, 'Number') ?? readNumberField(group, 'GroupCode')
+  const groupName = readStringField(group, 'GroupName')
+  if (resolvedGroupCode === null || !groupName) {
+    throw new SapServiceLayerError('SAP item group is missing GroupCode or GroupName', {
+      statusCode: 502,
+      sapCode: 'SAP_INVALID_ITEM_GROUP_PAYLOAD',
+    })
+  }
+  return { groupCode: resolvedGroupCode, groupName }
+}
+
 function readSapYesFlag(value: unknown): boolean {
   return value === true || (typeof value === 'string' && ['tyes', 'yes', 'true', '1'].includes(value.trim().toLowerCase()))
 }
@@ -1042,7 +1075,7 @@ export type SapItemSearchResult = {
   lastItemCode: string | null
 }
 
-const SAP_ITEM_SEARCH_SELECT = ['ItemCode', 'ItemName']
+const SAP_ITEM_SEARCH_SELECT = ['ItemCode', 'ItemName', 'ItemsGroupCode']
 const SAP_ITEM_SEARCH_PAGE_SIZE = 20
 
 function tokenizeItemDescriptionQuery(query: string): string[] {
