@@ -16,6 +16,7 @@ import {
 } from './costedBom'
 
 export const SAP_MP01_COST_CACHE_SECONDS = 60 * 60 * 48
+export const SAP_MP01_COST_CACHE_TAG = 'consulta-sap-mp01-costs'
 
 type ExpandedBomNode = {
   itemCode: string
@@ -68,25 +69,30 @@ function normalizeItemCodes(itemCodes: string[]): string[] {
   return [...new Set(itemCodes.map(code => code.trim().toUpperCase()).filter(Boolean))].toSorted()
 }
 
+async function loadMp01CostSnapshot(itemCodesKey: string): Promise<CachedMp01CostSnapshot> {
+  const itemCodes = itemCodesKey.split('|').filter(Boolean)
+  const [averages, itemMasters] = await Promise.all([
+    getSapItemsWithWarehouseAverage(itemCodes, 'MP-01'),
+    getSapItemsByCodes(itemCodes, ['ItemCode', 'ItemName', 'InventoryUOM']),
+  ])
+  return {
+    capturedAt: new Date().toISOString(),
+    averages: [...averages.values()],
+    itemMasters: [...itemMasters].map(([itemCode, item]) => ({
+      itemCode,
+      itemName: textValue(item.ItemName),
+      inventoryUom: textValue(item.InventoryUOM),
+    })),
+  }
+}
+
 const getCachedMp01CostSnapshot = unstable_cache(
-  async (itemCodesKey: string): Promise<CachedMp01CostSnapshot> => {
-    const itemCodes = itemCodesKey.split('|').filter(Boolean)
-    const [averages, itemMasters] = await Promise.all([
-      getSapItemsWithWarehouseAverage(itemCodes, 'MP-01'),
-      getSapItemsByCodes(itemCodes, ['ItemCode', 'ItemName', 'InventoryUOM']),
-    ])
-    return {
-      capturedAt: new Date().toISOString(),
-      averages: [...averages.values()],
-      itemMasters: [...itemMasters].map(([itemCode, item]) => ({
-        itemCode,
-        itemName: textValue(item.ItemName),
-        inventoryUom: textValue(item.InventoryUOM),
-      })),
-    }
-  },
+  loadMp01CostSnapshot,
   ['consulta-sap-mp01-costs-v3'],
-  { revalidate: SAP_MP01_COST_CACHE_SECONDS },
+  {
+    revalidate: SAP_MP01_COST_CACHE_SECONDS,
+    tags: [SAP_MP01_COST_CACHE_TAG],
+  },
 )
 
 async function loadFullBomHierarchy(rootItemCode: string): Promise<ExpandedBomNode | null> {
@@ -225,7 +231,10 @@ function resolveDirectCost(
   }
 }
 
-export async function getSapCostedBom(itemCode: string): Promise<SapCostedBomResult | null> {
+export async function getSapCostedBom(
+  itemCode: string,
+  options: { refreshCosts?: boolean } = {},
+): Promise<SapCostedBomResult | null> {
   const totalStartedAt = performance.now()
   const hierarchyStartedAt = performance.now()
   const root = await loadFullBomHierarchy(itemCode)
@@ -235,7 +244,9 @@ export async function getSapCostedBom(itemCode: string): Promise<SapCostedBomRes
   const itemCodes = normalizeItemCodes(collectNodes(root).map(node => node.itemCode))
   const itemCodesKey = itemCodes.join('|')
   const costSnapshotStartedAt = performance.now()
-  const costSnapshot = await getCachedMp01CostSnapshot(itemCodesKey)
+  const costSnapshot = options.refreshCosts
+    ? await loadMp01CostSnapshot(itemCodesKey)
+    : await getCachedMp01CostSnapshot(itemCodesKey)
   const costSnapshotMs = Math.round(performance.now() - costSnapshotStartedAt)
   const itemMasterByCode = new Map(costSnapshot.itemMasters.map(item => [item.itemCode, item]))
   const averagesByCode = new Map(costSnapshot.averages.map(average => [average.itemCode, average]))
