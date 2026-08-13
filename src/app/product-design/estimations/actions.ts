@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 
 import {
   getSapItem,
+  getSapItemGroup,
   getSapItemBomChildren,
   getSapItemBomTree,
   getSapWarehouseAverageCost,
@@ -28,6 +29,9 @@ import {
   deriveEstimationSalesItemPrefix,
   proposeEstimationReference,
 } from '@/lib/productDesign/estimationReferenceProposal'
+import { familyNameFromSapItemGroup, inferFamilyFromSapDescriptions } from '@/lib/productDesign/familyInference'
+import { evaluateEstimationBomCosting, type EstimationBomCostLine } from '@/lib/productDesign/estimationBomCosting'
+import { proposeGelcoatReplacements, sapItemColorCode } from '@/lib/productDesign/gelcoatAlignment'
 import { assertPermission, type AccessContext } from '@/utils/auth/access'
 
 const ESTIMATION_STATUSES = ['draft', 'active', 'closed', 'archived'] as const
@@ -41,6 +45,12 @@ const ESTIMATION_COST_CURRENCY = 'COP'
 type RawRow = Record<string, unknown>
 type ProductDesignAccess = AccessContext & {
   user: NonNullable<AccessContext['user']>
+}
+
+function toCostLine(line: EstimationDraftBomLine): EstimationBomCostLine | null {
+  if (line.quantity === null || line.costCategory === null || line.costStrategy === null) return null
+  if (line.costEvidence?.source === 'manual' && !line.manualCostReason?.trim()) return null
+  return { id: line.id, parentId: line.parentId, quantity: line.quantity, uom: line.uom, costCategory: line.costCategory, costStrategy: line.costStrategy, unitCost: line.unitCost }
 }
 
 export type ProductDesignEstimationStatus = (typeof ESTIMATION_STATUSES)[number]
@@ -115,6 +125,7 @@ export type EstimationHomologue = {
   itemCode: string
   itemName: string
   sapPrefix: string
+  colorCode: string | null
   bom: BomNode | null
   bomError: string | null
 }
@@ -125,7 +136,28 @@ export type EstimationFamilyInput = {
   productType: string
   zoneHome: string
   useDestination: string
+  line: string
   manufacturingProcess?: string | null
+}
+
+export type EstimationFamilyCreationOptions = {
+  productTypes: string[]
+  zoneHomes: string[]
+  useDestinations: string[]
+  lines: string[]
+  manufacturingProcesses: string[]
+}
+
+export type EstimationFamilyInference = {
+  familyName: string
+  productType: string
+  zoneHome: string
+  useDestination: string
+  analyzedItemCount: number
+  commonTerms: string[]
+  sapItemGroupCode: number | null
+  sapItemGroupName: string | null
+  familyNameSource: 'sap_item_group' | 'description_terms'
 }
 
 function requireServiceRoleConfiguration(): void {
@@ -187,14 +219,6 @@ function asEstimationStatus(value: unknown): ProductDesignEstimationStatus {
     throw new Error('El estado de la cotización no es válido.')
   }
   return normalized as ProductDesignEstimationStatus
-}
-
-function asCommercialOutcome(value: unknown): ProductDesignCommercialOutcome {
-  const normalized = requiredText(value, 'Resultado comercial')
-  if (!(COMMERCIAL_OUTCOMES as readonly string[]).includes(normalized)) {
-    throw new Error('El resultado comercial no es válido.')
-  }
-  return normalized as ProductDesignCommercialOutcome
 }
 
 function normalizeSapPrefix(value: unknown): string {
@@ -575,6 +599,10 @@ export async function saveProductDesignEstimationAction(input: SaveProductDesign
   const access = await requireProductDesignAccess()
   const id = requiredUuid(input.id, 'Cotización')
   const draft = normalizeEstimationDraft(input.draft)
+  const existing = await getEstimationRecord(id)
+  if (!existing) throw new Error('No fue posible releer la cotización antes de guardar.')
+  // Pricing belongs to Sales. Preserve it even if a crafted Design request sends it.
+  draft.commercialScenario = existing.draft.commercialScenario
   const draftPrefix = draft.homologue?.sapPrefix
   const sapPrefix = normalizeSapPrefix(input.sapPrefix ?? draftPrefix)
   const familyCode = optionalText(input.familyCode) ?? draft.homologue?.familyCode ?? null
@@ -646,6 +674,14 @@ export async function setEstimationSharedWithSalesAction(input: { id: string; sh
   const access = await requireProductDesignAccess()
   const id = requiredUuid(input.id, 'Cotización')
   const shared = input.shared === true
+  const existing = await getEstimationRecord(id)
+  if (!existing) throw new Error('No fue posible releer la cotización antes de cambiar su visibilidad.')
+  if (shared) {
+    const lines = existing.draft.bomLines.map((line) => toCostLine(line))
+    if (lines.some((line) => line === null)) throw new Error('Completa la LdM y sus costos antes de compartirla con Ventas.')
+    const costing = evaluateEstimationBomCosting({ lines: lines.filter((line): line is EstimationBomCostLine => line !== null) })
+    if (!costing.ok) throw new Error('La LdM no se puede totalizar todavía; corrige sus líneas antes de compartirla con Ventas.')
+  }
   await dbQuery(
     `UPDATE public.product_design_estimations
         SET shared_with_sales = $1,
@@ -657,35 +693,6 @@ export async function setEstimationSharedWithSalesAction(input: { id: string; sh
   )
   const saved = await getEstimationRecord(id)
   if (!saved) throw new Error('No fue posible releer el cambio de visibilidad para Ventas.')
-  revalidatePath('/product-design/estimations')
-  revalidatePath(`/product-design/estimations/${id}`)
-  revalidatePath('/sales/estimations')
-  return saved
-}
-
-export async function recordEstimationCommercialOutcomeAction(input: {
-  id: string
-  outcome: ProductDesignCommercialOutcome
-  contactName?: string | null
-  note?: string | null
-}): Promise<ProductDesignEstimation> {
-  const access = await requireProductDesignAccess()
-  const id = requiredUuid(input.id, 'Cotización')
-  const outcome = asCommercialOutcome(input.outcome)
-  await dbQuery(
-    `UPDATE public.product_design_estimations
-        SET commercial_outcome = $1,
-            commercial_contact_name = $2,
-            commercial_outcome_at = now(),
-            commercial_recorded_by = $3::uuid,
-            commercial_recorded_at = now(),
-            commercial_note = $4,
-            updated_by = $3::uuid
-      WHERE id = $5::uuid`,
-    [outcome, optionalText(input.contactName), access.user.id, optionalText(input.note), id],
-  )
-  const saved = await getEstimationRecord(id)
-  if (!saved) throw new Error('No fue posible releer el resultado comercial guardado.')
   revalidatePath('/product-design/estimations')
   revalidatePath(`/product-design/estimations/${id}`)
   revalidatePath('/sales/estimations')
@@ -770,12 +777,13 @@ export async function refreshEstimationSapCostsAction(input: { id: string }): Pr
   return saved
 }
 
-export async function searchEstimationHomologuesAction(query: string): Promise<EstimationHomologueCandidate[]> {
+export async function searchEstimationHomologuesAction(query: string, colorCode?: string | null): Promise<EstimationHomologueCandidate[]> {
   await requireProductDesignAccess()
   const normalizedQuery = requiredText(query, 'Búsqueda de homólogo')
+  const selectedColor = optionalText(colorCode)
   const [byCode, byDescription] = await Promise.all([
-    searchSapItems({ code: normalizedQuery }, { limit: SAP_PAGE_LIMIT }),
-    searchSapItems({ description: normalizedQuery }, { limit: SAP_PAGE_LIMIT }),
+    searchSapItems({ code: normalizedQuery, color: selectedColor ?? undefined }, { limit: SAP_PAGE_LIMIT }),
+    searchSapItems({ description: normalizedQuery, color: selectedColor ?? undefined }, { limit: SAP_PAGE_LIMIT }),
   ])
   const candidates = new Map<string, EstimationHomologueCandidate>()
   for (const item of [...byCode.items, ...byDescription.items]) {
@@ -806,6 +814,77 @@ export async function listEstimationCommercialColorsAction(): Promise<Estimation
   })
 }
 
+function readDistinctTextValues(rows: RawRow[], field: string): string[] {
+  return rows.flatMap(row => {
+    const value = stringOrNull(row[field])
+    return value ? [value] : []
+  })
+}
+
+export async function getEstimationFamilyCreationOptionsAction(): Promise<EstimationFamilyCreationOptions> {
+  await requireProductDesignAccess()
+  const [productTypes, zoneHomes, useDestinations, lines, manufacturingProcesses] = await Promise.all([
+    dbQuery(`SELECT DISTINCT product_type FROM public.families WHERE product_type IS NOT NULL AND product_type <> '' ORDER BY product_type ASC`),
+    dbQuery(`SELECT DISTINCT zone_home FROM public.families WHERE zone_home IS NOT NULL AND zone_home <> '' ORDER BY zone_home ASC`),
+    dbQuery(`SELECT DISTINCT use_destination FROM public.families WHERE use_destination IS NOT NULL AND use_destination <> '' ORDER BY use_destination ASC`),
+    dbQuery(`SELECT DISTINCT line FROM public.product_references WHERE line IS NOT NULL AND line <> '' ORDER BY line ASC`),
+    dbQuery(`SELECT DISTINCT manufacturing_process FROM public.families WHERE manufacturing_process IS NOT NULL AND manufacturing_process <> '' ORDER BY manufacturing_process ASC`),
+  ])
+
+  return {
+    productTypes: readDistinctTextValues(productTypes, 'product_type'),
+    zoneHomes: readDistinctTextValues(zoneHomes, 'zone_home'),
+    useDestinations: readDistinctTextValues(useDestinations, 'use_destination'),
+    lines: readDistinctTextValues(lines, 'line'),
+    manufacturingProcesses: [...new Set([SYNTHETIC_MARBLE_PROCESS, ...readDistinctTextValues(manufacturingProcesses, 'manufacturing_process')])].toSorted(),
+  }
+}
+
+export async function getEstimationFamilyInferenceAction(input: {
+  sapPrefix: string
+  homologueItemCode: string
+}): Promise<EstimationFamilyInference> {
+  await requireProductDesignAccess()
+  const sapPrefix = normalizeSapPrefix(input.sapPrefix)
+  const homologueItemCode = requiredText(input.homologueItemCode, 'Código SAP del homólogo').toUpperCase()
+  const salesItemPrefix = deriveEstimationSalesItemPrefix(homologueItemCode, sapPrefix)
+  const homologueItem = await getSapItem(homologueItemCode, ['ItemsGroupCode'])
+  const itemGroupCode = numberOrNull(homologueItem.ItemsGroupCode)
+  const itemGroup = itemGroupCode === null
+    ? null
+    : await getSapItemGroup(itemGroupCode).catch(() => null)
+  const itemNames: string[] = []
+  let afterItemCode: string | null = null
+  let hasMore = true
+  let pagesRead = 0
+
+  while (hasMore && pagesRead < SAP_REFERENCE_SCAN_MAX_PAGES) {
+    const page = await searchSapItems({ code: salesItemPrefix }, { limit: SAP_PAGE_LIMIT, afterItemCode })
+    for (const item of page.items) {
+      const itemCode = stringOrNull(item.ItemCode)
+      const itemName = stringOrNull(item.ItemName)
+      if (itemCode?.startsWith(`${salesItemPrefix}-`) && itemName) itemNames.push(itemName)
+    }
+    afterItemCode = page.lastItemCode
+    hasMore = page.hasMore && Boolean(afterItemCode)
+    pagesRead += 1
+  }
+
+  if (hasMore) {
+    throw new Error(`La consulta SAP de ${salesItemPrefix} superó ${SAP_REFERENCE_SCAN_MAX_PAGES} páginas; no se generará una sugerencia parcial de familia.`)
+  }
+
+  const descriptionInference = inferFamilyFromSapDescriptions(itemNames)
+  const itemGroupName = itemGroup ? familyNameFromSapItemGroup(itemGroup.groupName) : ''
+  return {
+    ...descriptionInference,
+    familyName: itemGroupName || descriptionInference.familyName,
+    sapItemGroupCode: itemGroup?.groupCode ?? itemGroupCode,
+    sapItemGroupName: itemGroup?.groupName ?? null,
+    familyNameSource: itemGroupName ? 'sap_item_group' : 'description_terms',
+  }
+}
+
 export async function getEstimationHomologueAction(itemCode: string): Promise<EstimationHomologue> {
   await requireProductDesignAccess()
   const normalizedItemCode = requiredText(itemCode, 'Código SAP del homólogo').toUpperCase()
@@ -819,9 +898,44 @@ export async function getEstimationHomologueAction(itemCode: string): Promise<Es
     itemCode: stringOrNull(item.ItemCode) ?? normalizedItemCode,
     itemName: stringOrNull(item.ItemName) ?? '',
     sapPrefix: normalizeSapPrefix(sapPrefix),
+    colorCode: stringOrNull(item.U_Color) ?? sapItemColorCode(stringOrNull(item.ItemCode) ?? normalizedItemCode),
     bom: bomResult.tree,
     bomError: bomResult.error,
   }
+}
+
+export async function replaceEstimationGelcoatForColorAction(input: { id: string; colorCode: string }): Promise<ProductDesignEstimation> {
+  const access = await requireProductDesignAccess()
+  const id = requiredUuid(input.id, 'Cotización')
+  const color = await getExistingCommercialColor(optionalText(input.colorCode))
+  if (!color) throw new Error('Selecciona un color comercial válido antes de actualizar el gelcoat.')
+  const existing = await getEstimationRecord(id)
+  if (!existing) throw new Error('La cotización no existe.')
+  const proposals = proposeGelcoatReplacements(existing.draft.bomLines, color.colorCode)
+  if (proposals.length === 0) throw new Error('La LdM no tiene una línea PGEL que requiera cambio para ese color.')
+  const sapItems = await Promise.all(proposals.map(proposal => getSapItem(proposal.proposedItemCode, ['ItemCode', 'ItemName', 'InventoryUOM', 'U_Color'])))
+  const replacements = new Map(proposals.map((proposal, index) => [proposal.lineId, {
+    itemCode: stringOrNull(sapItems[index]?.ItemCode) ?? proposal.proposedItemCode,
+    itemName: stringOrNull(sapItems[index]?.ItemName),
+    uom: stringOrNull(sapItems[index]?.InventoryUOM),
+  }]))
+  const draft = existing.draft
+  draft.commercialColor = { ...draft.commercialColor, colorCode: color.colorCode, colorName: color.colorName, selectedAt: timestampNow() }
+  draft.bomLines = draft.bomLines.map(line => {
+    const replacement = replacements.get(line.id)
+    return replacement ? { ...line, sapItemCode: replacement.itemCode, itemName: replacement.itemName ?? line.itemName, uom: replacement.uom ?? line.uom, unitCost: null, costEvidence: null, manualCostReason: null, notes: 'Gelcoat actualizado para el color comercial de la cotización.' } : line
+  })
+  await dbQuery(
+    `UPDATE public.product_design_estimations
+        SET color_code = $1, draft_data_json = $2::jsonb, updated_by = $3::uuid
+      WHERE id = $4::uuid`,
+    [color.colorCode, JSON.stringify(serializeEstimationDraft(draft)), access.user.id, id],
+  )
+  const saved = await getEstimationRecord(id)
+  if (!saved) throw new Error('No fue posible releer la LdM después de actualizar el gelcoat.')
+  revalidatePath('/product-design/estimations')
+  revalidatePath(`/product-design/estimations/${id}`)
+  return saved
 }
 
 export async function getEstimationHomologueChildrenAction(itemCode: string): Promise<{ lines: BomNode[]; error: string | null }> {
@@ -891,6 +1005,10 @@ export async function copyHomologueIntoEstimationAction(input: {
     },
   }
   draft.bomLines = homologue.bom ? toBomDraftLines(homologue.bom.lines) : []
+  if (!draft.commercialColor.colorCode && homologue.colorCode) {
+    const commercialColor = await getExistingCommercialColor(homologue.colorCode)
+    if (commercialColor) draft.commercialColor = { ...draft.commercialColor, colorCode: commercialColor.colorCode, colorName: commercialColor.colorName, selectedAt: timestampNow() }
+  }
 
   await dbQuery(
     `UPDATE public.product_design_estimations
@@ -927,14 +1045,15 @@ export async function createEstimationFamilyAction(input: EstimationFamilyInput)
   const productType = requiredText(input.productType, 'Tipo de producto')
   const zoneHome = requiredText(input.zoneHome, 'Zona')
   const useDestination = requiredText(input.useDestination, 'Destino de uso')
+  const line = requiredText(input.line, 'Línea comercial autorizada')
   const manufacturingProcess = optionalText(input.manufacturingProcess) ?? SYNTHETIC_MARBLE_PROCESS
   await dbQuery(
     `INSERT INTO public.families (
        family_code, family_name, product_type, zone_home, use_destination,
        manufacturing_process, allowed_lines, rh_default, assembled_default
      )
-     VALUES ($1, $2, $3, $4, $5, $6, '{}'::text[], false, false)`,
-    [familyCode, familyName, productType, zoneHome, useDestination, manufacturingProcess],
+     VALUES ($1, $2, $3, $4, $5, $6, ARRAY[$7]::text[], false, false)`,
+    [familyCode, familyName, productType, zoneHome, useDestination, manufacturingProcess, line],
   )
   const rows = await dbQuery(
     'SELECT family_code, family_name FROM public.families WHERE family_code = $1 LIMIT 1',

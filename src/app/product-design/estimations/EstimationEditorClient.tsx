@@ -5,7 +5,6 @@ import { useMemo, useState, useTransition } from 'react'
 import {
   ArrowLeft,
   Calculator,
-  CheckCircle2,
   Copy,
   FilePlus2,
   GitBranchPlus,
@@ -24,23 +23,24 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
 import {
   copyHomologueIntoEstimationAction,
   createEstimationFamilyAction,
   freezeEstimationSyntheticMarbleCalibrationAction,
+  getEstimationFamilyInferenceAction,
+  type EstimationFamilyCreationOptions,
+  type EstimationFamilyInference,
   getEstimationHomologueChildrenAction,
   getEstimationHomologueAction,
   proposeEstimationReferenceAction,
-  recordEstimationCommercialOutcomeAction,
   refreshEstimationSapCostsAction,
+  replaceEstimationGelcoatForColorAction,
   saveProductDesignEstimationAction,
   searchEstimationHomologuesAction,
   setEstimationSharedWithSalesAction,
   type EstimationHomologue,
   type EstimationHomologueCandidate,
   type EstimationCommercialColorCandidate,
-  type ProductDesignCommercialOutcome,
   type ProductDesignEstimation,
   type ProductDesignEstimationStatus,
 } from './actions'
@@ -58,6 +58,7 @@ import {
   getEstimationBomParentCandidates,
 } from '@/lib/productDesign/estimationBomHierarchy'
 import type { EstimationReferenceProposal } from '@/lib/productDesign/estimationReferenceProposal'
+import { proposeGelcoatReplacements } from '@/lib/productDesign/gelcoatAlignment'
 
 const COST_CATEGORIES: Array<{ value: EstimationBomCostCategory; label: string }> = [
   { value: 'material', label: 'Material' },
@@ -79,25 +80,72 @@ const ESTIMATION_STATUSES: Array<{ value: ProductDesignEstimationStatus; label: 
   { value: 'archived', label: 'Archivada' },
 ]
 
-const COMMERCIAL_OUTCOMES: Array<{ value: ProductDesignCommercialOutcome; label: string }> = [
-  { value: 'pending', label: 'Pendiente' },
-  { value: 'approved', label: 'Aprobada' },
-  { value: 'rejected', label: 'Rechazada' },
-  { value: 'not_pursued', label: 'No continuó' },
-]
-
 type FamilyForm = {
   familyName: string
   productType: string
   zoneHome: string
   useDestination: string
+  line: string
+  manufacturingProcess: string
 }
 
-const EMPTY_FAMILY_FORM: FamilyForm = {
-  familyName: '',
-  productType: '',
-  zoneHome: '',
-  useDestination: '',
+function familyFormFromInference(
+  inference: EstimationFamilyInference | null,
+  manufacturingProcess: string,
+): FamilyForm {
+  return {
+    familyName: inference?.familyName ?? '',
+    productType: inference?.productType ?? '',
+    zoneHome: inference?.zoneHome ?? '',
+    useDestination: inference?.useDestination ?? '',
+    line: '',
+    manufacturingProcess,
+  }
+}
+
+function CreatableFamilySelect({
+  id,
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  id: string
+  label: string
+  options: readonly string[]
+  value: string
+  onChange: (value: string) => void
+}) {
+  const [isCustom, setIsCustom] = useState(false)
+  if (isCustom) {
+    return (
+      <div className="flex gap-2">
+        <Input id={id} value={value} onChange={(event) => onChange(event.target.value)} placeholder={`Definir ${label.toLowerCase()}`} />
+        <Button type="button" variant="outline" onClick={() => { setIsCustom(false); onChange('') }}>Usar lista</Button>
+      </div>
+    )
+  }
+  const hasCustomValue = Boolean(value && !options.includes(value))
+  return (
+    <select
+      id={id}
+      value={hasCustomValue ? value : value || ''}
+      onChange={(event) => {
+        if (event.target.value === '__NEW__') {
+          setIsCustom(true)
+          onChange('')
+          return
+        }
+        onChange(event.target.value)
+      }}
+      className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm text-slate-800 shadow-sm"
+    >
+      <option value="">Seleccionar {label.toLowerCase()}...</option>
+      <option value="__NEW__">Agregar nueva...</option>
+      {hasCustomValue && <option value={value}>{value}</option>}
+      {options.map(option => <option key={option} value={option}>{option}</option>)}
+    </select>
+  )
 }
 
 function errorMessage(error: unknown): string {
@@ -206,9 +254,13 @@ function substructureLines(nodes: readonly SubstructureNode[], parentId: string)
 export function EstimationEditorClient({
   initialEstimation,
   commercialColors,
+  familyCreationOptions,
+  initialFamilyInference,
 }: {
   initialEstimation: ProductDesignEstimation
   commercialColors: EstimationCommercialColorCandidate[]
+  familyCreationOptions: EstimationFamilyCreationOptions
+  initialFamilyInference: EstimationFamilyInference | null
 }) {
   const [estimation, setEstimation] = useState<ProductDesignEstimation>(initialEstimation)
   const [isPending, startTransition] = useTransition()
@@ -219,9 +271,7 @@ export function EstimationEditorClient({
   const [componentQuery, setComponentQuery] = useState('')
   const [componentCandidates, setComponentCandidates] = useState<EstimationHomologueCandidate[]>([])
   const [componentParentId, setComponentParentId] = useState<string>('')
-  const [familyForm, setFamilyForm] = useState<FamilyForm>(EMPTY_FAMILY_FORM)
-  const [commercialContact, setCommercialContact] = useState(estimation.commercialContactName ?? '')
-  const [commercialNote, setCommercialNote] = useState(estimation.commercialNote ?? '')
+  const [familyForm, setFamilyForm] = useState<FamilyForm>(() => familyFormFromInference(initialFamilyInference, initialEstimation.manufacturingProcess))
 
   const suggestedFamilyCode = extensionText(estimation.draft.homologue?.extensions ?? {}, 'suggestedFamilyCode')
   const costInput = useMemo(() => buildCostLines(estimation.draft), [estimation.draft])
@@ -236,14 +286,16 @@ export function EstimationEditorClient({
   const lineValuations = useMemo(() => new Map(
     costResult?.ok ? costResult.lineValuations.map(valuation => [valuation.lineId, valuation]) : [],
   ), [costResult])
+  const gelcoatReplacementProposals = useMemo(
+    () => proposeGelcoatReplacements(estimation.draft.bomLines, estimation.draft.commercialColor.colorCode),
+    [estimation.draft.bomLines, estimation.draft.commercialColor.colorCode],
+  )
   const estimatedPeroxideGrams = estimation.draft.geometry.estimatedGelcoatKg === null
     ? null
     : estimation.draft.geometry.estimatedGelcoatKg * 1_000 * 0.025
 
   const setSaved = (saved: ProductDesignEstimation) => {
     setEstimation(saved)
-    setCommercialContact(saved.commercialContactName ?? '')
-    setCommercialNote(saved.commercialNote ?? '')
   }
 
   const updateDraft = (update: (draft: EstimationDraft) => EstimationDraft) => {
@@ -375,7 +427,7 @@ export function EstimationEditorClient({
       return
     }
     try {
-      setHomologueCandidates(await searchEstimationHomologuesAction(homologueQuery))
+      setHomologueCandidates(await searchEstimationHomologuesAction(homologueQuery, estimation.draft.commercialColor.colorCode))
     } catch (error) {
       toast.error(errorMessage(error))
     }
@@ -408,17 +460,35 @@ export function EstimationEditorClient({
           proposedReferenceCode: pendingReference.referenceCode,
           draft: {
             ...saved.draft,
-            commercialColor: estimation.draft.commercialColor,
-            gelcoatItem: estimation.draft.gelcoatItem,
+            commercialColor: estimation.draft.commercialColor.colorCode ? estimation.draft.commercialColor : saved.draft.commercialColor,
             geometry: estimation.draft.geometry,
             syntheticMarbleCalibration: estimation.draft.syntheticMarbleCalibration,
             commercialScenario: estimation.draft.commercialScenario,
           },
         }
         setSaved(await persist(next))
+        const inference = await getEstimationFamilyInferenceAction({
+          sapPrefix: saved.sapPrefix,
+          homologueItemCode: saved.homologueSapItemCode ?? pendingHomologue.itemCode,
+        })
+        setFamilyForm(familyFormFromInference(inference, saved.manufacturingProcess))
         setPendingHomologue(null)
         setPendingReference(null)
         toast.success('LdM homóloga copiada. Revisa las cantidades antes de cotizar.')
+      } catch (error) {
+        toast.error(errorMessage(error))
+      }
+    })
+  }
+
+  const replaceGelcoatForSelectedColor = () => {
+    const colorCode = estimation.draft.commercialColor.colorCode
+    if (!colorCode) return
+    startTransition(async () => {
+      try {
+        const saved = await replaceEstimationGelcoatForColorAction({ id: estimation.id, colorCode })
+        setSaved(saved)
+        toast.success('La línea de gelcoat de la LdM fue actualizada para el color seleccionado.')
       } catch (error) {
         toast.error(errorMessage(error))
       }
@@ -490,7 +560,8 @@ export function EstimationEditorClient({
           productType: familyForm.productType,
           zoneHome: familyForm.zoneHome,
           useDestination: familyForm.useDestination,
-          manufacturingProcess: estimation.manufacturingProcess,
+          line: familyForm.line,
+          manufacturingProcess: familyForm.manufacturingProcess,
         })
         const next: ProductDesignEstimation = {
           ...estimation,
@@ -519,23 +590,6 @@ export function EstimationEditorClient({
     })
   }
 
-  const recordCommercialOutcome = () => {
-    startTransition(async () => {
-      try {
-        const saved = await recordEstimationCommercialOutcomeAction({
-          id: estimation.id,
-          outcome: estimation.commercialOutcome,
-          contactName: commercialContact,
-          note: commercialNote,
-        })
-        setSaved(saved)
-        toast.success('Resultado comercial registrado.')
-      } catch (error) {
-        toast.error(errorMessage(error))
-      }
-    })
-  }
-
   return (
     <div className="space-y-6 pb-10">
       <header className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
@@ -551,7 +605,7 @@ export function EstimationEditorClient({
         <Button type="button" onClick={saveEstimation} disabled={isPending}><Save className="h-4 w-4" />Guardar cotización</Button>
       </header>
 
-      <section className="grid gap-6 xl:grid-cols-[minmax(0,1.7fr)_minmax(320px,0.9fr)]">
+      <section className="space-y-6">
         <div className="space-y-6">
           <Card>
             <CardHeader>
@@ -563,15 +617,17 @@ export function EstimationEditorClient({
                 <Label htmlFor="provisional-name">Nombre provisional</Label>
                 <Input id="provisional-name" value={estimation.provisionalName} onChange={(event) => setEstimation((current) => ({ ...current, provisionalName: event.target.value }))} />
               </div>
-              <div className="space-y-2"><Label htmlFor="width-mm">Ancho (mm)</Label><Input id="width-mm" inputMode="decimal" value={numberInput(estimation.widthMm)} onChange={(event) => setEstimation((current) => ({ ...current, widthMm: numberOrNull(event.target.value) }))} /></div>
-              <div className="space-y-2"><Label htmlFor="depth-mm">Fondo (mm)</Label><Input id="depth-mm" inputMode="decimal" value={numberInput(estimation.depthMm)} onChange={(event) => setEstimation((current) => ({ ...current, depthMm: numberOrNull(event.target.value) }))} /></div>
-              <div className="space-y-2"><Label htmlFor="height-mm">Alto (mm)</Label><Input id="height-mm" inputMode="decimal" value={numberInput(estimation.heightMm)} onChange={(event) => setEstimation((current) => ({ ...current, heightMm: numberOrNull(event.target.value) }))} /></div>
+              <div className="space-y-2"><Label htmlFor="width-cm">Ancho (cm)</Label><Input id="width-cm" inputMode="decimal" value={numberInput(estimation.widthMm)} onChange={(event) => setEstimation((current) => ({ ...current, widthMm: numberOrNull(event.target.value) }))} /></div>
+              <div className="space-y-2"><Label htmlFor="depth-cm">Fondo (cm)</Label><Input id="depth-cm" inputMode="decimal" value={numberInput(estimation.depthMm)} onChange={(event) => setEstimation((current) => ({ ...current, depthMm: numberOrNull(event.target.value) }))} /></div>
+              <div className="space-y-2"><Label htmlFor="height-cm">Alto (cm)</Label><Input id="height-cm" inputMode="decimal" value={numberInput(estimation.heightMm)} onChange={(event) => setEstimation((current) => ({ ...current, heightMm: numberOrNull(event.target.value) }))} /></div>
               <div className="space-y-2">
                 <Label htmlFor="estimation-status">Estado de Diseño</Label>
                 <select id="estimation-status" value={estimation.status} onChange={(event) => setEstimation((current) => ({ ...current, status: event.target.value as ProductDesignEstimationStatus }))} className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm text-slate-800 shadow-sm">
                   {ESTIMATION_STATUSES.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
                 </select>
               </div>
+              <div className="space-y-2"><Label htmlFor="net-weight">Peso neto (kg)</Label><Input id="net-weight" inputMode="decimal" value={numberInput(estimation.draft.provisionalIdentity.netWeightKg)} onChange={(event) => updateDraft((draft) => ({ ...draft, provisionalIdentity: { ...draft.provisionalIdentity, netWeightKg: numberOrNull(event.target.value) } }))} /></div>
+              <div className="space-y-2"><Label htmlFor="gross-weight">Peso bruto (kg)</Label><Input id="gross-weight" inputMode="decimal" value={numberInput(estimation.draft.provisionalIdentity.grossWeightKg)} onChange={(event) => updateDraft((draft) => ({ ...draft, provisionalIdentity: { ...draft.provisionalIdentity, grossWeightKg: numberOrNull(event.target.value) } }))} /></div>
               <div className="md:col-span-2">
                 <CommercialColorSelector
                   id="estimation-commercial-color"
@@ -602,13 +658,46 @@ export function EstimationEditorClient({
                 <p className="mt-1"><strong>Familia local:</strong> {estimation.familyCode ?? 'Aún no existe en el catálogo local'}</p>
               </div>
               <div className="flex gap-2">
-                <Input value={homologueQuery} onChange={(event) => setHomologueQuery(event.target.value)} placeholder="Buscar otro homólogo SAP" />
+                <Input value={homologueQuery} onChange={(event) => setHomologueQuery(event.target.value)} placeholder="Buscar homólogo SAP" />
                 <Button type="button" variant="outline" onClick={searchHomologues}><Search className="h-4 w-4" /></Button>
               </div>
               {homologueCandidates.length > 0 && <div className="max-h-44 overflow-y-auto rounded-lg border border-slate-200 p-1">{homologueCandidates.map((candidate) => <button key={candidate.itemCode} type="button" onClick={() => void chooseHomologue(candidate)} className="block w-full rounded-md px-3 py-2 text-left text-sm hover:bg-sky-50"><strong>{candidate.itemCode}</strong><span className="ml-2 text-slate-500">{candidate.itemName}</span></button>)}</div>}
-              {pendingHomologue && pendingReference && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"><p><strong>Nuevo homólogo pendiente:</strong> {pendingHomologue.itemCode} · {pendingHomologue.itemName}</p><p className="mt-1">U_Prefijo {pendingHomologue.sapPrefix}; prefijo comercial consultado {pendingReference.salesItemPrefix}; familia {pendingReference.familyCode}; referencia sugerida {pendingReference.referenceCode} (no reservada).</p><Button type="button" variant="outline" className="mt-3" onClick={replaceWithHomologue} disabled={isPending}><Copy className="h-4 w-4" />Copiar LdM al lienzo</Button></div>}
+              {estimation.draft.commercialColor.colorCode && <p className="text-xs text-slate-600">La búsqueda prioriza artículos SAP del color {estimation.draft.commercialColor.colorCode}; así la LdM base conserva su gelcoat concordante.</p>}
+              {pendingHomologue && pendingReference && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"><p><strong>Nuevo homólogo pendiente:</strong> {pendingHomologue.itemCode} · {pendingHomologue.itemName}</p><p className="mt-1">Color del homólogo: {pendingHomologue.colorCode ?? 'sin dato'} · U_Prefijo {pendingHomologue.sapPrefix}; prefijo comercial consultado {pendingReference.salesItemPrefix}; familia {pendingReference.familyCode}; referencia sugerida {pendingReference.referenceCode} (no reservada).</p><Button type="button" variant="outline" className="mt-3" onClick={replaceWithHomologue} disabled={isPending}><Copy className="h-4 w-4" />Copiar LdM al lienzo</Button></div>}
 
-              {!estimation.familyCode && suggestedFamilyCode && <div className="rounded-lg border border-sky-200 bg-sky-50 p-4"><p className="font-semibold text-sky-950">Crear familia local {suggestedFamilyCode}</p><p className="mt-1 text-sm text-sky-900">Sólo se creará la familia en el catálogo local. No se creará referencia, SKU ni artículo SAP.</p><div className="mt-3 grid gap-3 md:grid-cols-2"><Input placeholder="Nombre de familia" value={familyForm.familyName} onChange={(event) => setFamilyForm((current) => ({ ...current, familyName: event.target.value }))} /><Input placeholder="Tipo de producto" value={familyForm.productType} onChange={(event) => setFamilyForm((current) => ({ ...current, productType: event.target.value }))} /><Input placeholder="Zona" value={familyForm.zoneHome} onChange={(event) => setFamilyForm((current) => ({ ...current, zoneHome: event.target.value }))} /><Input placeholder="Destino de uso" value={familyForm.useDestination} onChange={(event) => setFamilyForm((current) => ({ ...current, useDestination: event.target.value }))} /></div><Button type="button" className="mt-3" onClick={createFamily} disabled={isPending}><FilePlus2 className="h-4 w-4" />Crear sólo familia local</Button></div>}
+              {!estimation.familyCode && suggestedFamilyCode && (
+                <div className="rounded-lg border border-sky-200 bg-sky-50 p-4">
+                  <p className="font-semibold text-sky-950">Crear familia local {suggestedFamilyCode}</p>
+                  <p className="mt-1 text-sm text-sky-900">Completa y revisa los datos base antes de crear la familia en el catálogo local. Este paso no crea referencias, SKU ni artículos SAP.</p>
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    <div className="space-y-2 md:col-span-2">
+                      <Label htmlFor="family-name">Nombre o descripción de familia</Label>
+                      <Input id="family-name" value={familyForm.familyName} onChange={(event) => setFamilyForm((current) => ({ ...current, familyName: event.target.value }))} placeholder="Nombre de familia" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="family-process">Proceso de manufactura</Label>
+                      <CreatableFamilySelect id="family-process" label="proceso" options={familyCreationOptions.manufacturingProcesses} value={familyForm.manufacturingProcess} onChange={(manufacturingProcess) => setFamilyForm(current => ({ ...current, manufacturingProcess }))} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="family-product-type">Tipo de producto</Label>
+                      <CreatableFamilySelect id="family-product-type" label="tipo de producto" options={familyCreationOptions.productTypes} value={familyForm.productType} onChange={(productType) => setFamilyForm(current => ({ ...current, productType }))} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="family-zone">Zona (ambiente)</Label>
+                      <CreatableFamilySelect id="family-zone" label="zona" options={familyCreationOptions.zoneHomes} value={familyForm.zoneHome} onChange={(zoneHome) => setFamilyForm(current => ({ ...current, zoneHome }))} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="family-destination">Uso / destino</Label>
+                      <CreatableFamilySelect id="family-destination" label="destino" options={familyCreationOptions.useDestinations} value={familyForm.useDestination} onChange={(useDestination) => setFamilyForm(current => ({ ...current, useDestination }))} />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label htmlFor="family-line">Línea comercial autorizada</Label>
+                      <CreatableFamilySelect id="family-line" label="línea" options={familyCreationOptions.lines} value={familyForm.line} onChange={(line) => setFamilyForm(current => ({ ...current, line }))} />
+                    </div>
+                  </div>
+                  <Button type="button" className="mt-4" onClick={createFamily} disabled={isPending}><FilePlus2 className="h-4 w-4" />Crear sólo familia local</Button>
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -621,7 +710,6 @@ export function EstimationEditorClient({
               <div className="grid gap-4 md:grid-cols-2"><div className="space-y-2"><Label htmlFor="cad-volume">Volumen CAD (mm³)</Label><Input id="cad-volume" inputMode="decimal" value={numberInput(estimation.draft.geometry.volumeMm3)} onChange={(event) => updateGeometry('volumeMm3', event.target.value)} /></div><div className="space-y-2"><Label htmlFor="paint-area">Área de pintura (mm²)</Label><Input id="paint-area" inputMode="decimal" value={numberInput(estimation.draft.geometry.paintAreaMm2)} onChange={(event) => updateGeometry('paintAreaMm2', event.target.value)} /></div></div>
               <Button type="button" variant="outline" onClick={freezeCalibration} disabled={isPending}><Calculator className="h-4 w-4" />Calcular y congelar con muestras válidas</Button>
               {estimation.draft.syntheticMarbleCalibration ? <div className="grid gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm md:grid-cols-2"><div><p className="font-semibold text-emerald-950">Mezcla</p><p>{estimation.draft.geometry.estimatedMixtureKg === null ? 'Ingresa volumen CAD' : `${formatFactor(estimation.draft.geometry.estimatedMixtureKg)} kg estimados`}</p><p className="mt-1 text-xs text-emerald-800">Factor {formatFactor(estimation.draft.syntheticMarbleCalibration.mixture?.factor ?? null)} kg/mm³ · n={estimation.draft.syntheticMarbleCalibration.mixture?.sampleCount ?? 0}</p></div><div><p className="font-semibold text-emerald-950">Gelcoat</p><p>{estimation.draft.geometry.estimatedGelcoatKg === null ? 'Ingresa área CAD' : `${formatFactor(estimation.draft.geometry.estimatedGelcoatKg)} kg estimados`}</p><p className="mt-1 text-xs text-emerald-800">Factor {formatFactor(estimation.draft.syntheticMarbleCalibration.gelcoat?.factor ?? null)} kg/mm² · n={estimation.draft.syntheticMarbleCalibration.gelcoat?.sampleCount ?? 0}</p><p className="mt-1 text-xs text-emerald-800">Peróxido sugerido (2,5%): {estimatedPeroxideGrams === null ? 'pendiente' : `${formatFactor(estimatedPeroxideGrams)} g`}</p></div></div> : <p className="text-sm text-amber-700">Aún no hay un snapshot congelado. Guardar una cotización no toma automáticamente una muestra individual como patrón.</p>}
-              <div className="grid gap-4 rounded-lg border border-slate-200 p-4 md:grid-cols-3"><div className="space-y-2 md:col-span-2"><Label htmlFor="gelcoat-item">Gelcoat SAP (confirmación explícita)</Label><Input id="gelcoat-item" value={estimation.draft.gelcoatItem.itemCode ?? ''} onChange={(event) => updateDraft((draft) => ({ ...draft, gelcoatItem: { ...draft.gelcoatItem, itemCode: event.target.value || null, selectedAt: new Date().toISOString() } }))} placeholder="Código SAP del gelcoat elegido" /></div><div className="space-y-2"><Label htmlFor="gelcoat-uom">Unidad</Label><Input id="gelcoat-uom" value={estimation.draft.gelcoatItem.uom ?? ''} onChange={(event) => updateDraft((draft) => ({ ...draft, gelcoatItem: { ...draft.gelcoatItem, uom: event.target.value || null, selectedAt: new Date().toISOString() } }))} placeholder="KG" /></div><div className="space-y-2 md:col-span-3"><Label htmlFor="gelcoat-name">Nombre gelcoat</Label><Input id="gelcoat-name" value={estimation.draft.gelcoatItem.itemName ?? ''} onChange={(event) => updateDraft((draft) => ({ ...draft, gelcoatItem: { ...draft.gelcoatItem, itemName: event.target.value || null, selectedAt: new Date().toISOString() } }))} placeholder="El color comercial no mapea automáticamente al gelcoat." /></div></div>
             </CardContent>
           </Card>
 
@@ -631,6 +719,7 @@ export function EstimationEditorClient({
               <CardDescription>Edita cantidades, agrega ítems SAP o manuales, y decide si un padre se expande por sus hijos o usa un costo explícito.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {gelcoatReplacementProposals.length > 0 && <div className="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 md:flex-row md:items-center md:justify-between"><div><p className="font-semibold">La LdM usa gelcoat de otro color</p><p className="mt-1">Se propone reemplazar {gelcoatReplacementProposals.map(item => `${item.currentItemCode} por ${item.proposedItemCode}`).join(', ')} directamente en la LdM.</p></div><Button type="button" variant="outline" onClick={replaceGelcoatForSelectedColor} disabled={isPending}>Actualizar gelcoat en LdM</Button></div>}
               <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 md:flex-row">
                 <Input value={componentQuery} onChange={(event) => setComponentQuery(event.target.value)} placeholder="Buscar ítem SAP para agregar" />
                 <select value={componentParentId} onChange={(event) => setComponentParentId(event.target.value)} className="h-10 rounded-lg border border-input bg-white px-3 text-sm">
@@ -691,14 +780,6 @@ export function EstimationEditorClient({
               {costInput.incompleteLineIds.length > 0 ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Completa cantidad, categoría, estrategia y la justificación de cualquier costo manual en {costInput.incompleteLineIds.length} línea(s) para calcular totales.</div> : costResult?.ok ? <div className="grid gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm md:grid-cols-2"><div><p className="font-semibold text-emerald-950">Materiales + empaque</p><p className="text-lg font-bold">{formatCurrency(costResult.totals.materialsAndPackaging)}</p></div><div><p className="font-semibold text-emerald-950">Total ampliado (incluye MO/CIF/otros)</p><p className="text-lg font-bold">{formatCurrency(costResult.totals.expandedTotal)}</p></div><p className="md:col-span-2 text-xs text-emerald-800">Material {formatCurrency(costResult.totals.byCategory.material)} · Empaque {formatCurrency(costResult.totals.byCategory.packaging)} · MO {formatCurrency(costResult.totals.byCategory.mo)} · CIF {formatCurrency(costResult.totals.byCategory.cif)} · Otros {formatCurrency(costResult.totals.byCategory.other)}</p></div> : <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800"><p className="font-semibold">La LdM aún no se puede totalizar</p><ul className="mt-1 list-disc pl-5">{costResult?.issues.map((issue) => <li key={`${issue.code}-${issue.lineId}`}>{issue.message}</li>)}</ul></div>}
             </CardContent>
           </Card>
-        </div>
-
-        <aside className="space-y-6">
-          <Card>
-            <CardHeader><CardTitle>Escenario comercial</CardTitle><CardDescription>Permanece editable; esta primera versión no endurece las fórmulas inconsistentes del Excel.</CardDescription></CardHeader>
-            <CardContent className="space-y-3"><div className="grid grid-cols-2 gap-3"><div className="space-y-1"><Label>MC %</Label><Input inputMode="decimal" value={numberInput(estimation.draft.commercialScenario.contributionMarginPct)} onChange={(event) => updateDraft((draft) => ({ ...draft, commercialScenario: { ...draft.commercialScenario, contributionMarginPct: numberOrNull(event.target.value) } }))} /></div><div className="space-y-1"><Label>Descuento %</Label><Input inputMode="decimal" value={numberInput(estimation.draft.commercialScenario.discountPct)} onChange={(event) => updateDraft((draft) => ({ ...draft, commercialScenario: { ...draft.commercialScenario, discountPct: numberOrNull(event.target.value) } }))} /></div><div className="space-y-1"><Label>Precio mínimo</Label><Input inputMode="decimal" value={numberInput(estimation.draft.commercialScenario.minimumPrice)} onChange={(event) => updateDraft((draft) => ({ ...draft, commercialScenario: { ...draft.commercialScenario, minimumPrice: numberOrNull(event.target.value) } }))} /></div><div className="space-y-1"><Label>PVP</Label><Input inputMode="decimal" value={numberInput(estimation.draft.commercialScenario.pvp)} onChange={(event) => updateDraft((draft) => ({ ...draft, commercialScenario: { ...draft.commercialScenario, pvp: numberOrNull(event.target.value) } }))} /></div><div className="space-y-1"><Label>Peso neto kg</Label><Input inputMode="decimal" value={numberInput(estimation.draft.commercialScenario.netWeightKg)} onChange={(event) => updateDraft((draft) => ({ ...draft, commercialScenario: { ...draft.commercialScenario, netWeightKg: numberOrNull(event.target.value) } }))} /></div><div className="space-y-1"><Label>Peso bruto kg</Label><Input inputMode="decimal" value={numberInput(estimation.draft.commercialScenario.grossWeightKg)} onChange={(event) => updateDraft((draft) => ({ ...draft, commercialScenario: { ...draft.commercialScenario, grossWeightKg: numberOrNull(event.target.value) } }))} /></div></div><Textarea value={estimation.draft.commercialScenario.notes ?? ''} onChange={(event) => updateDraft((draft) => ({ ...draft, commercialScenario: { ...draft.commercialScenario, notes: event.target.value || null } }))} placeholder="Supuestos del escenario comercial" /></CardContent>
-          </Card>
-
           <Card>
             <CardHeader><CardTitle>Revisión técnica</CardTitle><CardDescription>Ingeniería deja una observación informativa; no bloquea el estado de Diseño.</CardDescription></CardHeader>
             <CardContent className="space-y-2"><Badge variant={estimation.technicalReviewStatus === 'reviewed' ? 'secondary' : 'outline'}>{estimation.technicalReviewStatus}</Badge>{estimation.technicalReviewNote ? <p className="text-sm text-slate-700">{estimation.technicalReviewNote}</p> : <p className="text-sm text-slate-500">Sin observación todavía.</p>}<Link href="/engineering/estimations" className="inline-flex items-center gap-1 text-sm font-medium text-sky-700 hover:text-sky-900"><Wrench className="h-4 w-4" />Abrir revisiones de Ingeniería</Link></CardContent>
@@ -706,9 +787,9 @@ export function EstimationEditorClient({
 
           <Card>
             <CardHeader><CardTitle>Compartir con Ventas</CardTitle><CardDescription>Ventas ve sólo cotizaciones que Diseño comparta expresamente.</CardDescription></CardHeader>
-            <CardContent className="space-y-3"><Button type="button" variant={estimation.sharedWithSales ? 'outline' : 'default'} className="w-full" onClick={setSharedWithSales} disabled={isPending}>{estimation.sharedWithSales ? 'Retirar de Ventas' : <><Send className="h-4 w-4" />Compartir con Ventas</>}</Button><div className="space-y-2"><Label htmlFor="commercial-outcome">Resultado externo</Label><select id="commercial-outcome" value={estimation.commercialOutcome} onChange={(event) => setEstimation((current) => ({ ...current, commercialOutcome: event.target.value as ProductDesignCommercialOutcome }))} className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm">{COMMERCIAL_OUTCOMES.map((outcome) => <option key={outcome.value} value={outcome.value}>{outcome.label}</option>)}</select></div><Input value={commercialContact} onChange={(event) => setCommercialContact(event.target.value)} placeholder="Contacto o cuenta comercial" /><Textarea value={commercialNote} onChange={(event) => setCommercialNote(event.target.value)} placeholder="Respuesta o condición comercial" /><Button type="button" variant="outline" className="w-full" onClick={recordCommercialOutcome} disabled={isPending}><CheckCircle2 className="h-4 w-4" />Registrar respuesta</Button></CardContent>
+            <CardContent className="space-y-3"><Button type="button" variant={estimation.sharedWithSales ? 'outline' : 'default'} className="w-full" onClick={setSharedWithSales} disabled={isPending || (!estimation.sharedWithSales && (!costResult?.ok || costInput.incompleteLineIds.length > 0))}>{estimation.sharedWithSales ? 'Retirar de Ventas' : <><Send className="h-4 w-4" />Compartir con Ventas</>}</Button>{!estimation.sharedWithSales && (!costResult?.ok || costInput.incompleteLineIds.length > 0) && <p className="text-sm text-amber-700">Completa la LdM y sus costos para poder compartir esta cotización con Ventas.</p>}<p className="text-sm text-slate-600">Ventas administrará MC, descuento, precios y respuesta comercial.</p></CardContent>
           </Card>
-        </aside>
+        </div>
       </section>
     </div>
   )
