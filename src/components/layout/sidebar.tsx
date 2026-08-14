@@ -107,15 +107,23 @@ export function Sidebar({
         const initialId = window.setTimeout(() => {
             void refreshNamingStatus()
         }, 0)
+
+        return () => {
+            window.clearTimeout(initialId)
+        }
+    }, [canManageNaming, mounted, refreshNamingStatus])
+
+    useEffect(() => {
+        if (!mounted || !canManageNaming || !namingStatus?.hasWork || isStandaloneRoute(pathname)) return
+
         const intervalId = window.setInterval(() => {
             void refreshNamingStatus()
         }, 15000)
 
         return () => {
-            window.clearTimeout(initialId)
             window.clearInterval(intervalId)
         }
-    }, [canManageNaming, mounted, refreshNamingStatus])
+    }, [canManageNaming, mounted, namingStatus?.hasWork, pathname, refreshNamingStatus])
 
     const processNamingWork = useCallback(async (mode: 'auto' | 'manual' = 'manual') => {
         if (namingProcessingRef.current || !canManageNaming) return
