@@ -2,12 +2,11 @@ import 'server-only'
 
 import { unstable_cache } from 'next/cache'
 import {
-  getSapItemBomsByCodes,
   getSapItemsByCodes,
   getSapItemsWithWarehouseAverage,
-  type SapItemBom,
   type SapItemWarehouseAverage,
 } from './serviceLayer'
+import { loadFullSapBomHierarchy, type FullSapBomNode } from './fullBomHierarchy'
 import {
   buildCostedBomTree,
   type CostedBomInputNode,
@@ -17,18 +16,6 @@ import {
 
 export const SAP_MP01_COST_CACHE_SECONDS = 60 * 60 * 48
 export const SAP_MP01_COST_CACHE_TAG = 'consulta-sap-mp01-costs'
-
-type ExpandedBomNode = {
-  itemCode: string
-  itemName: string
-  quantity: number
-  inventoryUom: string | null
-  bomQuantity: number | null
-  componentWarehouse: string | null
-  outputWarehouse: string | null
-  lines: ExpandedBomNode[]
-  cycleDetected: boolean
-}
 
 type CachedMp01CostSnapshot = {
   capturedAt: string
@@ -59,7 +46,7 @@ function positiveFinite(value: number | null | undefined): value is number {
   return value !== null && value !== undefined && Number.isFinite(value) && value > 0
 }
 
-function collectNodes(node: ExpandedBomNode, nodes: ExpandedBomNode[] = []): ExpandedBomNode[] {
+function collectNodes(node: FullSapBomNode, nodes: FullSapBomNode[] = []): FullSapBomNode[] {
   nodes.push(node)
   for (const line of node.lines) collectNodes(line, nodes)
   return nodes
@@ -94,103 +81,6 @@ const getCachedMp01CostSnapshot = unstable_cache(
     tags: [SAP_MP01_COST_CACHE_TAG],
   },
 )
-
-async function loadFullBomHierarchy(rootItemCode: string): Promise<ExpandedBomNode | null> {
-  const rootCode = rootItemCode.trim().toUpperCase()
-  const bomsByCode = new Map<string, SapItemBom>()
-  const checkedCodes = new Set<string>()
-  let pendingCodes = [rootCode]
-
-  while (pendingCodes.length > 0) {
-    const currentCodes = pendingCodes.filter(code => !checkedCodes.has(code))
-    if (currentCodes.length === 0) break
-    for (const code of currentCodes) checkedCodes.add(code)
-
-    const currentBoms = await getSapItemBomsByCodes(currentCodes)
-    for (const [treeCode, bom] of currentBoms) bomsByCode.set(treeCode, bom)
-
-    const nextCodes = new Set<string>()
-    for (const bom of currentBoms.values()) {
-      for (const line of bom.lines) {
-        const childCode = line.ItemCode.trim().toUpperCase()
-        if (childCode && !checkedCodes.has(childCode)) nextCodes.add(childCode)
-      }
-    }
-    pendingCodes = [...nextCodes]
-  }
-
-  const rootBom = bomsByCode.get(rootCode)
-  if (!rootBom) return null
-
-  function buildNode(
-    itemCode: string,
-    itemName: string,
-    quantity: number,
-    inventoryUom: string | null,
-    componentWarehouse: string | null,
-    ancestry: Set<string>,
-  ): ExpandedBomNode {
-    const normalizedCode = itemCode.trim().toUpperCase()
-    if (ancestry.has(normalizedCode)) {
-      return {
-        itemCode: normalizedCode,
-        itemName,
-        quantity,
-        inventoryUom,
-        bomQuantity: null,
-        componentWarehouse,
-        outputWarehouse: null,
-        lines: [],
-        cycleDetected: true,
-      }
-    }
-
-    const bom = bomsByCode.get(normalizedCode)
-    if (!bom) {
-      return {
-        itemCode: normalizedCode,
-        itemName,
-        quantity,
-        inventoryUom,
-        bomQuantity: null,
-        componentWarehouse,
-        outputWarehouse: null,
-        lines: [],
-        cycleDetected: false,
-      }
-    }
-
-    const nextAncestry = new Set(ancestry)
-    nextAncestry.add(normalizedCode)
-    return {
-      itemCode: bom.treeCode,
-      itemName: bom.productDescription ?? itemName,
-      quantity,
-      inventoryUom,
-      bomQuantity: bom.quantity,
-      componentWarehouse,
-      outputWarehouse: bom.warehouse,
-      lines: bom.lines.map(line => buildNode(
-        line.ItemCode,
-        line.ItemName,
-        line.Quantity,
-        line.InventoryUOM,
-        line.Warehouse,
-        nextAncestry,
-      )),
-      cycleDetected: false,
-    }
-  }
-
-  return buildNode(
-    rootBom.treeCode,
-    rootBom.productDescription ?? '',
-    rootBom.quantity,
-    null,
-    null,
-    new Set(),
-  )
-}
 
 function resolveDirectCost(
   average: SapItemWarehouseAverage | undefined,
@@ -237,7 +127,7 @@ export async function getSapCostedBom(
 ): Promise<SapCostedBomResult | null> {
   const totalStartedAt = performance.now()
   const hierarchyStartedAt = performance.now()
-  const root = await loadFullBomHierarchy(itemCode)
+  const { tree: root } = await loadFullSapBomHierarchy(itemCode)
   if (!root) return null
   const hierarchyMs = Math.round(performance.now() - hierarchyStartedAt)
 
@@ -251,7 +141,7 @@ export async function getSapCostedBom(
   const itemMasterByCode = new Map(costSnapshot.itemMasters.map(item => [item.itemCode, item]))
   const averagesByCode = new Map(costSnapshot.averages.map(average => [average.itemCode, average]))
 
-  function toCostedInput(node: ExpandedBomNode): CostedBomInputNode {
+  function toCostedInput(node: FullSapBomNode): CostedBomInputNode {
     const itemMaster = itemMasterByCode.get(node.itemCode)
     const average = averagesByCode.get(node.itemCode)
     return {
