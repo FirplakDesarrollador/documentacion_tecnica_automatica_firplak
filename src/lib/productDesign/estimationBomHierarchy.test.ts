@@ -23,6 +23,10 @@ function line(id: string, parentId: string | null): EstimationDraftBomLine {
     costEvidence: null,
     manualCostReason: 'prueba',
     notes: null,
+    physicalWeightPolicy: 'from_quantity',
+    usefulQuantity: null,
+    fixedWeightKg: null,
+    physicalWeightSnapshot: null,
     extensions: {},
   }
 }

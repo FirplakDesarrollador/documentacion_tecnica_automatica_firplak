@@ -56,6 +56,8 @@ const MEASUREMENT_COLUMNS = `
   paint_area_mm2,
   mixture_kg,
   gelcoat_kg,
+  actual_net_weight_kg,
+  actual_gross_weight_kg,
   measured_at,
   production_lot,
   source_type,
@@ -118,6 +120,8 @@ function mutationValues(draft: EngineeringMeasurementDraft): Array<string | numb
     draft.paintAreaMm2,
     draft.mixtureKg,
     draft.gelcoatKg,
+    draft.actualNetWeightKg,
+    draft.actualGrossWeightKg,
     draft.measuredAt,
     draft.productionLot,
     draft.sourceType,
@@ -299,8 +303,10 @@ export async function createEngineeringMeasurementAction(
         color_code,
         cad_volume_mm3,
         paint_area_mm2,
-        mixture_kg,
-        gelcoat_kg,
+         mixture_kg,
+         gelcoat_kg,
+         actual_net_weight_kg,
+         actual_gross_weight_kg,
         measured_at,
         production_lot,
         source_type,
@@ -312,7 +318,7 @@ export async function createEngineeringMeasurementAction(
         recorded_by
       ) VALUES (
         $1, 'pending', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-        $12, $13, $14, $15, $16, $17, $18, $19, $20, $21::jsonb, $22, $23
+        $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24, $25
       )
       RETURNING id`,
       [...mutationValues(draft), actorId],
@@ -354,15 +360,17 @@ export async function updateEngineeringMeasurementAction(
          paint_area_mm2 = $12,
          mixture_kg = $13,
          gelcoat_kg = $14,
-         measured_at = $15,
-         production_lot = $16,
-         source_type = $17,
-         source_file = $18,
-         source_sheet = $19,
-         source_row = $20,
-         source_evidence_json = $21::jsonb,
-         notes = $22
-       WHERE id = $23
+         actual_net_weight_kg = $15,
+         actual_gross_weight_kg = $16,
+         measured_at = $17,
+         production_lot = $18,
+         source_type = $19,
+         source_file = $20,
+         source_sheet = $21,
+         source_row = $22,
+         source_evidence_json = $23::jsonb,
+         notes = $24
+       WHERE id = $25
        RETURNING id`,
       [...mutationValues(draft), id],
     )

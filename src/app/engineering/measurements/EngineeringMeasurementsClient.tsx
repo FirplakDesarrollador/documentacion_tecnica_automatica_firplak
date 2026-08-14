@@ -57,6 +57,8 @@ type MeasurementFormState = {
   paintAreaMm2: string
   mixtureKg: string
   gelcoatKg: string
+  actualNetWeightKg: string
+  actualGrossWeightKg: string
   measuredAt: string
   productionLot: string
   sourceType: string
@@ -83,6 +85,8 @@ function createEmptyForm(): MeasurementFormState {
     paintAreaMm2: '',
     mixtureKg: '',
     gelcoatKg: '',
+    actualNetWeightKg: '',
+    actualGrossWeightKg: '',
     measuredAt: '',
     productionLot: '',
     sourceType: 'manual',
@@ -114,6 +118,8 @@ function formFromMeasurement(measurement: EngineeringMeasurement): MeasurementFo
     paintAreaMm2: nullableNumberInput(measurement.paintAreaMm2),
     mixtureKg: nullableNumberInput(measurement.mixtureKg),
     gelcoatKg: nullableNumberInput(measurement.gelcoatKg),
+    actualNetWeightKg: nullableNumberInput(measurement.actualNetWeightKg),
+    actualGrossWeightKg: nullableNumberInput(measurement.actualGrossWeightKg),
     measuredAt: measurement.measuredAt ?? '',
     productionLot: measurement.productionLot ?? '',
     sourceType: measurement.sourceType,
@@ -158,6 +164,8 @@ function formToDraft(form: MeasurementFormState): EngineeringMeasurementDraftInp
     paintAreaMm2: form.paintAreaMm2,
     mixtureKg: form.mixtureKg,
     gelcoatKg: form.gelcoatKg,
+    actualNetWeightKg: form.actualNetWeightKg,
+    actualGrossWeightKg: form.actualGrossWeightKg,
     measuredAt: form.measuredAt,
     productionLot: form.productionLot,
     sourceType: form.sourceType,
@@ -544,7 +552,7 @@ export default function EngineeringMeasurementsClient({
 
               <section className="space-y-3 border-t border-slate-100 pt-5">
                 <div className="flex items-center gap-2 text-sm font-semibold text-slate-800"><Ruler className="h-4 w-4 text-sky-700" />Geometría CAD y consumo real</div>
-                <p className="text-xs leading-5 text-slate-500">Los cuatro valores son necesarios para validar la muestra y hacerla parte de la razón de totales.</p>
+                <p className="text-xs leading-5 text-slate-500">Los cuatro valores de geometría y consumo son necesarios para calibrar. Los pesos reales enriquecen el aprendizaje físico cuando estén disponibles.</p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Field label="Volumen CAD (mm³)">
                     <Input type="number" min="0" step="any" inputMode="decimal" value={form.cadVolumeMm3} onChange={event => updateForm('cadVolumeMm3', event.target.value)} placeholder="0" disabled={isPending} />
@@ -557,6 +565,12 @@ export default function EngineeringMeasurementsClient({
                   </Field>
                   <Field label="Gelcoat consumido (kg)">
                     <Input type="number" min="0" step="any" inputMode="decimal" value={form.gelcoatKg} onChange={event => updateForm('gelcoatKg', event.target.value)} placeholder="0" disabled={isPending} />
+                  </Field>
+                  <Field label="Peso neto real (kg)">
+                    <Input type="number" min="0" step="any" inputMode="decimal" value={form.actualNetWeightKg} onChange={event => updateForm('actualNetWeightKg', event.target.value)} placeholder="Sin empaque" disabled={isPending} />
+                  </Field>
+                  <Field label="Peso bruto real (kg)">
+                    <Input type="number" min="0" step="any" inputMode="decimal" value={form.actualGrossWeightKg} onChange={event => updateForm('actualGrossWeightKg', event.target.value)} placeholder="Con empaque" disabled={isPending} />
                   </Field>
                 </div>
               </section>

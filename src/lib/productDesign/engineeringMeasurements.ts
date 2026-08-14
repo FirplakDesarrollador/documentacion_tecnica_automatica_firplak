@@ -23,6 +23,8 @@ export type EngineeringMeasurementDraftInput = {
   paintAreaMm2?: number | string | null
   mixtureKg?: number | string | null
   gelcoatKg?: number | string | null
+  actualNetWeightKg?: number | string | null
+  actualGrossWeightKg?: number | string | null
   measuredAt?: string | null
   productionLot?: string | null
   sourceType?: string | null
@@ -48,6 +50,8 @@ export type EngineeringMeasurementDraft = {
   paintAreaMm2: number | null
   mixtureKg: number | null
   gelcoatKg: number | null
+  actualNetWeightKg: number | null
+  actualGrossWeightKg: number | null
   measuredAt: string | null
   productionLot: string | null
   sourceType: string
@@ -211,6 +215,12 @@ export function parseEngineeringMeasurementDraft(value: unknown): EngineeringMea
     ?? SYNTHETIC_MARBLE_CALIBRATION_GROUP
   const sourceType = nullableText(input.sourceType, 'sourceType')?.toLowerCase() ?? 'manual'
 
+  const actualNetWeightKg = nullablePositiveNumber(input.actualNetWeightKg, 'actualNetWeightKg')
+  const actualGrossWeightKg = nullablePositiveNumber(input.actualGrossWeightKg, 'actualGrossWeightKg')
+  if (actualNetWeightKg !== null && actualGrossWeightKg !== null && actualGrossWeightKg < actualNetWeightKg) {
+    throw new Error('actualGrossWeightKg no puede ser menor que actualNetWeightKg.')
+  }
+
   return {
     calibrationGroup,
     sampleLabel: requiredText(input.sampleLabel, 'sampleLabel'),
@@ -226,6 +236,8 @@ export function parseEngineeringMeasurementDraft(value: unknown): EngineeringMea
     paintAreaMm2: nullablePositiveNumber(input.paintAreaMm2, 'paintAreaMm2'),
     mixtureKg: nullablePositiveNumber(input.mixtureKg, 'mixtureKg'),
     gelcoatKg: nullablePositiveNumber(input.gelcoatKg, 'gelcoatKg'),
+    actualNetWeightKg,
+    actualGrossWeightKg,
     measuredAt: nullableIsoDate(input.measuredAt, 'measuredAt'),
     productionLot: nullableText(input.productionLot, 'productionLot'),
     sourceType,
@@ -299,6 +311,8 @@ export function parseEngineeringMeasurementRecord(value: unknown): EngineeringMe
     paintAreaMm2: row.paint_area_mm2,
     mixtureKg: row.mixture_kg,
     gelcoatKg: row.gelcoat_kg,
+    actualNetWeightKg: row.actual_net_weight_kg,
+    actualGrossWeightKg: row.actual_gross_weight_kg,
     measuredAt: row.measured_at,
     productionLot: row.production_lot,
     sourceType: row.source_type,

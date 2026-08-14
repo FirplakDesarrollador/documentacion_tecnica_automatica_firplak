@@ -32,6 +32,11 @@ import {
 import { familyNameFromSapItemGroup, inferFamilyFromSapDescriptions } from '@/lib/productDesign/familyInference'
 import { evaluateEstimationBomCosting, type EstimationBomCostLine } from '@/lib/productDesign/estimationBomCosting'
 import { proposeGelcoatReplacements, sapItemColorCode } from '@/lib/productDesign/gelcoatAlignment'
+import { applySyntheticMarbleBomQuantities } from '@/lib/productDesign/syntheticMarbleBomQuantities'
+import {
+  calculateEstimationPhysicalWeights,
+  DEFAULT_SYNTHETIC_MARBLE_WEIGHT_WASTE_PCT,
+} from '@/lib/productDesign/estimationPhysicalWeights'
 import { assertPermission, type AccessContext } from '@/utils/auth/access'
 
 const ESTIMATION_STATUSES = ['draft', 'active', 'closed', 'archived'] as const
@@ -355,6 +360,10 @@ function toBomDraftLines(nodes: readonly BomNode[], parentId: string | null = nu
       costEvidence: null,
       manualCostReason: null,
       notes: null,
+      physicalWeightPolicy: node.lines.length > 0 ? 'derive_children' : 'from_quantity',
+      usefulQuantity: null,
+      fixedWeightKg: null,
+      physicalWeightSnapshot: null,
       extensions: {
         sapLevel: node.level,
         sapLoaded: node.loaded,
@@ -389,6 +398,70 @@ async function getCurrentSyntheticMarbleCalibration(): Promise<ReturnType<typeof
 
 function timestampNow(): string {
   return new Date().toISOString()
+}
+
+async function applyCurrentPhysicalWeightProfiles(
+  lines: readonly EstimationDraftBomLine[],
+): Promise<EstimationDraftBomLine[]> {
+  const itemCodes = [...new Set(lines.flatMap(line => line.sapItemCode ? [line.sapItemCode.trim().toUpperCase()] : []))]
+  if (itemCodes.length === 0) return [...lines]
+  const placeholders = itemCodes.map((_, index) => `$${index + 1}`).join(', ')
+  const rows = await dbQuery(
+    `SELECT item_code, physical_weight_kg_per_uom, physical_weight_source, physical_weight_note, physical_weight_updated_at
+       FROM public.component_items
+      WHERE item_code IN (${placeholders})`,
+    itemCodes,
+  )
+  type PhysicalWeightProfile = {
+    kgPerUom: number | null
+    source: string | null
+    note: string | null
+    capturedAt: string | null
+  }
+  const byCode = new Map<string, PhysicalWeightProfile>()
+  for (const row of rows as RawRow[]) {
+    const itemCode = stringOrNull(row.item_code)?.toUpperCase()
+    if (!itemCode) continue
+    byCode.set(itemCode, {
+      kgPerUom: numberOrNull(row.physical_weight_kg_per_uom),
+      source: stringOrNull(row.physical_weight_source),
+      note: stringOrNull(row.physical_weight_note),
+      capturedAt: stringOrNull(row.physical_weight_updated_at),
+    })
+  }
+  return lines.map((line): EstimationDraftBomLine => {
+    const profile = line.sapItemCode ? byCode.get(line.sapItemCode.trim().toUpperCase()) : undefined
+    return profile ? {
+      ...line,
+      physicalWeightSnapshot: {
+        kgPerUom: profile.kgPerUom,
+        source: profile.source,
+        note: profile.note,
+        capturedAt: profile.capturedAt,
+        extensions: {},
+      },
+    } : line
+  })
+}
+
+function applyPhysicalWeightEstimate(draft: EstimationDraft): void {
+  const result = calculateEstimationPhysicalWeights({
+    lines: draft.bomLines,
+    estimatedMixtureKg: draft.geometry.estimatedMixtureKg,
+    estimatedGelcoatKg: draft.geometry.estimatedGelcoatKg,
+    wastePct: draft.geometry.weightWastePct ?? DEFAULT_SYNTHETIC_MARBLE_WEIGHT_WASTE_PCT,
+  })
+  draft.geometry = {
+    ...draft.geometry,
+    weightWastePct: draft.geometry.weightWastePct ?? DEFAULT_SYNTHETIC_MARBLE_WEIGHT_WASTE_PCT,
+    estimatedNetWeightKg: result.netWeightKg,
+    estimatedPackagingWeightKg: result.packagingWeightKg,
+    estimatedGrossWeightKg: result.grossWeightKg,
+    extensions: {
+      ...draft.geometry.extensions,
+      missingPhysicalWeightLineIds: result.missingLineIds,
+    },
+  }
 }
 
 async function refreshSapDraftLineCost(
@@ -708,6 +781,7 @@ export async function freezeEstimationSyntheticMarbleCalibrationAction(input: {
   id: string
   volumeMm3: number | null
   paintAreaMm2: number | null
+  weightWastePct: number | null
 }): Promise<ProductDesignEstimation> {
   const access = await requireProductDesignAccess()
   const id = requiredUuid(input.id, 'Cotización')
@@ -729,7 +803,15 @@ export async function freezeEstimationSyntheticMarbleCalibrationAction(input: {
     estimatedGelcoatKg: frozen?.gelcoat && input.paintAreaMm2 && input.paintAreaMm2 > 0
       ? input.paintAreaMm2 * frozen.gelcoat.factor
       : null,
+    weightWastePct: input.weightWastePct ?? DEFAULT_SYNTHETIC_MARBLE_WEIGHT_WASTE_PCT,
   }
+  const appliedQuantities = applySyntheticMarbleBomQuantities(
+    draft.bomLines,
+    draft.geometry.estimatedMixtureKg,
+    draft.geometry.estimatedGelcoatKg,
+  )
+  draft.bomLines = await applyCurrentPhysicalWeightProfiles(appliedQuantities.lines)
+  applyPhysicalWeightEstimate(draft)
   await dbQuery(
     `UPDATE public.product_design_estimations
         SET draft_data_json = $1::jsonb,
@@ -740,6 +822,84 @@ export async function freezeEstimationSyntheticMarbleCalibrationAction(input: {
   const saved = await getEstimationRecord(id)
   if (!saved) throw new Error('No fue posible releer la calibración congelada.')
   revalidatePath(`/product-design/estimations/${id}`)
+  return saved
+}
+
+export async function registerEstimationActualConsumptionMeasurementAction(input: {
+  id: string
+  actualMixtureKg: number | null
+  actualGelcoatKg: number | null
+  actualNetWeightKg: number | null
+  actualGrossWeightKg: number | null
+}): Promise<ProductDesignEstimation> {
+  const access = await requireProductDesignAccess()
+  const id = requiredUuid(input.id, 'Cotización')
+  const existing = await getEstimationRecord(id)
+  if (!existing) throw new Error('La cotización no existe.')
+  const actualMixtureKg = optionalPositiveNumber(input.actualMixtureKg, 'Mezcla real')
+  const actualGelcoatKg = optionalPositiveNumber(input.actualGelcoatKg, 'Gelcoat real')
+  const actualNetWeightKg = optionalPositiveNumber(input.actualNetWeightKg, 'Peso neto real')
+  const actualGrossWeightKg = optionalPositiveNumber(input.actualGrossWeightKg, 'Peso bruto real')
+  if (actualMixtureKg === null || actualGelcoatKg === null || actualNetWeightKg === null || actualGrossWeightKg === null) {
+    throw new Error('Registra mezcla, gelcoat, peso neto y peso bruto reales antes de enviar la toma a Ingeniería.')
+  }
+  if (actualGrossWeightKg < actualNetWeightKg) {
+    throw new Error('El peso bruto real no puede ser menor que el peso neto real.')
+  }
+  const { volumeMm3, paintAreaMm2 } = existing.draft.geometry
+  if (volumeMm3 === null || paintAreaMm2 === null) {
+    throw new Error('La toma real requiere volumen CAD y área de pintura.')
+  }
+  const draft = existing.draft
+  draft.geometry = { ...draft.geometry, actualMixtureKg, actualGelcoatKg, actualNetWeightKg, actualGrossWeightKg }
+  const measurementId = stringOrNull(draft.geometry.extensions.engineeringMeasurementId)
+  const evidence = JSON.stringify({
+    productDesignEstimationId: id,
+    recordedFrom: 'product_design_estimation',
+    physicalWeightSnapshot: {
+      wastePct: draft.geometry.weightWastePct,
+      estimatedNetWeightKg: draft.geometry.estimatedNetWeightKg,
+      estimatedGrossWeightKg: draft.geometry.estimatedGrossWeightKg,
+      bomLines: draft.bomLines,
+    },
+  })
+  if (measurementId) {
+    const updated = await dbQuery(
+      `UPDATE public.product_engineering_measurements
+          SET cad_volume_mm3 = $1, paint_area_mm2 = $2, mixture_kg = $3, gelcoat_kg = $4,
+              actual_net_weight_kg = $5, actual_gross_weight_kg = $6,
+              color_code = $7, sap_item_code = $8, legacy_product_name = $9,
+              source_evidence_json = $10::jsonb
+        WHERE id = $11::uuid AND measurement_status = 'pending'
+        RETURNING id`,
+      [volumeMm3, paintAreaMm2, actualMixtureKg, actualGelcoatKg, actualNetWeightKg, actualGrossWeightKg, existing.colorCode, existing.homologueSapItemCode, existing.provisionalName, evidence, measurementId],
+    )
+    if (updated.length === 0) throw new Error('La toma ya fue validada o excluida por Ingeniería. Registra una nueva toma desde Mediciones.')
+  } else {
+    const rows = await dbQuery(
+      `INSERT INTO public.product_engineering_measurements (
+        calibration_group, measurement_status, sample_label, sap_prefix, family_code,
+        sap_item_code, legacy_product_name, color_code, cad_volume_mm3, paint_area_mm2,
+        mixture_kg, gelcoat_kg, actual_net_weight_kg, actual_gross_weight_kg,
+        source_type, source_evidence_json, recorded_by
+      ) VALUES ($1, 'pending', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::uuid)
+        RETURNING id`,
+      ['SYNTHETIC_MARBLE_GENERAL', existing.provisionalName, existing.sapPrefix, existing.familyCode, existing.homologueSapItemCode, existing.provisionalName, existing.colorCode, volumeMm3, paintAreaMm2, actualMixtureKg, actualGelcoatKg, actualNetWeightKg, actualGrossWeightKg, 'product_design_estimation', evidence, access.user.id],
+    )
+    const createdMeasurementId = stringOrNull(rows[0]?.id)
+    if (!createdMeasurementId) throw new Error('La toma se registró sin un identificador verificable.')
+    draft.geometry.extensions.engineeringMeasurementId = createdMeasurementId
+  }
+  await dbQuery(
+    `UPDATE public.product_design_estimations
+        SET draft_data_json = $1::jsonb, updated_by = $2::uuid
+      WHERE id = $3::uuid`,
+    [JSON.stringify(serializeEstimationDraft(draft)), access.user.id, id],
+  )
+  const saved = await getEstimationRecord(id)
+  if (!saved) throw new Error('No fue posible releer la cotización tras registrar la toma.')
+  revalidatePath(`/product-design/estimations/${id}`)
+  revalidatePath('/engineering/measurements')
   return saved
 }
 
@@ -763,6 +923,8 @@ export async function refreshEstimationSapCostsAction(input: { id: string }): Pr
     ...existing.draft,
     bomLines: refreshedLines,
   }
+  draft.bomLines = await applyCurrentPhysicalWeightProfiles(draft.bomLines)
+  applyPhysicalWeightEstimate(draft)
   await dbQuery(
     `UPDATE public.product_design_estimations
         SET draft_data_json = $1::jsonb,
@@ -923,8 +1085,20 @@ export async function replaceEstimationGelcoatForColorAction(input: { id: string
   draft.commercialColor = { ...draft.commercialColor, colorCode: color.colorCode, colorName: color.colorName, selectedAt: timestampNow() }
   draft.bomLines = draft.bomLines.map(line => {
     const replacement = replacements.get(line.id)
-    return replacement ? { ...line, sapItemCode: replacement.itemCode, itemName: replacement.itemName ?? line.itemName, uom: replacement.uom ?? line.uom, unitCost: null, costEvidence: null, manualCostReason: null, notes: 'Gelcoat actualizado para el color comercial de la cotización.' } : line
+    return replacement ? {
+      ...line,
+      sapItemCode: replacement.itemCode,
+      itemName: replacement.itemName ?? line.itemName,
+      uom: replacement.uom ?? line.uom,
+      unitCost: null,
+      costEvidence: null,
+      manualCostReason: null,
+      physicalWeightSnapshot: null,
+      notes: 'Gelcoat actualizado para el color comercial de la cotización.',
+    } : line
   })
+  draft.bomLines = await applyCurrentPhysicalWeightProfiles(draft.bomLines)
+  applyPhysicalWeightEstimate(draft)
   await dbQuery(
     `UPDATE public.product_design_estimations
         SET color_code = $1, draft_data_json = $2::jsonb, updated_by = $3::uuid

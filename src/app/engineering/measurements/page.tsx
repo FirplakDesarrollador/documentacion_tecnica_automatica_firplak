@@ -1,3 +1,5 @@
+import Link from 'next/link'
+
 import { BackLink } from '@/components/navigation/BackLink'
 import { requirePagePermission } from '@/utils/auth/access'
 
@@ -13,7 +15,7 @@ export default async function EngineeringMeasurementsPage() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-4 py-2">
-      <BackLink href="/engineering" label="Volver a Ingeniería" />
+      <div className="flex flex-wrap items-center justify-between gap-3"><BackLink href="/engineering" label="Volver a Ingeniería" /><Link href="/physical-weights" className="text-sm font-medium text-sky-700 hover:text-sky-900">Administrar factores físicos</Link></div>
       <EngineeringMeasurementsClient
         initialMeasurements={initial.measurements}
         initialError={initial.error}

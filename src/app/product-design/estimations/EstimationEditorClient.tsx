@@ -33,6 +33,7 @@ import {
   getEstimationHomologueChildrenAction,
   getEstimationHomologueAction,
   proposeEstimationReferenceAction,
+  registerEstimationActualConsumptionMeasurementAction,
   refreshEstimationSapCostsAction,
   replaceEstimationGelcoatForColorAction,
   saveProductDesignEstimationAction,
@@ -45,7 +46,11 @@ import {
   type ProductDesignEstimationStatus,
 } from './actions'
 import { CommercialColorSelector } from './CommercialColorSelector'
-import type { EstimationDraft, EstimationDraftBomLine } from '@/lib/productDesign/estimationDraft'
+import {
+  type EstimationDraft,
+  type EstimationDraftBomLine,
+  type EstimationDraftPhysicalWeightPolicy,
+} from '@/lib/productDesign/estimationDraft'
 import {
   evaluateEstimationBomCosting,
   type EstimationBomCostCategory,
@@ -71,6 +76,14 @@ const COST_CATEGORIES: Array<{ value: EstimationBomCostCategory; label: string }
 const COST_STRATEGIES: Array<{ value: EstimationBomCostStrategy; label: string }> = [
   { value: 'expand_children', label: 'Costear por hijos' },
   { value: 'manual_override', label: 'Costo unitario' },
+]
+
+const PHYSICAL_WEIGHT_POLICIES: Array<{ value: EstimationDraftPhysicalWeightPolicy; label: string }> = [
+  { value: 'from_quantity', label: 'Cantidad LdM' },
+  { value: 'useful_quantity', label: 'Cantidad útil' },
+  { value: 'fixed_weight', label: 'Peso fijo' },
+  { value: 'derive_children', label: 'Derivar de hijos' },
+  { value: 'exclude', label: 'Excluir' },
 ]
 
 const ESTIMATION_STATUSES: Array<{ value: ProductDesignEstimationStatus; label: string }> = [
@@ -171,9 +184,8 @@ function formatCurrency(value: number): string {
   }).format(value)
 }
 
-function formatFactor(value: number | null): string {
-  if (value === null) return 'Sin factor'
-  return new Intl.NumberFormat('es-CO', { maximumSignificantDigits: 7 }).format(value)
+function formatQuantity(value: number | null, maximumFractionDigits = 3): string {
+  return value === null ? 'Pendiente' : new Intl.NumberFormat('es-CO', { maximumFractionDigits }).format(value)
 }
 
 function lineIdentifier(): string {
@@ -222,6 +234,10 @@ function blankManualLine(parentId: string | null): EstimationDraftBomLine {
     costEvidence: null,
     manualCostReason: null,
     notes: null,
+    physicalWeightPolicy: 'from_quantity',
+    usefulQuantity: null,
+    fixedWeightKg: null,
+    physicalWeightSnapshot: null,
     extensions: {},
   }
 }
@@ -245,6 +261,7 @@ function substructureLines(nodes: readonly SubstructureNode[], parentId: string)
     line.quantity = node.quantity
     line.uom = node.inventoryUom
     line.costStrategy = node.lines.length > 0 ? 'expand_children' : 'manual_override'
+    line.physicalWeightPolicy = node.lines.length > 0 ? 'derive_children' : 'from_quantity'
     line.notes = 'Línea copiada desde la sub-LdM SAP. Confirma cantidad, unidad y costo.'
     line.extensions = { sapLevel: node.level, sapLoaded: node.loaded }
     return [line, ...substructureLines(node.lines, line.id)]
@@ -293,6 +310,9 @@ export function EstimationEditorClient({
   const estimatedPeroxideGrams = estimation.draft.geometry.estimatedGelcoatKg === null
     ? null
     : estimation.draft.geometry.estimatedGelcoatKg * 1_000 * 0.025
+  const missingPhysicalWeightLineIds = estimation.draft.geometry.extensions.missingPhysicalWeightLineIds
+  const hasIncompletePhysicalWeight = estimation.draft.geometry.estimatedNetWeightKg !== null
+    && (estimation.draft.geometry.estimatedPackagingWeightKg === null || (Array.isArray(missingPhysicalWeightLineIds) && missingPhysicalWeightLineIds.length > 0))
 
   const setSaved = (saved: ProductDesignEstimation) => {
     setEstimation(saved)
@@ -384,7 +404,7 @@ export function EstimationEditorClient({
     })
   }
 
-  const updateGeometry = (field: 'volumeMm3' | 'paintAreaMm2', value: string) => {
+  const updateGeometry = (field: 'volumeMm3' | 'paintAreaMm2' | 'weightWastePct' | 'actualMixtureKg' | 'actualGelcoatKg' | 'actualNetWeightKg' | 'actualGrossWeightKg', value: string) => {
     updateDraft((draft) => ({
       ...draft,
       geometry: { ...draft.geometry, [field]: numberOrNull(value) },
@@ -528,9 +548,28 @@ export function EstimationEditorClient({
           id: estimation.id,
           volumeMm3: estimation.draft.geometry.volumeMm3,
           paintAreaMm2: estimation.draft.geometry.paintAreaMm2,
+          weightWastePct: estimation.draft.geometry.weightWastePct,
         })
         setSaved(saved)
-        toast.success('Se congeló el conjunto de muestras y sus factores para esta cotización.')
+        toast.success('Estimaciones calculadas y cantidades de mezcla, gelcoat y peróxido actualizadas en la LdM.')
+      } catch (error) {
+        toast.error(errorMessage(error))
+      }
+    })
+  }
+
+  const registerActualConsumption = () => {
+    startTransition(async () => {
+      try {
+        const saved = await registerEstimationActualConsumptionMeasurementAction({
+          id: estimation.id,
+          actualMixtureKg: estimation.draft.geometry.actualMixtureKg,
+          actualGelcoatKg: estimation.draft.geometry.actualGelcoatKg,
+          actualNetWeightKg: estimation.draft.geometry.actualNetWeightKg,
+          actualGrossWeightKg: estimation.draft.geometry.actualGrossWeightKg,
+        })
+        setSaved(saved)
+        toast.success('Toma real registrada como pendiente de validación de Ingeniería.')
       } catch (error) {
         toast.error(errorMessage(error))
       }
@@ -606,29 +645,24 @@ export function EstimationEditorClient({
       </header>
 
       <section className="space-y-6">
-        <div className="space-y-6">
+        <div className="grid gap-6 xl:grid-cols-2 xl:items-start">
           <Card>
-            <CardHeader>
+            <CardHeader className="pb-3">
               <CardTitle>Identidad provisional</CardTitle>
-              <CardDescription>Estos datos describen la estimación; no crean todavía referencia, versión, SKU ni nomenclatura oficial.</CardDescription>
             </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2 md:col-span-2">
+            <CardContent className="space-y-5">
+              <div className="grid gap-3 md:grid-cols-12">
+              <div className="space-y-2 md:col-span-9">
                 <Label htmlFor="provisional-name">Nombre provisional</Label>
                 <Input id="provisional-name" value={estimation.provisionalName} onChange={(event) => setEstimation((current) => ({ ...current, provisionalName: event.target.value }))} />
               </div>
-              <div className="space-y-2"><Label htmlFor="width-cm">Ancho (cm)</Label><Input id="width-cm" inputMode="decimal" value={numberInput(estimation.widthMm)} onChange={(event) => setEstimation((current) => ({ ...current, widthMm: numberOrNull(event.target.value) }))} /></div>
-              <div className="space-y-2"><Label htmlFor="depth-cm">Fondo (cm)</Label><Input id="depth-cm" inputMode="decimal" value={numberInput(estimation.depthMm)} onChange={(event) => setEstimation((current) => ({ ...current, depthMm: numberOrNull(event.target.value) }))} /></div>
-              <div className="space-y-2"><Label htmlFor="height-cm">Alto (cm)</Label><Input id="height-cm" inputMode="decimal" value={numberInput(estimation.heightMm)} onChange={(event) => setEstimation((current) => ({ ...current, heightMm: numberOrNull(event.target.value) }))} /></div>
-              <div className="space-y-2">
+              <div className="space-y-2 md:col-span-3">
                 <Label htmlFor="estimation-status">Estado de Diseño</Label>
                 <select id="estimation-status" value={estimation.status} onChange={(event) => setEstimation((current) => ({ ...current, status: event.target.value as ProductDesignEstimationStatus }))} className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm text-slate-800 shadow-sm">
                   {ESTIMATION_STATUSES.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
                 </select>
               </div>
-              <div className="space-y-2"><Label htmlFor="net-weight">Peso neto (kg)</Label><Input id="net-weight" inputMode="decimal" value={numberInput(estimation.draft.provisionalIdentity.netWeightKg)} onChange={(event) => updateDraft((draft) => ({ ...draft, provisionalIdentity: { ...draft.provisionalIdentity, netWeightKg: numberOrNull(event.target.value) } }))} /></div>
-              <div className="space-y-2"><Label htmlFor="gross-weight">Peso bruto (kg)</Label><Input id="gross-weight" inputMode="decimal" value={numberInput(estimation.draft.provisionalIdentity.grossWeightKg)} onChange={(event) => updateDraft((draft) => ({ ...draft, provisionalIdentity: { ...draft.provisionalIdentity, grossWeightKg: numberOrNull(event.target.value) } }))} /></div>
-              <div className="md:col-span-2">
+              <div className="space-y-2 md:col-span-6">
                 <CommercialColorSelector
                   id="estimation-commercial-color"
                   colors={commercialColors}
@@ -644,17 +678,14 @@ export function EstimationEditorClient({
                   }))}
                 />
               </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Homólogo y familia local</CardTitle>
-              <CardDescription>La LdM se copia al lienzo. El consecutivo sólo es una sugerencia y debe verificarse de nuevo cuando se cree en SAP.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+              <div className="space-y-2 md:col-span-2"><Label htmlFor="width-cm">Ancho (cm)</Label><Input id="width-cm" className="max-w-24" inputMode="decimal" value={numberInput(estimation.widthMm)} onChange={(event) => setEstimation((current) => ({ ...current, widthMm: numberOrNull(event.target.value) }))} /></div>
+              <div className="space-y-2 md:col-span-2"><Label htmlFor="depth-cm">Fondo (cm)</Label><Input id="depth-cm" className="max-w-24" inputMode="decimal" value={numberInput(estimation.depthMm)} onChange={(event) => setEstimation((current) => ({ ...current, depthMm: numberOrNull(event.target.value) }))} /></div>
+              <div className="space-y-2 md:col-span-2"><Label htmlFor="height-cm">Alto (cm)</Label><Input id="height-cm" className="max-w-24" inputMode="decimal" value={numberInput(estimation.heightMm)} onChange={(event) => setEstimation((current) => ({ ...current, heightMm: numberOrNull(event.target.value) }))} /></div>
+              </div>
+              <div className="space-y-4 border-t border-slate-200 pt-5">
+                <h2 className="text-lg font-semibold text-slate-900">Homólogo LdM</h2>
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
-                <p><strong>Homólogo actual:</strong> {estimation.draft.homologue?.sapItemCode ?? estimation.homologueSapItemCode ?? 'Sin definir'}{estimation.draft.homologue?.itemName ? ` · ${estimation.draft.homologue.itemName}` : ''}</p>
+                <p><strong>Actual:</strong> {estimation.draft.homologue?.sapItemCode ?? estimation.homologueSapItemCode ?? 'Sin definir'}{estimation.draft.homologue?.itemName ? ` · ${estimation.draft.homologue.itemName}` : ''}</p>
                 <p className="mt-1"><strong>Familia local:</strong> {estimation.familyCode ?? 'Aún no existe en el catálogo local'}</p>
               </div>
               <div className="flex gap-2">
@@ -698,20 +729,43 @@ export function EstimationEditorClient({
                   <Button type="button" className="mt-4" onClick={createFamily} disabled={isPending}><FilePlus2 className="h-4 w-4" />Crear sólo familia local</Button>
                 </div>
               )}
+              </div>
             </CardContent>
           </Card>
 
           <Card>
-            <CardHeader>
-              <CardTitle>Geometría Fusion 360 y calibración de Mármol Sintético</CardTitle>
-              <CardDescription>Calcula mezcla y gelcoat por razón de totales de las muestras válidas. El snapshot queda congelado en esta cotización.</CardDescription>
+            <CardHeader className="pb-3">
+              <CardTitle>Estimaciones según CAD | Mármol sintético</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2"><div className="space-y-2"><Label htmlFor="cad-volume">Volumen CAD (mm³)</Label><Input id="cad-volume" inputMode="decimal" value={numberInput(estimation.draft.geometry.volumeMm3)} onChange={(event) => updateGeometry('volumeMm3', event.target.value)} /></div><div className="space-y-2"><Label htmlFor="paint-area">Área de pintura (mm²)</Label><Input id="paint-area" inputMode="decimal" value={numberInput(estimation.draft.geometry.paintAreaMm2)} onChange={(event) => updateGeometry('paintAreaMm2', event.target.value)} /></div></div>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                <div className="space-y-2"><Label htmlFor="cad-volume">Volumen</Label><Input id="cad-volume" inputMode="decimal" value={numberInput(estimation.draft.geometry.volumeMm3)} onChange={(event) => updateGeometry('volumeMm3', event.target.value)} /></div>
+                <div className="space-y-2"><Label>Mezcla (kg)</Label><Input readOnly value={formatQuantity(estimation.draft.geometry.estimatedMixtureKg)} className="bg-slate-50" /></div>
+                <div className="space-y-2"><Label htmlFor="paint-area">Área</Label><Input id="paint-area" inputMode="decimal" value={numberInput(estimation.draft.geometry.paintAreaMm2)} onChange={(event) => updateGeometry('paintAreaMm2', event.target.value)} /></div>
+                <div className="space-y-2"><Label>Gelcoat (kg)</Label><Input readOnly value={formatQuantity(estimation.draft.geometry.estimatedGelcoatKg)} className="bg-slate-50" /></div>
+                <div className="space-y-2"><Label>Peróxido (g)</Label><Input readOnly value={formatQuantity(estimatedPeroxideGrams, 2)} className="bg-slate-50" /></div>
+              </div>
+              <div className="flex flex-wrap gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="min-w-24 flex-1 basis-24 space-y-2"><Label htmlFor="weight-waste">Merma (%)</Label><Input id="weight-waste" inputMode="decimal" value={numberInput((estimation.draft.geometry.weightWastePct ?? 0.05) * 100)} onChange={(event) => { const value = numberOrNull(event.target.value); updateGeometry('weightWastePct', value === null ? '' : String(value / 100)) }} /></div>
+                <div className="min-w-28 flex-1 basis-28 space-y-2"><Label>Peso neto (kg)</Label><Input readOnly value={formatQuantity(estimation.draft.geometry.estimatedNetWeightKg, 2)} className="bg-white" /></div>
+                <div className="min-w-32 flex-[1.15] basis-32 space-y-2"><Label>Peso empaque (kg)</Label><Input readOnly value={formatQuantity(estimation.draft.geometry.estimatedPackagingWeightKg, 2)} className="bg-white" /></div>
+                <div className="min-w-28 flex-1 basis-28 space-y-2"><Label>Peso bruto (kg)</Label><Input readOnly value={formatQuantity(estimation.draft.geometry.estimatedGrossWeightKg, 2)} className="bg-white" /></div>
+                {hasIncompletePhysicalWeight && <p className="w-full text-xs font-medium text-red-700">Faltan pesos por detallar; estos valores son una estimación inicial.</p>}
+              </div>
               <Button type="button" variant="outline" onClick={freezeCalibration} disabled={isPending}><Calculator className="h-4 w-4" />Calcular y congelar con muestras válidas</Button>
-              {estimation.draft.syntheticMarbleCalibration ? <div className="grid gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm md:grid-cols-2"><div><p className="font-semibold text-emerald-950">Mezcla</p><p>{estimation.draft.geometry.estimatedMixtureKg === null ? 'Ingresa volumen CAD' : `${formatFactor(estimation.draft.geometry.estimatedMixtureKg)} kg estimados`}</p><p className="mt-1 text-xs text-emerald-800">Factor {formatFactor(estimation.draft.syntheticMarbleCalibration.mixture?.factor ?? null)} kg/mm³ · n={estimation.draft.syntheticMarbleCalibration.mixture?.sampleCount ?? 0}</p></div><div><p className="font-semibold text-emerald-950">Gelcoat</p><p>{estimation.draft.geometry.estimatedGelcoatKg === null ? 'Ingresa área CAD' : `${formatFactor(estimation.draft.geometry.estimatedGelcoatKg)} kg estimados`}</p><p className="mt-1 text-xs text-emerald-800">Factor {formatFactor(estimation.draft.syntheticMarbleCalibration.gelcoat?.factor ?? null)} kg/mm² · n={estimation.draft.syntheticMarbleCalibration.gelcoat?.sampleCount ?? 0}</p><p className="mt-1 text-xs text-emerald-800">Peróxido sugerido (2,5%): {estimatedPeroxideGrams === null ? 'pendiente' : `${formatFactor(estimatedPeroxideGrams)} g`}</p></div></div> : <p className="text-sm text-amber-700">Aún no hay un snapshot congelado. Guardar una cotización no toma automáticamente una muestra individual como patrón.</p>}
+              <div className="flex flex-wrap items-end gap-3 rounded-lg border border-sky-200 bg-sky-50 p-3">
+                <div className="min-w-32 flex-1 basis-32 space-y-2"><Label htmlFor="actual-mixture">Mezcla real (kg)</Label><Input id="actual-mixture" inputMode="decimal" value={numberInput(estimation.draft.geometry.actualMixtureKg)} onChange={(event) => updateGeometry('actualMixtureKg', event.target.value)} placeholder="Consumo real" /></div>
+                <div className="min-w-32 flex-1 basis-32 space-y-2"><Label htmlFor="actual-gelcoat">Gelcoat real (kg)</Label><Input id="actual-gelcoat" inputMode="decimal" value={numberInput(estimation.draft.geometry.actualGelcoatKg)} onChange={(event) => updateGeometry('actualGelcoatKg', event.target.value)} placeholder="Consumo real" /></div>
+                <div className="min-w-32 flex-1 basis-32 space-y-2"><Label htmlFor="actual-net-weight">Peso neto real (kg)</Label><Input id="actual-net-weight" inputMode="decimal" value={numberInput(estimation.draft.geometry.actualNetWeightKg)} onChange={(event) => updateGeometry('actualNetWeightKg', event.target.value)} placeholder="Sin empaque" /></div>
+                <div className="min-w-32 flex-1 basis-32 space-y-2"><Label htmlFor="actual-gross-weight">Peso bruto real (kg)</Label><Input id="actual-gross-weight" inputMode="decimal" value={numberInput(estimation.draft.geometry.actualGrossWeightKg)} onChange={(event) => updateGeometry('actualGrossWeightKg', event.target.value)} placeholder="Con empaque" /></div>
+                <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={registerActualConsumption} disabled={isPending}>Registrar toma para Ingeniería</Button>
+                <p className="w-full text-xs text-sky-900">La toma queda pendiente en Mediciones de Ingeniería.</p>
+              </div>
             </CardContent>
           </Card>
+        </div>
+
+        <div className="space-y-6">
 
           <Card>
             <CardHeader>
@@ -731,8 +785,8 @@ export function EstimationEditorClient({
               </div>
               {componentCandidates.length > 0 && <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200 p-1">{componentCandidates.map((candidate) => <button key={candidate.itemCode} type="button" onClick={() => addSapComponent(candidate)} className="block w-full rounded-md px-3 py-2 text-left text-sm hover:bg-sky-50"><strong>{candidate.itemCode}</strong><span className="ml-2 text-slate-500">{candidate.itemName}</span></button>)}</div>}
               <div className="overflow-x-auto rounded-lg border border-slate-200">
-                <table className="min-w-[1420px] w-full text-left text-xs">
-                  <thead className="bg-slate-100 text-slate-600"><tr><th className="p-2">Nivel / componente</th><th className="p-2">Padre</th><th className="p-2">Cant.</th><th className="p-2">Unidad</th><th className="p-2">Categoría</th><th className="p-2">Estrategia</th><th className="p-2">Costo unit.</th><th className="p-2">Subtotal</th><th className="p-2">Evidencia</th><th className="p-2">Acciones</th></tr></thead>
+                <table className="min-w-[1620px] w-full text-left text-xs">
+                  <thead className="bg-slate-100 text-slate-600"><tr><th className="p-2">Nivel / componente</th><th className="p-2">Padre</th><th className="p-2">Cant.</th><th className="p-2">Unidad</th><th className="p-2">Categoría</th><th className="p-2">Estrategia</th><th className="p-2">Peso físico</th><th className="p-2">Costo unit.</th><th className="p-2">Subtotal</th><th className="p-2">Evidencia</th><th className="p-2">Acciones</th></tr></thead>
                   <tbody>
                     {hierarchyRows.map(({ line, level, hasChildren }) => {
                       const valuation = lineValuations.get(line.id)
@@ -756,6 +810,7 @@ export function EstimationEditorClient({
                               ? { costStrategy, unitCost: null, costEvidence: null, manualCostReason: null }
                               : { costStrategy })
                           }} className="h-8 rounded border border-input bg-white px-2">{line.costStrategy === null && <option value="">—</option>}{COST_STRATEGIES.map(strategy => <option key={strategy.value} value={strategy.value}>{strategy.label}</option>)}</select></td>
+                          <td className="p-2"><div className="min-w-44 space-y-1"><select value={line.physicalWeightPolicy} onChange={(event) => updateBomLine(line.id, { physicalWeightPolicy: event.target.value as EstimationDraftPhysicalWeightPolicy })} className="h-8 w-full rounded border border-input bg-white px-2">{PHYSICAL_WEIGHT_POLICIES.map(policy => <option key={policy.value} value={policy.value}>{policy.label}</option>)}</select>{line.physicalWeightPolicy === 'useful_quantity' && <Input className="h-8" inputMode="decimal" value={numberInput(line.usefulQuantity)} onChange={(event) => updateBomLine(line.id, { usefulQuantity: numberOrNull(event.target.value) })} placeholder="Cantidad útil" />}{line.physicalWeightPolicy === 'fixed_weight' && <Input className="h-8" inputMode="decimal" value={numberInput(line.fixedWeightKg)} onChange={(event) => updateBomLine(line.id, { fixedWeightKg: numberOrNull(event.target.value) })} placeholder="Peso fijo kg" />}{line.physicalWeightPolicy !== 'fixed_weight' && line.physicalWeightPolicy !== 'exclude' && line.physicalWeightPolicy !== 'derive_children' && <p className="text-[11px] text-slate-500">{line.physicalWeightSnapshot?.kgPerUom ?? 'Sin factor'} kg/{line.uom ?? 'UOM'}</p>}</div></td>
                           <td className="p-2"><Input className="h-8 w-28" inputMode="decimal" disabled={line.costStrategy === 'expand_children'} value={numberInput(line.unitCost)} onChange={(event) => {
                             const unitCost = numberOrNull(event.target.value)
                             updateBomLine(line.id, {
@@ -776,7 +831,7 @@ export function EstimationEditorClient({
                   </tbody>
                 </table>
               </div>
-              <div className="flex flex-wrap items-center gap-3"><Button type="button" variant="outline" onClick={refreshCosts} disabled={isPending}><RefreshCw className="h-4 w-4" />Actualizar promedios MP-01</Button><p className="text-xs text-slate-600">Sólo se aplican promedios/estándares vigentes de MP-01 a hojas SAP. Las líneas manuales conservan su costo y motivo; no se usan entradas genéricas como compras.</p></div>
+              <div className="flex flex-wrap items-center gap-3"><Button type="button" variant="outline" onClick={refreshCosts} disabled={isPending}><RefreshCw className="h-4 w-4" />Actualizar promedios MP-01</Button><Link href="/physical-weights" className="text-sm font-medium text-sky-700 hover:text-sky-900">Administrar factores físicos</Link><p className="text-xs text-slate-600">Sólo se aplican promedios/estándares vigentes de MP-01 a hojas SAP. Las líneas manuales conservan su costo y motivo; no se usan entradas genéricas como compras.</p></div>
               {costInput.incompleteLineIds.length > 0 ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Completa cantidad, categoría, estrategia y la justificación de cualquier costo manual en {costInput.incompleteLineIds.length} línea(s) para calcular totales.</div> : costResult?.ok ? <div className="grid gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm md:grid-cols-2"><div><p className="font-semibold text-emerald-950">Materiales + empaque</p><p className="text-lg font-bold">{formatCurrency(costResult.totals.materialsAndPackaging)}</p></div><div><p className="font-semibold text-emerald-950">Total ampliado (incluye MO/CIF/otros)</p><p className="text-lg font-bold">{formatCurrency(costResult.totals.expandedTotal)}</p></div><p className="md:col-span-2 text-xs text-emerald-800">Material {formatCurrency(costResult.totals.byCategory.material)} · Empaque {formatCurrency(costResult.totals.byCategory.packaging)} · MO {formatCurrency(costResult.totals.byCategory.mo)} · CIF {formatCurrency(costResult.totals.byCategory.cif)} · Otros {formatCurrency(costResult.totals.byCategory.other)}</p></div> : <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800"><p className="font-semibold">La LdM aún no se puede totalizar</p><ul className="mt-1 list-disc pl-5">{costResult?.issues.map((issue) => <li key={`${issue.code}-${issue.lineId}`}>{issue.message}</li>)}</ul></div>}
             </CardContent>
           </Card>

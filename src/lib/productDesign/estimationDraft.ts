@@ -28,6 +28,15 @@ export type EstimationDraftLineOrigin = (typeof ESTIMATION_DRAFT_LINE_ORIGINS)[n
 export const ESTIMATION_DRAFT_GEOMETRY_SOURCES = ['fusion_360', 'manual'] as const
 export type EstimationDraftGeometrySource = (typeof ESTIMATION_DRAFT_GEOMETRY_SOURCES)[number]
 
+export const ESTIMATION_DRAFT_PHYSICAL_WEIGHT_POLICIES = [
+  'from_quantity',
+  'useful_quantity',
+  'fixed_weight',
+  'derive_children',
+  'exclude',
+] as const
+export type EstimationDraftPhysicalWeightPolicy = (typeof ESTIMATION_DRAFT_PHYSICAL_WEIGHT_POLICIES)[number]
+
 export type EstimationDraftHomologue = {
   sapItemCode: string | null
   itemName: string | null
@@ -65,6 +74,22 @@ export type EstimationDraftGeometry = {
   paintAreaMm2: number | null
   estimatedMixtureKg: number | null
   estimatedGelcoatKg: number | null
+  actualMixtureKg: number | null
+  actualGelcoatKg: number | null
+  weightWastePct: number | null
+  estimatedNetWeightKg: number | null
+  estimatedPackagingWeightKg: number | null
+  estimatedGrossWeightKg: number | null
+  actualNetWeightKg: number | null
+  actualGrossWeightKg: number | null
+  extensions: EstimationDraftExtensions
+}
+
+export type EstimationDraftPhysicalWeightSnapshot = {
+  kgPerUom: number | null
+  source: string | null
+  note: string | null
+  capturedAt: string | null
   extensions: EstimationDraftExtensions
 }
 
@@ -121,6 +146,10 @@ export type EstimationDraftBomLine = {
   costEvidence: EstimationDraftCostEvidence | null
   manualCostReason: string | null
   notes: string | null
+  physicalWeightPolicy: EstimationDraftPhysicalWeightPolicy
+  usefulQuantity: number | null
+  fixedWeightKg: number | null
+  physicalWeightSnapshot: EstimationDraftPhysicalWeightSnapshot | null
   extensions: EstimationDraftExtensions
 }
 
@@ -223,6 +252,14 @@ const GEOMETRY_KEYS = [
   'paintAreaMm2',
   'estimatedMixtureKg',
   'estimatedGelcoatKg',
+  'actualMixtureKg',
+  'actualGelcoatKg',
+  'weightWastePct',
+  'estimatedNetWeightKg',
+  'estimatedPackagingWeightKg',
+  'estimatedGrossWeightKg',
+  'actualNetWeightKg',
+  'actualGrossWeightKg',
   'extensions',
 ] as const
 
@@ -243,6 +280,8 @@ const COST_EVIDENCE_KEYS = [
   'extensions',
 ] as const
 
+const PHYSICAL_WEIGHT_SNAPSHOT_KEYS = ['kgPerUom', 'source', 'note', 'capturedAt', 'extensions'] as const
+
 const BOM_LINE_KEYS = [
   'id',
   'parentId',
@@ -257,6 +296,10 @@ const BOM_LINE_KEYS = [
   'costEvidence',
   'manualCostReason',
   'notes',
+  'physicalWeightPolicy',
+  'usefulQuantity',
+  'fixedWeightKg',
+  'physicalWeightSnapshot',
   'extensions',
 ] as const
 
@@ -421,8 +464,31 @@ function normalizeGeometry(value: unknown): EstimationDraftGeometry {
     paintAreaMm2: readFiniteNumber(record, 'paintAreaMm2'),
     estimatedMixtureKg: readFiniteNumber(record, 'estimatedMixtureKg'),
     estimatedGelcoatKg: readFiniteNumber(record, 'estimatedGelcoatKg'),
+    actualMixtureKg: readFiniteNumber(record, 'actualMixtureKg'),
+    actualGelcoatKg: readFiniteNumber(record, 'actualGelcoatKg'),
+    weightWastePct: readFiniteNumber(record, 'weightWastePct'),
+    estimatedNetWeightKg: readFiniteNumber(record, 'estimatedNetWeightKg'),
+    estimatedPackagingWeightKg: readFiniteNumber(record, 'estimatedPackagingWeightKg'),
+    estimatedGrossWeightKg: readFiniteNumber(record, 'estimatedGrossWeightKg'),
+    actualNetWeightKg: readFiniteNumber(record, 'actualNetWeightKg'),
+    actualGrossWeightKg: readFiniteNumber(record, 'actualGrossWeightKg'),
     extensions: collectExtensions(record, GEOMETRY_KEYS),
   }
+}
+
+function normalizePhysicalWeightSnapshot(value: unknown): EstimationDraftPhysicalWeightSnapshot | null {
+  const record = readRecord(value)
+  if (!record) return null
+  const snapshot: EstimationDraftPhysicalWeightSnapshot = {
+    kgPerUom: readFiniteNumber(record, 'kgPerUom'),
+    source: readString(record, 'source'),
+    note: readString(record, 'note'),
+    capturedAt: readString(record, 'capturedAt'),
+    extensions: collectExtensions(record, PHYSICAL_WEIGHT_SNAPSHOT_KEYS),
+  }
+  return snapshot.kgPerUom !== null || snapshot.source || snapshot.note || snapshot.capturedAt || hasExtensions(snapshot.extensions)
+    ? snapshot
+    : null
 }
 
 function normalizeCommercialColor(value: unknown): EstimationDraftCommercialColor {
@@ -525,6 +591,11 @@ function normalizeBomLines(value: unknown): EstimationDraftBomLine[] {
       costEvidence: normalizeCostEvidence(record.costEvidence),
       manualCostReason: readString(record, 'manualCostReason'),
       notes: readString(record, 'notes'),
+      physicalWeightPolicy: readAllowedValue(record, 'physicalWeightPolicy', ESTIMATION_DRAFT_PHYSICAL_WEIGHT_POLICIES)
+        ?? 'from_quantity',
+      usefulQuantity: readFiniteNumber(record, 'usefulQuantity'),
+      fixedWeightKg: readFiniteNumber(record, 'fixedWeightKg'),
+      physicalWeightSnapshot: normalizePhysicalWeightSnapshot(record.physicalWeightSnapshot),
       extensions: collectExtensions(record, BOM_LINE_KEYS),
     }]
   })
@@ -628,6 +699,24 @@ function serializeGeometry(value: EstimationDraftGeometry): EstimationDraftJsonO
     paintAreaMm2: value.paintAreaMm2,
     estimatedMixtureKg: value.estimatedMixtureKg,
     estimatedGelcoatKg: value.estimatedGelcoatKg,
+    actualMixtureKg: value.actualMixtureKg,
+    actualGelcoatKg: value.actualGelcoatKg,
+    weightWastePct: value.weightWastePct,
+    estimatedNetWeightKg: value.estimatedNetWeightKg,
+    estimatedPackagingWeightKg: value.estimatedPackagingWeightKg,
+    estimatedGrossWeightKg: value.estimatedGrossWeightKg,
+    actualNetWeightKg: value.actualNetWeightKg,
+    actualGrossWeightKg: value.actualGrossWeightKg,
+  }
+}
+
+function serializePhysicalWeightSnapshot(value: EstimationDraftPhysicalWeightSnapshot): EstimationDraftJsonObject {
+  return {
+    ...value.extensions,
+    kgPerUom: value.kgPerUom,
+    source: value.source,
+    note: value.note,
+    capturedAt: value.capturedAt,
   }
 }
 
@@ -689,6 +778,10 @@ function serializeBomLine(value: EstimationDraftBomLine): EstimationDraftJsonObj
     costEvidence: value.costEvidence ? serializeCostEvidence(value.costEvidence) : null,
     manualCostReason: value.manualCostReason,
     notes: value.notes,
+    physicalWeightPolicy: value.physicalWeightPolicy,
+    usefulQuantity: value.usefulQuantity,
+    fixedWeightKg: value.fixedWeightKg,
+    physicalWeightSnapshot: value.physicalWeightSnapshot ? serializePhysicalWeightSnapshot(value.physicalWeightSnapshot) : null,
   }
 }
 
