@@ -1,9 +1,20 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
+import { Check, ChevronsUpDown } from 'lucide-react'
 
-import { Input } from '@/components/ui/input'
+import { cn } from '@/lib/utils'
+import { buttonVariants } from '@/components/ui/button'
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
 import { Label } from '@/components/ui/label'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import type { EstimationCommercialColorCandidate } from './actions'
 
 type CommercialColorSelectorProps = {
@@ -14,51 +25,37 @@ type CommercialColorSelectorProps = {
 }
 
 export function CommercialColorSelector({ colors, colorCode, onSelect, id }: CommercialColorSelectorProps) {
-  const [query, setQuery] = useState('')
-  const filteredColors = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleUpperCase('es-CO')
-    const matches = normalizedQuery
-      ? colors.filter(color => `${color.colorCode} ${color.colorName}`.toLocaleUpperCase('es-CO').includes(normalizedQuery))
-      : [...colors]
-    const selected = colorCode ? colors.find(color => color.colorCode === colorCode) : null
-    return selected && !matches.some(color => color.colorCode === selected.colorCode)
-      ? [selected, ...matches]
-      : matches
-  }, [colorCode, colors, query])
+  const [open, setOpen] = useState(false)
+  const selected = colors.find(color => color.colorCode === colorCode) ?? null
 
   return (
     <div className="space-y-2">
-      <Label htmlFor={`${id}-filter`}>Color comercial</Label>
-      <div className="flex min-w-0 overflow-hidden rounded-lg border border-input bg-white shadow-sm focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-1">
-        <Input
-          id={`${id}-filter`}
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Filtrar por código o nombre"
-          aria-label="Filtrar colores comerciales"
-          className="min-w-0 flex-1 rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
-        />
-        <select
-          id={id}
-          value={colorCode ?? ''}
-          onChange={(event) => {
-            const selected = colors.find(color => color.colorCode === event.target.value) ?? null
-            onSelect(selected)
-          }}
-          className="h-10 min-w-0 flex-[1.45] border-0 border-l border-input bg-transparent px-3 text-sm outline-none"
-          aria-label="Seleccionar color comercial"
-        >
-          <option value="">{query.trim() ? 'Seleccione un resultado' : 'Sin seleccionar'}</option>
-          {filteredColors.map(color => (
-            <option key={color.colorCode} value={color.colorCode}>
-              {color.colorCode} · {color.colorName || 'Sin nombre'}
-            </option>
-          ))}
-        </select>
-      </div>
-      <p className="text-xs text-slate-500">
-        Escribe en el campo izquierdo para filtrar inmediatamente las opciones del desplegable ({filteredColors.length} resultado{filteredColors.length === 1 ? '' : 's'}). Luego selecciona el color. El gelcoat SAP se confirma por separado.
-      </p>
+      <Label htmlFor={id}>Color comercial</Label>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger id={id} className={cn(buttonVariants({ variant: 'outline' }), 'w-full justify-between font-normal')}>
+          <span className="truncate">{selected ? `${selected.colorCode} · ${selected.colorName || 'Sin nombre'}` : 'Seleccionar color'}</span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </PopoverTrigger>
+        <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+          <Command>
+            <CommandInput placeholder="Buscar color por código o nombre..." />
+            <CommandList>
+              <CommandEmpty>No se encontraron colores.</CommandEmpty>
+              <CommandGroup>
+                <CommandItem value="sin seleccionar" onSelect={() => { onSelect(null); setOpen(false) }}>
+                  <Check className={cn('mr-2 h-4 w-4', colorCode ? 'invisible' : 'opacity-100')} />Sin seleccionar
+                </CommandItem>
+                {colors.map(color => (
+                  <CommandItem key={color.colorCode} value={`${color.colorCode} ${color.colorName}`} onSelect={() => { onSelect(color); setOpen(false) }}>
+                    <Check className={cn('mr-2 h-4 w-4', colorCode === color.colorCode ? 'opacity-100' : 'invisible')} />
+                    {color.colorCode} · {color.colorName || 'Sin nombre'}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
     </div>
   )
 }
