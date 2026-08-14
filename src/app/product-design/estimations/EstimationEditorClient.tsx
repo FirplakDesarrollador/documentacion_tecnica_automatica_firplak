@@ -1,13 +1,35 @@
 'use client'
 
 import Link from 'next/link'
-import { useMemo, useState, useTransition } from 'react'
+import { type ReactNode, useMemo, useState, useTransition } from 'react'
+import {
+  closestCenter,
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import {
   ArrowLeft,
   Calculator,
+  ChevronDown,
+  ChevronRight,
   Copy,
   FilePlus2,
   GitBranchPlus,
+  GripVertical,
   PackagePlus,
   RefreshCw,
   Save,
@@ -30,7 +52,7 @@ import {
   getEstimationFamilyInferenceAction,
   type EstimationFamilyCreationOptions,
   type EstimationFamilyInference,
-  getEstimationHomologueChildrenAction,
+  getEstimationSapSubtreeAction,
   getEstimationHomologueAction,
   proposeEstimationReferenceAction,
   registerEstimationActualConsumptionMeasurementAction,
@@ -39,6 +61,7 @@ import {
   saveProductDesignEstimationAction,
   searchEstimationHomologuesAction,
   setEstimationSharedWithSalesAction,
+  suggestEstimationSubBomCodeAction,
   type EstimationHomologue,
   type EstimationHomologueCandidate,
   type EstimationCommercialColorCandidate,
@@ -56,13 +79,19 @@ import {
   type EstimationBomCostCategory,
   type EstimationBomCostLine,
   type EstimationBomCostStrategy,
+  type EstimationBomLineValuation,
 } from '@/lib/productDesign/estimationBomCosting'
 import {
   buildEstimationBomHierarchy,
-  canAssignEstimationBomParent,
   getEstimationBomParentCandidates,
+  getEstimationBomDescendantIds,
+  getEstimationBomDisplayLevel,
+  moveEstimationBomBranch,
+  removeEstimationBomBranch,
+  type EstimationBomDropPosition,
 } from '@/lib/productDesign/estimationBomHierarchy'
 import type { EstimationReferenceProposal } from '@/lib/productDesign/estimationReferenceProposal'
+import { inferEstimationSapCostCategory } from '@/lib/productDesign/estimationSapClassification'
 import { proposeGelcoatReplacements } from '@/lib/productDesign/gelcoatAlignment'
 
 const COST_CATEGORIES: Array<{ value: EstimationBomCostCategory; label: string }> = [
@@ -92,6 +121,42 @@ const ESTIMATION_STATUSES: Array<{ value: ProductDesignEstimationStatus; label: 
   { value: 'closed', label: 'Cerrada' },
   { value: 'archived', label: 'Archivada' },
 ]
+
+const BOM_GRID_COLUMNS = 'grid-cols-[36px_minmax(320px,1.7fr)_88px_88px_120px_150px_130px_130px_minmax(240px,1fr)_210px]'
+
+function SortableBomRow({
+  lineId,
+  excluded,
+  dropPosition,
+  children,
+}: {
+  lineId: string
+  excluded?: boolean
+  dropPosition?: EstimationBomDropPosition | null
+  children: ReactNode
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: lineId })
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={`grid ${BOM_GRID_COLUMNS} items-start border-t text-xs transition-colors ${excluded ? 'bg-amber-50/70 opacity-65' : dropPosition === 'inside' ? 'bg-sky-50 ring-2 ring-inset ring-sky-400' : 'bg-white'} ${dropPosition === 'before' ? 'border-t-2 border-t-sky-500' : 'border-slate-100'} ${dropPosition === 'after' ? 'border-b-2 border-b-sky-500' : ''} ${isDragging ? 'relative z-20 opacity-50 shadow-lg' : ''}`}
+    >
+      <div className="flex justify-center p-2">
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          className="flex h-8 w-7 cursor-grab items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700 active:cursor-grabbing"
+          aria-label="Mover rama"
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
+      </div>
+      {children}
+    </div>
+  )
+}
 
 type FamilyForm = {
   familyName: string
@@ -198,9 +263,10 @@ function extensionText(extensions: Record<string, unknown>, key: string): string
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
-function buildCostLines(draft: EstimationDraft): { lines: EstimationBomCostLine[]; incompleteLineIds: string[] } {
+function buildCostLinesFromBomLines(bomLines: readonly EstimationDraftBomLine[]): { lines: EstimationBomCostLine[]; incompleteLineIds: string[] } {
   const incompleteLineIds: string[] = []
-  const lines = draft.bomLines.flatMap((line): EstimationBomCostLine[] => {
+  const lines = bomLines.flatMap((line): EstimationBomCostLine[] => {
+    if (isExcludedByManualBoundary(line, bomLines)) return []
     const manualCostWithoutReason = line.costEvidence?.source === 'manual' && !line.manualCostReason?.trim()
     if (line.quantity === null || line.costCategory === null || line.costStrategy === null || manualCostWithoutReason) {
       incompleteLineIds.push(line.id)
@@ -213,10 +279,18 @@ function buildCostLines(draft: EstimationDraft): { lines: EstimationBomCostLine[
       uom: line.uom,
       costCategory: line.costCategory,
       costStrategy: line.costStrategy,
+      origin: line.origin,
+      bomQuantity: typeof line.extensions.sapBomQuantity === 'number'
+        ? line.extensions.sapBomQuantity
+        : null,
       unitCost: line.unitCost,
     }]
   })
   return { lines, incompleteLineIds }
+}
+
+function buildCostLines(draft: EstimationDraft): { lines: EstimationBomCostLine[]; incompleteLineIds: string[] } {
+  return buildCostLinesFromBomLines(draft.bomLines)
 }
 
 function blankManualLine(parentId: string | null): EstimationDraftBomLine {
@@ -249,22 +323,115 @@ function sapLine(candidate: EstimationHomologueCandidate, parentId: string | nul
     sapItemCode: candidate.itemCode,
     itemName: candidate.itemName || null,
     uom: null,
+    costStrategy: 'sap_direct',
     notes: 'Ítem SAP agregado al lienzo. Confirma cantidad y unidad antes de costear.',
   }
 }
 
-type SubstructureNode = Awaited<ReturnType<typeof getEstimationHomologueChildrenAction>>['lines'][number]
+type SubstructureNode = Awaited<ReturnType<typeof getEstimationSapSubtreeAction>>['tree']
+type SubstructureLeafCosts = Awaited<ReturnType<typeof getEstimationSapSubtreeAction>>['leafCosts']
 
-function substructureLines(nodes: readonly SubstructureNode[], parentId: string): EstimationDraftBomLine[] {
+function substructureIsComplete(node: SubstructureNode, branchErrors: Record<string, string>): boolean {
+  return !node.cycleDetected
+    && !branchErrors[node.itemCode]
+    && node.lines.every(child => substructureIsComplete(child, branchErrors))
+}
+
+function substructureLines(
+  nodes: readonly SubstructureNode[],
+  parentId: string,
+  branchErrors: Record<string, string> = {},
+  leafCosts: SubstructureLeafCosts = {},
+): EstimationDraftBomLine[] {
   return nodes.flatMap(node => {
     const line = sapLine({ itemCode: node.itemCode, itemName: node.itemName }, parentId)
     line.quantity = node.quantity
     line.uom = node.inventoryUom
-    line.costStrategy = node.lines.length > 0 ? 'expand_children' : 'manual_override'
+    line.costCategory = inferEstimationSapCostCategory(node.itemCode, node.itemName)
+    line.costStrategy = node.lines.length > 0 || node.cycleDetected ? 'expand_children' : 'sap_direct'
+    const leafCost = leafCosts[node.itemCode]
+    const sourceUom = leafCost?.inventoryUom?.trim().toUpperCase() ?? null
+    const lineUom = node.inventoryUom?.trim().toUpperCase() ?? sourceUom
+    const hasCompatibleLeafCost = line.costStrategy === 'sap_direct'
+      && leafCost?.unitCost !== null
+      && leafCost?.unitCost !== undefined
+      && leafCost.unitCost > 0
+      && (!sourceUom || sourceUom === lineUom)
+    line.unitCost = hasCompatibleLeafCost ? leafCost.unitCost : null
+    line.costEvidence = line.costStrategy === 'expand_children' ? null : {
+      source: hasCompatibleLeafCost ? 'warehouse_average' : 'unavailable',
+      candidateId: hasCompatibleLeafCost ? `warehouse-average:${node.itemCode}:MP-01` : null,
+      warehouseCode: 'MP-01',
+      documentType: hasCompatibleLeafCost ? 'WarehouseAverage' : null,
+      documentNumber: null,
+      documentDate: leafCost?.readAt ?? null,
+      originalCurrency: hasCompatibleLeafCost ? 'COP' : null,
+      sourceUom,
+      warning: hasCompatibleLeafCost
+        ? 'Costo temporal: promedio/estándar vigente de MP-01. No representa la última compra ni una recepción de proveedor.'
+        : 'SAP no reporta un promedio/estándar positivo compatible en MP-01; el costo queda pendiente.',
+      extensions: { sourceReadAt: leafCost?.readAt ?? null },
+    }
     line.physicalWeightPolicy = node.lines.length > 0 ? 'derive_children' : 'from_quantity'
-    line.notes = 'Línea copiada desde la sub-LdM SAP. Confirma cantidad, unidad y costo.'
-    line.extensions = { sapLevel: node.level, sapLoaded: node.loaded }
-    return [line, ...substructureLines(node.lines, line.id)]
+    line.notes = node.cycleDetected ? 'SAP reporta un ciclo en esta rama.' : 'Línea copiada desde la sub-LdM SAP.'
+    line.extensions = {
+      sapLoaded: true,
+      sapLoadedComplete: substructureIsComplete(node, branchErrors),
+      sapBomQuantity: node.bomQuantity,
+      sapComponentWarehouse: node.componentWarehouse,
+      sapOutputWarehouse: node.outputWarehouse,
+      sapCycleDetected: node.cycleDetected,
+      sapStructureLocked: node.lines.length > 0,
+    }
+    return [line, ...substructureLines(node.lines, line.id, branchErrors, leafCosts)]
+  })
+}
+
+function isSapLine(line: EstimationDraftBomLine | undefined): boolean {
+  return line?.origin === 'sap'
+}
+
+function costSourceLabel(line: EstimationDraftBomLine): string {
+  if (line.costStrategy === 'expand_children') return 'Calculado por sub-LdM'
+  if (line.origin === 'sap' && line.costStrategy === 'sap_direct') return 'SAP directo'
+  if (line.origin === 'manual' && line.costStrategy === 'manual_override') return 'Manual justificado'
+  return 'Pendiente'
+}
+
+function isExcludedByManualBoundary(
+  line: EstimationDraftBomLine,
+  lines: readonly EstimationDraftBomLine[],
+): boolean {
+  let parentId = line.parentId
+  while (parentId) {
+    const container = lines.find(candidate => candidate.id === parentId)
+    if (!container) return false
+    if (container.origin === 'manual' && container.costStrategy === 'manual_override') return true
+    parentId = container.parentId
+  }
+  return false
+}
+
+function reconcileManualContainers(
+  lines: EstimationDraftBomLine[],
+  containerIds: ReadonlySet<string>,
+  rollupContainerIds: ReadonlySet<string> = new Set(),
+): EstimationDraftBomLine[] {
+  return lines.map(line => {
+    if (!containerIds.has(line.id) || line.origin !== 'manual') return line
+    const hasChildren = lines.some(candidate => candidate.parentId === line.id)
+    if (!hasChildren && line.costStrategy === 'expand_children') {
+      return { ...line, costStrategy: 'manual_override', unitCost: null, costEvidence: null, manualCostReason: null }
+    }
+    const hasExplicitOverride = line.costStrategy === 'manual_override'
+      && line.costEvidence?.source === 'manual'
+      && line.unitCost !== null
+      && line.unitCost > 0
+      && Boolean(line.manualCostReason?.trim())
+    if (hasChildren && rollupContainerIds.has(line.id) && !hasExplicitOverride) {
+      return { ...line, costStrategy: 'expand_children', unitCost: null, costEvidence: null, manualCostReason: null }
+    }
+    return line
   })
 }
 
@@ -288,7 +455,14 @@ export function EstimationEditorClient({
   const [componentQuery, setComponentQuery] = useState('')
   const [componentCandidates, setComponentCandidates] = useState<EstimationHomologueCandidate[]>([])
   const [componentParentId, setComponentParentId] = useState<string>('')
+  const [activeBomLineId, setActiveBomLineId] = useState<string | null>(null)
+  const [bomDropHint, setBomDropHint] = useState<{ targetId: string; position: EstimationBomDropPosition } | null>(null)
+  const [collapsedBomLineIds, setCollapsedBomLineIds] = useState<Set<string>>(() => new Set())
   const [familyForm, setFamilyForm] = useState<FamilyForm>(() => familyFormFromInference(initialFamilyInference, initialEstimation.manufacturingProcess))
+  const dragSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
 
   const suggestedFamilyCode = extensionText(estimation.draft.homologue?.extensions ?? {}, 'suggestedFamilyCode')
   const costInput = useMemo(() => buildCostLines(estimation.draft), [estimation.draft])
@@ -300,9 +474,28 @@ export function EstimationEditorClient({
     () => buildEstimationBomHierarchy(estimation.draft.bomLines),
     [estimation.draft.bomLines],
   )
-  const lineValuations = useMemo(() => new Map(
-    costResult?.ok ? costResult.lineValuations.map(valuation => [valuation.lineId, valuation]) : [],
-  ), [costResult])
+  const visibleHierarchyRows = useMemo(() => hierarchyRows.filter(({ line }) => {
+    let parentId = line.parentId
+    while (parentId) {
+      if (collapsedBomLineIds.has(parentId)) return false
+      parentId = estimation.draft.bomLines.find(candidate => candidate.id === parentId)?.parentId ?? null
+    }
+    return true
+  }), [collapsedBomLineIds, estimation.draft.bomLines, hierarchyRows])
+  const lineValuations = useMemo(() => {
+    if (costResult?.ok) return new Map(costResult.lineValuations.map(valuation => [valuation.lineId, valuation]))
+    const valuations = new Map<string, EstimationBomLineValuation>()
+    hierarchyRows.filter(row => row.level === 0).forEach(({ line }) => {
+      const branchIds = getEstimationBomDescendantIds(estimation.draft.bomLines, line.id)
+      branchIds.add(line.id)
+      const branchInput = buildCostLinesFromBomLines(estimation.draft.bomLines.filter(candidate => branchIds.has(candidate.id)))
+      if (branchInput.incompleteLineIds.length > 0) return
+      const branchResult = evaluateEstimationBomCosting({ lines: branchInput.lines })
+      if (!branchResult.ok) return
+      branchResult.lineValuations.forEach(valuation => valuations.set(valuation.lineId, valuation))
+    })
+    return valuations
+  }, [costResult, estimation.draft.bomLines, hierarchyRows])
   const gelcoatReplacementProposals = useMemo(
     () => proposeGelcoatReplacements(estimation.draft.bomLines, estimation.draft.commercialColor.colorCode),
     [estimation.draft.bomLines, estimation.draft.commercialColor.colorCode],
@@ -330,14 +523,35 @@ export function EstimationEditorClient({
   }
 
   const assignBomParent = (lineId: string, parentId: string | null) => {
-    if (!canAssignEstimationBomParent(estimation.draft.bomLines, lineId, parentId)) {
-      toast.error('No se puede mover una línea debajo de sí misma ni de uno de sus descendientes.')
+    const line = estimation.draft.bomLines.find(candidate => candidate.id === lineId)
+    const currentContainer = estimation.draft.bomLines.find(candidate => candidate.id === line?.parentId)
+    const targetContainer = estimation.draft.bomLines.find(candidate => candidate.id === parentId)
+    if (isSapLine(currentContainer) || isSapLine(targetContainer)) {
+      toast.error('Convierte primero la cabecera SAP en una sub-LdM nueva para modificar su contenido.')
       return
     }
-    updateBomLine(lineId, { parentId })
+    try {
+      updateDraft(draft => ({
+        ...draft,
+        bomLines: reconcileManualContainers(
+          parentId
+            ? moveEstimationBomBranch(draft.bomLines, lineId, parentId, 'inside')
+            : draft.bomLines.map(candidate => candidate.id === lineId ? { ...candidate, parentId: null } : candidate),
+          new Set([line?.parentId, parentId].filter((id): id is string => Boolean(id))),
+          new Set(parentId ? [parentId] : []),
+        ),
+      }))
+    } catch (error) {
+      toast.error(errorMessage(error))
+    }
   }
 
   const addManualChild = (parentId: string | null) => {
+    const parent = estimation.draft.bomLines.find(line => line.id === parentId)
+    if (isSapLine(parent)) {
+      toast.error('Convierte primero la cabecera SAP en una sub-LdM nueva para agregar componentes.')
+      return
+    }
     updateDraft(draft => ({
       ...draft,
       bomLines: [
@@ -350,37 +564,82 @@ export function EstimationEditorClient({
   }
 
   const prepareSapChildSearch = (parentId: string) => {
+    const parent = estimation.draft.bomLines.find(line => line.id === parentId)
+    if (isSapLine(parent)) {
+      toast.error('Convierte primero la cabecera SAP en una sub-LdM nueva para agregar componentes.')
+      return
+    }
     setComponentParentId(parentId)
     toast.info('Los próximos resultados SAP se agregarán como hijos de la línea seleccionada.')
   }
 
-  const copySapSubstructure = (line: EstimationDraftBomLine) => {
+  const refreshSapSubstructure = (line: EstimationDraftBomLine) => {
     if (!line.sapItemCode) {
       toast.error('Sólo una línea vinculada a SAP puede consultar una sub-LdM.')
       return
     }
-    const existingChildren = estimation.draft.bomLines.filter(candidate => candidate.parentId === line.id)
-    if (existingChildren.length > 0 && !window.confirm(
-      `Esta línea ya tiene ${existingChildren.length} hijo(s). ¿Deseas anexar también las líneas actuales de la sub-LdM SAP?`,
-    )) return
+    const descendantCount = getEstimationBomDescendantIds(estimation.draft.bomLines, line.id).size
+    if (!window.confirm(`Se reemplazarán ${descendantCount} descendiente(s) por la lectura actual de SAP. ¿Continuar?`)) return
     startTransition(async () => {
       try {
-        const result = await getEstimationHomologueChildrenAction(line.sapItemCode ?? '')
-        if (result.error) throw new Error(result.error)
-        if (result.lines.length === 0) {
-          toast.info(`${line.sapItemCode} no tiene una sub-LdM SAP.`)
-          return
-        }
-        updateDraft(draft => ({
-          ...draft,
-          bomLines: [
-            ...draft.bomLines.map(candidate => candidate.id === line.id
-              ? { ...candidate, costStrategy: 'expand_children' as const, unitCost: null, costEvidence: null }
-              : candidate),
-            ...substructureLines(result.lines, line.id),
-          ],
-        }))
-        toast.success(`Se copiaron ${result.lines.length} línea(s) hijas desde SAP. Guarda para persistir el cambio.`)
+        const result = await getEstimationSapSubtreeAction(line.sapItemCode ?? '')
+        updateDraft(draft => {
+          const descendantIds = getEstimationBomDescendantIds(draft.bomLines, line.id)
+          return {
+            ...draft,
+            bomLines: draft.bomLines.flatMap(candidate => {
+              if (descendantIds.has(candidate.id)) return []
+              if (candidate.id !== line.id) return [candidate]
+              const updatedLine: EstimationDraftBomLine = {
+                ...candidate,
+                itemName: result.tree.itemName || candidate.itemName,
+                uom: result.tree.inventoryUom,
+                costStrategy: result.tree.lines.length > 0 ? 'expand_children' : 'sap_direct',
+                unitCost: null,
+                costEvidence: null,
+                physicalWeightPolicy: result.tree.lines.length > 0 ? 'derive_children' : 'from_quantity',
+                extensions: {
+                  ...candidate.extensions,
+                  sapBomQuantity: result.tree.bomQuantity,
+                  sapLoadedComplete: Object.keys(result.branchErrors).length === 0 && !result.tree.cycleDetected,
+                  sapReadErrors: result.branchErrors,
+                },
+              }
+              return [updatedLine, ...substructureLines(result.tree.lines, line.id, result.branchErrors, result.leafCosts)]
+            }),
+          }
+        })
+        toast.success('La rama se actualizó desde SAP. Guarda para persistir el cambio.')
+      } catch (error) {
+        toast.error(errorMessage(error))
+      }
+    })
+  }
+
+  const convertSapSubstructure = (line: EstimationDraftBomLine) => {
+    if (!line.sapItemCode) return
+    startTransition(async () => {
+      try {
+        const suggestion = await suggestEstimationSubBomCodeAction(line.sapItemCode ?? '')
+        updateBomLine(line.id, {
+          origin: 'manual',
+          sapItemCode: null,
+          costStrategy: estimation.draft.bomLines.some(candidate => candidate.parentId === line.id) ? 'expand_children' : 'manual_override',
+          unitCost: null,
+          costEvidence: null,
+          manualCostReason: null,
+          extensions: {
+            ...line.extensions,
+            sourceSapItemCode: line.sapItemCode,
+            sourceSapItemName: line.itemName,
+            sourceSapFamilyPrefix: suggestion.familyPrefix,
+            suggestedSapItemCode: suggestion.suggestedItemCode,
+            suggestionReserved: false,
+            convertedAt: new Date().toISOString(),
+            sapStructureLocked: false,
+          },
+        })
+        toast.success(`Sub-LdM convertida. Código sugerido no reservado: ${suggestion.suggestedItemCode}.`)
       } catch (error) {
         toast.error(errorMessage(error))
       }
@@ -388,20 +647,21 @@ export function EstimationEditorClient({
   }
 
   const removeBomLine = (lineId: string) => {
-    updateDraft((draft) => {
-      const removedIds = new Set([lineId])
-      let changed = true
-      while (changed) {
-        changed = false
-        for (const line of draft.bomLines) {
-          if (line.parentId && removedIds.has(line.parentId) && !removedIds.has(line.id)) {
-            removedIds.add(line.id)
-            changed = true
-          }
-        }
-      }
-      return { ...draft, bomLines: draft.bomLines.filter((line) => !removedIds.has(line.id)) }
-    })
+    const line = estimation.draft.bomLines.find(candidate => candidate.id === lineId)
+    const container = estimation.draft.bomLines.find(candidate => candidate.id === line?.parentId)
+    if (isSapLine(container)) {
+      toast.error('Convierte primero la cabecera SAP en una sub-LdM nueva para eliminar componentes internos.')
+      return
+    }
+    const descendantCount = getEstimationBomDescendantIds(estimation.draft.bomLines, lineId).size
+    if (!window.confirm(`Se eliminará esta línea y ${descendantCount} descendiente(s) del borrador. ¿Continuar?`)) return
+    updateDraft(draft => ({
+      ...draft,
+      bomLines: reconcileManualContainers(
+        removeEstimationBomBranch(draft.bomLines, lineId),
+        new Set(line?.parentId ? [line.parentId] : []),
+      ),
+    }))
   }
 
   const updateGeometry = (field: 'volumeMm3' | 'paintAreaMm2' | 'weightWastePct' | 'actualMixtureKg' | 'actualGelcoatKg' | 'actualNetWeightKg' | 'actualGrossWeightKg', value: string) => {
@@ -528,17 +788,101 @@ export function EstimationEditorClient({
   }
 
   const addSapComponent = (candidate: EstimationHomologueCandidate) => {
-    updateDraft((draft) => ({
-      ...draft,
-      bomLines: [
-        ...draft.bomLines.map(line => componentParentId && line.id === componentParentId
-          ? { ...line, costStrategy: 'expand_children' as const, unitCost: null, costEvidence: null }
-          : line),
-        sapLine(candidate, componentParentId || null),
-      ],
-    }))
-    setComponentCandidates([])
-    setComponentQuery('')
+    const parent = estimation.draft.bomLines.find(line => line.id === componentParentId)
+    if (isSapLine(parent)) {
+      toast.error('Convierte primero la cabecera SAP en una sub-LdM nueva para agregar componentes.')
+      return
+    }
+    startTransition(async () => {
+      try {
+        const result = await getEstimationSapSubtreeAction(candidate.itemCode)
+        const [root, ...descendants] = substructureLines([result.tree], componentParentId || '__root__', result.branchErrors, result.leafCosts)
+        root.parentId = componentParentId || null
+        root.quantity = 1
+        updateDraft((draft) => ({
+          ...draft,
+          bomLines: [
+            ...draft.bomLines.map(line => componentParentId && line.id === componentParentId
+              ? { ...line, costStrategy: 'expand_children' as const, unitCost: null, costEvidence: null }
+              : line),
+            root,
+            ...descendants,
+          ],
+        }))
+        setComponentCandidates([])
+        setComponentQuery('')
+        toast.success('Ítem SAP y su sub-LdM agregados al borrador.')
+      } catch (error) {
+        toast.error(errorMessage(error))
+      }
+    })
+  }
+
+  const handleBomDragStart = (event: DragStartEvent) => {
+    setActiveBomLineId(String(event.active.id))
+  }
+
+  const resolveBomDrop = (event: DragOverEvent | DragEndEvent) => {
+    if (!event.over || event.active.id === event.over.id) return null
+    const lineId = String(event.active.id)
+    const targetId = String(event.over.id)
+    const source = estimation.draft.bomLines.find(line => line.id === lineId)
+    const target = estimation.draft.bomLines.find(line => line.id === targetId)
+    if (!source || !target || getEstimationBomDescendantIds(estimation.draft.bomLines, lineId).has(targetId)) return null
+
+    const translated = event.active.rect.current.translated
+    const activeCenter = translated ? translated.top + translated.height / 2 : event.over.rect.top + event.over.rect.height / 2
+    const relativeY = (activeCenter - event.over.rect.top) / Math.max(event.over.rect.height, 1)
+    const orderedLineIds = visibleHierarchyRows.map(row => row.line.id)
+    const position: EstimationBomDropPosition = event.activatorEvent.type === 'keydown'
+      ? (orderedLineIds.indexOf(targetId) > orderedLineIds.indexOf(lineId) ? 'after' : 'before')
+      : relativeY < 0.25
+        ? 'before'
+        : relativeY > 0.75
+          ? 'after'
+          : 'inside'
+    const sourceContainer = estimation.draft.bomLines.find(line => line.id === source.parentId)
+    const destinationContainerId = position === 'inside' ? target.id : target.parentId
+    const destinationContainer = estimation.draft.bomLines.find(line => line.id === destinationContainerId)
+    if (isSapLine(sourceContainer) || isSapLine(destinationContainer)) return null
+
+    return { lineId, targetId, position, source, destinationContainerId }
+  }
+
+  const handleBomDragOver = (event: DragOverEvent) => {
+    const drop = resolveBomDrop(event)
+    setBomDropHint(drop ? { targetId: drop.targetId, position: drop.position } : null)
+  }
+
+  const handleBomDragEnd = (event: DragEndEvent) => {
+    setActiveBomLineId(null)
+    setBomDropHint(null)
+    const drop = resolveBomDrop(event)
+    if (!drop) {
+      if (event.over && event.active.id !== event.over.id) {
+        toast.error('La rama no puede moverse a esa zona. Convierte primero cualquier cabecera SAP involucrada y evita ciclos.')
+      }
+      return
+    }
+    const { lineId, targetId, position, source, destinationContainerId } = drop
+    const sourceContainer = estimation.draft.bomLines.find(line => line.id === source.parentId)
+    const destinationContainer = estimation.draft.bomLines.find(line => line.id === destinationContainerId)
+    if (isSapLine(sourceContainer) || isSapLine(destinationContainer)) {
+      toast.error('Convierte primero la cabecera SAP en una sub-LdM nueva para reorganizar su contenido.')
+      return
+    }
+    try {
+      updateDraft(draft => ({
+        ...draft,
+        bomLines: reconcileManualContainers(
+          moveEstimationBomBranch(draft.bomLines, lineId, targetId, position),
+          new Set([source.parentId, destinationContainerId].filter((id): id is string => Boolean(id))),
+          new Set(position === 'inside' ? [targetId] : []),
+        ),
+      }))
+    } catch (error) {
+      toast.error(errorMessage(error))
+    }
   }
 
   const freezeCalibration = () => {
@@ -770,66 +1114,75 @@ export function EstimationEditorClient({
           <Card>
             <CardHeader>
               <CardTitle>Lienzo de LdM y costos</CardTitle>
-              <CardDescription>Edita cantidades, agrega ítems SAP o manuales, y decide si un padre se expande por sus hijos o usa un costo explícito.</CardDescription>
+              <CardDescription>Edita cantidades, agrega ítems SAP o manuales y define el costeo de cada rama sin doble conteo.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {gelcoatReplacementProposals.length > 0 && <div className="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 md:flex-row md:items-center md:justify-between"><div><p className="font-semibold">La LdM usa gelcoat de otro color</p><p className="mt-1">Se propone reemplazar {gelcoatReplacementProposals.map(item => `${item.currentItemCode} por ${item.proposedItemCode}`).join(', ')} directamente en la LdM.</p></div><Button type="button" variant="outline" onClick={replaceGelcoatForSelectedColor} disabled={isPending}>Actualizar gelcoat en LdM</Button></div>}
               <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 md:flex-row">
                 <Input value={componentQuery} onChange={(event) => setComponentQuery(event.target.value)} placeholder="Buscar ítem SAP para agregar" />
                 <select value={componentParentId} onChange={(event) => setComponentParentId(event.target.value)} className="h-10 rounded-lg border border-input bg-white px-3 text-sm">
-                  <option value="">Como raíz</option>
+                  <option value="">En nivel 2</option>
                   {hierarchyRows.map(({ line, level }) => <option key={line.id} value={line.id}>{'— '.repeat(level)}{line.itemName ?? line.sapItemCode ?? line.id}</option>)}
                 </select>
                 <Button type="button" variant="outline" onClick={searchComponents}><Search className="h-4 w-4" />Buscar SAP</Button>
                 <Button type="button" variant="outline" onClick={() => addManualChild(componentParentId || null)}><PackagePlus className="h-4 w-4" />Agregar manual</Button>
               </div>
               {componentCandidates.length > 0 && <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200 p-1">{componentCandidates.map((candidate) => <button key={candidate.itemCode} type="button" onClick={() => addSapComponent(candidate)} className="block w-full rounded-md px-3 py-2 text-left text-sm hover:bg-sky-50"><strong>{candidate.itemCode}</strong><span className="ml-2 text-slate-500">{candidate.itemName}</span></button>)}</div>}
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-center gap-3">
+                  <Badge className="bg-slate-900 text-white">Nivel 1</Badge>
+                  <div><p className="font-semibold text-slate-950">{estimation.provisionalName}</p><p className="text-xs text-slate-600">Estructura basada en {estimation.draft.homologue?.sapItemCode ?? 'un homólogo pendiente'}</p></div>
+                </div>
+              </div>
               <div className="overflow-x-auto rounded-lg border border-slate-200">
-                <table className="min-w-[1620px] w-full text-left text-xs">
-                  <thead className="bg-slate-100 text-slate-600"><tr><th className="p-2">Nivel / componente</th><th className="p-2">Padre</th><th className="p-2">Cant.</th><th className="p-2">Unidad</th><th className="p-2">Categoría</th><th className="p-2">Estrategia</th><th className="p-2">Peso físico</th><th className="p-2">Costo unit.</th><th className="p-2">Subtotal</th><th className="p-2">Evidencia</th><th className="p-2">Acciones</th></tr></thead>
-                  <tbody>
-                    {hierarchyRows.map(({ line, level, hasChildren }) => {
-                      const valuation = lineValuations.get(line.id)
-                      const parentCandidates = getEstimationBomParentCandidates(estimation.draft.bomLines, line.id)
-                      return (
-                        <tr key={line.id} className="border-t border-slate-100 align-top">
-                          <td className="p-2">
-                            <div className="flex items-center gap-2" style={{ paddingLeft: `${level * 18}px` }}>
-                              <Badge variant={hasChildren ? 'secondary' : 'outline'}>Nivel {level}</Badge>
-                              <p className="font-medium text-slate-900">{line.sapItemCode ?? 'Manual'}</p>
+                <div className={`grid min-w-[1720px] ${BOM_GRID_COLUMNS} bg-slate-100 text-xs font-semibold text-slate-600`}>
+                  <div className="p-2" aria-hidden="true" /><div className="p-2">Nivel / componente</div><div className="p-2">Cant.</div><div className="p-2">Unidad</div><div className="p-2">Categoría</div><div className="p-2">Fuente</div><div className="p-2">Costo unit.</div><div className="p-2">Subtotal</div><div className="p-2">Evidencia</div><div className="p-2">Acciones</div>
+                </div>
+                <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragStart={handleBomDragStart} onDragOver={handleBomDragOver} onDragEnd={handleBomDragEnd} onDragCancel={() => { setActiveBomLineId(null); setBomDropHint(null) }}>
+                  <SortableContext items={visibleHierarchyRows.map(row => row.line.id)} strategy={verticalListSortingStrategy}>
+                    <div className="min-w-[1720px]">
+                      {visibleHierarchyRows.map(({ line, level, hasChildren }) => {
+                        const valuation = lineValuations.get(line.id)
+                        const parentCandidates = getEstimationBomParentCandidates(estimation.draft.bomLines, line.id).filter(candidate => candidate.origin !== 'sap')
+                        const containingLine = estimation.draft.bomLines.find(candidate => candidate.id === line.parentId)
+                        const contentLocked = isSapLine(containingLine)
+                        const isManual = line.origin === 'manual'
+                        const sourceLabel = costSourceLabel(line)
+                        const suggestedCode = extensionText(line.extensions, 'suggestedSapItemCode')
+                        const excludedByManualBoundary = isExcludedByManualBoundary(line, estimation.draft.bomLines)
+                        return (
+                          <SortableBomRow key={line.id} lineId={line.id} excluded={excludedByManualBoundary} dropPosition={bomDropHint?.targetId === line.id ? bomDropHint.position : null}>
+                            <div className="p-2" style={{ paddingLeft: `${level * 22 + 8}px` }}>
+                              <div className="relative flex items-center gap-2 before:absolute before:-left-4 before:top-4 before:h-px before:w-3 before:bg-slate-300">
+                                {hasChildren ? <button type="button" className="rounded p-1 hover:bg-slate-100" onClick={() => setCollapsedBomLineIds(current => {
+                                  const next = new Set(current)
+                                  if (next.has(line.id)) next.delete(line.id)
+                                  else next.add(line.id)
+                                  return next
+                                })} aria-label={collapsedBomLineIds.has(line.id) ? 'Expandir rama' : 'Contraer rama'}>{collapsedBomLineIds.has(line.id) ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button> : <span className="w-6" />}
+                                <Badge variant={hasChildren ? 'secondary' : 'outline'}>Nivel {getEstimationBomDisplayLevel(level)}</Badge>
+                                <span className="font-semibold text-slate-900">{line.sapItemCode ?? suggestedCode ?? 'Manual'}</span>
+                              </div>
+                              {isManual ? <Input className="mt-1 h-8 min-w-64" value={line.itemName ?? ''} onChange={(event) => updateBomLine(line.id, { itemName: event.target.value || null })} placeholder="Nombre del componente" /> : <p className="mt-1 text-slate-700">{line.itemName}</p>}
+                              {suggestedCode && <p className="mt-1 text-[11px] text-amber-700">Sugerido, no reservado: {suggestedCode}</p>}
+                              {excludedByManualBoundary && <Badge className="mt-1 bg-amber-100 text-amber-800">Excluido por costo manual de la rama</Badge>}
+                              <div className="mt-2 flex gap-1"><select value={line.physicalWeightPolicy} disabled={contentLocked} onChange={(event) => updateBomLine(line.id, { physicalWeightPolicy: event.target.value as EstimationDraftPhysicalWeightPolicy })} className="h-7 rounded border border-input bg-white px-2 text-[11px]">{PHYSICAL_WEIGHT_POLICIES.map(policy => <option key={policy.value} value={policy.value}>{policy.label}</option>)}</select></div>
                             </div>
-                            <Input className="mt-1 h-8 min-w-56" style={{ marginLeft: `${level * 18}px` }} value={line.itemName ?? ''} onChange={(event) => updateBomLine(line.id, { itemName: event.target.value || null })} placeholder="Nombre" />
-                          </td>
-                          <td className="p-2"><select value={line.parentId ?? ''} onChange={(event) => assignBomParent(line.id, event.target.value || null)} className="h-8 max-w-44 rounded border border-input bg-white px-2"><option value="">Raíz</option>{parentCandidates.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.itemName ?? candidate.sapItemCode ?? candidate.id}</option>)}</select></td>
-                          <td className="p-2"><Input className="h-8 w-20" inputMode="decimal" value={numberInput(line.quantity)} onChange={(event) => updateBomLine(line.id, { quantity: numberOrNull(event.target.value) })} /></td>
-                          <td className="p-2"><Input className="h-8 w-16" value={line.uom ?? ''} onChange={(event) => updateBomLine(line.id, { uom: event.target.value || null })} /></td>
-                          <td className="p-2"><select value={line.costCategory ?? ''} onChange={(event) => updateBomLine(line.id, { costCategory: (event.target.value || null) as EstimationBomCostCategory | null })} className="h-8 rounded border border-input bg-white px-2">{line.costCategory === null && <option value="">—</option>}{COST_CATEGORIES.map(category => <option key={category.value} value={category.value}>{category.label}</option>)}</select></td>
-                          <td className="p-2"><select value={line.costStrategy ?? ''} onChange={(event) => {
-                            const costStrategy = (event.target.value || null) as EstimationBomCostStrategy | null
-                            updateBomLine(line.id, costStrategy === 'expand_children'
-                              ? { costStrategy, unitCost: null, costEvidence: null, manualCostReason: null }
-                              : { costStrategy })
-                          }} className="h-8 rounded border border-input bg-white px-2">{line.costStrategy === null && <option value="">—</option>}{COST_STRATEGIES.map(strategy => <option key={strategy.value} value={strategy.value}>{strategy.label}</option>)}</select></td>
-                          <td className="p-2"><div className="min-w-44 space-y-1"><select value={line.physicalWeightPolicy} onChange={(event) => updateBomLine(line.id, { physicalWeightPolicy: event.target.value as EstimationDraftPhysicalWeightPolicy })} className="h-8 w-full rounded border border-input bg-white px-2">{PHYSICAL_WEIGHT_POLICIES.map(policy => <option key={policy.value} value={policy.value}>{policy.label}</option>)}</select>{line.physicalWeightPolicy === 'useful_quantity' && <Input className="h-8" inputMode="decimal" value={numberInput(line.usefulQuantity)} onChange={(event) => updateBomLine(line.id, { usefulQuantity: numberOrNull(event.target.value) })} placeholder="Cantidad útil" />}{line.physicalWeightPolicy === 'fixed_weight' && <Input className="h-8" inputMode="decimal" value={numberInput(line.fixedWeightKg)} onChange={(event) => updateBomLine(line.id, { fixedWeightKg: numberOrNull(event.target.value) })} placeholder="Peso fijo kg" />}{line.physicalWeightPolicy !== 'fixed_weight' && line.physicalWeightPolicy !== 'exclude' && line.physicalWeightPolicy !== 'derive_children' && <p className="text-[11px] text-slate-500">{line.physicalWeightSnapshot?.kgPerUom ?? 'Sin factor'} kg/{line.uom ?? 'UOM'}</p>}</div></td>
-                          <td className="p-2"><Input className="h-8 w-28" inputMode="decimal" disabled={line.costStrategy === 'expand_children'} value={numberInput(line.unitCost)} onChange={(event) => {
-                            const unitCost = numberOrNull(event.target.value)
-                            updateBomLine(line.id, {
-                              unitCost,
-                              costEvidence: unitCost === null ? null : {
-                                source: 'manual', candidateId: null, warehouseCode: 'MP-01', documentType: 'Manual', documentNumber: null,
-                                documentDate: new Date().toISOString(), originalCurrency: 'COP', sourceUom: line.uom,
-                                warning: 'Costo manual definido por Diseño; requiere justificación.', extensions: {},
-                              },
-                            })
-                          }} /></td>
-                          <td className="p-2 font-semibold text-slate-800">{valuation ? formatCurrency(valuation.totalCost) : 'Pendiente'}</td>
-                          <td className="p-2"><Input className="h-8 min-w-52" value={line.manualCostReason ?? ''} onChange={(event) => updateBomLine(line.id, { manualCostReason: event.target.value || null })} placeholder="Justificación costo manual" /><p className="mt-1 max-w-60 break-words text-slate-600">{line.costEvidence?.source ?? 'Pendiente'}{line.costEvidence?.warehouseCode ? ` · ${line.costEvidence.warehouseCode}` : ''}{line.costEvidence?.sourceUom ? ` · ${line.costEvidence.sourceUom}` : ''}</p>{line.costEvidence?.documentDate && <p className="mt-1 text-slate-500">Lectura: {new Date(line.costEvidence.documentDate).toLocaleString('es-CO')}</p>}{line.costEvidence?.warning && <p className="mt-1 max-w-60 break-words text-amber-700">{line.costEvidence.warning}</p>}</td>
-                          <td className="p-2"><div className="flex min-w-48 flex-col gap-1"><Button type="button" size="sm" variant="outline" onClick={() => prepareSapChildSearch(line.id)}><GitBranchPlus className="h-3.5 w-3.5" />Agregar hijo SAP</Button><Button type="button" size="sm" variant="outline" onClick={() => addManualChild(line.id)}><PackagePlus className="h-3.5 w-3.5" />Agregar manual</Button><Button type="button" size="sm" variant="outline" disabled={!line.sapItemCode || isPending} onClick={() => copySapSubstructure(line)}><Copy className="h-3.5 w-3.5" />Copiar sub-LdM SAP</Button><Button type="button" variant="ghost" size="sm" onClick={() => removeBomLine(line.id)}><Trash2 className="h-3.5 w-3.5 text-red-600" />Eliminar rama</Button></div></td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+                            <div className="p-2"><Input className="h-8 w-20" inputMode="decimal" disabled={contentLocked} value={numberInput(line.quantity)} onChange={(event) => updateBomLine(line.id, { quantity: numberOrNull(event.target.value) })} /></div>
+                            <div className="p-2">{isManual ? <Input className="h-8 w-16" value={line.uom ?? ''} onChange={(event) => updateBomLine(line.id, { uom: event.target.value || null })} /> : <span className="inline-flex min-h-8 items-center font-medium text-slate-700">{line.uom ?? '—'}</span>}</div>
+                            <div className="p-2"><select value={line.costCategory ?? ''} disabled={contentLocked} onChange={(event) => updateBomLine(line.id, { costCategory: (event.target.value || null) as EstimationBomCostCategory | null })} className="h-8 rounded border border-input bg-white px-2">{line.costCategory === null && <option value="">—</option>}{COST_CATEGORIES.map(category => <option key={category.value} value={category.value}>{category.label}</option>)}</select></div>
+                            <div className="p-2">{isManual ? <select value={line.costStrategy ?? ''} disabled={contentLocked} onChange={(event) => { const costStrategy = (event.target.value || null) as EstimationBomCostStrategy | null; if (costStrategy === 'manual_override' && hasChildren && !window.confirm('El costo manual excluirá expresamente todos los descendientes del cálculo. ¿Continuar?')) return; updateBomLine(line.id, costStrategy === 'expand_children' ? { costStrategy, unitCost: null, costEvidence: null, manualCostReason: null } : { costStrategy }) }} className="h-8 rounded border border-input bg-white px-2">{COST_STRATEGIES.map(strategy => <option key={strategy.value} value={strategy.value}>{strategy.label}</option>)}</select> : <Badge className={line.costStrategy === 'expand_children' ? 'bg-violet-100 text-violet-800' : 'bg-sky-100 text-sky-800'}>{sourceLabel}</Badge>}</div>
+                            <div className="p-2">{isManual && line.costStrategy === 'manual_override' ? <Input className="h-8 w-28" inputMode="decimal" value={numberInput(line.unitCost)} onChange={(event) => { const unitCost = numberOrNull(event.target.value); updateBomLine(line.id, { unitCost, costEvidence: unitCost === null ? null : { source: 'manual', candidateId: null, warehouseCode: null, documentType: 'Manual', documentNumber: null, documentDate: new Date().toISOString(), originalCurrency: 'COP', sourceUom: line.uom, warning: 'Costo manual definido por Diseño; requiere justificación.', extensions: {} } }) }} /> : <span className="font-semibold text-slate-800">{valuation?.structuralUnitCost === null || valuation?.structuralUnitCost === undefined ? 'Pendiente' : formatCurrency(valuation.structuralUnitCost)}</span>}</div>
+                            <div className="p-2 font-semibold text-slate-800">{valuation ? formatCurrency(valuation.totalCost) : 'Pendiente'}</div>
+                            <div className="p-2"><Badge className={sourceLabel === 'SAP directo' ? 'bg-sky-100 text-sky-800' : sourceLabel === 'Calculado por sub-LdM' ? 'bg-violet-100 text-violet-800' : sourceLabel === 'Manual justificado' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-700'}>{sourceLabel}</Badge>{isManual && line.costStrategy === 'manual_override' && <Input className="mt-2 h-8 min-w-52" value={line.manualCostReason ?? ''} onChange={(event) => updateBomLine(line.id, { manualCostReason: event.target.value || null })} placeholder="Justificación obligatoria" />}{line.costEvidence?.warehouseCode && <p className="mt-1 text-slate-600">Bodega {line.costEvidence.warehouseCode} · {line.costEvidence.sourceUom ?? line.uom}</p>}{line.costEvidence?.documentDate && <p className="mt-1 text-slate-500">{line.costEvidence.source === 'warehouse_average' ? 'Consultado el' : 'Fecha'}: {new Date(line.costEvidence.documentDate).toLocaleString('es-CO')}</p>}{extensionText(line.costEvidence?.extensions ?? {}, 'definedByUserId') && <p className="mt-1 text-slate-500">Usuario: {extensionText(line.costEvidence?.extensions ?? {}, 'definedByUserId')}</p>}{line.costEvidence?.warning && <p className="mt-1 text-amber-700">{line.costEvidence.warning}</p>}{line.costStrategy === 'expand_children' && <p className="mt-1 text-violet-700">{getEstimationBomDescendantIds(estimation.draft.bomLines, line.id).size} descendiente(s) · {line.extensions.sapLoadedComplete === false ? 'parcial' : 'completo'}</p>}</div>
+                            <div className="p-2"><div className="flex min-w-48 flex-col gap-1">{isManual && <><Button type="button" size="sm" variant="outline" onClick={() => prepareSapChildSearch(line.id)}><GitBranchPlus className="h-3.5 w-3.5" />Agregar hijo SAP</Button><Button type="button" size="sm" variant="outline" onClick={() => addManualChild(line.id)}><PackagePlus className="h-3.5 w-3.5" />Agregar manual</Button></>}{line.origin === 'sap' && <Button type="button" size="sm" variant="outline" disabled={isPending} onClick={() => refreshSapSubstructure(line)}><RefreshCw className="h-3.5 w-3.5" />Consultar/actualizar SAP</Button>}{line.origin === 'sap' && hasChildren && <Button type="button" size="sm" variant="outline" disabled={isPending} onClick={() => convertSapSubstructure(line)}><Copy className="h-3.5 w-3.5" />Crear sub-LdM nueva</Button>}<select aria-label="Mover a" value={line.parentId ?? ''} disabled={contentLocked} onChange={(event) => assignBomParent(line.id, event.target.value || null)} className="h-8 rounded border border-input bg-white px-2"><option value="">Mover a nivel 2</option>{parentCandidates.map(candidate => <option key={candidate.id} value={candidate.id}>Mover dentro de {candidate.itemName ?? candidate.sapItemCode ?? candidate.id}</option>)}</select><Button type="button" variant="ghost" size="sm" disabled={contentLocked} onClick={() => removeBomLine(line.id)}><Trash2 className="h-3.5 w-3.5 text-red-600" />Eliminar rama</Button></div></div>
+                          </SortableBomRow>
+                        )
+                      })}
+                    </div>
+                  </SortableContext>
+                  <DragOverlay>{activeBomLineId ? <div className="rounded border border-sky-300 bg-white px-4 py-3 text-sm shadow-xl">Moviendo {estimation.draft.bomLines.find(line => line.id === activeBomLineId)?.itemName ?? 'rama'}</div> : null}</DragOverlay>
+                </DndContext>
               </div>
               <div className="flex flex-wrap items-center gap-3"><Button type="button" variant="outline" onClick={refreshCosts} disabled={isPending}><RefreshCw className="h-4 w-4" />Actualizar promedios MP-01</Button><Link href="/physical-weights" className="text-sm font-medium text-sky-700 hover:text-sky-900">Administrar factores físicos</Link><p className="text-xs text-slate-600">Sólo se aplican promedios/estándares vigentes de MP-01 a hojas SAP. Las líneas manuales conservan su costo y motivo; no se usan entradas genéricas como compras.</p></div>
               {costInput.incompleteLineIds.length > 0 ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Completa cantidad, categoría, estrategia y la justificación de cualquier costo manual en {costInput.incompleteLineIds.length} línea(s) para calcular totales.</div> : costResult?.ok ? <div className="grid gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm md:grid-cols-2"><div><p className="font-semibold text-emerald-950">Materiales + empaque</p><p className="text-lg font-bold">{formatCurrency(costResult.totals.materialsAndPackaging)}</p></div><div><p className="font-semibold text-emerald-950">Total ampliado (incluye MO/CIF/otros)</p><p className="text-lg font-bold">{formatCurrency(costResult.totals.expandedTotal)}</p></div><p className="md:col-span-2 text-xs text-emerald-800">Material {formatCurrency(costResult.totals.byCategory.material)} · Empaque {formatCurrency(costResult.totals.byCategory.packaging)} · MO {formatCurrency(costResult.totals.byCategory.mo)} · CIF {formatCurrency(costResult.totals.byCategory.cif)} · Otros {formatCurrency(costResult.totals.byCategory.other)}</p></div> : <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800"><p className="font-semibold">La LdM aún no se puede totalizar</p><ul className="mt-1 list-disc pl-5">{costResult?.issues.map((issue) => <li key={`${issue.code}-${issue.lineId}`}>{issue.message}</li>)}</ul></div>}
