@@ -5,6 +5,7 @@ import {
   evaluateEstimationBomCosting,
   type EstimationBomCostLine,
 } from './estimationBomCosting'
+import { inferEstimationSapCostCategory } from './estimationSapClassification'
 
 function line({ id, ...overrides }: Partial<EstimationBomCostLine> & Pick<EstimationBomCostLine, 'id'>): EstimationBomCostLine {
   return {
@@ -14,6 +15,7 @@ function line({ id, ...overrides }: Partial<EstimationBomCostLine> & Pick<Estima
     uom: 'UN',
     costCategory: 'material',
     costStrategy: 'manual_override',
+    origin: 'manual',
     unitCost: 1,
     ...overrides,
   }
@@ -71,6 +73,18 @@ test('un override manual en un padre reemplaza totalmente el costo de sus hijos'
   )
 })
 
+test('los descendientes excluidos por un override manual no bloquean el total aunque estén incompletos', () => {
+  const result = evaluateEstimationBomCosting({
+    lines: [
+      line({ id: 'manual-boundary', origin: 'manual', costStrategy: 'manual_override', unitCost: 25 }),
+      line({ id: 'pending-child', parentId: 'manual-boundary', quantity: 0, uom: null, unitCost: null }),
+    ],
+  })
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.equal(result.totals.expandedTotal, 25)
+})
+
 test('detecta padres inexistentes, ciclos y valores de cantidad, costo o unidad inválidos', () => {
   const result = evaluateEstimationBomCosting({
     lines: [
@@ -108,4 +122,63 @@ test('un nodo expandible sin hijos no oculta un costo ni una unidad faltante', (
     result.issues.map(issue => issue.code).sort(),
     ['expand_children_without_children', 'uom_invalid'].sort(),
   )
+})
+
+test('PGEL01-0003-000-0100 totaliza 19.650 únicamente desde sus hojas SAP', () => {
+  const result = evaluateEstimationBomCosting({
+    lines: [
+      line({ id: 'PGEL01-0003-000-0100', origin: 'sap', costStrategy: 'expand_children', unitCost: 12_327.89, bomQuantity: 1 }),
+      line({ id: 'CMPD01-0022-000-0000', parentId: 'PGEL01-0003-000-0100', origin: 'sap', costStrategy: 'sap_direct', unitCost: 18_687 }),
+      line({ id: 'PZCO01-0001-000-0000', parentId: 'PGEL01-0003-000-0100', origin: 'sap', costStrategy: 'sap_direct', unitCost: 405, costCategory: 'mo' }),
+      line({ id: 'PZCO01-0002-000-0000', parentId: 'PGEL01-0003-000-0100', origin: 'sap', costStrategy: 'sap_direct', unitCost: 558, costCategory: 'cif' }),
+    ],
+  })
+
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.equal(result.totals.expandedTotal, 19_650)
+  assert.equal(result.lineValuations.find(valuation => valuation.lineId === 'PGEL01-0003-000-0100')?.structuralUnitCost, 19_650)
+})
+
+test('normaliza cantidades anidadas por la cantidad base de cada ProductTree', () => {
+  const result = evaluateEstimationBomCosting({
+    lines: [
+      line({ id: 'root', quantity: 2, costStrategy: 'expand_children', bomQuantity: 2 }),
+      line({ id: 'leaf', parentId: 'root', quantity: 3, origin: 'sap', costStrategy: 'sap_direct', unitCost: 10 }),
+    ],
+  })
+
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.equal(result.totals.expandedTotal, 30)
+  assert.equal(result.lineValuations.find(valuation => valuation.lineId === 'root')?.structuralUnitCost, 15)
+})
+
+test('una cabecera SAP no admite un override manual', () => {
+  const result = evaluateEstimationBomCosting({
+    lines: [line({ id: 'sap-header', origin: 'sap', costStrategy: 'manual_override', unitCost: 100 })],
+  })
+  assert.equal(result.ok, false)
+  if (result.ok) return
+  assert.ok(result.issues.some(issue => issue.code === 'sap_manual_override_forbidden'))
+})
+
+test('una sub-LdM SAP anidada se calcula sin pedir costo a sus cabeceras', () => {
+  const result = evaluateEstimationBomCosting({
+    lines: [
+      line({ id: 'PINP01-0006-000-0000', origin: 'sap', costStrategy: 'expand_children', unitCost: null }),
+      line({ id: 'CMPD02-0011-000-0000', parentId: 'PINP01-0006-000-0000', origin: 'sap', costStrategy: 'expand_children', unitCost: null }),
+      line({ id: 'leaf-a', parentId: 'CMPD02-0011-000-0000', origin: 'sap', costStrategy: 'sap_direct', unitCost: 4 }),
+      line({ id: 'leaf-b', parentId: 'CMPD02-0011-000-0000', origin: 'sap', costStrategy: 'sap_direct', unitCost: 6 }),
+    ],
+  })
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.equal(result.totals.expandedTotal, 10)
+})
+
+test('clasifica las líneas operativas SAP de mano de obra y CIF', () => {
+  assert.equal(inferEstimationSapCostCategory('PZCO01-0001-000-0000', 'MANO OBRA POR MINUTO'), 'mo')
+  assert.equal(inferEstimationSapCostCategory('PZCO01-0002-000-0000', 'CIF POR MINUTO'), 'cif')
+  assert.equal(inferEstimationSapCostCategory('CMPD01-0022-000-0000', 'GELCOAT'), 'material')
 })

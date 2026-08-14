@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 
 import { evaluateEstimationBomCosting, type EstimationBomCostLine } from '@/lib/productDesign/estimationBomCosting'
+import { getEstimationBomDescendantIds } from '@/lib/productDesign/estimationBomHierarchy'
 import { normalizeEstimationDraft, serializeEstimationDraft, type EstimationDraft, type EstimationDraftBomLine } from '@/lib/productDesign/estimationDraft'
 import { DEFAULT_SALES_PRICING_FORMULAS, normalizeSalesPercentage, normalizeSalesPricingFormulaConfig, SALES_PRICING_FORMULAS_SETTING_KEY, type SalesPricingFormulaConfig } from '@/lib/productDesign/salesPricingFormulas'
 import { dbQuery } from '@/lib/supabase'
@@ -30,11 +31,32 @@ function required(value: unknown, label: string): string { const result = text(v
 function number(value: unknown): number | null { if (typeof value === 'number' && Number.isFinite(value)) return value; if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value); return null }
 function parseJson(value: unknown): unknown { if (typeof value !== 'string') return value; try { return JSON.parse(value) as unknown } catch { return {} } }
 function currency(value: string | null): string { return value && /^[A-Z]{3}$/u.test(value.toUpperCase()) ? value.toUpperCase() : 'COP' }
-function toCostLine(line: EstimationDraftBomLine): EstimationBomCostLine | null { return line.quantity === null || line.costCategory === null || line.costStrategy === null ? null : { id: line.id, parentId: line.parentId, quantity: line.quantity, uom: line.uom, costCategory: line.costCategory, costStrategy: line.costStrategy, unitCost: line.unitCost } }
+function toCostLine(line: EstimationDraftBomLine): EstimationBomCostLine | null {
+  if (line.quantity === null || line.costCategory === null || line.costStrategy === null) return null
+  if (line.costEvidence?.source === 'manual' && !line.manualCostReason?.trim()) return null
+  const rawBomQuantity = line.extensions.sapBomQuantity
+  return {
+    id: line.id,
+    parentId: line.parentId,
+    quantity: line.quantity,
+    uom: line.uom,
+    costCategory: line.costCategory,
+    costStrategy: line.costStrategy,
+    origin: line.origin,
+    bomQuantity: typeof rawBomQuantity === 'number' && Number.isFinite(rawBomQuantity) ? rawBomQuantity : null,
+    unitCost: line.unitCost,
+  }
+}
 function snapshot(draft: EstimationDraft): SalesEstimationCostSnapshot {
   const unit = currency(draft.commercialScenario.currency)
   if (draft.bomLines.length === 0) return { state: 'pending', currency: unit, message: 'La cotización aún no tiene líneas de LdM costeables.' }
-  const lines = draft.bomLines.map(toCostLine)
+  const ignoredLineIds = new Set<string>()
+  draft.bomLines.forEach(line => {
+    if (line.origin === 'manual' && line.costStrategy === 'manual_override') {
+      getEstimationBomDescendantIds(draft.bomLines, line.id).forEach(id => ignoredLineIds.add(id))
+    }
+  })
+  const lines = draft.bomLines.filter(line => !ignoredLineIds.has(line.id)).map(toCostLine)
   if (lines.some(line => line === null)) return { state: 'pending', currency: unit, message: 'Faltan cantidad, categoría o estrategia de costo en una o más líneas de la LdM.' }
   const result = evaluateEstimationBomCosting({ lines: lines.filter((line): line is EstimationBomCostLine => line !== null) })
   return result.ok ? { state: 'available', currency: unit, materialsAndPackaging: result.totals.materialsAndPackaging, expandedTotal: result.totals.expandedTotal } : { state: 'pending', currency: unit, message: result.issues[0]?.message ?? 'La LdM requiere ajustes antes de presentar un total.' }

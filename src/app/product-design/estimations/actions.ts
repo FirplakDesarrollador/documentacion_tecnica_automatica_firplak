@@ -4,13 +4,14 @@ import { revalidatePath } from 'next/cache'
 
 import {
   getSapItem,
+  getSapItemBomsByCodes,
   getSapItemGroup,
-  getSapItemBomChildren,
-  getSapItemBomTree,
+  getSapItemsByCodes,
+  getSapItemsWithWarehouseAverage,
   getSapWarehouseAverageCost,
   searchSapItems,
-  type BomNode,
 } from '@/lib/sap/serviceLayer'
+import { loadFullSapBomHierarchy, type FullSapBomNode } from '@/lib/sap/fullBomHierarchy'
 import { dbQuery } from '@/lib/supabase'
 import {
   calculateSyntheticMarbleCalibration,
@@ -31,6 +32,8 @@ import {
 } from '@/lib/productDesign/estimationReferenceProposal'
 import { familyNameFromSapItemGroup, inferFamilyFromSapDescriptions } from '@/lib/productDesign/familyInference'
 import { evaluateEstimationBomCosting, type EstimationBomCostLine } from '@/lib/productDesign/estimationBomCosting'
+import { assertValidEstimationBomLinks, getEstimationBomDescendantIds } from '@/lib/productDesign/estimationBomHierarchy'
+import { inferEstimationSapCostCategory } from '@/lib/productDesign/estimationSapClassification'
 import { proposeGelcoatReplacements, sapItemColorCode } from '@/lib/productDesign/gelcoatAlignment'
 import { applySyntheticMarbleBomQuantities } from '@/lib/productDesign/syntheticMarbleBomQuantities'
 import {
@@ -55,7 +58,19 @@ type ProductDesignAccess = AccessContext & {
 function toCostLine(line: EstimationDraftBomLine): EstimationBomCostLine | null {
   if (line.quantity === null || line.costCategory === null || line.costStrategy === null) return null
   if (line.costEvidence?.source === 'manual' && !line.manualCostReason?.trim()) return null
-  return { id: line.id, parentId: line.parentId, quantity: line.quantity, uom: line.uom, costCategory: line.costCategory, costStrategy: line.costStrategy, unitCost: line.unitCost }
+  const rawBomQuantity = line.extensions.sapBomQuantity
+  const bomQuantity = typeof rawBomQuantity === 'number' && Number.isFinite(rawBomQuantity) ? rawBomQuantity : null
+  return {
+    id: line.id,
+    parentId: line.parentId,
+    quantity: line.quantity,
+    uom: line.uom,
+    costCategory: line.costCategory,
+    costStrategy: line.costStrategy,
+    origin: line.origin,
+    bomQuantity,
+    unitCost: line.unitCost,
+  }
 }
 
 export type ProductDesignEstimationStatus = (typeof ESTIMATION_STATUSES)[number]
@@ -131,8 +146,17 @@ export type EstimationHomologue = {
   itemName: string
   sapPrefix: string
   colorCode: string | null
-  bom: BomNode | null
+  bom: FullSapBomNode | null
   bomError: string | null
+  bomBranchErrors: Record<string, string>
+  bomLeafCosts: Record<string, EstimationSapLeafCost>
+}
+
+export type EstimationSapLeafCost = {
+  unitCost: number | null
+  inventoryUom: string | null
+  warehouseCode: string
+  readAt: string
 }
 
 export type EstimationFamilyInput = {
@@ -343,33 +367,212 @@ async function getExistingCommercialColor(colorCode: string | null): Promise<Est
   }
 }
 
-function toBomDraftLines(nodes: readonly BomNode[], parentId: string | null = null): EstimationDraftBomLine[] {
+function toBomDraftLines(
+  nodes: readonly FullSapBomNode[],
+  parentId: string | null = null,
+  branchErrors: Record<string, string> = {},
+  level = 2,
+  rootBomQuantity = 1,
+  leafCosts: Record<string, EstimationSapLeafCost> = {},
+): EstimationDraftBomLine[] {
+  const safeRootBomQuantity = Number.isFinite(rootBomQuantity) && rootBomQuantity > 0 ? rootBomQuantity : 1
   return nodes.flatMap((node, index) => {
     const id = `${parentId ?? 'root'}-${node.itemCode}-${index + 1}`
+    const branchError = branchErrors[node.itemCode] ?? null
+    const subtreeComplete = !node.cycleDetected
+      && branchError === null
+      && node.lines.every(child => isFullSapSubtreeComplete(child, branchErrors))
+    const hasExpandableStructure = node.lines.length > 0 || node.cycleDetected || branchError !== null
+    const leafCost = leafCosts[node.itemCode]
+    const sourceUom = leafCost?.inventoryUom?.trim().toUpperCase() ?? null
+    const lineUom = node.inventoryUom?.trim().toUpperCase() ?? sourceUom
+    const hasCompatibleLeafCost = !hasExpandableStructure
+      && leafCost?.unitCost !== null
+      && leafCost?.unitCost !== undefined
+      && leafCost.unitCost > 0
+      && (!sourceUom || sourceUom === lineUom)
     const line: EstimationDraftBomLine = {
       id,
       parentId,
       origin: 'sap',
       sapItemCode: node.itemCode,
       itemName: node.itemName || null,
-      quantity: node.quantity,
+      quantity: parentId === null ? node.quantity / safeRootBomQuantity : node.quantity,
       uom: node.inventoryUom,
-      costCategory: 'material',
-      costStrategy: node.lines.length > 0 ? 'expand_children' : 'manual_override',
-      unitCost: null,
-      costEvidence: null,
+      costCategory: inferEstimationSapCostCategory(node.itemCode, node.itemName),
+      costStrategy: hasExpandableStructure ? 'expand_children' : 'sap_direct',
+      unitCost: hasCompatibleLeafCost ? leafCost.unitCost : null,
+      costEvidence: hasExpandableStructure ? null : {
+        source: hasCompatibleLeafCost ? 'warehouse_average' : 'unavailable',
+        candidateId: hasCompatibleLeafCost ? `warehouse-average:${node.itemCode}:MP-01` : null,
+        warehouseCode: 'MP-01',
+        documentType: hasCompatibleLeafCost ? 'WarehouseAverage' : null,
+        documentNumber: null,
+        documentDate: leafCost?.readAt ?? null,
+        originalCurrency: hasCompatibleLeafCost ? ESTIMATION_COST_CURRENCY : null,
+        sourceUom,
+        warning: hasCompatibleLeafCost
+          ? 'Costo temporal: promedio/estándar vigente de MP-01. No representa la última compra ni una recepción de proveedor.'
+          : sourceUom && lineUom && sourceUom !== lineUom
+            ? `El promedio MP-01 está en ${sourceUom} y la línea usa ${lineUom}; el costo queda pendiente.`
+            : 'SAP no reporta un promedio/estándar positivo en MP-01; el costo queda pendiente.',
+        extensions: { sourceReadAt: leafCost?.readAt ?? null },
+      },
       manualCostReason: null,
-      notes: null,
-      physicalWeightPolicy: node.lines.length > 0 ? 'derive_children' : 'from_quantity',
+      notes: branchError ?? (node.cycleDetected ? 'SAP reporta un ciclo en esta sub-LdM.' : null),
+      physicalWeightPolicy: hasExpandableStructure ? 'derive_children' : 'from_quantity',
       usefulQuantity: null,
       fixedWeightKg: null,
       physicalWeightSnapshot: null,
       extensions: {
-        sapLevel: node.level,
-        sapLoaded: node.loaded,
+        sapLevel: level,
+        sapLoaded: !branchError,
+        sapLoadedComplete: subtreeComplete,
+        sapBomQuantity: node.bomQuantity,
+        sapComponentWarehouse: node.componentWarehouse,
+        sapOutputWarehouse: node.outputWarehouse,
+        sapCycleDetected: node.cycleDetected,
+        sapStructureLocked: node.lines.length > 0,
+        sapReadError: branchError,
       },
     }
-    return [line, ...toBomDraftLines(node.lines, id)]
+    return [line, ...toBomDraftLines(node.lines, id, branchErrors, level + 1, 1, leafCosts)]
+  })
+}
+
+function isFullSapSubtreeComplete(node: FullSapBomNode, branchErrors: Record<string, string>): boolean {
+  return !node.cycleDetected
+    && !branchErrors[node.itemCode]
+    && node.lines.every(child => isFullSapSubtreeComplete(child, branchErrors))
+}
+
+function collectFullSapLeafCodes(node: FullSapBomNode): string[] {
+  if (node.lines.length === 0) return node.cycleDetected ? [] : [node.itemCode]
+  return node.lines.flatMap(collectFullSapLeafCodes)
+}
+
+async function loadEstimationSapLeafCosts(tree: FullSapBomNode | null): Promise<Record<string, EstimationSapLeafCost>> {
+  if (!tree) return {}
+  const readAt = timestampNow()
+  const averages = await getSapItemsWithWarehouseAverage(collectFullSapLeafCodes(tree), 'MP-01')
+  return Object.fromEntries([...averages].map(([itemCode, average]) => [itemCode, {
+    unitCost: average.standardAveragePrice,
+    inventoryUom: average.inventoryUom,
+    warehouseCode: average.warehouseCode,
+    readAt,
+  }]))
+}
+
+function assertSapSubstructureIntegrity(
+  lines: readonly EstimationDraftBomLine[],
+  previousLines: readonly EstimationDraftBomLine[],
+): void {
+  assertValidEstimationBomLinks(lines)
+  const currentById = new Map(lines.map(line => [line.id, line]))
+  const previousById = new Map(previousLines.map(line => [line.id, line]))
+
+  for (const previous of previousLines) {
+    if (previous.origin !== 'sap') continue
+    const current = currentById.get(previous.id)
+    if (!current) continue
+    const previousChildren = previousLines.filter(line => line.parentId === previous.id)
+
+    if (current.origin === 'manual') {
+      const sourceItemCode = stringOrNull(current.extensions.sourceSapItemCode)?.toUpperCase()
+      const convertedAt = stringOrNull(current.extensions.convertedAt)
+      if (previousChildren.length === 0 || sourceItemCode !== previous.sapItemCode?.toUpperCase() || !convertedAt) {
+        throw new Error(`La conversión de ${previous.sapItemCode ?? previous.id} a componente manual no tiene trazabilidad válida.`)
+      }
+      continue
+    }
+
+  }
+
+  for (const line of lines) {
+    const previous = previousById.get(line.id)
+    if (previous?.origin === 'manual' && line.origin === 'sap') {
+      throw new Error(`La línea manual ${line.id} no puede cambiar de origen conservando el mismo identificador.`)
+    }
+  }
+}
+
+async function canonicalizeSapDraftLines(
+  lines: readonly EstimationDraftBomLine[],
+  previousLines: readonly EstimationDraftBomLine[],
+): Promise<EstimationDraftBomLine[]> {
+  assertSapSubstructureIntegrity(lines, previousLines)
+  const previousById = new Map(previousLines.map(line => [line.id, line]))
+  const sapItemCodes = [...new Set(lines.flatMap(line => {
+    const previous = previousById.get(line.id)
+    const itemCode = line.origin === 'sap'
+      ? (previous?.origin === 'sap' ? previous.sapItemCode : line.sapItemCode)?.trim().toUpperCase()
+      : null
+    return itemCode ? [itemCode] : []
+  }))]
+  const itemMasters = await getSapItemsByCodes(sapItemCodes, ['ItemCode', 'ItemName', 'InventoryUOM'])
+  const childCounts = new Map<string, number>()
+  lines.forEach(line => {
+    if (!line.parentId) return
+    childCounts.set(line.parentId, (childCounts.get(line.parentId) ?? 0) + 1)
+  })
+  const completeSapHeaders = lines.filter(line => line.origin === 'sap'
+    && (childCounts.get(line.id) ?? 0) > 0
+    && line.extensions.sapLoadedComplete !== false)
+  const sapBoms = await getSapItemBomsByCodes(completeSapHeaders.flatMap(line => {
+    const previous = previousById.get(line.id)
+    const itemCode = previous?.origin === 'sap' ? previous.sapItemCode : line.sapItemCode
+    return itemCode ? [itemCode.trim().toUpperCase()] : []
+  }))
+  completeSapHeaders.forEach(header => {
+    const previous = previousById.get(header.id)
+    const itemCode = (previous?.origin === 'sap' ? previous.sapItemCode : header.sapItemCode)?.trim().toUpperCase()
+    const sapBom = itemCode ? sapBoms.get(itemCode) : null
+    if (!sapBom) throw new Error(`No fue posible verificar la sub-LdM SAP ${itemCode ?? header.id} antes de guardar.`)
+    const currentChildren = lines.filter(line => line.parentId === header.id)
+    const matchesSap = currentChildren.length === sapBom.lines.length && currentChildren.every((child, index) => {
+      const sapChild = sapBom.lines[index]
+      return child.origin === 'sap'
+        && child.sapItemCode?.trim().toUpperCase() === sapChild.ItemCode.trim().toUpperCase()
+        && child.quantity === sapChild.Quantity
+    })
+    if (!matchesSap) {
+      throw new Error(`Convierte ${itemCode ?? header.id} en una sub-LdM nueva antes de modificar su estructura interna.`)
+    }
+  })
+
+  return lines.map(line => {
+    const hasChildren = (childCounts.get(line.id) ?? 0) > 0
+    if (line.origin === 'manual') {
+      return {
+        ...line,
+        sapItemCode: null,
+        costStrategy: hasChildren && line.costStrategy === 'sap_direct'
+          ? 'expand_children'
+          : !hasChildren && line.costStrategy === 'sap_direct'
+            ? 'manual_override'
+            : line.costStrategy,
+      }
+    }
+
+    const previous = previousById.get(line.id)
+    const itemCode = (previous?.origin === 'sap' ? previous.sapItemCode : line.sapItemCode)?.trim().toUpperCase()
+    if (!itemCode) throw new Error(`La línea SAP ${line.id} no tiene ItemCode.`)
+    if (line.costStrategy === 'manual_override' || line.costEvidence?.source === 'manual') {
+      throw new Error(`Convierte ${itemCode} en una sub-LdM nueva antes de asignarle un costo manual.`)
+    }
+    const itemMaster = itemMasters.get(itemCode)
+    if (!itemMaster) throw new Error(`No fue posible verificar ${itemCode} en SAP antes de guardar.`)
+
+    return {
+      ...line,
+      sapItemCode: itemCode,
+      itemName: stringOrNull(itemMaster.ItemName),
+      uom: stringOrNull(itemMaster.InventoryUOM),
+      costStrategy: hasChildren ? 'expand_children' : 'sap_direct',
+      unitCost: hasChildren ? null : line.unitCost,
+      costEvidence: hasChildren ? null : line.costEvidence,
+      manualCostReason: null,
+    }
   })
 }
 
@@ -466,25 +669,9 @@ function applyPhysicalWeightEstimate(draft: EstimationDraft): void {
 
 async function refreshSapDraftLineCost(
   line: EstimationDraftBomLine,
-  currency: string,
 ): Promise<EstimationDraftBomLine> {
   const itemCode = line.sapItemCode?.trim().toUpperCase() ?? null
-  if (!itemCode || line.origin !== 'sap' || line.costStrategy !== 'manual_override') return line
-  if (line.unitCost && line.manualCostReason) return {
-    ...line,
-    costEvidence: line.costEvidence ?? {
-      source: 'manual',
-      candidateId: null,
-      warehouseCode: 'MP-01',
-      documentType: 'Manual',
-      documentNumber: null,
-      documentDate: timestampNow(),
-      originalCurrency: currency,
-      sourceUom: line.uom,
-      warning: 'Costo manual conservado por decisión explícita de Diseño.',
-      extensions: {},
-    },
-  }
+  if (!itemCode || line.origin !== 'sap' || line.costStrategy !== 'sap_direct') return line
 
   try {
     const warehouseAverage = await getSapWarehouseAverageCost(itemCode, 'MP-01')
@@ -503,7 +690,7 @@ async function refreshSapDraftLineCost(
           documentDate: null,
           originalCurrency: null,
           sourceUom: null,
-          warning: 'No se pudo comprobar la unidad de inventario SAP; registre un costo manual con motivo.',
+          warning: 'No se pudo comprobar la unidad de inventario SAP; el costo queda pendiente hasta corregir la fuente SAP.',
           extensions: { sourceReadAt: timestampNow() },
         },
       }
@@ -522,7 +709,7 @@ async function refreshSapDraftLineCost(
           documentDate: timestampNow(),
           originalCurrency: ESTIMATION_COST_CURRENCY,
           sourceUom,
-          warning: `El promedio MP-01 está en ${sourceUom} y la línea usa ${targetUom}. No se aplicó una conversión implícita; registra un costo manual con motivo.`,
+          warning: `El promedio MP-01 está en ${sourceUom} y la línea usa ${targetUom}. No se aplicó una conversión implícita; el costo queda pendiente.`,
           extensions: { sourceReadAt: timestampNow() },
         },
       }
@@ -543,7 +730,7 @@ async function refreshSapDraftLineCost(
           documentDate: timestampNow(),
           originalCurrency: ESTIMATION_COST_CURRENCY,
           sourceUom,
-          warning: 'SAP no reporta un promedio/estándar positivo en MP-01. Registra un costo manual con motivo.',
+          warning: 'SAP no reporta un promedio/estándar positivo en MP-01. El costo queda pendiente y no admite reemplazo manual mientras la línea conserve origen SAP.',
           extensions: { sourceReadAt: timestampNow() },
         },
       }
@@ -674,6 +861,22 @@ export async function saveProductDesignEstimationAction(input: SaveProductDesign
   const draft = normalizeEstimationDraft(input.draft)
   const existing = await getEstimationRecord(id)
   if (!existing) throw new Error('No fue posible releer la cotización antes de guardar.')
+  draft.bomLines = await canonicalizeSapDraftLines(draft.bomLines, existing.draft.bomLines)
+  draft.bomLines = draft.bomLines.map(line => {
+    const evidence = line.costEvidence
+    if (line.origin !== 'manual' || line.costStrategy !== 'manual_override' || evidence?.source !== 'manual') return line
+    return {
+      ...line,
+      costEvidence: {
+        ...evidence,
+        documentDate: evidence.documentDate ?? timestampNow(),
+        extensions: {
+          ...evidence.extensions,
+          definedByUserId: evidence.extensions.definedByUserId ?? access.user.id,
+        },
+      },
+    }
+  })
   // Pricing belongs to Sales. Preserve it even if a crafted Design request sends it.
   draft.commercialScenario = existing.draft.commercialScenario
   const draftPrefix = draft.homologue?.sapPrefix
@@ -750,7 +953,13 @@ export async function setEstimationSharedWithSalesAction(input: { id: string; sh
   const existing = await getEstimationRecord(id)
   if (!existing) throw new Error('No fue posible releer la cotización antes de cambiar su visibilidad.')
   if (shared) {
-    const lines = existing.draft.bomLines.map((line) => toCostLine(line))
+    const ignoredLineIds = new Set<string>()
+    existing.draft.bomLines.forEach(line => {
+      if (line.origin === 'manual' && line.costStrategy === 'manual_override') {
+        getEstimationBomDescendantIds(existing.draft.bomLines, line.id).forEach(id => ignoredLineIds.add(id))
+      }
+    })
+    const lines = existing.draft.bomLines.filter(line => !ignoredLineIds.has(line.id)).map((line) => toCostLine(line))
     if (lines.some((line) => line === null)) throw new Error('Completa la LdM y sus costos antes de compartirla con Ventas.')
     const costing = evaluateEstimationBomCosting({ lines: lines.filter((line): line is EstimationBomCostLine => line !== null) })
     if (!costing.ok) throw new Error('La LdM no se puede totalizar todavía; corrige sus líneas antes de compartirla con Ventas.')
@@ -914,10 +1123,35 @@ export async function refreshEstimationSapCostsAction(input: { id: string }): Pr
   const existing = await getEstimationRecord(id)
   if (!existing) throw new Error('La cotización no existe.')
 
-  const currency = existing.draft.commercialScenario.currency.trim().toUpperCase() || ESTIMATION_COST_CURRENCY
+  const directSapItemCodes = existing.draft.bomLines.flatMap(line => line.origin === 'sap'
+    && line.costStrategy === 'sap_direct'
+    && line.sapItemCode
+    ? [line.sapItemCode.trim().toUpperCase()]
+    : [])
+  const unexpectedSapBoms = await getSapItemBomsByCodes(directSapItemCodes)
   const refreshedLines: EstimationDraftBomLine[] = []
   for (const line of existing.draft.bomLines) {
-    refreshedLines.push(await refreshSapDraftLineCost(line, currency))
+    const itemCode = line.sapItemCode?.trim().toUpperCase()
+    if (line.origin === 'sap' && line.costStrategy === 'sap_direct' && itemCode && unexpectedSapBoms.has(itemCode)) {
+      refreshedLines.push({
+        ...line,
+        unitCost: null,
+        costEvidence: {
+          source: 'unavailable',
+          candidateId: null,
+          warehouseCode: 'MP-01',
+          documentType: null,
+          documentNumber: null,
+          documentDate: null,
+          originalCurrency: null,
+          sourceUom: line.uom,
+          warning: `${itemCode} tiene una sub-LdM SAP. Consulta o actualiza su estructura para calcularla por descendientes.`,
+          extensions: { sourceReadAt: timestampNow() },
+        },
+      })
+      continue
+    }
+    refreshedLines.push(await refreshSapDraftLineCost(line))
   }
   const draft = {
     ...existing.draft,
@@ -1052,8 +1286,9 @@ export async function getEstimationHomologueAction(itemCode: string): Promise<Es
   const normalizedItemCode = requiredText(itemCode, 'Código SAP del homólogo').toUpperCase()
   const [item, bomResult] = await Promise.all([
     getSapItem(normalizedItemCode),
-    getSapItemBomTree(normalizedItemCode),
+    loadFullSapBomHierarchy(normalizedItemCode),
   ])
+  const bomLeafCosts = await loadEstimationSapLeafCosts(bomResult.tree)
   const sapPrefix = stringOrNull(item.U_Prefijo)
   if (!sapPrefix) throw new Error(`El homólogo ${normalizedItemCode} no tiene U_Prefijo en SAP.`)
   return {
@@ -1062,7 +1297,9 @@ export async function getEstimationHomologueAction(itemCode: string): Promise<Es
     sapPrefix: normalizeSapPrefix(sapPrefix),
     colorCode: stringOrNull(item.U_Color) ?? sapItemColorCode(stringOrNull(item.ItemCode) ?? normalizedItemCode),
     bom: bomResult.tree,
-    bomError: bomResult.error,
+    bomError: bomResult.tree ? null : bomResult.branchErrors[normalizedItemCode] ?? null,
+    bomBranchErrors: bomResult.branchErrors,
+    bomLeafCosts,
   }
 }
 
@@ -1112,9 +1349,99 @@ export async function replaceEstimationGelcoatForColorAction(input: { id: string
   return saved
 }
 
-export async function getEstimationHomologueChildrenAction(itemCode: string): Promise<{ lines: BomNode[]; error: string | null }> {
+export async function getEstimationSapSubtreeAction(itemCode: string): Promise<{
+  tree: FullSapBomNode
+  branchErrors: Record<string, string>
+  leafCosts: Record<string, EstimationSapLeafCost>
+}> {
   await requireProductDesignAccess()
-  return getSapItemBomChildren(requiredText(itemCode, 'Código SAP de subestructura').toUpperCase())
+  const normalizedItemCode = requiredText(itemCode, 'Código SAP de subestructura').toUpperCase()
+  const result = await loadFullSapBomHierarchy(normalizedItemCode)
+  if (result.tree) return {
+    tree: result.tree,
+    branchErrors: result.branchErrors,
+    leafCosts: await loadEstimationSapLeafCosts(result.tree),
+  }
+
+  const itemMasters = await getSapItemsByCodes([normalizedItemCode], ['ItemCode', 'ItemName', 'InventoryUOM'])
+  const item = itemMasters.get(normalizedItemCode)
+  if (!item) throw new Error(`El artículo ${normalizedItemCode} no existe en SAP.`)
+  return {
+    tree: {
+      itemCode: normalizedItemCode,
+      itemName: stringOrNull(item.ItemName) ?? '',
+      quantity: 1,
+      inventoryUom: stringOrNull(item.InventoryUOM),
+      bomQuantity: null,
+      componentWarehouse: null,
+      outputWarehouse: null,
+      lines: [],
+      cycleDetected: false,
+    },
+    branchErrors: result.branchErrors,
+    leafCosts: await loadEstimationSapLeafCosts({
+      itemCode: normalizedItemCode,
+      itemName: stringOrNull(item.ItemName) ?? '',
+      quantity: 1,
+      inventoryUom: stringOrNull(item.InventoryUOM),
+      bomQuantity: null,
+      componentWarehouse: null,
+      outputWarehouse: null,
+      lines: [],
+      cycleDetected: false,
+    }),
+  }
+}
+
+export async function getEstimationHomologueChildrenAction(itemCode: string): Promise<{
+  lines: FullSapBomNode[]
+  error: string | null
+}> {
+  const { tree, branchErrors } = await getEstimationSapSubtreeAction(itemCode)
+  return {
+    lines: tree.lines,
+    error: branchErrors[tree.itemCode] ?? null,
+  }
+}
+
+export async function suggestEstimationSubBomCodeAction(itemCode: string): Promise<{
+  sourceItemCode: string
+  familyPrefix: string
+  suggestedItemCode: string
+  reserved: false
+}> {
+  await requireProductDesignAccess()
+  const sourceItemCode = requiredText(itemCode, 'Código SAP fuente').toUpperCase()
+  const match = sourceItemCode.match(/^([A-Z0-9]+)-(\d+)-([A-Z0-9]+)-([A-Z0-9]+)$/u)
+  if (!match) throw new Error(`El código ${sourceItemCode} no tiene el formato esperado para sugerir un consecutivo.`)
+  const [, familyPrefix, sourceSequence, version, variant] = match
+  let maximumSequence = 0
+  let afterItemCode: string | null = null
+  let hasMore = true
+  let pagesRead = 0
+
+  while (hasMore && pagesRead < SAP_REFERENCE_SCAN_MAX_PAGES) {
+    const page = await searchSapItems({ code: familyPrefix }, { limit: SAP_PAGE_LIMIT, afterItemCode })
+    page.items.forEach(item => {
+      const candidateCode = stringOrNull(item.ItemCode)?.toUpperCase()
+      const candidateMatch = candidateCode?.match(new RegExp(`^${familyPrefix}-(\\d+)-`, 'u'))
+      if (!candidateMatch) return
+      const sequence = Number(candidateMatch[1])
+      if (Number.isSafeInteger(sequence)) maximumSequence = Math.max(maximumSequence, sequence)
+    })
+    afterItemCode = page.lastItemCode
+    hasMore = page.hasMore && Boolean(afterItemCode)
+    pagesRead += 1
+  }
+  if (hasMore) throw new Error(`La consulta SAP de ${familyPrefix} fue parcial; no se sugerirá un consecutivo incompleto.`)
+
+  const nextSequence = String(Math.max(maximumSequence + 1, Number(sourceSequence) + 1)).padStart(sourceSequence.length, '0')
+  return {
+    sourceItemCode,
+    familyPrefix,
+    suggestedItemCode: `${familyPrefix}-${nextSequence}-${version}-${variant}`,
+    reserved: false,
+  }
 }
 
 export async function proposeEstimationReferenceAction(input: { sapPrefix: string; homologueItemCode: string }) {
@@ -1175,10 +1502,14 @@ export async function copyHomologueIntoEstimationAction(input: {
     bomReadAt: timestampNow(),
     extensions: {
       bomReadError: homologue.bomError,
+      bomBranchErrors: homologue.bomBranchErrors,
+      sourceBomQuantity: homologue.bom?.bomQuantity ?? null,
       suggestedFamilyCode: familyCode,
     },
   }
-  draft.bomLines = homologue.bom ? toBomDraftLines(homologue.bom.lines) : []
+  draft.bomLines = homologue.bom
+    ? toBomDraftLines(homologue.bom.lines, null, homologue.bomBranchErrors, 2, homologue.bom.bomQuantity ?? 1, homologue.bomLeafCosts)
+    : []
   if (!draft.commercialColor.colorCode && homologue.colorCode) {
     const commercialColor = await getExistingCommercialColor(homologue.colorCode)
     if (commercialColor) draft.commercialColor = { ...draft.commercialColor, colorCode: commercialColor.colorCode, colorName: commercialColor.colorName, selectedAt: timestampNow() }

@@ -115,7 +115,7 @@ test('normaliza el borrador completo con homólogo, geometría, color, gelcoat, 
     },
   })
 
-  assert.equal(draft.schemaVersion, 1)
+  assert.equal(draft.schemaVersion, 2)
   assert.equal(draft.homologue?.sapItemCode, 'VBAN29-0048-000-0000')
   assert.equal(draft.syntheticMarbleCalibration?.mixture?.sampleCount, 2)
   assert.equal(draft.geometry.volumeMm3, 3_131_000)
@@ -219,6 +219,45 @@ test('asigna IDs deterministas y únicos a líneas ausentes o duplicadas', () =>
     'line-4',
   ])
   assert.equal(new Set(draft.bomLines.map(line => line.id)).size, draft.bomLines.length)
+})
+
+test('migra hojas SAP heredadas con evidencia MP-01 a costo SAP directo', () => {
+  const migrated = normalizeEstimationDraft({
+    bomLines: [{
+      id: 'sap-leaf',
+      origin: 'sap',
+      sapItemCode: 'CMPD01-0022-000-0000',
+      quantity: 1,
+      uom: 'KG',
+      costCategory: 'material',
+      costStrategy: 'manual_override',
+      unitCost: 18_687,
+      costEvidence: { source: 'warehouse_average', warehouseCode: 'MP-01' },
+    }],
+  })
+  assert.equal(migrated.bomLines[0]?.costStrategy, 'sap_direct')
+
+  const pendingSap = normalizeEstimationDraft({
+    bomLines: [{
+      id: 'pending-sap',
+      origin: 'sap',
+      sapItemCode: 'PINP01-0006-000-0000',
+      costStrategy: 'manual_override',
+      costEvidence: { source: 'unavailable', warning: 'Registra un costo manual con motivo.' },
+    }],
+  })
+  assert.equal(pendingSap.bomLines[0]?.costEvidence?.warning?.includes('costo manual'), false)
+
+  const explicitManual = normalizeEstimationDraft({
+    bomLines: [{
+      id: 'legacy-manual',
+      origin: 'sap',
+      sapItemCode: 'LEGACY',
+      costStrategy: 'manual_override',
+      costEvidence: { source: 'manual' },
+    }],
+  })
+  assert.equal(explicitManual.bomLines[0]?.costStrategy, 'manual_override')
 })
 
 test('congela los factores de MS y no cambia el snapshot si luego cambia el cálculo vivo', () => {

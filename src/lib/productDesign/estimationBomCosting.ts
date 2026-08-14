@@ -8,7 +8,7 @@ export const ESTIMATION_BOM_COST_CATEGORIES = [
 
 export type EstimationBomCostCategory = (typeof ESTIMATION_BOM_COST_CATEGORIES)[number]
 
-export type EstimationBomCostStrategy = 'expand_children' | 'manual_override'
+export type EstimationBomCostStrategy = 'expand_children' | 'sap_direct' | 'manual_override'
 
 /**
  * An editable quotation line. Its quantity is relative to its parent when it
@@ -21,7 +21,10 @@ export type EstimationBomCostLine = {
   uom: string | null
   costCategory: EstimationBomCostCategory
   costStrategy: EstimationBomCostStrategy
-  /** Required only when costStrategy is manual_override. */
+  origin?: 'sap' | 'manual'
+  /** ProductTree output quantity. Only applies to expanded branches. */
+  bomQuantity?: number | null
+  /** Required for direct SAP costs and explicit manual overrides. */
   unitCost: number | null
 }
 
@@ -36,6 +39,9 @@ export type EstimationBomCostingIssueCode =
   | 'cost_category_invalid'
   | 'cost_strategy_invalid'
   | 'unit_cost_invalid'
+  | 'bom_quantity_invalid'
+  | 'sap_direct_with_children'
+  | 'sap_manual_override_forbidden'
   | 'expand_children_without_children'
 
 export type EstimationBomCostingIssue = {
@@ -62,6 +68,7 @@ export type EstimationBomLineValuation = {
   quantity: number
   effectiveQuantity: number
   unitCost: number | null
+  structuralUnitCost: number | null
   totalCost: number
   derivedFromLineIds: string[]
   ignoredChildLineIds: string[]
@@ -111,7 +118,7 @@ function isCostCategory(value: string): value is EstimationBomCostCategory {
 }
 
 function isCostStrategy(value: string): value is EstimationBomCostStrategy {
-  return value === 'expand_children' || value === 'manual_override'
+  return value === 'expand_children' || value === 'sap_direct' || value === 'manual_override'
 }
 
 function emptyBreakdown(): EstimationBomCostBreakdown {
@@ -178,8 +185,14 @@ function validateLineValues(indexedLines: Iterable<IndexedLine>): EstimationBomC
       issues.push(issue('cost_strategy_invalid', id, `La estrategia de costo de ${id} no es válida.`))
       continue
     }
-    if (line.costStrategy === 'manual_override' && !finitePositive(line.unitCost)) {
+    if (line.costStrategy !== 'expand_children' && !finitePositive(line.unitCost)) {
       issues.push(issue('unit_cost_invalid', id, `El costo unitario de ${id} debe ser un número positivo.`))
+    }
+    if (line.costStrategy === 'expand_children' && line.bomQuantity !== null && line.bomQuantity !== undefined && !finitePositive(line.bomQuantity)) {
+      issues.push(issue('bom_quantity_invalid', id, `La cantidad base de la sub-LdM ${id} debe ser positiva.`))
+    }
+    if (line.origin === 'sap' && line.costStrategy === 'manual_override') {
+      issues.push(issue('sap_manual_override_forbidden', id, `La línea SAP ${id} no puede usar un costo manual.`))
     }
   }
 
@@ -243,12 +256,19 @@ function buildChildrenByParent(linesById: Map<string, IndexedLine>): Map<string,
 function validateExpandableLines(
   linesById: Map<string, IndexedLine>,
   childrenByParent: Map<string, IndexedLine[]>,
+  ignoredLineIds: ReadonlySet<string>,
 ): EstimationBomCostingIssue[] {
   const issues: EstimationBomCostingIssue[] = []
 
   for (const { id, line } of linesById.values()) {
+    if (ignoredLineIds.has(id)) continue
     if (line.costStrategy === 'expand_children' && (childrenByParent.get(id)?.length ?? 0) === 0) {
-      issues.push(issue('expand_children_without_children', id, `La línea ${id} debe tener hijos o usar costo manual.`))
+      issues.push(issue('expand_children_without_children', id, line.origin === 'sap'
+        ? `La sub-LdM SAP ${id} está incompleta y debe volver a consultarse.`
+        : `La línea ${id} debe tener hijos o usar un costo manual explícito.`))
+    }
+    if (line.costStrategy === 'sap_direct' && (childrenByParent.get(id)?.length ?? 0) > 0) {
+      issues.push(issue('sap_direct_with_children', id, `La línea SAP ${id} tiene hijos y debe costearse por su sub-LdM.`))
     }
   }
 
@@ -263,7 +283,6 @@ export function evaluateEstimationBomCosting(
   input: EstimationBomCostingInput,
 ): EstimationBomCostingResult {
   const { linesById, issues } = buildIndexedLines(input.lines)
-  issues.push(...validateLineValues(linesById.values()))
   issues.push(...validateParentsAndCycles(linesById))
 
   const roots = [...linesById.values()].filter(indexedLine => indexedLine.parentId === null)
@@ -272,7 +291,19 @@ export function evaluateEstimationBomCosting(
   }
 
   const childrenByParent = buildChildrenByParent(linesById)
-  issues.push(...validateExpandableLines(linesById, childrenByParent))
+  const ignoredLineIds = new Set<string>()
+  function ignoreDescendants(lineId: string): void {
+    for (const child of childrenByParent.get(lineId) ?? []) {
+      if (ignoredLineIds.has(child.id)) continue
+      ignoredLineIds.add(child.id)
+      ignoreDescendants(child.id)
+    }
+  }
+  for (const { id, line } of linesById.values()) {
+    if (line.origin !== 'sap' && line.costStrategy === 'manual_override') ignoreDescendants(id)
+  }
+  issues.push(...validateLineValues([...linesById.values()].filter(line => !ignoredLineIds.has(line.id))))
+  issues.push(...validateExpandableLines(linesById, childrenByParent, ignoredLineIds))
 
   if (issues.length > 0) {
     return { ok: false, issues }
@@ -286,7 +317,7 @@ export function evaluateEstimationBomCosting(
     const effectiveQuantity = parentQuantity * line.quantity
     const children = childrenByParent.get(id) ?? []
 
-    if (line.costStrategy === 'manual_override') {
+    if (line.costStrategy === 'manual_override' || line.costStrategy === 'sap_direct') {
       const unitCost = line.unitCost
       if (!finitePositive(unitCost)) {
         throw new Error(`La línea ${id} pasó la validación sin un costo unitario válido.`)
@@ -302,6 +333,7 @@ export function evaluateEstimationBomCosting(
         quantity: line.quantity,
         effectiveQuantity,
         unitCost,
+        structuralUnitCost: unitCost,
         totalCost,
         derivedFromLineIds: [],
         ignoredChildLineIds: children.map(child => child.id),
@@ -309,10 +341,13 @@ export function evaluateEstimationBomCosting(
       return totalCost
     }
 
+    const bomQuantityCandidate = line.bomQuantity ?? null
+    const bomQuantity = finitePositive(bomQuantityCandidate) ? bomQuantityCandidate : 1
     const totalCost = children.reduce(
-      (total, child) => total + valueLine(child, effectiveQuantity),
+      (total, child) => total + valueLine(child, effectiveQuantity / bomQuantity),
       0,
     )
+    const structuralUnitCost = totalCost / effectiveQuantity
     lineValuations.push({
       lineId: id,
       parentId,
@@ -321,7 +356,8 @@ export function evaluateEstimationBomCosting(
       uom: line.uom?.trim() ?? '',
       quantity: line.quantity,
       effectiveQuantity,
-      unitCost: null,
+      unitCost: structuralUnitCost,
+      structuralUnitCost,
       totalCost,
       derivedFromLineIds: children.map(child => child.id),
       ignoredChildLineIds: [],

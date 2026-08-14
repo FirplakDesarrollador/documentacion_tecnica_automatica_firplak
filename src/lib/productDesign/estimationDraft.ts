@@ -9,7 +9,7 @@ import type {
 } from './estimationBomCosting'
 import type { EstimationCostSource } from './estimationCosts'
 
-export const ESTIMATION_DRAFT_SCHEMA_VERSION = 1 as const
+export const ESTIMATION_DRAFT_SCHEMA_VERSION = 2 as const
 
 export type EstimationDraftJsonValue =
   | string
@@ -199,6 +199,7 @@ const COST_CATEGORIES: readonly EstimationBomCostCategory[] = [
 
 const COST_STRATEGIES: readonly EstimationBomCostStrategy[] = [
   'expand_children',
+  'sap_direct',
   'manual_override',
 ]
 
@@ -576,6 +577,20 @@ function normalizeBomLines(value: unknown): EstimationDraftBomLine[] {
     const sapItemCode = readString(record, 'sapItemCode')
     const origin = readAllowedValue(record, 'origin', ESTIMATION_DRAFT_LINE_ORIGINS)
       ?? (sapItemCode ? 'sap' : 'manual')
+    const normalizedCostEvidence = normalizeCostEvidence(record.costEvidence)
+    const costEvidence = origin === 'sap'
+      && normalizedCostEvidence?.warning?.toLowerCase().includes('costo manual')
+      ? {
+          ...normalizedCostEvidence,
+          warning: 'Costo SAP pendiente. Consulta o actualiza la estructura y la fuente MP-01 antes de totalizar.',
+        }
+      : normalizedCostEvidence
+    const storedCostStrategy = readAllowedValue(record, 'costStrategy', COST_STRATEGIES)
+    const costStrategy = origin === 'sap'
+      && storedCostStrategy === 'manual_override'
+      && costEvidence?.source !== 'manual'
+      ? 'sap_direct'
+      : storedCostStrategy
 
     return [{
       id: normalizedUniqueLineId(readString(record, 'id'), index, seenIds),
@@ -586,9 +601,9 @@ function normalizeBomLines(value: unknown): EstimationDraftBomLine[] {
       quantity: readFiniteNumber(record, 'quantity'),
       uom: readString(record, 'uom'),
       costCategory: readAllowedValue(record, 'costCategory', COST_CATEGORIES),
-      costStrategy: readAllowedValue(record, 'costStrategy', COST_STRATEGIES),
+      costStrategy,
       unitCost: readFiniteNumber(record, 'unitCost'),
-      costEvidence: normalizeCostEvidence(record.costEvidence),
+      costEvidence,
       manualCostReason: readString(record, 'manualCostReason'),
       notes: readString(record, 'notes'),
       physicalWeightPolicy: readAllowedValue(record, 'physicalWeightPolicy', ESTIMATION_DRAFT_PHYSICAL_WEIGHT_POLICIES)
