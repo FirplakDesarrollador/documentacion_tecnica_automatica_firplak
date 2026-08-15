@@ -4,7 +4,7 @@ import test from 'node:test'
 import { proposeGelcoatReplacements, sapItemColorCode } from './gelcoatAlignment'
 import type { EstimationDraftBomLine } from './estimationDraft'
 
-const line = (sapItemCode: string): EstimationDraftBomLine => ({ id: sapItemCode, parentId: null, origin: 'sap', sapItemCode, itemName: null, quantity: 1, uom: 'KG', costCategory: 'material', costStrategy: 'manual_override', unitCost: null, costEvidence: null, manualCostReason: null, notes: null, physicalWeightPolicy: 'from_quantity', usefulQuantity: null, fixedWeightKg: null, physicalWeightSnapshot: null, extensions: {} })
+const line = (sapItemCode: string): EstimationDraftBomLine => ({ id: sapItemCode, parentId: null, origin: 'sap', sapItemCode, itemName: null, quantity: 1, uom: 'KG', costCategory: 'material', costStrategy: 'manual_override', unitCost: null, costEvidence: null, manualCostReason: null, notes: null, physicalWeightPolicy: 'direct_weight', physicalWeightCategory: 'product', usefulQuantity: null, fixedWeightKg: null, physicalWeightSnapshot: null, extensions: {} })
 
 test('deriva el color desde el último bloque del SKU SAP', () => {
   assert.equal(sapItemColorCode('PGEL01-0003-000-0100'), '0100')

@@ -5,7 +5,7 @@ import { applySyntheticMarbleBomQuantities, roundUpSapQuantity } from './synthet
 import type { EstimationDraftBomLine } from './estimationDraft'
 
 function line(id: string, sapItemCode: string, uom = 'KG'): EstimationDraftBomLine {
-  return { id, parentId: null, origin: 'sap', sapItemCode, itemName: null, quantity: 1, uom, costCategory: 'material', costStrategy: 'manual_override', unitCost: null, costEvidence: null, manualCostReason: null, notes: null, physicalWeightPolicy: 'from_quantity', usefulQuantity: null, fixedWeightKg: null, physicalWeightSnapshot: null, extensions: {} }
+  return { id, parentId: null, origin: 'sap', sapItemCode, itemName: null, quantity: 1, uom, costCategory: 'material', costStrategy: 'manual_override', unitCost: null, costEvidence: null, manualCostReason: null, notes: null, physicalWeightPolicy: 'direct_weight', physicalWeightCategory: 'product', usefulQuantity: null, fixedWeightKg: null, physicalWeightSnapshot: null, extensions: {} }
 }
 
 test('redondea cantidades SAP hacia arriba a dos decimales', () => {

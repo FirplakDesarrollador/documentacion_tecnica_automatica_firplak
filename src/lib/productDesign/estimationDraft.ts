@@ -29,13 +29,18 @@ export const ESTIMATION_DRAFT_GEOMETRY_SOURCES = ['fusion_360', 'manual'] as con
 export type EstimationDraftGeometrySource = (typeof ESTIMATION_DRAFT_GEOMETRY_SOURCES)[number]
 
 export const ESTIMATION_DRAFT_PHYSICAL_WEIGHT_POLICIES = [
-  'from_quantity',
-  'useful_quantity',
-  'fixed_weight',
-  'derive_children',
-  'exclude',
+  'direct_weight',
+  'useful_weight',
+  'sub_bom_weight',
+  'no_weight',
 ] as const
 export type EstimationDraftPhysicalWeightPolicy = (typeof ESTIMATION_DRAFT_PHYSICAL_WEIGHT_POLICIES)[number]
+export const ESTIMATION_DRAFT_PHYSICAL_WEIGHT_CATEGORIES = ['product', 'packaging'] as const
+export type EstimationDraftPhysicalWeightCategory = (typeof ESTIMATION_DRAFT_PHYSICAL_WEIGHT_CATEGORIES)[number]
+
+export function isPackagingPhysicalItemCode(itemCode: string | null): boolean {
+  return /EMP\d{2}/iu.test(itemCode ?? '')
+}
 
 export type EstimationDraftHomologue = {
   sapItemCode: string | null
@@ -76,7 +81,12 @@ export type EstimationDraftGeometry = {
   estimatedGelcoatKg: number | null
   actualMixtureKg: number | null
   actualGelcoatKg: number | null
+  actualCastingWasteKg: number | null
+  actualPostDemoldWasteOverrideKg: number | null
+  actualPackagingWeightKg: number | null
   weightWastePct: number | null
+  castingWastePct: number | null
+  postDemoldWastePct: number | null
   estimatedNetWeightKg: number | null
   estimatedPackagingWeightKg: number | null
   estimatedGrossWeightKg: number | null
@@ -147,6 +157,7 @@ export type EstimationDraftBomLine = {
   manualCostReason: string | null
   notes: string | null
   physicalWeightPolicy: EstimationDraftPhysicalWeightPolicy
+  physicalWeightCategory: EstimationDraftPhysicalWeightCategory | null
   usefulQuantity: number | null
   fixedWeightKg: number | null
   physicalWeightSnapshot: EstimationDraftPhysicalWeightSnapshot | null
@@ -255,7 +266,12 @@ const GEOMETRY_KEYS = [
   'estimatedGelcoatKg',
   'actualMixtureKg',
   'actualGelcoatKg',
+  'actualCastingWasteKg',
+  'actualPostDemoldWasteOverrideKg',
+  'actualPackagingWeightKg',
   'weightWastePct',
+  'castingWastePct',
+  'postDemoldWastePct',
   'estimatedNetWeightKg',
   'estimatedPackagingWeightKg',
   'estimatedGrossWeightKg',
@@ -298,6 +314,7 @@ const BOM_LINE_KEYS = [
   'manualCostReason',
   'notes',
   'physicalWeightPolicy',
+  'physicalWeightCategory',
   'usefulQuantity',
   'fixedWeightKg',
   'physicalWeightSnapshot',
@@ -467,7 +484,12 @@ function normalizeGeometry(value: unknown): EstimationDraftGeometry {
     estimatedGelcoatKg: readFiniteNumber(record, 'estimatedGelcoatKg'),
     actualMixtureKg: readFiniteNumber(record, 'actualMixtureKg'),
     actualGelcoatKg: readFiniteNumber(record, 'actualGelcoatKg'),
+    actualCastingWasteKg: readFiniteNumber(record, 'actualCastingWasteKg'),
+    actualPostDemoldWasteOverrideKg: readFiniteNumber(record, 'actualPostDemoldWasteOverrideKg'),
+    actualPackagingWeightKg: readFiniteNumber(record, 'actualPackagingWeightKg'),
     weightWastePct: readFiniteNumber(record, 'weightWastePct'),
+    castingWastePct: readFiniteNumber(record, 'castingWastePct'),
+    postDemoldWastePct: readFiniteNumber(record, 'postDemoldWastePct'),
     estimatedNetWeightKg: readFiniteNumber(record, 'estimatedNetWeightKg'),
     estimatedPackagingWeightKg: readFiniteNumber(record, 'estimatedPackagingWeightKg'),
     estimatedGrossWeightKg: readFiniteNumber(record, 'estimatedGrossWeightKg'),
@@ -490,6 +512,18 @@ function normalizePhysicalWeightSnapshot(value: unknown): EstimationDraftPhysica
   return snapshot.kgPerUom !== null || snapshot.source || snapshot.note || snapshot.capturedAt || hasExtensions(snapshot.extensions)
     ? snapshot
     : null
+}
+
+function normalizePhysicalWeightPolicy(value: unknown): EstimationDraftPhysicalWeightPolicy {
+  const legacy: Record<string, EstimationDraftPhysicalWeightPolicy> = {
+    from_quantity: 'direct_weight',
+    fixed_weight: 'direct_weight',
+    useful_quantity: 'useful_weight',
+    derive_children: 'sub_bom_weight',
+    exclude: 'no_weight',
+  }
+  if (typeof value === 'string' && legacy[value]) return legacy[value]
+  return readAllowedValue({ value }, 'value', ESTIMATION_DRAFT_PHYSICAL_WEIGHT_POLICIES) ?? 'direct_weight'
 }
 
 function normalizeCommercialColor(value: unknown): EstimationDraftCommercialColor {
@@ -591,6 +625,13 @@ function normalizeBomLines(value: unknown): EstimationDraftBomLine[] {
       && costEvidence?.source !== 'manual'
       ? 'sap_direct'
       : storedCostStrategy
+    const quantity = readFiniteNumber(record, 'quantity')
+    const fixedWeightKg = readFiniteNumber(record, 'fixedWeightKg')
+    const physicalWeightSnapshot = normalizePhysicalWeightSnapshot(record.physicalWeightSnapshot)
+      ?? legacyFixedWeightSnapshot(record.physicalWeightPolicy, quantity, fixedWeightKg)
+    const extensions = collectExtensions(record, BOM_LINE_KEYS)
+    const storedPhysicalWeightCategory = readAllowedValue(record, 'physicalWeightCategory', ESTIMATION_DRAFT_PHYSICAL_WEIGHT_CATEGORIES)
+    const physicalWeightCategoryDefinedByUser = extensions.physicalWeightCategoryDefinedByUser === true
 
     return [{
       id: normalizedUniqueLineId(readString(record, 'id'), index, seenIds),
@@ -598,7 +639,7 @@ function normalizeBomLines(value: unknown): EstimationDraftBomLine[] {
       origin,
       sapItemCode,
       itemName: readString(record, 'itemName'),
-      quantity: readFiniteNumber(record, 'quantity'),
+      quantity,
       uom: readString(record, 'uom'),
       costCategory: readAllowedValue(record, 'costCategory', COST_CATEGORIES),
       costStrategy,
@@ -606,14 +647,33 @@ function normalizeBomLines(value: unknown): EstimationDraftBomLine[] {
       costEvidence,
       manualCostReason: readString(record, 'manualCostReason'),
       notes: readString(record, 'notes'),
-      physicalWeightPolicy: readAllowedValue(record, 'physicalWeightPolicy', ESTIMATION_DRAFT_PHYSICAL_WEIGHT_POLICIES)
-        ?? 'from_quantity',
+      physicalWeightPolicy: normalizePhysicalWeightPolicy(record.physicalWeightPolicy),
+      physicalWeightCategory: isPackagingPhysicalItemCode(sapItemCode) && !physicalWeightCategoryDefinedByUser
+        ? 'packaging'
+        : storedPhysicalWeightCategory
+        ?? (isPackagingPhysicalItemCode(sapItemCode) || readAllowedValue(record, 'costCategory', COST_CATEGORIES) === 'packaging' ? 'packaging' : readAllowedValue(record, 'costCategory', COST_CATEGORIES) === 'material' ? 'product' : null),
       usefulQuantity: readFiniteNumber(record, 'usefulQuantity'),
-      fixedWeightKg: readFiniteNumber(record, 'fixedWeightKg'),
-      physicalWeightSnapshot: normalizePhysicalWeightSnapshot(record.physicalWeightSnapshot),
-      extensions: collectExtensions(record, BOM_LINE_KEYS),
+      fixedWeightKg,
+      physicalWeightSnapshot,
+      extensions,
     }]
   })
+}
+
+/** Preserves historical fixed weights as a per-UOM factor under Peso directo. */
+function legacyFixedWeightSnapshot(
+  policy: unknown,
+  quantity: number | null,
+  fixedWeightKg: number | null,
+): EstimationDraftPhysicalWeightSnapshot | null {
+  if (policy !== 'fixed_weight' || fixedWeightKg === null || fixedWeightKg < 0 || quantity === null || quantity <= 0) return null
+  return {
+    kgPerUom: fixedWeightKg / quantity,
+    source: 'Migrado desde peso fijo',
+    note: 'Factor conservado al unificar la lógica como Peso directo.',
+    capturedAt: null,
+    extensions: { migratedFrom: 'fixed_weight' },
+  }
 }
 
 function normalizeCommercialScenario(value: unknown): EstimationDraftCommercialScenario {
@@ -716,7 +776,12 @@ function serializeGeometry(value: EstimationDraftGeometry): EstimationDraftJsonO
     estimatedGelcoatKg: value.estimatedGelcoatKg,
     actualMixtureKg: value.actualMixtureKg,
     actualGelcoatKg: value.actualGelcoatKg,
+    actualCastingWasteKg: value.actualCastingWasteKg,
+    actualPostDemoldWasteOverrideKg: value.actualPostDemoldWasteOverrideKg,
+    actualPackagingWeightKg: value.actualPackagingWeightKg,
     weightWastePct: value.weightWastePct,
+    castingWastePct: value.castingWastePct,
+    postDemoldWastePct: value.postDemoldWastePct,
     estimatedNetWeightKg: value.estimatedNetWeightKg,
     estimatedPackagingWeightKg: value.estimatedPackagingWeightKg,
     estimatedGrossWeightKg: value.estimatedGrossWeightKg,
@@ -794,6 +859,7 @@ function serializeBomLine(value: EstimationDraftBomLine): EstimationDraftJsonObj
     manualCostReason: value.manualCostReason,
     notes: value.notes,
     physicalWeightPolicy: value.physicalWeightPolicy,
+    physicalWeightCategory: value.physicalWeightCategory,
     usefulQuantity: value.usefulQuantity,
     fixedWeightKg: value.fixedWeightKg,
     physicalWeightSnapshot: value.physicalWeightSnapshot ? serializePhysicalWeightSnapshot(value.physicalWeightSnapshot) : null,

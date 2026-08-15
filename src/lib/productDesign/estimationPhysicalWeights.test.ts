@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { calculateEstimationPhysicalWeights, suggestSyntheticMarbleWeightWastePct } from './estimationPhysicalWeights'
+import { calculateEstimationPhysicalWeights, inferPhysicalWeightPolicy, suggestSyntheticMarbleWeightWastePct } from './estimationPhysicalWeights'
 import type { EstimationDraftBomLine } from './estimationDraft'
 
 function line(overrides: Partial<EstimationDraftBomLine> & Pick<EstimationDraftBomLine, 'id'>): EstimationDraftBomLine {
@@ -20,7 +20,8 @@ function line(overrides: Partial<EstimationDraftBomLine> & Pick<EstimationDraftB
     costEvidence: null,
     manualCostReason: null,
     notes: null,
-    physicalWeightPolicy: 'from_quantity',
+    physicalWeightPolicy: 'direct_weight',
+    physicalWeightCategory: 'product',
     usefulQuantity: null,
     fixedWeightKg: null,
     physicalWeightSnapshot: { kgPerUom: 1, source: 'prueba', note: null, capturedAt: null, extensions: {} },
@@ -38,7 +39,7 @@ test('separa peso neto, empaque y evita contar dos veces una subestructura', () 
       line({ id: 'gel', sapItemCode: 'PGEL01-0003-000-0100' }),
       line({ id: 'peroxide', quantity: 10, uom: 'GR', physicalWeightSnapshot: { kgPerUom: 0.001, source: 'prueba', note: null, capturedAt: null, extensions: {} } }),
       line({ id: 'box', quantity: 2, costCategory: 'packaging', physicalWeightSnapshot: { kgPerUom: 0.3, source: 'prueba', note: null, capturedAt: null, extensions: {} } }),
-      line({ id: 'parent', physicalWeightPolicy: 'derive_children' }),
+      line({ id: 'parent', physicalWeightPolicy: 'sub_bom_weight' }),
       line({ id: 'child', parentId: 'parent', quantity: 4, physicalWeightSnapshot: { kgPerUom: 0.2, source: 'prueba', note: null, capturedAt: null, extensions: {} } }),
     ],
   })
@@ -51,7 +52,7 @@ test('conserva un peso inicial y marca las líneas que todavía no tienen factor
   const result = calculateEstimationPhysicalWeights({
     estimatedMixtureKg: 1,
     estimatedGelcoatKg: 1,
-    lines: [line({ id: 'missing', physicalWeightSnapshot: null })],
+    lines: [line({ id: 'missing', uom: 'M', physicalWeightSnapshot: null })],
   })
   assert.ok(Math.abs((result.netWeightKg ?? 0) - 1.9) < 0.000_001)
   assert.equal(result.packagingWeightKg, 0)
@@ -60,6 +61,52 @@ test('conserva un peso inicial y marca las líneas que todavía no tienen factor
 })
 
 test('propone desperdicio a partir de una toma física completa sin modificar la cotización', () => {
+})
+
+test('asigna las cuatro categorías por unidad y estructura', () => {
+  assert.equal(inferPhysicalWeightPolicy(line({ id: 'weight', uom: 'G' }), false), 'direct_weight')
+  assert.equal(inferPhysicalWeightPolicy(line({ id: 'linear', uom: 'M' }), false), 'direct_weight')
+  assert.equal(inferPhysicalWeightPolicy(line({ id: 'area', uom: 'M2' }), false), 'useful_weight')
+  assert.equal(inferPhysicalWeightPolicy(line({ id: 'volume', uom: 'L' }), false), 'direct_weight')
+  assert.equal(inferPhysicalWeightPolicy(line({ id: 'time', uom: 'MIN' }), false), 'no_weight')
+  assert.equal(inferPhysicalWeightPolicy(line({ id: 'sub-bom' }), true), 'sub_bom_weight')
+})
+
+test('normaliza peso, usa cantidad útil y aplica densidad por volumen', () => {
+  const result = calculateEstimationPhysicalWeights({
+    estimatedMixtureKg: 0,
+    estimatedGelcoatKg: 0,
+    wastePct: 0,
+    lines: [
+      line({ id: 'grams', quantity: 500, uom: 'G', physicalWeightSnapshot: null }),
+      line({ id: 'pounds', quantity: 2, uom: 'LB', physicalWeightSnapshot: null }),
+      line({ id: 'surface', quantity: 10, uom: 'M2', usefulQuantity: 2.5, physicalWeightSnapshot: { kgPerUom: 0.4, source: 'prueba', note: null, capturedAt: null, extensions: {} } }),
+      line({ id: 'liquid', quantity: 3, uom: 'L', physicalWeightSnapshot: { kgPerUom: 1.2, source: 'densidad', note: null, capturedAt: null, extensions: {} } }),
+      line({ id: 'labor', quantity: 30, uom: 'MIN', costCategory: 'mo', physicalWeightSnapshot: null }),
+    ],
+  })
+  assert.ok(Math.abs((result.netWeightKg ?? 0) - 6.007_184_74) < 0.000_001)
+  assert.equal(result.packagingWeightKg, 0)
+  assert.deepEqual(result.missingLineIds, [])
+})
+
+test('calcula una Sub-LdM por unidad y la multiplica sin contar su cabecera', () => {
+  const result = calculateEstimationPhysicalWeights({
+    estimatedMixtureKg: 0,
+    estimatedGelcoatKg: 0,
+    wastePct: 0,
+    lines: [
+      line({ id: 'sub-bom', quantity: 3, uom: 'UN', physicalWeightSnapshot: { kgPerUom: 99, source: 'ignorado', note: null, capturedAt: null, extensions: {} } }),
+      line({ id: 'component', parentId: 'sub-bom', quantity: 2, uom: 'M', physicalWeightSnapshot: { kgPerUom: 0.5, source: 'prueba', note: null, capturedAt: null, extensions: {} } }),
+      line({ id: 'nested', parentId: 'sub-bom', quantity: 2, uom: 'UN' }),
+      line({ id: 'nested-component', parentId: 'nested', quantity: 0.25, uom: 'KG', physicalWeightSnapshot: null }),
+    ],
+  })
+  assert.equal(result.netWeightKg, 4.5)
+  assert.deepEqual(result.missingLineIds, [])
+})
+
+test('propone desperdicio desde una toma física completa', () => {
   const suggested = suggestSyntheticMarbleWeightWastePct({
     actualMixtureKg: 6,
     actualGelcoatKg: 0.4,

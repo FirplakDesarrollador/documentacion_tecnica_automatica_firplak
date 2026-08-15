@@ -39,7 +39,9 @@ import { applySyntheticMarbleBomQuantities } from '@/lib/productDesign/synthetic
 import {
   calculateEstimationPhysicalWeights,
   DEFAULT_SYNTHETIC_MARBLE_WEIGHT_WASTE_PCT,
+  inferPhysicalWeightPolicy,
 } from '@/lib/productDesign/estimationPhysicalWeights'
+import { calculateEstimationMaterialBalance } from '@/lib/productDesign/estimationMaterialBalance'
 import { assertPermission, type AccessContext } from '@/utils/auth/access'
 
 const ESTIMATION_STATUSES = ['draft', 'active', 'closed', 'archived'] as const
@@ -57,7 +59,6 @@ type ProductDesignAccess = AccessContext & {
 
 function toCostLine(line: EstimationDraftBomLine): EstimationBomCostLine | null {
   if (line.quantity === null || line.costCategory === null || line.costStrategy === null) return null
-  if (line.costEvidence?.source === 'manual' && !line.manualCostReason?.trim()) return null
   const rawBomQuantity = line.extensions.sapBomQuantity
   const bomQuantity = typeof rawBomQuantity === 'number' && Number.isFinite(rawBomQuantity) ? rawBomQuantity : null
   return {
@@ -134,6 +135,14 @@ export type SaveProductDesignEstimationInput = CreateProductDesignEstimationInpu
 export type EstimationHomologueCandidate = {
   itemCode: string
   itemName: string
+}
+
+export type EstimationSapFamilyCandidate = {
+  sapPrefix: string
+  familyCode: string
+  sampleItemCode: string
+  sampleItemName: string
+  localFamilyName: string | null
 }
 
 export type EstimationCommercialColorCandidate = {
@@ -234,6 +243,13 @@ function optionalPositiveNumber(value: unknown, label: string): number | null {
   const normalized = numberOrNull(value)
   if (normalized === null || normalized <= 0) throw new Error(`${label} debe ser un número mayor que cero.`)
   return normalized
+}
+
+function optionalNonNegativeNumber(value: unknown, label: string): number | null {
+  if (value === null || value === undefined || value === '') return null
+  const parsed = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`${label} debe ser un número no negativo.`)
+  return parsed
 }
 
 function requiredUuid(value: unknown, label: string): string {
@@ -420,7 +436,8 @@ function toBomDraftLines(
       },
       manualCostReason: null,
       notes: branchError ?? (node.cycleDetected ? 'SAP reporta un ciclo en esta sub-LdM.' : null),
-      physicalWeightPolicy: hasExpandableStructure ? 'derive_children' : 'from_quantity',
+      physicalWeightPolicy: hasExpandableStructure ? 'sub_bom_weight' : 'direct_weight',
+      physicalWeightCategory: /EMP\d{2}/iu.test(node.itemCode) || inferEstimationSapCostCategory(node.itemCode, node.itemName) === 'packaging' ? 'packaging' : 'product',
       usefulQuantity: null,
       fixedWeightKg: null,
       physicalWeightSnapshot: null,
@@ -599,6 +616,35 @@ async function getCurrentSyntheticMarbleCalibration(): Promise<ReturnType<typeof
   return calculateSyntheticMarbleCalibration(measurements)
 }
 
+async function getCurrentWasteCalibration(): Promise<{ castingWastePct: number | null; postDemoldWastePct: number | null; sampleIds: string[] }> {
+  const rows = await dbQuery(
+    `SELECT id, source_evidence_json
+       FROM public.product_engineering_measurements
+      WHERE calibration_group = 'SYNTHETIC_MARBLE_GENERAL' AND measurement_status = 'valid'`,
+  )
+  let materialTotal = 0
+  let castingWasteTotal = 0
+  let postDemoldWasteTotal = 0
+  const sampleIds: string[] = []
+  for (const row of rows as RawRow[]) {
+    const evidence = row.source_evidence_json && typeof row.source_evidence_json === 'object' ? row.source_evidence_json as RawRow : null
+    const balance = evidence?.materialBalance && typeof evidence.materialBalance === 'object' ? evidence.materialBalance as RawRow : null
+    const totalMaterialKg = numberOrNull(balance?.totalMaterialKg)
+    const castingWasteKg = numberOrNull(balance?.actualCastingWasteKg ?? balance?.castingWasteKg)
+    const postDemoldWasteKg = numberOrNull(balance?.effectivePostDemoldWasteKg)
+    if (!totalMaterialKg || totalMaterialKg <= 0 || castingWasteKg === null || postDemoldWasteKg === null) continue
+    materialTotal += totalMaterialKg
+    castingWasteTotal += castingWasteKg
+    postDemoldWasteTotal += postDemoldWasteKg
+    sampleIds.push(requiredText(row.id, 'Identificador de muestra'))
+  }
+  return {
+    castingWastePct: materialTotal > 0 ? castingWasteTotal / materialTotal : null,
+    postDemoldWastePct: materialTotal > 0 ? postDemoldWasteTotal / materialTotal : null,
+    sampleIds,
+  }
+}
+
 function timestampNow(): string {
   return new Date().toISOString()
 }
@@ -632,9 +678,10 @@ async function applyCurrentPhysicalWeightProfiles(
       capturedAt: stringOrNull(row.physical_weight_updated_at),
     })
   }
+  const childIds = new Set(lines.flatMap(line => line.parentId ? [line.parentId] : []))
   return lines.map((line): EstimationDraftBomLine => {
     const profile = line.sapItemCode ? byCode.get(line.sapItemCode.trim().toUpperCase()) : undefined
-    return profile ? {
+    const lineWithProfile = profile ? {
       ...line,
       physicalWeightSnapshot: {
         kgPerUom: profile.kgPerUom,
@@ -644,15 +691,29 @@ async function applyCurrentPhysicalWeightProfiles(
         extensions: {},
       },
     } : line
+    return {
+      ...lineWithProfile,
+      physicalWeightPolicy: inferPhysicalWeightPolicy(lineWithProfile, childIds.has(line.id)),
+    }
   })
 }
 
 function applyPhysicalWeightEstimate(draft: EstimationDraft): void {
+  const childIds = new Set(draft.bomLines.flatMap(line => line.parentId ? [line.parentId] : []))
+  draft.bomLines = draft.bomLines.map(line => ({
+    ...line,
+    physicalWeightPolicy: inferPhysicalWeightPolicy(line, childIds.has(line.id)),
+    physicalWeightCategory: inferPhysicalWeightPolicy(line, childIds.has(line.id)) === 'no_weight'
+      ? null
+      : line.physicalWeightCategory ?? 'product',
+  }))
   const result = calculateEstimationPhysicalWeights({
     lines: draft.bomLines,
     estimatedMixtureKg: draft.geometry.estimatedMixtureKg,
     estimatedGelcoatKg: draft.geometry.estimatedGelcoatKg,
     wastePct: draft.geometry.weightWastePct ?? DEFAULT_SYNTHETIC_MARBLE_WEIGHT_WASTE_PCT,
+    castingWastePct: draft.geometry.castingWastePct ?? 0,
+    postDemoldWastePct: draft.geometry.postDemoldWastePct ?? draft.geometry.weightWastePct ?? DEFAULT_SYNTHETIC_MARBLE_WEIGHT_WASTE_PCT,
   })
   draft.geometry = {
     ...draft.geometry,
@@ -788,6 +849,29 @@ export async function listProductDesignEstimationsAction(): Promise<ProductDesig
   return rows.map(mapEstimationSummary)
 }
 
+export async function deleteProductDesignEstimationAction(input: { id: string }): Promise<{
+  deletedId: string
+  provisionalName: string
+  preservedEngineeringMeasurements: number
+}> {
+  await requireProductDesignAccess()
+  const id = requiredUuid(input.id, 'Cotización')
+  const existing = await getEstimationRecord(id)
+  if (!existing) throw new Error('La cotización no existe o ya fue eliminada.')
+  const measurementRows = await dbQuery(
+    `SELECT count(*)::int AS count
+       FROM public.product_engineering_measurements
+      WHERE source_evidence_json ->> 'productDesignEstimationId' = $1`,
+    [id],
+  )
+  const preservedEngineeringMeasurements = numberOrNull(measurementRows[0]?.count) ?? 0
+  await dbQuery('DELETE FROM public.product_design_estimations WHERE id = $1::uuid', [id])
+  const deleted = await getEstimationRecord(id)
+  if (deleted) throw new Error('La cotización no pudo eliminarse de forma verificable.')
+  revalidatePath('/product-design/estimations')
+  return { deletedId: id, provisionalName: existing.provisionalName, preservedEngineeringMeasurements }
+}
+
 export async function getProductDesignEstimationAction(id: string): Promise<ProductDesignEstimation | null> {
   await requireProductDesignAccess()
   return getEstimationRecord(requiredUuid(id, 'Cotización'))
@@ -862,6 +946,11 @@ export async function saveProductDesignEstimationAction(input: SaveProductDesign
   const existing = await getEstimationRecord(id)
   if (!existing) throw new Error('No fue posible releer la cotización antes de guardar.')
   draft.bomLines = await canonicalizeSapDraftLines(draft.bomLines, existing.draft.bomLines)
+  const childIds = new Set(draft.bomLines.flatMap(line => line.parentId ? [line.parentId] : []))
+  draft.bomLines = draft.bomLines.map(line => {
+    const physicalWeightPolicy = inferPhysicalWeightPolicy(line, childIds.has(line.id))
+    return { ...line, physicalWeightPolicy, physicalWeightCategory: physicalWeightPolicy === 'no_weight' ? null : line.physicalWeightCategory ?? 'product' }
+  })
   draft.bomLines = draft.bomLines.map(line => {
     const evidence = line.costEvidence
     if (line.origin !== 'manual' || line.costStrategy !== 'manual_override' || evidence?.source !== 'manual') return line
@@ -991,12 +1080,24 @@ export async function freezeEstimationSyntheticMarbleCalibrationAction(input: {
   volumeMm3: number | null
   paintAreaMm2: number | null
   weightWastePct: number | null
+  castingWastePct: number | null
+  postDemoldWastePct: number | null
 }): Promise<ProductDesignEstimation> {
   const access = await requireProductDesignAccess()
   const id = requiredUuid(input.id, 'Cotización')
   const existing = await getEstimationRecord(id)
   if (!existing) throw new Error('La cotización no existe.')
-  const calibration = await getCurrentSyntheticMarbleCalibration()
+  const volumeMm3 = optionalPositiveNumber(input.volumeMm3, 'Volumen CAD')
+  const paintAreaMm2 = optionalPositiveNumber(input.paintAreaMm2, 'Área de pintura')
+  const castingWastePct = optionalNonNegativeNumber(input.castingWastePct, 'Merma de vaciado')
+  const postDemoldWastePct = optionalNonNegativeNumber(input.postDemoldWastePct, 'Merma pos-desmolde')
+  if (volumeMm3 === null || paintAreaMm2 === null || castingWastePct === null || postDemoldWastePct === null) {
+    throw new Error('Completa volumen, área, merma de vaciado y merma pos-desmolde antes de calcular.')
+  }
+  if (castingWastePct >= 1 || postDemoldWastePct >= 1 || castingWastePct + postDemoldWastePct >= 1) {
+    throw new Error('Las mermas deben ser menores a 100 % y su suma también debe ser menor a 100 %.')
+  }
+  const [calibration, wasteCalibration] = await Promise.all([getCurrentSyntheticMarbleCalibration(), getCurrentWasteCalibration()])
   const frozen = freezeSyntheticMarbleCalibration(calibration, timestampNow())
   const draft = existing.draft
   draft.syntheticMarbleCalibration = frozen
@@ -1004,15 +1105,21 @@ export async function freezeEstimationSyntheticMarbleCalibrationAction(input: {
     ...draft.geometry,
     source: 'fusion_360',
     capturedAt: timestampNow(),
-    volumeMm3: optionalPositiveNumber(input.volumeMm3, 'Volumen CAD'),
-    paintAreaMm2: optionalPositiveNumber(input.paintAreaMm2, 'Área de pintura'),
-    estimatedMixtureKg: frozen?.mixture && input.volumeMm3 && input.volumeMm3 > 0
-      ? input.volumeMm3 * frozen.mixture.factor
+    volumeMm3,
+    paintAreaMm2,
+    estimatedMixtureKg: frozen?.mixture
+      ? volumeMm3 * frozen.mixture.factor
       : null,
-    estimatedGelcoatKg: frozen?.gelcoat && input.paintAreaMm2 && input.paintAreaMm2 > 0
-      ? input.paintAreaMm2 * frozen.gelcoat.factor
+    estimatedGelcoatKg: frozen?.gelcoat
+      ? paintAreaMm2 * frozen.gelcoat.factor
       : null,
     weightWastePct: input.weightWastePct ?? DEFAULT_SYNTHETIC_MARBLE_WEIGHT_WASTE_PCT,
+    castingWastePct: wasteCalibration.castingWastePct ?? castingWastePct,
+    postDemoldWastePct: wasteCalibration.postDemoldWastePct ?? postDemoldWastePct,
+    extensions: {
+      ...draft.geometry.extensions,
+      wasteCalibrationSampleIds: wasteCalibration.sampleIds,
+    },
   }
   const appliedQuantities = applySyntheticMarbleBomQuantities(
     draft.bomLines,
@@ -1040,6 +1147,9 @@ export async function registerEstimationActualConsumptionMeasurementAction(input
   actualGelcoatKg: number | null
   actualNetWeightKg: number | null
   actualGrossWeightKg: number | null
+  actualCastingWasteKg: number | null
+  actualPostDemoldWasteOverrideKg: number | null
+  actualPackagingWeightKg: number | null
 }): Promise<ProductDesignEstimation> {
   const access = await requireProductDesignAccess()
   const id = requiredUuid(input.id, 'Cotización')
@@ -1049,10 +1159,11 @@ export async function registerEstimationActualConsumptionMeasurementAction(input
   const actualGelcoatKg = optionalPositiveNumber(input.actualGelcoatKg, 'Gelcoat real')
   const actualNetWeightKg = optionalPositiveNumber(input.actualNetWeightKg, 'Peso neto real')
   const actualGrossWeightKg = optionalPositiveNumber(input.actualGrossWeightKg, 'Peso bruto real')
-  if (actualMixtureKg === null || actualGelcoatKg === null || actualNetWeightKg === null || actualGrossWeightKg === null) {
-    throw new Error('Registra mezcla, gelcoat, peso neto y peso bruto reales antes de enviar la toma a Ingeniería.')
-  }
-  if (actualGrossWeightKg < actualNetWeightKg) {
+  const actualCastingWasteKg = optionalNonNegativeNumber(input.actualCastingWasteKg, 'Merma de vaciado')
+  const actualPostDemoldWasteOverrideKg = optionalNonNegativeNumber(input.actualPostDemoldWasteOverrideKg, 'Merma pos-desmolde')
+  const actualPackagingWeightKg = optionalNonNegativeNumber(input.actualPackagingWeightKg, 'Peso del empaque')
+  if (actualMixtureKg === null && actualGelcoatKg === null && actualNetWeightKg === null) throw new Error('Registra al menos mezcla, gelcoat o peso neto antes de enviar la toma a Ingeniería.')
+  if (actualGrossWeightKg !== null && actualNetWeightKg !== null && actualGrossWeightKg < actualNetWeightKg) {
     throw new Error('El peso bruto real no puede ser menor que el peso neto real.')
   }
   const { volumeMm3, paintAreaMm2 } = existing.draft.geometry
@@ -1060,17 +1171,47 @@ export async function registerEstimationActualConsumptionMeasurementAction(input
     throw new Error('La toma real requiere volumen CAD y área de pintura.')
   }
   const draft = existing.draft
-  draft.geometry = { ...draft.geometry, actualMixtureKg, actualGelcoatKg, actualNetWeightKg, actualGrossWeightKg }
+  const effectiveGelcoatKg = actualGelcoatKg ?? draft.geometry.estimatedGelcoatKg
+  const actualPeroxideGrams = effectiveGelcoatKg === null ? null : effectiveGelcoatKg * 1_000 * 0.025
+  const materialBalance = calculateEstimationMaterialBalance({ actualMixtureKg, actualGelcoatKg, theoreticalGelcoatKg: draft.geometry.estimatedGelcoatKg, actualCastingWasteKg, actualPostDemoldWasteOverrideKg, actualNetWeightKg, actualPackagingWeightKg, actualGrossWeightKg })
+  const appliedQuantities = applySyntheticMarbleBomQuantities(draft.bomLines, actualMixtureKg, actualGelcoatKg)
+  draft.bomLines = appliedQuantities.lines
+  draft.geometry = {
+    ...draft.geometry,
+    actualMixtureKg,
+    actualGelcoatKg,
+    actualNetWeightKg,
+    actualGrossWeightKg,
+    actualCastingWasteKg,
+    actualPostDemoldWasteOverrideKg,
+    actualPackagingWeightKg,
+    extensions: {
+      ...draft.geometry.extensions,
+      actualPeroxideGrams,
+      actualPackagingWeightKg,
+      materialBalance: { ...materialBalance, actualCastingWasteKg, actualPostDemoldWasteOverrideKg },
+      actualConsumptionRecordedAt: timestampNow(),
+      actualBomLineIds: {
+        mixture: appliedQuantities.mixtureLineIds,
+        gelcoat: appliedQuantities.gelcoatLineIds,
+        peroxide: appliedQuantities.peroxideLineIds,
+      },
+    },
+  }
   const measurementId = stringOrNull(draft.geometry.extensions.engineeringMeasurementId)
+  let verifiedMeasurementId = measurementId
   const evidence = JSON.stringify({
     productDesignEstimationId: id,
     recordedFrom: 'product_design_estimation',
-    physicalWeightSnapshot: {
+      physicalWeightSnapshot: {
       wastePct: draft.geometry.weightWastePct,
       estimatedNetWeightKg: draft.geometry.estimatedNetWeightKg,
       estimatedGrossWeightKg: draft.geometry.estimatedGrossWeightKg,
-      bomLines: draft.bomLines,
-    },
+        bomLines: draft.bomLines,
+      },
+      actualPeroxideGrams,
+      actualPackagingWeightKg,
+      materialBalance: { ...materialBalance, actualCastingWasteKg, actualPostDemoldWasteOverrideKg },
   })
   if (measurementId) {
     const updated = await dbQuery(
@@ -1097,8 +1238,27 @@ export async function registerEstimationActualConsumptionMeasurementAction(input
     )
     const createdMeasurementId = stringOrNull(rows[0]?.id)
     if (!createdMeasurementId) throw new Error('La toma se registró sin un identificador verificable.')
-    draft.geometry.extensions.engineeringMeasurementId = createdMeasurementId
+    verifiedMeasurementId = createdMeasurementId
   }
+  if (!verifiedMeasurementId) throw new Error('La toma no devolvió un identificador verificable.')
+  const measurementRows = await dbQuery(
+    `SELECT mixture_kg, gelcoat_kg, actual_net_weight_kg, actual_gross_weight_kg
+       FROM public.product_engineering_measurements
+      WHERE id = $1::uuid AND measurement_status = 'pending'
+      LIMIT 1`,
+    [verifiedMeasurementId],
+  )
+  const verifiedMeasurement = measurementRows[0]
+  if (
+    !verifiedMeasurement
+    || numberOrNull(verifiedMeasurement.mixture_kg) !== actualMixtureKg
+    || numberOrNull(verifiedMeasurement.gelcoat_kg) !== actualGelcoatKg
+    || numberOrNull(verifiedMeasurement.actual_net_weight_kg) !== actualNetWeightKg
+    || numberOrNull(verifiedMeasurement.actual_gross_weight_kg) !== actualGrossWeightKg
+  ) {
+    throw new Error('La toma no pudo verificarse después de guardarla en Mediciones de Ingeniería.')
+  }
+  draft.geometry.extensions.engineeringMeasurementId = verifiedMeasurementId
   await dbQuery(
     `UPDATE public.product_design_estimations
         SET draft_data_json = $1::jsonb, updated_by = $2::uuid
@@ -1234,6 +1394,49 @@ export async function getEstimationFamilyCreationOptionsAction(): Promise<Estima
     lines: readDistinctTextValues(lines, 'line'),
     manufacturingProcesses: [...new Set([SYNTHETIC_MARBLE_PROCESS, ...readDistinctTextValues(manufacturingProcesses, 'manufacturing_process')])].toSorted(),
   }
+}
+
+export async function searchEstimationSapFamiliesAction(query: string): Promise<EstimationSapFamilyCandidate[]> {
+  await requireProductDesignAccess()
+  const normalizedQuery = requiredText(query, 'Búsqueda de familia SAP').toUpperCase()
+  const compactQuery = normalizedQuery.replace(/[^A-Z0-9]/gu, '').replace(/^V/u, '')
+  const [byCode, byDescription] = await Promise.all([
+    searchSapItems({ code: `V${compactQuery}` }, { limit: SAP_PAGE_LIMIT }),
+    searchSapItems({ code: 'V', description: normalizedQuery }, { limit: SAP_PAGE_LIMIT }),
+  ])
+  const candidates = new Map<string, Omit<EstimationSapFamilyCandidate, 'localFamilyName'>>()
+  for (const item of [...byCode.items, ...byDescription.items]) {
+    const itemCode = stringOrNull(item.ItemCode)?.toUpperCase()
+    if (!itemCode) continue
+    const sapPrefix = itemCode.split('-')[0] ?? ''
+    if (!/^V[A-Z0-9]+$/u.test(sapPrefix)) continue
+    const familyCode = deriveEstimationFamilyCode(sapPrefix)
+    if (!candidates.has(familyCode)) {
+      candidates.set(familyCode, {
+        sapPrefix,
+        familyCode,
+        sampleItemCode: itemCode,
+        sampleItemName: stringOrNull(item.ItemName) ?? '',
+      })
+    }
+  }
+  const familyCodes = [...candidates.keys()]
+  if (familyCodes.length === 0) return []
+  const placeholders = familyCodes.map((_, index) => `$${index + 1}`).join(', ')
+  const localRows = await dbQuery(
+    `SELECT family_code, family_name
+       FROM public.families
+      WHERE family_code IN (${placeholders})`,
+    familyCodes,
+  )
+  const localNames = new Map<string, string>(localRows.flatMap((row: RawRow) => {
+    const familyCode = stringOrNull(row.family_code)
+    return familyCode ? [[familyCode, stringOrNull(row.family_name) ?? ''] as const] : []
+  }))
+  return [...candidates.values()].map(candidate => ({
+    ...candidate,
+    localFamilyName: localNames.has(candidate.familyCode) ? localNames.get(candidate.familyCode) ?? '' : null,
+  })).toSorted((left, right) => left.familyCode.localeCompare(right.familyCode))
 }
 
 export async function getEstimationFamilyInferenceAction(input: {
@@ -1444,11 +1647,10 @@ export async function suggestEstimationSubBomCodeAction(itemCode: string): Promi
   }
 }
 
-export async function proposeEstimationReferenceAction(input: { sapPrefix: string; homologueItemCode: string }) {
-  await requireProductDesignAccess()
-  const normalizedPrefix = normalizeSapPrefix(input.sapPrefix)
-  const normalizedHomologueItemCode = requiredText(input.homologueItemCode, 'Código SAP del homólogo').toUpperCase()
-  const salesItemPrefix = deriveEstimationSalesItemPrefix(normalizedHomologueItemCode, normalizedPrefix)
+async function proposeEstimationReferenceForPrefix(
+  normalizedPrefix: string,
+  salesItemPrefix: string,
+) {
   const existingCodes: string[] = []
   let afterItemCode: string | null = null
   let hasMore = true
@@ -1478,6 +1680,62 @@ export async function proposeEstimationReferenceAction(input: { sapPrefix: strin
     salesItemPrefix,
     existingCodes,
   })
+}
+
+export async function proposeEstimationReferenceAction(input: { sapPrefix: string; homologueItemCode: string }) {
+  await requireProductDesignAccess()
+  const normalizedPrefix = normalizeSapPrefix(input.sapPrefix)
+  const normalizedHomologueItemCode = requiredText(input.homologueItemCode, 'Código SAP del homólogo').toUpperCase()
+  const salesItemPrefix = deriveEstimationSalesItemPrefix(normalizedHomologueItemCode, normalizedPrefix)
+  return proposeEstimationReferenceForPrefix(normalizedPrefix, salesItemPrefix)
+}
+
+export async function proposeEstimationReferenceForFamilyAction(input: { sapPrefix: string }) {
+  await requireProductDesignAccess()
+  const normalizedPrefix = normalizeSapPrefix(input.sapPrefix)
+  const familyCode = deriveEstimationFamilyCode(normalizedPrefix)
+  return proposeEstimationReferenceForPrefix(normalizedPrefix, `V${familyCode}`)
+}
+
+export async function redefineEstimationFamilyAction(input: {
+  id: string
+  sapPrefix: string
+}): Promise<ProductDesignEstimation> {
+  const access = await requireProductDesignAccess()
+  const id = requiredUuid(input.id, 'Cotización')
+  const existing = await getEstimationRecord(id)
+  if (!existing) throw new Error('La cotización no existe.')
+  const normalizedPrefix = normalizeSapPrefix(input.sapPrefix)
+  const familyCode = deriveEstimationFamilyCode(normalizedPrefix)
+  await assertExistingFamily(familyCode)
+  const proposal = await proposeEstimationReferenceForPrefix(normalizedPrefix, `V${familyCode}`)
+  const draft = existing.draft
+  if (draft.homologue) {
+    draft.homologue.familyCode = familyCode
+    draft.homologue.extensions = {
+      ...draft.homologue.extensions,
+      sourceSapPrefix: draft.homologue.extensions.sourceSapPrefix ?? draft.homologue.sapPrefix,
+      workingSapPrefix: normalizedPrefix,
+      workingFamilySelectedAt: timestampNow(),
+    }
+  }
+  await dbQuery(
+    `UPDATE public.product_design_estimations
+        SET sap_prefix = $1,
+            family_code = $2,
+            proposed_reference_code = $3,
+            draft_data_json = $4::jsonb,
+            updated_by = $5::uuid
+      WHERE id = $6::uuid`,
+    [normalizedPrefix, familyCode, proposal.referenceCode, JSON.stringify(serializeEstimationDraft(draft)), access.user.id, id],
+  )
+  const saved = await getEstimationRecord(id)
+  if (!saved || saved.familyCode !== familyCode || saved.proposedReferenceCode !== proposal.referenceCode) {
+    throw new Error('La familia de trabajo no pudo verificarse después de guardar.')
+  }
+  revalidatePath('/product-design/estimations')
+  revalidatePath(`/product-design/estimations/${id}`)
+  return saved
 }
 
 export async function copyHomologueIntoEstimationAction(input: {
