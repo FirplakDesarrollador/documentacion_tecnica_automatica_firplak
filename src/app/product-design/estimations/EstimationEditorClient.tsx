@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { type ReactNode, useMemo, useState, useTransition } from 'react'
+import { type ComponentProps, type ReactNode, useMemo, useState, useTransition } from 'react'
 import {
   closestCenter,
   DndContext,
@@ -21,6 +21,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { Collapsible } from '@base-ui/react/collapsible'
 import {
   ArrowLeft,
   Calculator,
@@ -55,15 +56,19 @@ import {
   getEstimationSapSubtreeAction,
   getEstimationHomologueAction,
   proposeEstimationReferenceAction,
+  proposeEstimationReferenceForFamilyAction,
+  redefineEstimationFamilyAction,
   registerEstimationActualConsumptionMeasurementAction,
   refreshEstimationSapCostsAction,
   replaceEstimationGelcoatForColorAction,
   saveProductDesignEstimationAction,
   searchEstimationHomologuesAction,
+  searchEstimationSapFamiliesAction,
   setEstimationSharedWithSalesAction,
   suggestEstimationSubBomCodeAction,
   type EstimationHomologue,
   type EstimationHomologueCandidate,
+  type EstimationSapFamilyCandidate,
   type EstimationCommercialColorCandidate,
   type ProductDesignEstimation,
   type ProductDesignEstimationStatus,
@@ -74,16 +79,16 @@ import {
   type EstimationDraftBomLine,
   type EstimationDraftPhysicalWeightPolicy,
 } from '@/lib/productDesign/estimationDraft'
+import { isDecimalInput, parseDecimalInput } from '@/lib/productDesign/decimalInput'
+import { calculateEstimationMaterialBalance } from '@/lib/productDesign/estimationMaterialBalance'
 import {
   evaluateEstimationBomCosting,
-  type EstimationBomCostCategory,
   type EstimationBomCostLine,
   type EstimationBomCostStrategy,
   type EstimationBomLineValuation,
 } from '@/lib/productDesign/estimationBomCosting'
 import {
   buildEstimationBomHierarchy,
-  getEstimationBomParentCandidates,
   getEstimationBomDescendantIds,
   getEstimationBomDisplayLevel,
   moveEstimationBomBranch,
@@ -93,27 +98,21 @@ import {
 import type { EstimationReferenceProposal } from '@/lib/productDesign/estimationReferenceProposal'
 import { inferEstimationSapCostCategory } from '@/lib/productDesign/estimationSapClassification'
 import { proposeGelcoatReplacements } from '@/lib/productDesign/gelcoatAlignment'
-
-const COST_CATEGORIES: Array<{ value: EstimationBomCostCategory; label: string }> = [
-  { value: 'material', label: 'Material' },
-  { value: 'packaging', label: 'Empaque' },
-  { value: 'mo', label: 'MO' },
-  { value: 'cif', label: 'CIF' },
-  { value: 'other', label: 'Otro' },
-]
+import { inferPhysicalWeightPolicy, isPhysicalWeightPolicyFixed } from '@/lib/productDesign/estimationPhysicalWeights'
 
 const COST_STRATEGIES: Array<{ value: EstimationBomCostStrategy; label: string }> = [
   { value: 'expand_children', label: 'Costear por hijos' },
   { value: 'manual_override', label: 'Costo unitario' },
 ]
 
-const PHYSICAL_WEIGHT_POLICIES: Array<{ value: EstimationDraftPhysicalWeightPolicy; label: string }> = [
-  { value: 'from_quantity', label: 'Cantidad LdM' },
-  { value: 'useful_quantity', label: 'Cantidad útil' },
-  { value: 'fixed_weight', label: 'Peso fijo' },
-  { value: 'derive_children', label: 'Derivar de hijos' },
-  { value: 'exclude', label: 'Excluir' },
-]
+const PHYSICAL_WEIGHT_POLICY_LABELS: Record<EstimationDraftPhysicalWeightPolicy, string> = {
+  direct_weight: 'Peso directo',
+  useful_weight: 'Peso útil',
+  sub_bom_weight: 'Peso Sub-LdM',
+  no_weight: 'Sin peso',
+}
+
+const PHYSICAL_WEIGHT_POLICY_CHOICES = Object.entries(PHYSICAL_WEIGHT_POLICY_LABELS) as Array<[EstimationDraftPhysicalWeightPolicy, string]>
 
 const ESTIMATION_STATUSES: Array<{ value: ProductDesignEstimationStatus; label: string }> = [
   { value: 'draft', label: 'Borrador' },
@@ -122,7 +121,7 @@ const ESTIMATION_STATUSES: Array<{ value: ProductDesignEstimationStatus; label: 
   { value: 'archived', label: 'Archivada' },
 ]
 
-const BOM_GRID_COLUMNS = 'grid-cols-[36px_minmax(320px,1.7fr)_88px_88px_120px_150px_130px_130px_minmax(240px,1fr)_210px]'
+const BOM_GRID_COLUMNS = 'grid-cols-[28px_minmax(420px,1fr)_128px_128px_128px_200px]'
 
 function SortableBomRow({
   lineId,
@@ -139,8 +138,11 @@ function SortableBomRow({
   return (
     <div
       ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`grid ${BOM_GRID_COLUMNS} items-start border-t text-xs transition-colors ${excluded ? 'bg-amber-50/70 opacity-65' : dropPosition === 'inside' ? 'bg-sky-50 ring-2 ring-inset ring-sky-400' : 'bg-white'} ${dropPosition === 'before' ? 'border-t-2 border-t-sky-500' : 'border-slate-100'} ${dropPosition === 'after' ? 'border-b-2 border-b-sky-500' : ''} ${isDragging ? 'relative z-20 opacity-50 shadow-lg' : ''}`}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+      }}
+      className={`grid ${BOM_GRID_COLUMNS} items-start border-t text-xs ${excluded ? 'bg-amber-50/70 opacity-65' : dropPosition === 'inside' ? 'bg-sky-50 ring-2 ring-inset ring-sky-400' : 'bg-white'} ${dropPosition === 'before' ? 'border-t-2 border-t-sky-500' : 'border-slate-100'} ${dropPosition === 'after' ? 'border-b-2 border-b-sky-500' : ''} ${isDragging ? 'relative z-20 opacity-50 shadow-lg' : ''}`}
     >
       <div className="flex justify-center p-2">
         <button
@@ -155,6 +157,51 @@ function SortableBomRow({
       </div>
       {children}
     </div>
+  )
+}
+
+type EstimationBomHierarchyRow = ReturnType<typeof buildEstimationBomHierarchy>[number]
+
+function EstimationBomTreeBranch({
+  row,
+  rowsByParentId,
+  collapsedLineIds,
+  onOpenChange,
+  renderRow,
+}: {
+  row: EstimationBomHierarchyRow
+  rowsByParentId: ReadonlyMap<string | null, EstimationBomHierarchyRow[]>
+  collapsedLineIds: ReadonlySet<string>
+  onOpenChange: (lineId: string, open: boolean) => void
+  renderRow: (row: EstimationBomHierarchyRow, chevron: ReactNode) => ReactNode
+}) {
+  const children = rowsByParentId.get(row.line.id) ?? []
+  const hasChildren = children.length > 0
+
+  if (!hasChildren) return <>{renderRow(row, <span className="w-6" />)}</>
+
+  const isOpen = !collapsedLineIds.has(row.line.id)
+  return (
+    <Collapsible.Root open={isOpen} onOpenChange={(open) => onOpenChange(row.line.id, open)}>
+      {renderRow(
+        row,
+        <Collapsible.Trigger className="rounded p-1 hover:bg-slate-100" aria-label={isOpen ? 'Contraer rama' : 'Expandir rama'}>
+          {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </Collapsible.Trigger>,
+      )}
+      <Collapsible.Panel className="overflow-hidden [height:var(--collapsible-panel-height)] motion-safe:transition-[height] motion-safe:duration-300 motion-safe:ease-out data-[starting-style]:h-0 data-[ending-style]:h-0 motion-reduce:transition-none">
+        {children.map((child) => (
+          <EstimationBomTreeBranch
+            key={child.line.id}
+            row={child}
+            rowsByParentId={rowsByParentId}
+            collapsedLineIds={collapsedLineIds}
+            onOpenChange={onOpenChange}
+            renderRow={renderRow}
+          />
+        ))}
+      </Collapsible.Panel>
+    </Collapsible.Root>
   )
 }
 
@@ -231,14 +278,63 @@ function errorMessage(error: unknown): string {
 }
 
 function numberOrNull(value: string): number | null {
-  const normalized = value.trim()
-  if (!normalized) return null
-  const parsed = Number(normalized)
-  return Number.isFinite(parsed) ? parsed : null
+  return parseDecimalInput(value)
 }
 
 function numberInput(value: number | null): string {
   return value === null ? '' : String(value)
+}
+
+function UnitInput({ unit, className, ...props }: ComponentProps<typeof Input> & { unit: string }) {
+  return (
+    <div className="relative">
+      <Input {...props} className={`${className ?? ''} pr-11`} />
+      <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-medium text-slate-400">{unit}</span>
+    </div>
+  )
+}
+
+function BomQuantityUomInput({
+  line,
+  contentLocked,
+  onChange,
+}: {
+  line: EstimationDraftBomLine
+  contentLocked: boolean
+  onChange: (changes: Partial<EstimationDraftBomLine>) => void
+}) {
+  if (line.origin !== 'manual') {
+    return <UnitInput aria-label="Cantidad y unidad" className="h-8 w-full pl-1.5" disabled={contentLocked} inputMode="decimal" unit={line.uom ?? '—'} value={numberInput(line.quantity)} onChange={(event) => onChange({ quantity: numberOrNull(event.target.value) })} />
+  }
+
+  return (
+    <div className="flex h-8 overflow-hidden rounded-md border border-input bg-white shadow-xs">
+      <Input aria-label="Cantidad" className="h-full min-w-0 flex-1 rounded-none border-0 px-2 shadow-none focus-visible:ring-0" disabled={contentLocked} inputMode="decimal" value={numberInput(line.quantity)} onChange={(event) => onChange({ quantity: numberOrNull(event.target.value) })} />
+      <Input aria-label="Unidad" className="h-full w-12 rounded-none border-0 border-l border-input px-2 shadow-none focus-visible:ring-0" disabled={contentLocked} value={line.uom ?? ''} onChange={(event) => onChange({ uom: event.target.value || null })} />
+    </div>
+  )
+}
+
+type ActualConsumptionInputs = {
+  actualMixtureKg: string
+  actualGelcoatKg: string
+  actualNetWeightKg: string
+  actualGrossWeightKg: string
+  actualCastingWasteKg: string
+  actualPostDemoldWasteOverrideKg: string
+  actualPackagingWeightKg: string
+}
+
+function actualConsumptionInputsFromDraft(draft: EstimationDraft): ActualConsumptionInputs {
+  return {
+    actualMixtureKg: numberInput(draft.geometry.actualMixtureKg),
+    actualGelcoatKg: numberInput(draft.geometry.actualGelcoatKg),
+    actualNetWeightKg: numberInput(draft.geometry.actualNetWeightKg),
+    actualGrossWeightKg: numberInput(draft.geometry.actualGrossWeightKg),
+    actualCastingWasteKg: numberInput(draft.geometry.actualCastingWasteKg),
+    actualPostDemoldWasteOverrideKg: numberInput(draft.geometry.actualPostDemoldWasteOverrideKg),
+    actualPackagingWeightKg: numberInput(draft.geometry.actualPackagingWeightKg),
+  }
 }
 
 function formatCurrency(value: number): string {
@@ -267,8 +363,7 @@ function buildCostLinesFromBomLines(bomLines: readonly EstimationDraftBomLine[])
   const incompleteLineIds: string[] = []
   const lines = bomLines.flatMap((line): EstimationBomCostLine[] => {
     if (isExcludedByManualBoundary(line, bomLines)) return []
-    const manualCostWithoutReason = line.costEvidence?.source === 'manual' && !line.manualCostReason?.trim()
-    if (line.quantity === null || line.costCategory === null || line.costStrategy === null || manualCostWithoutReason) {
+    if (line.quantity === null || line.costCategory === null || line.costStrategy === null) {
       incompleteLineIds.push(line.id)
       return []
     }
@@ -308,7 +403,8 @@ function blankManualLine(parentId: string | null): EstimationDraftBomLine {
     costEvidence: null,
     manualCostReason: null,
     notes: null,
-    physicalWeightPolicy: 'from_quantity',
+    physicalWeightPolicy: 'direct_weight',
+    physicalWeightCategory: 'product',
     usefulQuantity: null,
     fixedWeightKg: null,
     physicalWeightSnapshot: null,
@@ -321,6 +417,7 @@ function sapLine(candidate: EstimationHomologueCandidate, parentId: string | nul
     ...blankManualLine(parentId),
     origin: 'sap',
     sapItemCode: candidate.itemCode,
+    physicalWeightCategory: /EMP\d{2}/iu.test(candidate.itemCode) ? 'packaging' : 'product',
     itemName: candidate.itemName || null,
     uom: null,
     costStrategy: 'sap_direct',
@@ -372,7 +469,8 @@ function substructureLines(
         : 'SAP no reporta un promedio/estándar positivo compatible en MP-01; el costo queda pendiente.',
       extensions: { sourceReadAt: leafCost?.readAt ?? null },
     }
-    line.physicalWeightPolicy = node.lines.length > 0 ? 'derive_children' : 'from_quantity'
+    line.physicalWeightPolicy = node.lines.length > 0 ? 'sub_bom_weight' : 'direct_weight'
+    line.physicalWeightCategory = /EMP\d{2}/iu.test(node.itemCode) || line.costCategory === 'packaging' ? 'packaging' : 'product'
     line.notes = node.cycleDetected ? 'SAP reporta un ciclo en esta rama.' : 'Línea copiada desde la sub-LdM SAP.'
     line.extensions = {
       sapLoaded: true,
@@ -391,11 +489,17 @@ function isSapLine(line: EstimationDraftBomLine | undefined): boolean {
   return line?.origin === 'sap'
 }
 
-function costSourceLabel(line: EstimationDraftBomLine): string {
-  if (line.costStrategy === 'expand_children') return 'Calculado por sub-LdM'
-  if (line.origin === 'sap' && line.costStrategy === 'sap_direct') return 'SAP directo'
-  if (line.origin === 'manual' && line.costStrategy === 'manual_override') return 'Manual justificado'
-  return 'Pendiente'
+function sapRefreshRootLines(lines: readonly EstimationDraftBomLine[]): EstimationDraftBomLine[] {
+  const linesById = new Map(lines.map(line => [line.id, line]))
+  return lines.filter(line => line.origin === 'sap' && line.sapItemCode && linesById.get(line.parentId ?? '')?.origin !== 'sap')
+}
+
+function latestSapReadAt(lines: readonly EstimationDraftBomLine[]): string | null {
+  return lines.reduce<string | null>((latest, line) => {
+    const readAt = line.costEvidence?.source === 'warehouse_average' ? line.costEvidence.documentDate : null
+    if (!readAt || Number.isNaN(Date.parse(readAt))) return latest
+    return !latest || Date.parse(readAt) > Date.parse(latest) ? readAt : latest
+  }, null)
 }
 
 function isExcludedByManualBoundary(
@@ -427,7 +531,7 @@ function reconcileManualContainers(
       && line.costEvidence?.source === 'manual'
       && line.unitCost !== null
       && line.unitCost > 0
-      && Boolean(line.manualCostReason?.trim())
+
     if (hasChildren && rollupContainerIds.has(line.id) && !hasExplicitOverride) {
       return { ...line, costStrategy: 'expand_children', unitCost: null, costEvidence: null, manualCostReason: null }
     }
@@ -447,6 +551,9 @@ export function EstimationEditorClient({
   initialFamilyInference: EstimationFamilyInference | null
 }) {
   const [estimation, setEstimation] = useState<ProductDesignEstimation>(initialEstimation)
+  const [actualConsumptionInputs, setActualConsumptionInputs] = useState<ActualConsumptionInputs>(
+    () => actualConsumptionInputsFromDraft(initialEstimation.draft),
+  )
   const [isPending, startTransition] = useTransition()
   const [homologueQuery, setHomologueQuery] = useState('')
   const [homologueCandidates, setHomologueCandidates] = useState<EstimationHomologueCandidate[]>([])
@@ -455,6 +562,13 @@ export function EstimationEditorClient({
   const [componentQuery, setComponentQuery] = useState('')
   const [componentCandidates, setComponentCandidates] = useState<EstimationHomologueCandidate[]>([])
   const [componentParentId, setComponentParentId] = useState<string>('')
+  const [familyQuery, setFamilyQuery] = useState('')
+  const [familyCandidates, setFamilyCandidates] = useState<EstimationSapFamilyCandidate[]>([])
+  const [pendingSapFamily, setPendingSapFamily] = useState<EstimationSapFamilyCandidate | null>(null)
+  const [pendingFamilyReference, setPendingFamilyReference] = useState<EstimationReferenceProposal | null>(null)
+  const [isSearchingFamily, setIsSearchingFamily] = useState(false)
+  const [isPreparingFamily, setIsPreparingFamily] = useState(false)
+  const [hasSearchedFamily, setHasSearchedFamily] = useState(false)
   const [activeBomLineId, setActiveBomLineId] = useState<string | null>(null)
   const [bomDropHint, setBomDropHint] = useState<{ targetId: string; position: EstimationBomDropPosition } | null>(null)
   const [collapsedBomLineIds, setCollapsedBomLineIds] = useState<Set<string>>(() => new Set())
@@ -465,6 +579,9 @@ export function EstimationEditorClient({
   )
 
   const suggestedFamilyCode = extensionText(estimation.draft.homologue?.extensions ?? {}, 'suggestedFamilyCode')
+  const familyCodeToCreate = pendingSapFamily?.localFamilyName === null
+    ? pendingSapFamily.familyCode
+    : (!estimation.familyCode ? suggestedFamilyCode : null)
   const costInput = useMemo(() => buildCostLines(estimation.draft), [estimation.draft])
   const costResult = useMemo(
     () => costInput.incompleteLineIds.length === 0 ? evaluateEstimationBomCosting({ lines: costInput.lines }) : null,
@@ -482,6 +599,15 @@ export function EstimationEditorClient({
     }
     return true
   }), [collapsedBomLineIds, estimation.draft.bomLines, hierarchyRows])
+  const hierarchyRowsByParentId = useMemo(() => {
+    const rowsByParentId = new Map<string | null, EstimationBomHierarchyRow[]>()
+    hierarchyRows.forEach((row) => {
+      const siblings = rowsByParentId.get(row.line.parentId) ?? []
+      siblings.push(row)
+      rowsByParentId.set(row.line.parentId, siblings)
+    })
+    return rowsByParentId
+  }, [hierarchyRows])
   const lineValuations = useMemo(() => {
     if (costResult?.ok) return new Map(costResult.lineValuations.map(valuation => [valuation.lineId, valuation]))
     const valuations = new Map<string, EstimationBomLineValuation>()
@@ -500,15 +626,41 @@ export function EstimationEditorClient({
     () => proposeGelcoatReplacements(estimation.draft.bomLines, estimation.draft.commercialColor.colorCode),
     [estimation.draft.bomLines, estimation.draft.commercialColor.colorCode],
   )
+  const lastSapCostReadAt = useMemo(
+    () => latestSapReadAt(estimation.draft.bomLines),
+    [estimation.draft.bomLines],
+  )
   const estimatedPeroxideGrams = estimation.draft.geometry.estimatedGelcoatKg === null
     ? null
     : estimation.draft.geometry.estimatedGelcoatKg * 1_000 * 0.025
+  const actualGelcoatKg = parseDecimalInput(actualConsumptionInputs.actualGelcoatKg)
+  const materialBalance = calculateEstimationMaterialBalance({
+    actualMixtureKg: parseDecimalInput(actualConsumptionInputs.actualMixtureKg),
+    actualGelcoatKg,
+    theoreticalGelcoatKg: estimation.draft.geometry.estimatedGelcoatKg,
+    actualCastingWasteKg: parseDecimalInput(actualConsumptionInputs.actualCastingWasteKg),
+    actualPostDemoldWasteOverrideKg: parseDecimalInput(actualConsumptionInputs.actualPostDemoldWasteOverrideKg),
+    actualNetWeightKg: parseDecimalInput(actualConsumptionInputs.actualNetWeightKg),
+    actualPackagingWeightKg: parseDecimalInput(actualConsumptionInputs.actualPackagingWeightKg),
+    actualGrossWeightKg: parseDecimalInput(actualConsumptionInputs.actualGrossWeightKg),
+  })
+  const actualPeroxideGrams = actualGelcoatKg === null
+    ? null
+    : actualGelcoatKg * 1_000 * 0.025
   const missingPhysicalWeightLineIds = estimation.draft.geometry.extensions.missingPhysicalWeightLineIds
   const hasIncompletePhysicalWeight = estimation.draft.geometry.estimatedNetWeightKg !== null
     && (estimation.draft.geometry.estimatedPackagingWeightKg === null || (Array.isArray(missingPhysicalWeightLineIds) && missingPhysicalWeightLineIds.length > 0))
+  const canCalculateCad = estimation.draft.geometry.volumeMm3 !== null
+    && estimation.draft.geometry.volumeMm3 > 0
+    && estimation.draft.geometry.paintAreaMm2 !== null
+    && estimation.draft.geometry.paintAreaMm2 > 0
+    && estimation.draft.geometry.castingWastePct !== null
+    && estimation.draft.geometry.postDemoldWastePct !== null
+    && estimation.draft.geometry.castingWastePct + estimation.draft.geometry.postDemoldWastePct < 1
 
   const setSaved = (saved: ProductDesignEstimation) => {
     setEstimation(saved)
+    setActualConsumptionInputs(actualConsumptionInputsFromDraft(saved.draft))
   }
 
   const updateDraft = (update: (draft: EstimationDraft) => EstimationDraft) => {
@@ -522,28 +674,13 @@ export function EstimationEditorClient({
     }))
   }
 
-  const assignBomParent = (lineId: string, parentId: string | null) => {
-    const line = estimation.draft.bomLines.find(candidate => candidate.id === lineId)
-    const currentContainer = estimation.draft.bomLines.find(candidate => candidate.id === line?.parentId)
-    const targetContainer = estimation.draft.bomLines.find(candidate => candidate.id === parentId)
-    if (isSapLine(currentContainer) || isSapLine(targetContainer)) {
-      toast.error('Convierte primero la cabecera SAP en una sub-LdM nueva para modificar su contenido.')
-      return
-    }
-    try {
-      updateDraft(draft => ({
-        ...draft,
-        bomLines: reconcileManualContainers(
-          parentId
-            ? moveEstimationBomBranch(draft.bomLines, lineId, parentId, 'inside')
-            : draft.bomLines.map(candidate => candidate.id === lineId ? { ...candidate, parentId: null } : candidate),
-          new Set([line?.parentId, parentId].filter((id): id is string => Boolean(id))),
-          new Set(parentId ? [parentId] : []),
-        ),
-      }))
-    } catch (error) {
-      toast.error(errorMessage(error))
-    }
+  const setBomBranchOpen = (lineId: string, open: boolean) => {
+    setCollapsedBomLineIds((current) => {
+      const next = new Set(current)
+      if (open) next.delete(lineId)
+      else next.add(lineId)
+      return next
+    })
   }
 
   const addManualChild = (parentId: string | null) => {
@@ -573,47 +710,38 @@ export function EstimationEditorClient({
     toast.info('Los próximos resultados SAP se agregarán como hijos de la línea seleccionada.')
   }
 
-  const refreshSapSubstructure = (line: EstimationDraftBomLine) => {
-    if (!line.sapItemCode) {
-      toast.error('Sólo una línea vinculada a SAP puede consultar una sub-LdM.')
-      return
-    }
-    const descendantCount = getEstimationBomDescendantIds(estimation.draft.bomLines, line.id).size
-    if (!window.confirm(`Se reemplazarán ${descendantCount} descendiente(s) por la lectura actual de SAP. ¿Continuar?`)) return
-    startTransition(async () => {
-      try {
-        const result = await getEstimationSapSubtreeAction(line.sapItemCode ?? '')
-        updateDraft(draft => {
-          const descendantIds = getEstimationBomDescendantIds(draft.bomLines, line.id)
-          return {
-            ...draft,
-            bomLines: draft.bomLines.flatMap(candidate => {
-              if (descendantIds.has(candidate.id)) return []
-              if (candidate.id !== line.id) return [candidate]
-              const updatedLine: EstimationDraftBomLine = {
-                ...candidate,
-                itemName: result.tree.itemName || candidate.itemName,
-                uom: result.tree.inventoryUom,
-                costStrategy: result.tree.lines.length > 0 ? 'expand_children' : 'sap_direct',
-                unitCost: null,
-                costEvidence: null,
-                physicalWeightPolicy: result.tree.lines.length > 0 ? 'derive_children' : 'from_quantity',
-                extensions: {
-                  ...candidate.extensions,
-                  sapBomQuantity: result.tree.bomQuantity,
-                  sapLoadedComplete: Object.keys(result.branchErrors).length === 0 && !result.tree.cycleDetected,
-                  sapReadErrors: result.branchErrors,
-                },
-              }
-              return [updatedLine, ...substructureLines(result.tree.lines, line.id, result.branchErrors, result.leafCosts)]
-            }),
-          }
-        })
-        toast.success('La rama se actualizó desde SAP. Guarda para persistir el cambio.')
-      } catch (error) {
-        toast.error(errorMessage(error))
+  const refreshSapStructures = async (draft: EstimationDraft): Promise<EstimationDraft> => {
+    let refreshedDraft = draft
+    for (const rootLine of sapRefreshRootLines(refreshedDraft.bomLines)) {
+      const activeRoot = refreshedDraft.bomLines.find(line => line.id === rootLine.id)
+      if (!activeRoot?.sapItemCode) continue
+      const result = await getEstimationSapSubtreeAction(activeRoot.sapItemCode)
+      const descendantIds = getEstimationBomDescendantIds(refreshedDraft.bomLines, activeRoot.id)
+      const updatedRoot: EstimationDraftBomLine = {
+        ...activeRoot,
+        itemName: result.tree.itemName || activeRoot.itemName,
+        uom: result.tree.inventoryUom,
+        costStrategy: result.tree.lines.length > 0 ? 'expand_children' : 'sap_direct',
+        unitCost: null,
+        costEvidence: null,
+        physicalWeightPolicy: result.tree.lines.length > 0 ? 'sub_bom_weight' : 'direct_weight',
+        extensions: {
+          ...activeRoot.extensions,
+          sapBomQuantity: result.tree.bomQuantity,
+          sapLoadedComplete: Object.keys(result.branchErrors).length === 0 && !result.tree.cycleDetected,
+          sapReadErrors: result.branchErrors,
+        },
       }
-    })
+      const refreshedChildren = substructureLines(result.tree.lines, activeRoot.id, result.branchErrors, result.leafCosts)
+      refreshedDraft = {
+        ...refreshedDraft,
+        bomLines: refreshedDraft.bomLines.flatMap(line => {
+          if (descendantIds.has(line.id)) return []
+          return line.id === activeRoot.id ? [updatedRoot, ...refreshedChildren] : [line]
+        }),
+      }
+    }
+    return refreshedDraft
   }
 
   const convertSapSubstructure = (line: EstimationDraftBomLine) => {
@@ -664,11 +792,17 @@ export function EstimationEditorClient({
     }))
   }
 
-  const updateGeometry = (field: 'volumeMm3' | 'paintAreaMm2' | 'weightWastePct' | 'actualMixtureKg' | 'actualGelcoatKg' | 'actualNetWeightKg' | 'actualGrossWeightKg', value: string) => {
+  const updateGeometry = (field: 'volumeMm3' | 'paintAreaMm2' | 'weightWastePct' | 'castingWastePct' | 'postDemoldWastePct' | keyof ActualConsumptionInputs, value: string) => {
     updateDraft((draft) => ({
       ...draft,
       geometry: { ...draft.geometry, [field]: numberOrNull(value) },
     }))
+  }
+
+  const updateActualConsumption = (field: keyof ActualConsumptionInputs, value: string) => {
+    if (!isDecimalInput(value)) return
+    setActualConsumptionInputs(current => ({ ...current, [field]: value }))
+    updateGeometry(field, value)
   }
 
   const persist = async (value: ProductDesignEstimation): Promise<ProductDesignEstimation> => {
@@ -893,6 +1027,8 @@ export function EstimationEditorClient({
           volumeMm3: estimation.draft.geometry.volumeMm3,
           paintAreaMm2: estimation.draft.geometry.paintAreaMm2,
           weightWastePct: estimation.draft.geometry.weightWastePct,
+          castingWastePct: estimation.draft.geometry.castingWastePct,
+          postDemoldWastePct: estimation.draft.geometry.postDemoldWastePct,
         })
         setSaved(saved)
         toast.success('Estimaciones calculadas y cantidades de mezcla, gelcoat y peróxido actualizadas en la LdM.')
@@ -907,13 +1043,16 @@ export function EstimationEditorClient({
       try {
         const saved = await registerEstimationActualConsumptionMeasurementAction({
           id: estimation.id,
-          actualMixtureKg: estimation.draft.geometry.actualMixtureKg,
-          actualGelcoatKg: estimation.draft.geometry.actualGelcoatKg,
-          actualNetWeightKg: estimation.draft.geometry.actualNetWeightKg,
-          actualGrossWeightKg: estimation.draft.geometry.actualGrossWeightKg,
+          actualMixtureKg: parseDecimalInput(actualConsumptionInputs.actualMixtureKg),
+          actualGelcoatKg: parseDecimalInput(actualConsumptionInputs.actualGelcoatKg),
+          actualNetWeightKg: parseDecimalInput(actualConsumptionInputs.actualNetWeightKg),
+          actualGrossWeightKg: parseDecimalInput(actualConsumptionInputs.actualGrossWeightKg),
+          actualCastingWasteKg: parseDecimalInput(actualConsumptionInputs.actualCastingWasteKg),
+          actualPostDemoldWasteOverrideKg: parseDecimalInput(actualConsumptionInputs.actualPostDemoldWasteOverrideKg),
+          actualPackagingWeightKg: parseDecimalInput(actualConsumptionInputs.actualPackagingWeightKg),
         })
         setSaved(saved)
-        toast.success('Toma real registrada como pendiente de validación de Ingeniería.')
+        toast.success('Toma real registrada y verificada. Mezcla, gelcoat y peróxido reemplazaron sus cantidades en la LdM; los pesos quedaron disponibles para Ingeniería.')
       } catch (error) {
         toast.error(errorMessage(error))
       }
@@ -923,10 +1062,11 @@ export function EstimationEditorClient({
   const refreshCosts = () => {
     startTransition(async () => {
       try {
-        const persisted = await persist(estimation)
+        const refreshedDraft = await refreshSapStructures(estimation.draft)
+        const persisted = await persist({ ...estimation, draft: refreshedDraft })
         const saved = await refreshEstimationSapCostsAction({ id: persisted.id })
         setSaved(saved)
-        toast.success('Costos SAP actualizados con su fuente y advertencias guardadas.')
+        toast.success('Estructura y costos SAP actualizados.')
       } catch (error) {
         toast.error(errorMessage(error))
       }
@@ -934,10 +1074,10 @@ export function EstimationEditorClient({
   }
 
   const createFamily = () => {
-    const sapPrefix = estimation.draft.homologue?.sapPrefix ?? estimation.sapPrefix
+    const sapPrefix = pendingSapFamily?.sapPrefix ?? estimation.draft.homologue?.sapPrefix ?? estimation.sapPrefix
     startTransition(async () => {
       try {
-        const family = await createEstimationFamilyAction({
+        await createEstimationFamilyAction({
           sapPrefix,
           familyName: familyForm.familyName,
           productType: familyForm.productType,
@@ -946,15 +1086,73 @@ export function EstimationEditorClient({
           line: familyForm.line,
           manufacturingProcess: familyForm.manufacturingProcess,
         })
-        const next: ProductDesignEstimation = {
-          ...estimation,
-          familyCode: family.familyCode,
-          draft: estimation.draft.homologue
-            ? { ...estimation.draft, homologue: { ...estimation.draft.homologue, familyCode: family.familyCode } }
-            : estimation.draft,
-        }
-        setSaved(await persist(next))
-        toast.success(`Familia local ${family.familyCode} creada y vinculada. No se creó ningún producto formal.`)
+        const saved = await redefineEstimationFamilyAction({ id: estimation.id, sapPrefix })
+        setSaved(saved)
+        setPendingSapFamily(null)
+        setPendingFamilyReference(null)
+        setFamilyCandidates([])
+        setFamilyQuery('')
+        toast.success(`Familia local ${saved.familyCode} creada, vinculada y verificada. Referencia sugerida ${saved.proposedReferenceCode}.`)
+      } catch (error) {
+        toast.error(errorMessage(error))
+      }
+    })
+  }
+
+  const searchSapFamilies = async () => {
+    if (!familyQuery.trim()) {
+      setFamilyCandidates([])
+      setHasSearchedFamily(false)
+      return
+    }
+    setIsSearchingFamily(true)
+    setHasSearchedFamily(false)
+    try {
+      setFamilyCandidates(await searchEstimationSapFamiliesAction(familyQuery))
+    } catch (error) {
+      toast.error(errorMessage(error))
+    } finally {
+      setIsSearchingFamily(false)
+      setHasSearchedFamily(true)
+    }
+  }
+
+  const selectSapFamily = async (candidate: EstimationSapFamilyCandidate) => {
+    setPendingSapFamily(candidate)
+    setPendingFamilyReference(null)
+    setIsPreparingFamily(true)
+    try {
+      const proposal = await proposeEstimationReferenceForFamilyAction({ sapPrefix: candidate.sapPrefix })
+      setPendingFamilyReference(proposal)
+      if (candidate.localFamilyName === null) {
+        setFamilyForm(current => ({
+          ...current,
+          familyName: '',
+          productType: '',
+          zoneHome: '',
+          useDestination: '',
+          line: '',
+        }))
+      }
+    } catch (error) {
+      setPendingSapFamily(null)
+      toast.error(errorMessage(error))
+    } finally {
+      setIsPreparingFamily(false)
+    }
+  }
+
+  const applySelectedFamily = () => {
+    if (!pendingSapFamily || pendingSapFamily.localFamilyName === null) return
+    startTransition(async () => {
+      try {
+        const saved = await redefineEstimationFamilyAction({ id: estimation.id, sapPrefix: pendingSapFamily.sapPrefix })
+        setSaved(saved)
+        setPendingSapFamily(null)
+        setPendingFamilyReference(null)
+        setFamilyCandidates([])
+        setFamilyQuery('')
+        toast.success(`Familia de trabajo actualizada a ${saved.familyCode}; referencia sugerida ${saved.proposedReferenceCode}.`)
       } catch (error) {
         toast.error(errorMessage(error))
       }
@@ -971,6 +1169,37 @@ export function EstimationEditorClient({
         toast.error(errorMessage(error))
       }
     })
+  }
+
+  const renderBomRow = (row: EstimationBomHierarchyRow, chevron: ReactNode) => {
+    const { line, level, hasChildren } = row
+    const valuation = lineValuations.get(line.id)
+    const containingLine = estimation.draft.bomLines.find(candidate => candidate.id === line.parentId)
+    const contentLocked = isSapLine(containingLine)
+    const isManual = line.origin === 'manual'
+    const physicalWeightPolicy = inferPhysicalWeightPolicy(line, hasChildren)
+    const physicalWeightPolicyIsFixed = isPhysicalWeightPolicyFixed(line, hasChildren)
+    const suggestedCode = extensionText(line.extensions, 'suggestedSapItemCode')
+    const excludedByManualBoundary = isExcludedByManualBoundary(line, estimation.draft.bomLines)
+    return (
+      <SortableBomRow key={line.id} lineId={line.id} excluded={excludedByManualBoundary} dropPosition={bomDropHint?.targetId === line.id ? bomDropHint.position : null}>
+        <div className="p-2" style={{ paddingLeft: `${level * 14 + 4}px` }}>
+          <div className="flex items-center gap-1.5">
+            {chevron}
+            <Badge variant={hasChildren ? 'secondary' : 'outline'}>Nivel {getEstimationBomDisplayLevel(level)}</Badge>
+            <span className="font-semibold text-slate-900">{line.sapItemCode ?? suggestedCode ?? 'Manual'}</span>
+            {isManual ? <Input className="h-7 min-w-0 flex-1" value={line.itemName ?? ''} onChange={(event) => updateBomLine(line.id, { itemName: event.target.value || null })} placeholder="Nombre" /> : <span className="min-w-0 flex-1 break-words leading-tight text-slate-700">{line.itemName}</span>}
+          </div>
+          {suggestedCode && <p className="mt-1 text-[11px] text-amber-700">Sugerido, no reservado: {suggestedCode}</p>}
+          {excludedByManualBoundary && <Badge className="mt-1 bg-amber-100 text-amber-800">Excluido por costo manual de la rama</Badge>}
+          <div className="mt-2 ml-[30px] flex items-center gap-2">{physicalWeightPolicyIsFixed ? <Badge variant="outline">{PHYSICAL_WEIGHT_POLICY_LABELS[physicalWeightPolicy]}</Badge> : <select aria-label="Tipo de peso" className="h-7 rounded border border-input bg-white px-2 text-[11px]" value={physicalWeightPolicy} onChange={(event) => updateBomLine(line.id, { physicalWeightPolicy: event.target.value as EstimationDraftPhysicalWeightPolicy })}>{PHYSICAL_WEIGHT_POLICY_CHOICES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>}{physicalWeightPolicy !== 'no_weight' && <select aria-label="Destino del peso" className="h-7 rounded border border-input bg-white px-2 text-[11px]" value={line.physicalWeightCategory ?? 'product'} onChange={(event) => updateBomLine(line.id, { physicalWeightCategory: event.target.value as 'product' | 'packaging', extensions: { ...line.extensions, physicalWeightCategoryDefinedByUser: true } })}><option value="product">Producto</option><option value="packaging">Empaque</option></select>}{physicalWeightPolicy === 'useful_weight' && <Input aria-label="Cantidad útil" className="h-7 w-24" disabled={contentLocked} inputMode="decimal" value={numberInput(line.usefulQuantity)} onChange={(event) => updateBomLine(line.id, { usefulQuantity: numberOrNull(event.target.value) })} placeholder="Cantidad útil" />}{!physicalWeightPolicyIsFixed && physicalWeightPolicy === 'direct_weight' && line.physicalWeightSnapshot?.kgPerUom === null && <Link href="/physical-weights" className="text-[11px] font-medium text-amber-700 hover:text-amber-900">Definir kg/{line.uom ?? 'UOM'}</Link>}</div>
+        </div>
+        <div className="flex justify-center p-2"><BomQuantityUomInput line={line} contentLocked={contentLocked} onChange={(changes) => updateBomLine(line.id, changes)} /></div>
+        <div className="flex flex-col items-center p-2 text-center">{isManual && <select value={line.costStrategy ?? ''} disabled={contentLocked} onChange={(event) => { const costStrategy = (event.target.value || null) as EstimationBomCostStrategy | null; if (costStrategy === 'manual_override' && hasChildren && !window.confirm('El costo manual excluirá expresamente todos los descendientes del cálculo. ¿Continuar?')) return; updateBomLine(line.id, costStrategy === 'expand_children' ? { costStrategy, unitCost: null, costEvidence: null, manualCostReason: null } : { costStrategy }) }} className="mb-1 h-7 max-w-full rounded border border-input bg-white px-1 text-[11px]">{COST_STRATEGIES.map(strategy => <option key={strategy.value} value={strategy.value}>{strategy.label}</option>)}</select>}{isManual && line.costStrategy === 'manual_override' ? <Input className="h-8 w-24" inputMode="decimal" value={numberInput(line.unitCost)} onChange={(event) => { const unitCost = numberOrNull(event.target.value); updateBomLine(line.id, { unitCost, costEvidence: unitCost === null ? null : { source: 'manual', candidateId: null, warehouseCode: null, documentType: 'Manual', documentNumber: null, documentDate: new Date().toISOString(), originalCurrency: 'COP', sourceUom: line.uom, warning: null, extensions: {} } }) }} /> : <span className="font-semibold text-slate-800">{valuation?.structuralUnitCost === null || valuation?.structuralUnitCost === undefined ? 'Pendiente' : formatCurrency(valuation.structuralUnitCost)}</span>}</div>
+        <div className="p-2 text-center font-semibold text-slate-800">{valuation ? formatCurrency(valuation.totalCost) : 'Pendiente'}</div>
+        <div className="px-4 py-3"><div className="flex min-w-40 flex-col gap-1">{isManual && <><Button type="button" size="sm" variant="outline" onClick={() => prepareSapChildSearch(line.id)}><GitBranchPlus className="h-3.5 w-3.5" />Agregar hijo SAP</Button><Button type="button" size="sm" variant="outline" onClick={() => addManualChild(line.id)}><PackagePlus className="h-3.5 w-3.5" />Agregar manual</Button></>}{line.origin === 'sap' && hasChildren && <Button type="button" size="sm" variant="outline" disabled={isPending} onClick={() => convertSapSubstructure(line)}><Copy className="h-3.5 w-3.5" />Copiar sub-LdM</Button>}<Button type="button" variant="ghost" size="sm" disabled={contentLocked} onClick={() => removeBomLine(line.id)}><Trash2 className="h-3.5 w-3.5 text-red-600" />Eliminar rama</Button></div></div>
+      </SortableBomRow>
+    )
   }
 
   return (
@@ -1031,6 +1260,20 @@ export function EstimationEditorClient({
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
                 <p><strong>Actual:</strong> {estimation.draft.homologue?.sapItemCode ?? estimation.homologueSapItemCode ?? 'Sin definir'}{estimation.draft.homologue?.itemName ? ` · ${estimation.draft.homologue.itemName}` : ''}</p>
                 <p className="mt-1"><strong>Familia local:</strong> {estimation.familyCode ?? 'Aún no existe en el catálogo local'}</p>
+                <p className="mt-1"><strong>Referencia sugerida:</strong> {estimation.proposedReferenceCode ?? 'Pendiente'} <span className="text-xs text-slate-500">(no reservada)</span></p>
+              </div>
+              <div className="rounded-lg border border-violet-200 bg-violet-50 p-3">
+                <Label htmlFor="sap-family-search">Redefinir familia de trabajo desde SAP</Label>
+                <div className="mt-2 flex gap-2">
+                  <Input id="sap-family-search" value={familyQuery} onChange={(event) => setFamilyQuery(event.target.value)} placeholder="Código o descripción de familia SAP" />
+                  <Button type="button" variant="outline" aria-label="Buscar familias SAP" onClick={searchSapFamilies} disabled={isSearchingFamily || isPending}>{isSearchingFamily ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}</Button>
+                </div>
+                <p className="mt-2 text-xs text-violet-800">La búsqueda identifica familias por los prefijos de artículos comerciales SAP y verifica si ya existen en el catálogo local.</p>
+                {isSearchingFamily && <div role="status" className="mt-3 flex items-center gap-2 rounded-lg border border-violet-300 bg-white p-3 text-sm text-violet-950"><RefreshCw className="h-4 w-4 animate-spin" />Consultando familias disponibles en SAP…</div>}
+                {!isSearchingFamily && hasSearchedFamily && familyCandidates.length === 0 && <p className="mt-3 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-600">No se encontraron familias SAP para esta búsqueda.</p>}
+                {familyCandidates.length > 0 && <div className="mt-3 max-h-44 overflow-y-auto rounded-lg border border-violet-200 bg-white p-1">{familyCandidates.map(candidate => <button key={candidate.familyCode} type="button" disabled={isPreparingFamily} onClick={() => void selectSapFamily(candidate)} className="block w-full rounded-md px-3 py-2 text-left text-sm hover:bg-violet-50 disabled:cursor-wait disabled:opacity-60"><span className="flex items-center justify-between gap-2"><strong>{candidate.familyCode}</strong><Badge className={candidate.localFamilyName === null ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}>{candidate.localFamilyName === null ? 'Requiere crear en Supabase' : 'Disponible localmente'}</Badge></span><span className="mt-1 block text-xs text-slate-500">{candidate.sampleItemCode} · {candidate.sampleItemName}</span></button>)}</div>}
+                {pendingSapFamily && isPreparingFamily && <div role="status" className="mt-3 flex items-center gap-2 rounded-lg border border-violet-300 bg-white p-3 text-sm text-violet-950"><RefreshCw className="h-4 w-4 animate-spin" />Calculando la siguiente referencia SAP para {pendingSapFamily.familyCode}…</div>}
+                {pendingSapFamily && pendingFamilyReference && <div className="mt-3 rounded-lg border border-violet-300 bg-white p-3 text-sm"><p className="font-semibold">Familia seleccionada: {pendingSapFamily.familyCode}</p><p className="mt-1">Siguiente referencia sugerida: <strong>{pendingFamilyReference.referenceCode}</strong> (no reservada).</p>{pendingSapFamily.localFamilyName !== null ? <Button type="button" className="mt-3" onClick={applySelectedFamily} disabled={isPending}>Usar esta familia y referencia</Button> : <p className="mt-2 text-xs font-medium text-amber-800">Esta familia existe en SAP pero no en Supabase. Completa todos los datos del formulario para crearla y vincularla.</p>}</div>}
               </div>
               <div className="flex gap-2">
                 <Input value={homologueQuery} onChange={(event) => setHomologueQuery(event.target.value)} placeholder="Buscar homólogo SAP" />
@@ -1040,9 +1283,9 @@ export function EstimationEditorClient({
               {estimation.draft.commercialColor.colorCode && <p className="text-xs text-slate-600">La búsqueda prioriza artículos SAP del color {estimation.draft.commercialColor.colorCode}; así la LdM base conserva su gelcoat concordante.</p>}
               {pendingHomologue && pendingReference && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"><p><strong>Nuevo homólogo pendiente:</strong> {pendingHomologue.itemCode} · {pendingHomologue.itemName}</p><p className="mt-1">Color del homólogo: {pendingHomologue.colorCode ?? 'sin dato'} · U_Prefijo {pendingHomologue.sapPrefix}; prefijo comercial consultado {pendingReference.salesItemPrefix}; familia {pendingReference.familyCode}; referencia sugerida {pendingReference.referenceCode} (no reservada).</p><Button type="button" variant="outline" className="mt-3" onClick={replaceWithHomologue} disabled={isPending}><Copy className="h-4 w-4" />Copiar LdM al lienzo</Button></div>}
 
-              {!estimation.familyCode && suggestedFamilyCode && (
+              {familyCodeToCreate && (
                 <div className="rounded-lg border border-sky-200 bg-sky-50 p-4">
-                  <p className="font-semibold text-sky-950">Crear familia local {suggestedFamilyCode}</p>
+                  <p className="font-semibold text-sky-950">Crear familia local {familyCodeToCreate}</p>
                   <p className="mt-1 text-sm text-sky-900">Completa y revisa los datos base antes de crear la familia en el catálogo local. Este paso no crea referencias, SKU ni artículos SAP.</p>
                   <div className="mt-4 grid gap-3 md:grid-cols-2">
                     <div className="space-y-2 md:col-span-2">
@@ -1070,7 +1313,7 @@ export function EstimationEditorClient({
                       <CreatableFamilySelect id="family-line" label="línea" options={familyCreationOptions.lines} value={familyForm.line} onChange={(line) => setFamilyForm(current => ({ ...current, line }))} />
                     </div>
                   </div>
-                  <Button type="button" className="mt-4" onClick={createFamily} disabled={isPending}><FilePlus2 className="h-4 w-4" />Crear sólo familia local</Button>
+                  <Button type="button" className="mt-4" onClick={createFamily} disabled={isPending}><FilePlus2 className="h-4 w-4" />Crear familia y usarla en la cotización</Button>
                 </div>
               )}
               </div>
@@ -1082,28 +1325,34 @@ export function EstimationEditorClient({
               <CardTitle>Estimaciones según CAD | Mármol sintético</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-                <div className="space-y-2"><Label htmlFor="cad-volume">Volumen</Label><Input id="cad-volume" inputMode="decimal" value={numberInput(estimation.draft.geometry.volumeMm3)} onChange={(event) => updateGeometry('volumeMm3', event.target.value)} /></div>
-                <div className="space-y-2"><Label>Mezcla (kg)</Label><Input readOnly value={formatQuantity(estimation.draft.geometry.estimatedMixtureKg)} className="bg-slate-50" /></div>
-                <div className="space-y-2"><Label htmlFor="paint-area">Área</Label><Input id="paint-area" inputMode="decimal" value={numberInput(estimation.draft.geometry.paintAreaMm2)} onChange={(event) => updateGeometry('paintAreaMm2', event.target.value)} /></div>
-                <div className="space-y-2"><Label>Gelcoat (kg)</Label><Input readOnly value={formatQuantity(estimation.draft.geometry.estimatedGelcoatKg)} className="bg-slate-50" /></div>
-                <div className="space-y-2"><Label>Peróxido (g)</Label><Input readOnly value={formatQuantity(estimatedPeroxideGrams, 2)} className="bg-slate-50" /></div>
+              <div className="grid items-end gap-4 rounded-xl border border-slate-200 bg-white p-4 sm:grid-cols-2 2xl:grid-cols-3">
+                <div className="space-y-2"><Label htmlFor="cad-volume">Volumen</Label><UnitInput id="cad-volume" unit="mm³" inputMode="decimal" value={numberInput(estimation.draft.geometry.volumeMm3)} onChange={(event) => updateGeometry('volumeMm3', event.target.value)} /></div>
+                <div className="space-y-2"><Label>Mezcla</Label><UnitInput unit="kg" readOnly value={formatQuantity(estimation.draft.geometry.estimatedMixtureKg)} className="bg-slate-50" /></div>
+                <div className="space-y-2"><Label htmlFor="paint-area">Área</Label><UnitInput id="paint-area" unit="mm²" inputMode="decimal" value={numberInput(estimation.draft.geometry.paintAreaMm2)} onChange={(event) => updateGeometry('paintAreaMm2', event.target.value)} /></div>
+                <div className="space-y-2"><Label>Gelcoat</Label><UnitInput unit="kg" readOnly value={formatQuantity(estimation.draft.geometry.estimatedGelcoatKg)} className="bg-slate-50" /></div>
+                <div className="space-y-2"><Label>Peróxido</Label><UnitInput unit="g" readOnly value={formatQuantity(estimatedPeroxideGrams, 2)} className="bg-slate-50" /></div>
               </div>
-              <div className="flex flex-wrap gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <div className="min-w-24 flex-1 basis-24 space-y-2"><Label htmlFor="weight-waste">Merma (%)</Label><Input id="weight-waste" inputMode="decimal" value={numberInput((estimation.draft.geometry.weightWastePct ?? 0.05) * 100)} onChange={(event) => { const value = numberOrNull(event.target.value); updateGeometry('weightWastePct', value === null ? '' : String(value / 100)) }} /></div>
-                <div className="min-w-28 flex-1 basis-28 space-y-2"><Label>Peso neto (kg)</Label><Input readOnly value={formatQuantity(estimation.draft.geometry.estimatedNetWeightKg, 2)} className="bg-white" /></div>
-                <div className="min-w-32 flex-[1.15] basis-32 space-y-2"><Label>Peso empaque (kg)</Label><Input readOnly value={formatQuantity(estimation.draft.geometry.estimatedPackagingWeightKg, 2)} className="bg-white" /></div>
-                <div className="min-w-28 flex-1 basis-28 space-y-2"><Label>Peso bruto (kg)</Label><Input readOnly value={formatQuantity(estimation.draft.geometry.estimatedGrossWeightKg, 2)} className="bg-white" /></div>
-                {hasIncompletePhysicalWeight && <p className="w-full text-xs font-medium text-red-700">Faltan pesos por detallar; estos valores son una estimación inicial.</p>}
+              <div className="grid items-end gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2 2xl:grid-cols-3">
+                <div className="space-y-2"><Label htmlFor="casting-waste">Merma vaciado</Label><UnitInput id="casting-waste" unit="%" inputMode="decimal" value={numberInput(estimation.draft.geometry.castingWastePct === null ? null : estimation.draft.geometry.castingWastePct * 100)} onChange={(event) => { const value = numberOrNull(event.target.value); updateGeometry('castingWastePct', value === null ? '' : String(value / 100)) }} /></div>
+                <div className="space-y-2"><Label htmlFor="post-waste">Merma pos-desmolde</Label><UnitInput id="post-waste" unit="%" inputMode="decimal" value={numberInput(estimation.draft.geometry.postDemoldWastePct === null ? null : estimation.draft.geometry.postDemoldWastePct * 100)} onChange={(event) => { const value = numberOrNull(event.target.value); updateGeometry('postDemoldWastePct', value === null ? '' : String(value / 100)) }} /></div>
+                <div className="space-y-2"><Label>Peso neto</Label><UnitInput unit="kg" readOnly value={formatQuantity(estimation.draft.geometry.estimatedNetWeightKg, 2)} className="bg-white" /></div>
+                <div className="space-y-2"><Label>Peso empaque</Label><UnitInput unit="kg" readOnly value={formatQuantity(estimation.draft.geometry.estimatedPackagingWeightKg, 2)} className="bg-white" /></div>
+                <div className="space-y-2"><Label>Peso bruto</Label><UnitInput unit="kg" readOnly value={formatQuantity(estimation.draft.geometry.estimatedGrossWeightKg, 2)} className="bg-white" /></div>
+                {hasIncompletePhysicalWeight && <p className="text-xs font-medium text-red-700 sm:col-span-2 xl:col-span-5">Faltan pesos por detallar; estos valores son una estimación inicial.</p>}
               </div>
-              <Button type="button" variant="outline" onClick={freezeCalibration} disabled={isPending}><Calculator className="h-4 w-4" />Calcular y congelar con muestras válidas</Button>
-              <div className="flex flex-wrap items-end gap-3 rounded-lg border border-sky-200 bg-sky-50 p-3">
-                <div className="min-w-32 flex-1 basis-32 space-y-2"><Label htmlFor="actual-mixture">Mezcla real (kg)</Label><Input id="actual-mixture" inputMode="decimal" value={numberInput(estimation.draft.geometry.actualMixtureKg)} onChange={(event) => updateGeometry('actualMixtureKg', event.target.value)} placeholder="Consumo real" /></div>
-                <div className="min-w-32 flex-1 basis-32 space-y-2"><Label htmlFor="actual-gelcoat">Gelcoat real (kg)</Label><Input id="actual-gelcoat" inputMode="decimal" value={numberInput(estimation.draft.geometry.actualGelcoatKg)} onChange={(event) => updateGeometry('actualGelcoatKg', event.target.value)} placeholder="Consumo real" /></div>
-                <div className="min-w-32 flex-1 basis-32 space-y-2"><Label htmlFor="actual-net-weight">Peso neto real (kg)</Label><Input id="actual-net-weight" inputMode="decimal" value={numberInput(estimation.draft.geometry.actualNetWeightKg)} onChange={(event) => updateGeometry('actualNetWeightKg', event.target.value)} placeholder="Sin empaque" /></div>
-                <div className="min-w-32 flex-1 basis-32 space-y-2"><Label htmlFor="actual-gross-weight">Peso bruto real (kg)</Label><Input id="actual-gross-weight" inputMode="decimal" value={numberInput(estimation.draft.geometry.actualGrossWeightKg)} onChange={(event) => updateGeometry('actualGrossWeightKg', event.target.value)} placeholder="Con empaque" /></div>
+              <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-slate-600">Completa volumen, área y ambas mermas para calcular.</p><Button type="button" variant="outline" onClick={freezeCalibration} disabled={isPending || !canCalculateCad}><Calculator className="h-4 w-4" />Calcular y congelar con muestras válidas</Button></div>
+              <div className="grid items-end gap-4 rounded-xl border border-sky-200 bg-sky-50 p-4 sm:grid-cols-2 [&>.w-full]:sm:col-span-2">
+                <div className="space-y-2"><Label htmlFor="actual-mixture">Mezcla real</Label><UnitInput id="actual-mixture" unit="kg" inputMode="decimal" value={actualConsumptionInputs.actualMixtureKg} onChange={(event) => updateActualConsumption('actualMixtureKg', event.target.value)} placeholder="Consumo real" /></div>
+                <div className="space-y-2"><Label htmlFor="actual-gelcoat">Gelcoat real</Label><UnitInput id="actual-gelcoat" unit="kg" inputMode="decimal" value={actualConsumptionInputs.actualGelcoatKg} onChange={(event) => updateActualConsumption('actualGelcoatKg', event.target.value)} placeholder="Consumo real" /></div>
+                <div className="space-y-2"><Label htmlFor="actual-peroxide">Peróxido real</Label><UnitInput id="actual-peroxide" unit="g" readOnly value={formatQuantity(actualPeroxideGrams, 2)} className="bg-white" /></div>
+                <div className="space-y-2"><Label htmlFor="actual-casting-waste">Merma vaciado</Label><UnitInput id="actual-casting-waste" unit="kg" inputMode="decimal" value={actualConsumptionInputs.actualCastingWasteKg} onChange={(event) => updateActualConsumption('actualCastingWasteKg', event.target.value)} /></div>
+                <div className="space-y-2"><Label htmlFor="actual-post-waste">Merma pos-desmolde</Label><UnitInput id="actual-post-waste" unit="kg" inputMode="decimal" value={actualConsumptionInputs.actualPostDemoldWasteOverrideKg || numberInput(materialBalance.calculatedPostDemoldWasteKg)} onChange={(event) => updateActualConsumption('actualPostDemoldWasteOverrideKg', event.target.value)} /></div>
+                <div className="space-y-2"><Label htmlFor="actual-net-weight">Peso neto real</Label><UnitInput id="actual-net-weight" unit="kg" inputMode="decimal" value={actualConsumptionInputs.actualNetWeightKg} onChange={(event) => updateActualConsumption('actualNetWeightKg', event.target.value)} placeholder="Sin empaque" /></div>
+                <div className="space-y-2"><Label htmlFor="actual-packaging-weight">Peso empaque</Label><UnitInput id="actual-packaging-weight" unit="kg" inputMode="decimal" value={actualConsumptionInputs.actualPackagingWeightKg} onChange={(event) => updateActualConsumption('actualPackagingWeightKg', event.target.value)} placeholder="Opcional" /></div>
+                <div className="space-y-2"><Label htmlFor="actual-gross-weight">Peso bruto real</Label><UnitInput id="actual-gross-weight" unit="kg" inputMode="decimal" value={actualConsumptionInputs.actualGrossWeightKg || numberInput(materialBalance.calculatedGrossWeightKg)} onChange={(event) => updateActualConsumption('actualGrossWeightKg', event.target.value)} placeholder="Con empaque" /></div>
+                <div className="w-full grid gap-2 rounded-md border border-sky-200 bg-white p-3 text-sm sm:grid-cols-3"><p>MP usada: <strong>{formatQuantity(materialBalance.totalMaterialKg, 3)} kg</strong><br/><span className="text-xs text-slate-600">Gelcoat {materialBalance.gelcoatBasis === 'actual' ? 'real' : materialBalance.gelcoatBasis === 'theoretical' ? 'teórico' : 'pendiente'}</span></p><p>Merma vaciado: <strong>{formatQuantity(materialBalance.castingWastePct === null ? null : materialBalance.castingWastePct * 100, 2)} %</strong></p><p>Merma pos-desmolde: <strong>{formatQuantity(materialBalance.postDemoldWastePct === null ? null : materialBalance.postDemoldWastePct * 100, 2)} %</strong></p><p>Merma total: <strong>{formatQuantity(materialBalance.totalWastePct === null ? null : materialBalance.totalWastePct * 100, 2)} %</strong></p><p>Rendimiento: <strong>{formatQuantity(materialBalance.yieldPct === null ? null : materialBalance.yieldPct * 100, 2)} %</strong></p><p>No mapeado: <strong>{formatQuantity(materialBalance.unmappedWasteKg, 3)} kg</strong></p><p>Peso bruto efectivo: <strong>{formatQuantity(materialBalance.effectiveGrossWeightKg, 3)} kg</strong><br/><span className="text-xs text-slate-600">{actualConsumptionInputs.actualGrossWeightKg ? 'Dato real' : 'Calculado'}</span></p></div>
                 <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={registerActualConsumption} disabled={isPending}>Registrar toma para Ingeniería</Button>
-                <p className="w-full text-xs text-sky-900">La toma queda pendiente en Mediciones de Ingeniería.</p>
+                <p className="w-full text-xs text-sky-900">Al registrar, la toma queda pendiente en Mediciones de Ingeniería y las cantidades reales de mezcla, gelcoat y peróxido reemplazan esos componentes en la LdM. Los pesos reales permanecen en la cotización y en la evidencia de la medición para el futuro producto formal.</p>
               </div>
             </CardContent>
           </Card>
@@ -1135,57 +1384,29 @@ export function EstimationEditorClient({
                 </div>
               </div>
               <div className="overflow-x-auto rounded-lg border border-slate-200">
-                <div className={`grid min-w-[1720px] ${BOM_GRID_COLUMNS} bg-slate-100 text-xs font-semibold text-slate-600`}>
-                  <div className="p-2" aria-hidden="true" /><div className="p-2">Nivel / componente</div><div className="p-2">Cant.</div><div className="p-2">Unidad</div><div className="p-2">Categoría</div><div className="p-2">Fuente</div><div className="p-2">Costo unit.</div><div className="p-2">Subtotal</div><div className="p-2">Evidencia</div><div className="p-2">Acciones</div>
+                <div className={`grid min-w-[788px] ${BOM_GRID_COLUMNS} bg-slate-100 text-xs font-semibold text-slate-600`}>
+                  <div className="p-2" aria-hidden="true" /><div className="p-2 text-center">Nivel / componente</div><div className="p-2 text-center">Cant./Und</div><div className="p-2 text-center">Costo unit.</div><div className="p-2 text-center">Subtotal</div><div className="p-2 text-center">Acciones</div>
                 </div>
                 <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragStart={handleBomDragStart} onDragOver={handleBomDragOver} onDragEnd={handleBomDragEnd} onDragCancel={() => { setActiveBomLineId(null); setBomDropHint(null) }}>
                   <SortableContext items={visibleHierarchyRows.map(row => row.line.id)} strategy={verticalListSortingStrategy}>
-                    <div className="min-w-[1720px]">
-                      {visibleHierarchyRows.map(({ line, level, hasChildren }) => {
-                        const valuation = lineValuations.get(line.id)
-                        const parentCandidates = getEstimationBomParentCandidates(estimation.draft.bomLines, line.id).filter(candidate => candidate.origin !== 'sap')
-                        const containingLine = estimation.draft.bomLines.find(candidate => candidate.id === line.parentId)
-                        const contentLocked = isSapLine(containingLine)
-                        const isManual = line.origin === 'manual'
-                        const sourceLabel = costSourceLabel(line)
-                        const suggestedCode = extensionText(line.extensions, 'suggestedSapItemCode')
-                        const excludedByManualBoundary = isExcludedByManualBoundary(line, estimation.draft.bomLines)
-                        return (
-                          <SortableBomRow key={line.id} lineId={line.id} excluded={excludedByManualBoundary} dropPosition={bomDropHint?.targetId === line.id ? bomDropHint.position : null}>
-                            <div className="p-2" style={{ paddingLeft: `${level * 22 + 8}px` }}>
-                              <div className="relative flex items-center gap-2 before:absolute before:-left-4 before:top-4 before:h-px before:w-3 before:bg-slate-300">
-                                {hasChildren ? <button type="button" className="rounded p-1 hover:bg-slate-100" onClick={() => setCollapsedBomLineIds(current => {
-                                  const next = new Set(current)
-                                  if (next.has(line.id)) next.delete(line.id)
-                                  else next.add(line.id)
-                                  return next
-                                })} aria-label={collapsedBomLineIds.has(line.id) ? 'Expandir rama' : 'Contraer rama'}>{collapsedBomLineIds.has(line.id) ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button> : <span className="w-6" />}
-                                <Badge variant={hasChildren ? 'secondary' : 'outline'}>Nivel {getEstimationBomDisplayLevel(level)}</Badge>
-                                <span className="font-semibold text-slate-900">{line.sapItemCode ?? suggestedCode ?? 'Manual'}</span>
-                              </div>
-                              {isManual ? <Input className="mt-1 h-8 min-w-64" value={line.itemName ?? ''} onChange={(event) => updateBomLine(line.id, { itemName: event.target.value || null })} placeholder="Nombre del componente" /> : <p className="mt-1 text-slate-700">{line.itemName}</p>}
-                              {suggestedCode && <p className="mt-1 text-[11px] text-amber-700">Sugerido, no reservado: {suggestedCode}</p>}
-                              {excludedByManualBoundary && <Badge className="mt-1 bg-amber-100 text-amber-800">Excluido por costo manual de la rama</Badge>}
-                              <div className="mt-2 flex gap-1"><select value={line.physicalWeightPolicy} disabled={contentLocked} onChange={(event) => updateBomLine(line.id, { physicalWeightPolicy: event.target.value as EstimationDraftPhysicalWeightPolicy })} className="h-7 rounded border border-input bg-white px-2 text-[11px]">{PHYSICAL_WEIGHT_POLICIES.map(policy => <option key={policy.value} value={policy.value}>{policy.label}</option>)}</select></div>
-                            </div>
-                            <div className="p-2"><Input className="h-8 w-20" inputMode="decimal" disabled={contentLocked} value={numberInput(line.quantity)} onChange={(event) => updateBomLine(line.id, { quantity: numberOrNull(event.target.value) })} /></div>
-                            <div className="p-2">{isManual ? <Input className="h-8 w-16" value={line.uom ?? ''} onChange={(event) => updateBomLine(line.id, { uom: event.target.value || null })} /> : <span className="inline-flex min-h-8 items-center font-medium text-slate-700">{line.uom ?? '—'}</span>}</div>
-                            <div className="p-2"><select value={line.costCategory ?? ''} disabled={contentLocked} onChange={(event) => updateBomLine(line.id, { costCategory: (event.target.value || null) as EstimationBomCostCategory | null })} className="h-8 rounded border border-input bg-white px-2">{line.costCategory === null && <option value="">—</option>}{COST_CATEGORIES.map(category => <option key={category.value} value={category.value}>{category.label}</option>)}</select></div>
-                            <div className="p-2">{isManual ? <select value={line.costStrategy ?? ''} disabled={contentLocked} onChange={(event) => { const costStrategy = (event.target.value || null) as EstimationBomCostStrategy | null; if (costStrategy === 'manual_override' && hasChildren && !window.confirm('El costo manual excluirá expresamente todos los descendientes del cálculo. ¿Continuar?')) return; updateBomLine(line.id, costStrategy === 'expand_children' ? { costStrategy, unitCost: null, costEvidence: null, manualCostReason: null } : { costStrategy }) }} className="h-8 rounded border border-input bg-white px-2">{COST_STRATEGIES.map(strategy => <option key={strategy.value} value={strategy.value}>{strategy.label}</option>)}</select> : <Badge className={line.costStrategy === 'expand_children' ? 'bg-violet-100 text-violet-800' : 'bg-sky-100 text-sky-800'}>{sourceLabel}</Badge>}</div>
-                            <div className="p-2">{isManual && line.costStrategy === 'manual_override' ? <Input className="h-8 w-28" inputMode="decimal" value={numberInput(line.unitCost)} onChange={(event) => { const unitCost = numberOrNull(event.target.value); updateBomLine(line.id, { unitCost, costEvidence: unitCost === null ? null : { source: 'manual', candidateId: null, warehouseCode: null, documentType: 'Manual', documentNumber: null, documentDate: new Date().toISOString(), originalCurrency: 'COP', sourceUom: line.uom, warning: 'Costo manual definido por Diseño; requiere justificación.', extensions: {} } }) }} /> : <span className="font-semibold text-slate-800">{valuation?.structuralUnitCost === null || valuation?.structuralUnitCost === undefined ? 'Pendiente' : formatCurrency(valuation.structuralUnitCost)}</span>}</div>
-                            <div className="p-2 font-semibold text-slate-800">{valuation ? formatCurrency(valuation.totalCost) : 'Pendiente'}</div>
-                            <div className="p-2"><Badge className={sourceLabel === 'SAP directo' ? 'bg-sky-100 text-sky-800' : sourceLabel === 'Calculado por sub-LdM' ? 'bg-violet-100 text-violet-800' : sourceLabel === 'Manual justificado' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-700'}>{sourceLabel}</Badge>{isManual && line.costStrategy === 'manual_override' && <Input className="mt-2 h-8 min-w-52" value={line.manualCostReason ?? ''} onChange={(event) => updateBomLine(line.id, { manualCostReason: event.target.value || null })} placeholder="Justificación obligatoria" />}{line.costEvidence?.warehouseCode && <p className="mt-1 text-slate-600">Bodega {line.costEvidence.warehouseCode} · {line.costEvidence.sourceUom ?? line.uom}</p>}{line.costEvidence?.documentDate && <p className="mt-1 text-slate-500">{line.costEvidence.source === 'warehouse_average' ? 'Consultado el' : 'Fecha'}: {new Date(line.costEvidence.documentDate).toLocaleString('es-CO')}</p>}{extensionText(line.costEvidence?.extensions ?? {}, 'definedByUserId') && <p className="mt-1 text-slate-500">Usuario: {extensionText(line.costEvidence?.extensions ?? {}, 'definedByUserId')}</p>}{line.costEvidence?.warning && <p className="mt-1 text-amber-700">{line.costEvidence.warning}</p>}{line.costStrategy === 'expand_children' && <p className="mt-1 text-violet-700">{getEstimationBomDescendantIds(estimation.draft.bomLines, line.id).size} descendiente(s) · {line.extensions.sapLoadedComplete === false ? 'parcial' : 'completo'}</p>}</div>
-                            <div className="p-2"><div className="flex min-w-48 flex-col gap-1">{isManual && <><Button type="button" size="sm" variant="outline" onClick={() => prepareSapChildSearch(line.id)}><GitBranchPlus className="h-3.5 w-3.5" />Agregar hijo SAP</Button><Button type="button" size="sm" variant="outline" onClick={() => addManualChild(line.id)}><PackagePlus className="h-3.5 w-3.5" />Agregar manual</Button></>}{line.origin === 'sap' && <Button type="button" size="sm" variant="outline" disabled={isPending} onClick={() => refreshSapSubstructure(line)}><RefreshCw className="h-3.5 w-3.5" />Consultar/actualizar SAP</Button>}{line.origin === 'sap' && hasChildren && <Button type="button" size="sm" variant="outline" disabled={isPending} onClick={() => convertSapSubstructure(line)}><Copy className="h-3.5 w-3.5" />Crear sub-LdM nueva</Button>}<select aria-label="Mover a" value={line.parentId ?? ''} disabled={contentLocked} onChange={(event) => assignBomParent(line.id, event.target.value || null)} className="h-8 rounded border border-input bg-white px-2"><option value="">Mover a nivel 2</option>{parentCandidates.map(candidate => <option key={candidate.id} value={candidate.id}>Mover dentro de {candidate.itemName ?? candidate.sapItemCode ?? candidate.id}</option>)}</select><Button type="button" variant="ghost" size="sm" disabled={contentLocked} onClick={() => removeBomLine(line.id)}><Trash2 className="h-3.5 w-3.5 text-red-600" />Eliminar rama</Button></div></div>
-                          </SortableBomRow>
-                        )
-                      })}
+                    <div className="min-w-[788px]">
+                      {(hierarchyRowsByParentId.get(null) ?? []).map((row) => (
+                        <EstimationBomTreeBranch
+                          key={row.line.id}
+                          row={row}
+                          rowsByParentId={hierarchyRowsByParentId}
+                          collapsedLineIds={collapsedBomLineIds}
+                          onOpenChange={setBomBranchOpen}
+                          renderRow={renderBomRow}
+                        />
+                      ))}
                     </div>
                   </SortableContext>
                   <DragOverlay>{activeBomLineId ? <div className="rounded border border-sky-300 bg-white px-4 py-3 text-sm shadow-xl">Moviendo {estimation.draft.bomLines.find(line => line.id === activeBomLineId)?.itemName ?? 'rama'}</div> : null}</DragOverlay>
                 </DndContext>
               </div>
-              <div className="flex flex-wrap items-center gap-3"><Button type="button" variant="outline" onClick={refreshCosts} disabled={isPending}><RefreshCw className="h-4 w-4" />Actualizar promedios MP-01</Button><Link href="/physical-weights" className="text-sm font-medium text-sky-700 hover:text-sky-900">Administrar factores físicos</Link><p className="text-xs text-slate-600">Sólo se aplican promedios/estándares vigentes de MP-01 a hojas SAP. Las líneas manuales conservan su costo y motivo; no se usan entradas genéricas como compras.</p></div>
-              {costInput.incompleteLineIds.length > 0 ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Completa cantidad, categoría, estrategia y la justificación de cualquier costo manual en {costInput.incompleteLineIds.length} línea(s) para calcular totales.</div> : costResult?.ok ? <div className="grid gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm md:grid-cols-2"><div><p className="font-semibold text-emerald-950">Materiales + empaque</p><p className="text-lg font-bold">{formatCurrency(costResult.totals.materialsAndPackaging)}</p></div><div><p className="font-semibold text-emerald-950">Total ampliado (incluye MO/CIF/otros)</p><p className="text-lg font-bold">{formatCurrency(costResult.totals.expandedTotal)}</p></div><p className="md:col-span-2 text-xs text-emerald-800">Material {formatCurrency(costResult.totals.byCategory.material)} · Empaque {formatCurrency(costResult.totals.byCategory.packaging)} · MO {formatCurrency(costResult.totals.byCategory.mo)} · CIF {formatCurrency(costResult.totals.byCategory.cif)} · Otros {formatCurrency(costResult.totals.byCategory.other)}</p></div> : <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800"><p className="font-semibold">La LdM aún no se puede totalizar</p><ul className="mt-1 list-disc pl-5">{costResult?.issues.map((issue) => <li key={`${issue.code}-${issue.lineId}`}>{issue.message}</li>)}</ul></div>}
+              <div className="flex flex-wrap items-center gap-3"><Button type="button" variant="outline" onClick={refreshCosts} disabled={isPending}><RefreshCw className="h-4 w-4" />Actualizar estructura y costos SAP</Button>{lastSapCostReadAt && <p className="text-xs text-slate-600">Consultado el: {new Intl.DateTimeFormat('es-CO', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(lastSapCostReadAt))}</p>}<Link href="/physical-weights" className="text-sm font-medium text-sky-700 hover:text-sky-900">Administrar factores físicos</Link><p className="text-xs text-slate-600">Sólo se aplican promedios/estándares vigentes de MP-01 a hojas SAP. Las líneas manuales conservan su costo; no se usan entradas genéricas como compras.</p></div>
+              {costInput.incompleteLineIds.length > 0 ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Completa cantidad, categoría y estrategia en {costInput.incompleteLineIds.length} línea(s) para calcular totales.</div> : costResult?.ok ? <div className="grid gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm md:grid-cols-2"><div><p className="font-semibold text-emerald-950">Materiales + empaque</p><p className="text-lg font-bold">{formatCurrency(costResult.totals.materialsAndPackaging)}</p></div><div><p className="font-semibold text-emerald-950">Total ampliado (incluye MO/CIF/otros)</p><p className="text-lg font-bold">{formatCurrency(costResult.totals.expandedTotal)}</p></div><p className="md:col-span-2 text-xs text-emerald-800">Material {formatCurrency(costResult.totals.byCategory.material)} · Empaque {formatCurrency(costResult.totals.byCategory.packaging)} · MO {formatCurrency(costResult.totals.byCategory.mo)} · CIF {formatCurrency(costResult.totals.byCategory.cif)} · Otros {formatCurrency(costResult.totals.byCategory.other)}</p></div> : <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800"><p className="font-semibold">La LdM aún no se puede totalizar</p><ul className="mt-1 list-disc pl-5">{costResult?.issues.map((issue) => <li key={`${issue.code}-${issue.lineId}`}>{issue.message}</li>)}</ul></div>}
             </CardContent>
           </Card>
           <Card>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Check, ChevronsUpDown } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
@@ -26,7 +26,15 @@ type CommercialColorSelectorProps = {
 
 export function CommercialColorSelector({ colors, colorCode, onSelect, id }: CommercialColorSelectorProps) {
   const [open, setOpen] = useState(false)
-  const selected = colors.find(color => color.colorCode === colorCode) ?? null
+  const uniqueColors = useMemo(() => {
+    const byCode = new Map<string, EstimationCommercialColorCandidate>()
+    colors.forEach((color) => {
+      const current = byCode.get(color.colorCode)
+      if (!current || (!current.colorName && color.colorName)) byCode.set(color.colorCode, color)
+    })
+    return [...byCode.values()]
+  }, [colors])
+  const selected = uniqueColors.find(color => color.colorCode === colorCode) ?? null
 
   return (
     <div className="space-y-2">
@@ -45,7 +53,7 @@ export function CommercialColorSelector({ colors, colorCode, onSelect, id }: Com
                 <CommandItem value="sin seleccionar" onSelect={() => { onSelect(null); setOpen(false) }}>
                   <Check className={cn('mr-2 h-4 w-4', colorCode ? 'invisible' : 'opacity-100')} />Sin seleccionar
                 </CommandItem>
-                {colors.map(color => (
+                {uniqueColors.map(color => (
                   <CommandItem key={color.colorCode} value={`${color.colorCode} ${color.colorName}`} onSelect={() => { onSelect(color); setOpen(false) }}>
                     <Check className={cn('mr-2 h-4 w-4', colorCode === color.colorCode ? 'opacity-100' : 'invisible')} />
                     {color.colorCode} · {color.colorName || 'Sin nombre'}
