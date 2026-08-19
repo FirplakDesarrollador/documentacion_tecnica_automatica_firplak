@@ -29,9 +29,8 @@ if (process.env.NODE_ENV !== 'production') globalForSupabase._supabaseServer = s
 export async function dbQuery(sql: string, values?: (string | number | boolean | null)[]) {
     let finalSql = sql
     if (values && values.length > 0) {
-        let i = 0
-        finalSql = sql.replace(/\$\d+/g, () => {
-            const val = values[i++]
+        finalSql = sql.replace(/\$(\d+)/g, (_match, index) => {
+            const val = values[Number(index) - 1]
             if (val === null || val === undefined) return 'NULL'
             if (typeof val === 'boolean') return val ? 'true' : 'false'
             if (typeof val === 'number') return String(val)
@@ -40,20 +39,18 @@ export async function dbQuery(sql: string, values?: (string | number | boolean |
     }
 
     try {
-        // Usamos el RPC 'exec_sql' para ejecutar SQL crudo de forma segura y rápida
+// Usamos el RPC 'exec_sql' para ejecutar SQL crudo de forma segura y rápida
         // Esto evita depender del Management API de Supabase y sus límites/tokens inestables
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data, error } = await (supabaseServer.rpc as any)('exec_sql', { query_text: finalSql })
-        
+        const { data, error } = await supabaseServer.rpc('exec_sql', { query_text: finalSql })
+
         if (error) throw error
-        
+
         // Si el resultado es el objeto de éxito de DML (UPDATE/INSERT/DELETE)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const d = data as any
+        const d = data
         if (d && typeof d === 'object' && 'success' in d && d.success === true) {
             return d
         }
-        
+
         return (d || []) as Record<string, unknown>[]
     } catch (err: unknown) {
         const detail = err instanceof Error ? err.message
