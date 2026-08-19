@@ -62,7 +62,7 @@ export function applySyntheticMarbleBomQuantities(
       gelcoatLineIds.push(line.id)
       return { ...line, quantity: gelcoatQuantity }
     }
-    if (estimatedGelcoatKg !== null && isSyntheticMarblePeroxide(line)) {
+    if (estimatedGelcoatKg !== null && isSyntheticMarblePeroxide(line) && line.parentId && lines.some(parent => parent.id === line.parentId && isSyntheticMarbleGelcoat(parent))) {
       peroxideLineIds.push(line.id)
       return { ...line, quantity: roundUpSapQuantity(peroxideQuantityForUom(estimatedGelcoatKg, line.uom)) }
     }
