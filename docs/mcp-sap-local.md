@@ -1,6 +1,6 @@
 # MCP local para SAP Business One
 
-Este MCP usa el protocolo `stdio` y consulta SAP Business One Service Layer en modo lectura. No ejecuta POST, PATCH ni DELETE contra SAP.
+Este MCP usa el protocolo `stdio` y consulta SAP Business One Service Layer. Las escrituras disponibles permanecen bloqueadas por defecto y requieren `SAP_WRITES_ENABLED=true`, *dry-run* previo y confirmaciÃ³n explÃ­cita en cada herramienta.
 
 ## Variables requeridas
 
@@ -15,6 +15,7 @@ Opcionales:
 
 - `SAP_REJECT_UNAUTHORIZED`: `false` para certificados internos no confiables; usar `true` cuando el certificado sea valido.
 - `SAP_TIMEOUT_MS`: timeout HTTP, por defecto `60000`.
+- `SAP_WRITES_ENABLED`: debe ser `true` para una escritura SAP real; si falta o no es verdadero, toda escritura queda bloqueada.
 
 No se deben pegar estos valores en el chat ni versionarlos en el repositorio. El MCP solo lee `process.env`.
 
@@ -26,6 +27,9 @@ No se deben pegar estos valores en el chat ni versionarlos en el repositorio. El
 - `sap_get_product_tree`: consulta un `TreeCode` con sus lineas.
 - `sap_search_product_trees`: consulta varios prefijos de `TreeCode`, con paginacion y opcion de incluir lineas.
 - `sap_search_items_by_prefix`: consulta Items por prefijo.
+- `sap_list_item_groups`: consulta grupos de artÃ­culos SAP (OITB), con filtro opcional por el inicio del nombre.
+- `sap_get_item_group`: consulta un grupo de artÃ­culos por su nÃºmero, incluida su configuraciÃ³n de determinaciÃ³n contable.
+- `sap_create_item_group`: prepara o crea un grupo de artÃ­culos. Con `sourceGroupCode` duplica su configuraciÃ³n contable y de planeaciÃ³n; el *dry-run* devuelve una estimaciÃ³n del siguiente nÃºmero. SAP asigna el nÃºmero definitivo al crear y la operaciÃ³n real requiere `confirmed=true`.
 
 ## Registro en Codex
 
@@ -35,7 +39,7 @@ Agregar este bloque a `C:\Users\oswaldo.rivera\.codex\config.toml`:
 [mcp_servers.sap]
 command = "node"
 args = ["C:\\Users\\oswaldo.rivera\\Desktop\\Proyecto IA - Documentacion tecnica automatica\\scripts\\mcp-sap-server.mjs"]
-env_vars = ["SAP_API_URL", "SAP_COMPANY_DB", "SAP_USERNAME", "SAP_PASSWORD", "SAP_REJECT_UNAUTHORIZED", "SAP_TIMEOUT_MS"]
+env_vars = ["SAP_API_URL", "SAP_COMPANY_DB", "SAP_USERNAME", "SAP_PASSWORD", "SAP_REJECT_UNAUTHORIZED", "SAP_TIMEOUT_MS", "SAP_WRITES_ENABLED"]
 startup_timeout_sec = 30
 ```
 

@@ -165,6 +165,27 @@ function collectionQuery({ filter, top, skip, select, expand }) {
   return params.length ? `?${params.join('&')}` : ''
 }
 
+function itemGroupsPath({ filter, top, skip, orderBy }) {
+  const query = collectionQuery({
+    filter,
+    top,
+    skip,
+    select: ['Number', 'GroupName'],
+  })
+  if (!orderBy) return `/ItemGroups${query}`
+  return `/ItemGroups${query}${query ? '&' : '?'}$orderby=${encodeURIComponent(orderBy)}`
+}
+
+function buildItemGroupCreatePayload(sourceGroup, groupName) {
+  if (!sourceGroup || typeof sourceGroup !== 'object' || Array.isArray(sourceGroup)) {
+    throw new SapMcpError('El grupo fuente de SAP no tiene un payload vÃ¡lido', 502, 'SAP_INVALID_ITEM_GROUP_PAYLOAD')
+  }
+  const inheritedSettings = Object.fromEntries(
+    Object.entries(sourceGroup).filter(([key]) => key !== 'Number' && key !== 'GroupName' && !key.startsWith('odata.')),
+  )
+  return { ...inheritedSettings, GroupName: groupName }
+}
+
 async function sapRequest(path, options = {}, retry = true) {
   const config = getConfig()
   const session = await login()
@@ -372,6 +393,91 @@ server.registerTool('sap_get_product_tree', {
   },
   annotations: readOnlyAnnotations,
 }, async ({ treeCode }) => withToolErrors(() => sapRequest(`/ProductTrees(${encodeODataString(treeCode.trim())})`)))
+
+server.registerTool('sap_list_item_groups', {
+  title: 'List SAP item groups',
+  description: 'Reads SAP Business One article groups (OITB). Optionally filters by the beginning of GroupName.',
+  inputSchema: {
+    namePrefix: z.string().trim().min(1).max(100).optional(),
+    top: z.number().int().min(1).max(MAX_PAGE_SIZE).optional(),
+    skip: z.number().int().min(0).optional(),
+  },
+  annotations: readOnlyAnnotations,
+}, async ({ namePrefix, top = 200, skip = 0 }) => withToolErrors(() => sapRequest(itemGroupsPath({
+  filter: namePrefix ? `startswith(GroupName, ${encodeODataString(namePrefix.trim())})` : undefined,
+  top: Math.min(top, MAX_PAGE_SIZE),
+  skip,
+  orderBy: 'Number asc',
+}))))
+
+server.registerTool('sap_get_item_group', {
+  title: 'Get SAP item group',
+  description: 'Reads one SAP Business One article group (OITB), including its account-determination configuration.',
+  inputSchema: {
+    groupCode: z.number().int().min(0),
+  },
+  annotations: readOnlyAnnotations,
+}, async ({ groupCode }) => withToolErrors(() => sapRequest(`/ItemGroups(${groupCode})`)))
+
+server.registerTool('sap_create_item_group', {
+  title: 'Create SAP item group',
+  description: 'Dry-run by default. Creates one SAP article group (OITB), optionally duplicating the accounting and planning settings from an existing group. SAP assigns its group number. A real write requires confirmed=true and SAP_WRITES_ENABLED=true.',
+  inputSchema: {
+    groupName: z.string().trim().min(1).max(100),
+    sourceGroupCode: z.number().int().min(0).optional(),
+    dryRun: z.boolean().optional(),
+    confirmed: z.boolean().optional(),
+  },
+  annotations: writeAnnotations,
+}, async ({ groupName, sourceGroupCode, dryRun = true, confirmed = false }) => withToolErrors(async () => {
+  const normalizedName = groupName.trim()
+  const existing = await sapRequest(itemGroupsPath({
+    filter: `GroupName eq ${encodeODataString(normalizedName)}`,
+    top: 2,
+    skip: 0,
+  }))
+  const existingGroups = Array.isArray(existing?.value) ? existing.value : []
+  if (existingGroups.length > 0) {
+    throw new SapMcpError(`El grupo de artÃ­culos ya existe: ${normalizedName}`, 409, 'SAP_ITEM_GROUP_ALREADY_EXISTS')
+  }
+
+  const latest = await sapRequest(itemGroupsPath({ top: 1, skip: 0, orderBy: 'Number desc' }))
+  const latestGroup = Array.isArray(latest?.value) ? latest.value[0] : null
+  const latestNumber = Number(latestGroup?.Number)
+  const estimatedNextGroupCode = Number.isSafeInteger(latestNumber) ? latestNumber + 1 : null
+  const sourceGroup = sourceGroupCode === undefined
+    ? null
+    : await getExisting(`/ItemGroups(${sourceGroupCode})`)
+  if (sourceGroupCode !== undefined && !sourceGroup) {
+    throw new SapMcpError(`El grupo fuente no existe: ${sourceGroupCode}`, 404, 'SAP_ITEM_GROUP_SOURCE_NOT_FOUND')
+  }
+  const createPayload = sourceGroup ? buildItemGroupCreatePayload(sourceGroup, normalizedName) : { GroupName: normalizedName }
+
+  if (dryRun) {
+    return {
+      dryRun: true,
+      groupName: normalizedName,
+      sourceGroupCode,
+      sourceGroupName: sourceGroup?.GroupName ?? null,
+      createPayload,
+      estimatedNextGroupCode,
+      note: 'SAP asigna el nÃºmero real al crear el grupo; la estimaciÃ³n no reserva el cÃ³digo.',
+    }
+  }
+  if (!confirmed) {
+    throw new SapMcpError('confirmed=true es obligatorio para crear un grupo de artÃ­culos en SAP', 400, 'SAP_WRITE_CONFIRMATION_REQUIRED')
+  }
+  if (!getConfig().writesEnabled) {
+    throw new SapMcpError('SAP_WRITES_ENABLED no estÃ¡ activo para el MCP', 403, 'SAP_WRITES_DISABLED')
+  }
+
+  const created = await sapRequest('/ItemGroups', { method: 'POST', body: createPayload })
+  const createdNumber = Number(created?.Number)
+  const verified = Number.isSafeInteger(createdNumber)
+    ? await sapRequest(`/ItemGroups(${createdNumber})?$select=Number,GroupName`)
+    : null
+  return { dryRun: false, groupName: normalizedName, sourceGroupCode, created, verified }
+}))
 
 server.registerTool('sap_search_product_trees', {
   title: 'Search SAP product trees',
