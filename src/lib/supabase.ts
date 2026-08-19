@@ -41,12 +41,14 @@ export async function dbQuery(sql: string, values?: (string | number | boolean |
     try {
 // Usamos el RPC 'exec_sql' para ejecutar SQL crudo de forma segura y rápida
         // Esto evita depender del Management API de Supabase y sus límites/tokens inestables
-        const { data, error } = await supabaseServer.rpc('exec_sql', { query_text: finalSql })
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data, error } = await (supabaseServer.rpc as any)('exec_sql', { query_text: finalSql })
 
         if (error) throw error
 
         // Si el resultado es el objeto de éxito de DML (UPDATE/INSERT/DELETE)
-        const d = data
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const d = data as any
         if (d && typeof d === 'object' && 'success' in d && d.success === true) {
             return d
         }
