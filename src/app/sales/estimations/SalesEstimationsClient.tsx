@@ -1,7 +1,7 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
-import { AlertCircle, Calculator, Save, Settings2 } from 'lucide-react'
+import { Fragment, useMemo, useState, useTransition } from 'react'
+import { AlertCircle, Calculator, ChevronDown, ChevronRight, ClipboardCopy, Download, FileSpreadsheet, Save, Settings2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { evaluateSalesPricing, type SalesPricingFormulaConfig } from '@/lib/productDesign/salesPricingFormulas'
-import { saveSalesEstimationCommercialResponseAction, saveSalesEstimationPricingAction, saveSalesPricingFormulaConfigAction, type SalesEstimationView } from './actions'
+import { saveSalesEstimationCommercialResponseAction, saveSalesEstimationPricingAction, saveSalesPricingFormulaConfigAction, getEstimationBomLinesForExport, type SalesEstimationView } from './actions'
+import { buildEstimationBomClipboardText } from '@/lib/sales/estimationBomExport'
 
 function money(value: number, currency: string) { return new Intl.NumberFormat('es-CO', { style: 'currency', currency, maximumFractionDigits: 0 }).format(value) }
 function number(value: number | null, digits = 2) { return value === null ? '—' : new Intl.NumberFormat('es-CO', { maximumFractionDigits: digits }).format(value) }
@@ -19,6 +20,86 @@ function date(value: string | null) { return value ? new Date(value).toLocaleDat
 function dimensions(estimation: SalesEstimationView) { const values = [estimation.dimensions.widthMm, estimation.dimensions.depthMm, estimation.dimensions.heightMm]; return values.some(value => value !== null) ? values.map(value => value === null ? '—' : `${number(value)} cm`).join(' × ') : 'Medidas pendientes' }
 function status(value: string) { return ({ pending: 'Pendiente', approved: 'Aprobada', rejected: 'Rechazada', not_pursued: 'No continuó', reviewed: 'Revisada', observed: 'Con observaciones', not_requested: 'No solicitada' } as Record<string, string>)[value] ?? value }
 function Metric({ label, value }: { label: string; value: string }) { return <div className="rounded-lg border border-slate-100 bg-slate-50 p-3"><p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p><p className="mt-1 text-sm font-semibold text-slate-900">{value}</p></div> }
+
+type BomTreeNode = {
+  row: SalesEstimationView['bomLines'][number]
+  children: BomTreeNode[]
+}
+
+function buildBomTree(flatRows: SalesEstimationView['bomLines']): BomTreeNode[] {
+  const nodes: BomTreeNode[] = []
+  const stack: BomTreeNode[] = []
+  for (const row of flatRows) {
+    const node: BomTreeNode = { row, children: [] }
+    while (stack.length > 0 && stack[stack.length - 1].row.level >= row.level) stack.pop()
+    if (stack.length === 0) {
+      nodes.push(node)
+    } else {
+      stack[stack.length - 1].children.push(node)
+    }
+    stack.push(node)
+  }
+  return nodes
+}
+
+function BomTreeRows({ node, depth }: { node: BomTreeNode; depth: number }) {
+  const [expanded, setExpanded] = useState(depth === 0)
+  const hasChildren = node.children.length > 0
+  const { row } = node
+  const isRoot = row.level === 1
+  return (
+    <Fragment>
+      <tr className={`border-b border-slate-100 ${isRoot ? 'bg-indigo-50 font-semibold' : 'bg-white hover:bg-slate-50'}`}>
+        <td className="px-3 py-1.5 align-top">
+          <div className="flex items-center gap-1" style={{ paddingLeft: `${depth * 18}px` }}>
+            <span className="flex size-5 shrink-0 items-center justify-center">
+              {hasChildren ? (
+                <button type="button" onClick={() => setExpanded(prev => !prev)} className="flex size-5 items-center justify-center rounded text-slate-500 transition hover:bg-slate-200 hover:text-slate-800">
+                  {expanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+                </button>
+              ) : null}
+            </span>
+            <span className="whitespace-nowrap font-mono text-xs text-slate-800">{row.itemCode || '—'}</span>
+          </div>
+        </td>
+        <td className="px-3 py-1.5 whitespace-normal break-words leading-5 text-slate-600">{row.itemName || '—'}</td>
+        <td className="px-3 py-1.5 text-right align-top tabular-nums text-slate-800">{row.quantity > 0 ? number(row.quantity, 4) : '—'}</td>
+        <td className="px-3 py-1.5 text-center align-top text-slate-600">{row.uom || '—'}</td>
+        <td className="px-3 py-1.5 text-right align-top tabular-nums text-slate-800">{row.unitCost !== null ? money(row.unitCost, 'COP') : '—'}</td>
+        <td className="px-3 py-1.5 text-right align-top tabular-nums text-slate-800">{row.subtotal !== null ? money(row.subtotal, 'COP') : '—'}</td>
+      </tr>
+      {expanded && hasChildren && node.children.map(child => (
+        <BomTreeRows key={child.row.id} node={child} depth={depth + 1} />
+      ))}
+    </Fragment>
+  )
+}
+
+function BomPreviewTable({ bomLines }: { bomLines: SalesEstimationView['bomLines'] }) {
+  if (bomLines.length === 0) return <p className="text-sm text-slate-500">Esta cotización aún no tiene líneas de Lista de Materiales.</p>
+  const tree = buildBomTree(bomLines)
+  return (
+    <div className="overflow-x-auto rounded-lg border border-slate-200">
+      <table className="w-full min-w-[780px] border-collapse text-sm">
+        <thead>
+          <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
+            <th className="px-3 py-2">Código</th>
+            <th className="px-3 py-2">Descripción</th>
+            <th className="px-3 py-2 text-right">Cantidad</th>
+            <th className="px-3 py-2 text-center">Unidad</th>
+            <th className="px-3 py-2 text-right">Costo und.</th>
+            <th className="px-3 py-2 text-right">Subtotal</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tree.map(node => (
+            <BomTreeRows key={node.row.id} node={node} depth={0} />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
 
 export function SalesEstimationsClient({ initialEstimations, initialFormulas }: { initialEstimations: SalesEstimationView[]; initialFormulas: SalesPricingFormulaConfig }) {
   const [estimations, setEstimations] = useState(initialEstimations)
@@ -30,6 +111,8 @@ export function SalesEstimationsClient({ initialEstimations, initialFormulas }: 
   const [contact, setContact] = useState(() => initialEstimations[0]?.commercialResponse.contactName ?? '')
   const [outcome, setOutcome] = useState<'pending' | 'approved' | 'rejected' | 'not_pursued'>(() => (initialEstimations[0]?.commercialResponse.outcome as 'pending' | 'approved' | 'rejected' | 'not_pursued' | undefined) ?? 'pending')
   const [note, setNote] = useState(() => initialEstimations[0]?.commercialResponse.note ?? '')
+  const [bomCopyFeedback, setBomCopyFeedback] = useState<string | null>(null)
+  const [bomExportLoading, setBomExportLoading] = useState(false)
   const [isPending, startTransition] = useTransition()
   const selected = estimations.find(item => item.id === selectedId) ?? null
   const pricing = useMemo(() => {
@@ -41,6 +124,44 @@ export function SalesEstimationsClient({ initialEstimations, initialFormulas }: 
   const savePricing = () => { if (!selected) return; startTransition(async () => { try { const saved = await saveSalesEstimationPricingAction({ id: selected.id, contributionMarginPct: Number(mc), discountPct: Number(discount) }); replace(saved); toast.success('MC y descuento guardados.'); } catch (error) { toast.error(error instanceof Error ? error.message : 'No fue posible guardar los porcentajes.') } }) }
   const saveResponse = () => { if (!selected) return; startTransition(async () => { try { const saved = await saveSalesEstimationCommercialResponseAction({ id: selected.id, outcome, contactName: contact, note }); replace(saved); toast.success('Respuesta comercial guardada.'); } catch (error) { toast.error(error instanceof Error ? error.message : 'No fue posible guardar la respuesta.') } }) }
   const saveFormulas = () => startTransition(async () => { try { setFormulas(await saveSalesPricingFormulaConfigAction(formulas)); setEditingFormulas(false); toast.success('Fórmulas globales actualizadas.'); } catch (error) { toast.error(error instanceof Error ? error.message : 'Las fórmulas no son válidas.') } })
+  const handleCopyBom = async () => {
+    if (!selected) return
+    setBomCopyFeedback(null)
+    try {
+      const data = await getEstimationBomLinesForExport(selected.id)
+      const text = buildEstimationBomClipboardText(data.rows)
+      await navigator.clipboard.writeText(text)
+      setBomCopyFeedback('LdM copiada. Pégala directamente en Excel.')
+    } catch {
+      setBomCopyFeedback('El navegador no permitió copiar. Usa Descargar Excel.')
+    }
+  }
+  const handleDownloadBom = async () => {
+    if (!selected) return
+    setBomExportLoading(true)
+    setBomCopyFeedback(null)
+    try {
+      const response = await fetch(`/api/sales/estimations/${encodeURIComponent(selected.id)}/bom-export`)
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { error?: string } | null
+        throw new Error(body?.error ?? 'No se pudo descargar el archivo.')
+      }
+      const blob = await response.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = objectUrl
+      link.download = `LDM_${selected.provisionalName.replace(/[^a-zA-Z0-9]/g, '_')}.xlsx`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(objectUrl)
+      setBomCopyFeedback('Excel descargado.')
+    } catch (error) {
+      setBomCopyFeedback(error instanceof Error ? error.message : 'No se pudo descargar el Excel.')
+    } finally {
+      setBomExportLoading(false)
+    }
+  }
   if (!selected) return <Card><CardHeader><CardTitle>No hay cotizaciones compartidas</CardTitle><CardDescription>Cuando Diseño comparta una cotización totalizable aparecerá aquí.</CardDescription></CardHeader></Card>
-  return <div className="grid gap-6 xl:grid-cols-[300px_minmax(0,1fr)]"><aside className="space-y-2"><h2 className="text-lg font-semibold">Compartidas ({estimations.length})</h2>{estimations.map(item => <button key={item.id} type="button" onClick={() => select(item)} className={`w-full rounded-xl border p-4 text-left ${item.id === selected.id ? 'border-sky-300 bg-sky-50' : 'border-slate-200 bg-white'}`}><p className="truncate font-semibold">{item.provisionalName}</p><p className="mt-1 text-xs text-slate-600">{item.sapPrefix} · {dimensions(item)}</p></button>)}</aside><section className="space-y-5"><Card><CardHeader><CardTitle>{selected.provisionalName}</CardTitle><CardDescription>{selected.sapPrefix} · {selected.proposedReferenceCode ?? 'Consecutivo pendiente'} · {dimensions(selected)}</CardDescription></CardHeader><CardContent className="space-y-5"><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4"><Metric label="Materiales + empaque" value={selected.pricing.state === 'available' ? money(selected.pricing.materialsAndPackaging, selected.pricing.currency) : 'Pendiente'} /><Metric label="Total ampliado" value={selected.pricing.state === 'available' ? money(selected.pricing.expandedTotal, selected.pricing.currency) : 'Pendiente'} /><Metric label="Peso neto" value={`${number(selected.weights.netKg)} kg`} /><Metric label="Peso bruto" value={`${number(selected.weights.grossKg)} kg`} /></div>{selected.pricing.state === 'pending' && <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"><AlertCircle className="h-4 w-4 shrink-0" />{selected.pricing.message}</div>}<div className="grid gap-4 lg:grid-cols-2"><div className="space-y-3 rounded-lg border p-4"><h2 className="flex items-center gap-2 font-semibold"><Calculator className="h-4 w-4" />Precio comercial</h2><div className="grid grid-cols-2 gap-3"><div><Label>MC %</Label><Input inputMode="decimal" value={mc} onChange={event => setMc(event.target.value)} placeholder="67" /></div><div><Label>Descuento %</Label><Input inputMode="decimal" value={discount} onChange={event => setDiscount(event.target.value)} placeholder="40" /></div></div><Button type="button" onClick={savePricing} disabled={isPending || selected.pricing.state !== 'available'}><Save className="h-4 w-4" />Guardar porcentajes</Button><div className="grid grid-cols-3 gap-2"><Metric label="Precio mínimo" value={pricing ? money(pricing.minimumPrice, selected.pricing.currency) : 'Pendiente'} /><Metric label="Precio máximo" value={pricing ? money(pricing.maximumPrice, selected.pricing.currency) : 'Pendiente'} /><Metric label="PVP" value={pricing ? money(pricing.pvp, selected.pricing.currency) : 'Pendiente'} /></div></div><div className="space-y-3 rounded-lg border p-4"><h2 className="font-semibold">Respuesta comercial externa</h2><Label>Contacto o cuenta comercial</Label><Input value={contact} onChange={event => setContact(event.target.value)} /><Label>Resultado</Label><select value={outcome} onChange={event => setOutcome(event.target.value as typeof outcome)} className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm"><option value="pending">Pendiente</option><option value="approved">Aprobada</option><option value="rejected">Rechazada</option><option value="not_pursued">No continuó</option></select><Textarea value={note} onChange={event => setNote(event.target.value)} placeholder="Observación comercial" /><Button type="button" variant="outline" onClick={saveResponse} disabled={isPending}>Guardar respuesta</Button></div></div><div className="rounded-lg border border-slate-200 p-4"><p className="font-semibold">Revisión técnica</p><p className="mt-1 text-sm text-slate-600">{status(selected.technicalReview.status)} · {date(selected.technicalReview.reviewedAt)}</p><p className="mt-2 text-sm">{selected.technicalReview.note ?? 'Sin observaciones.'}</p></div></CardContent></Card><Card><CardHeader><CardTitle className="flex items-center gap-2"><Settings2 className="h-4 w-4" />Editar fórmulas de cálculo de precios</CardTitle><CardDescription>Aplican globalmente a todas las cotizaciones compartidas. Variables permitidas: costo_materia_prima, costo_ampliado, mc_pct, descuento_pct, precio_minimo y precio_maximo.</CardDescription></CardHeader><CardContent>{editingFormulas ? <div className="space-y-3"><div><Label>Precio mínimo</Label><Input value={formulas.minimumPrice} onChange={event => setFormulas(current => ({ ...current, minimumPrice: event.target.value }))} /></div><div><Label>Precio máximo</Label><Input value={formulas.maximumPrice} onChange={event => setFormulas(current => ({ ...current, maximumPrice: event.target.value }))} /></div><div><Label>PVP</Label><Input value={formulas.pvp} onChange={event => setFormulas(current => ({ ...current, pvp: event.target.value }))} /></div><div className="flex gap-2"><Button type="button" onClick={saveFormulas} disabled={isPending}>Guardar fórmulas</Button><Button type="button" variant="outline" onClick={() => setEditingFormulas(false)}>Cancelar</Button></div></div> : <Button type="button" variant="outline" onClick={() => setEditingFormulas(true)}>Editar fórmulas de cálculo de precios</Button>}</CardContent></Card></section></div>
+  return <div className="grid gap-6 xl:grid-cols-[300px_minmax(0,1fr)]"><aside className="space-y-2"><h2 className="text-lg font-semibold">Compartidas ({estimations.length})</h2>{estimations.map(item => <button key={item.id} type="button" onClick={() => select(item)} className={`w-full rounded-xl border p-4 text-left ${item.id === selected.id ? 'border-sky-300 bg-sky-50' : 'border-slate-200 bg-white'}`}><p className="truncate font-semibold">{item.provisionalName}</p><p className="mt-1 text-xs text-slate-600">{item.sapPrefix} · {dimensions(item)}</p></button>)}</aside><section className="space-y-5"><Card><CardHeader><CardTitle>{selected.provisionalName}</CardTitle><CardDescription>{selected.sapPrefix} · {selected.proposedReferenceCode ?? 'Consecutivo pendiente'} · {dimensions(selected)}</CardDescription></CardHeader><CardContent className="space-y-5"><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4"><Metric label="Materiales + empaque" value={selected.pricing.state === 'available' ? money(selected.pricing.materialsAndPackaging, selected.pricing.currency) : 'Pendiente'} /><Metric label="Total ampliado" value={selected.pricing.state === 'available' ? money(selected.pricing.expandedTotal, selected.pricing.currency) : 'Pendiente'} /><Metric label="Peso neto" value={`${number(selected.weights.netKg)} kg`} /><Metric label="Peso bruto" value={`${number(selected.weights.grossKg)} kg`} /></div>{selected.pricing.state === 'pending' && <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"><AlertCircle className="h-4 w-4 shrink-0" />{selected.pricing.message}</div>}<div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 p-4"><h2 className="text-sm font-semibold text-slate-700 mr-2">Lista de Materiales</h2><Button type="button" size="sm" variant="outline" onClick={handleCopyBom} disabled={bomExportLoading}><ClipboardCopy className="mr-1.5 h-3.5 w-3.5" />Copiar para Excel</Button><Button type="button" size="sm" variant="outline" onClick={handleDownloadBom} disabled={bomExportLoading}><Download className="mr-1.5 h-3.5 w-3.5" />{bomExportLoading ? 'Descargando…' : 'Descargar Excel'}</Button>{bomCopyFeedback && <span className="text-xs text-slate-600">{bomCopyFeedback}</span>}</div>{(selected.bomLines ?? []).length > 0 && <div className="space-y-2"><h3 className="flex items-center gap-2 text-sm font-semibold text-slate-700"><FileSpreadsheet className="h-4 w-4" />Vista previa de la Lista de Materiales</h3><BomPreviewTable bomLines={selected.bomLines ?? []} /></div>}<div className="grid gap-4 lg:grid-cols-2"><div className="space-y-3 rounded-lg border p-4"><h2 className="flex items-center gap-2 font-semibold"><Calculator className="h-4 w-4" />Precio comercial</h2><div className="grid grid-cols-2 gap-3"><div><Label>MC %</Label><Input inputMode="decimal" value={mc} onChange={event => setMc(event.target.value)} placeholder="67" /></div><div><Label>Descuento %</Label><Input inputMode="decimal" value={discount} onChange={event => setDiscount(event.target.value)} placeholder="40" /></div></div><Button type="button" onClick={savePricing} disabled={isPending || selected.pricing.state !== 'available'}><Save className="h-4 w-4" />Guardar porcentajes</Button><div className="grid grid-cols-3 gap-2"><Metric label="Precio mínimo" value={pricing ? money(pricing.minimumPrice, selected.pricing.currency) : 'Pendiente'} /><Metric label="Precio máximo" value={pricing ? money(pricing.maximumPrice, selected.pricing.currency) : 'Pendiente'} /><Metric label="PVP" value={pricing ? money(pricing.pvp, selected.pricing.currency) : 'Pendiente'} /></div></div><div className="space-y-3 rounded-lg border p-4"><h2 className="font-semibold">Respuesta comercial externa</h2><Label>Contacto o cuenta comercial</Label><Input value={contact} onChange={event => setContact(event.target.value)} /><Label>Resultado</Label><select value={outcome} onChange={event => setOutcome(event.target.value as typeof outcome)} className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm"><option value="pending">Pendiente</option><option value="approved">Aprobada</option><option value="rejected">Rechazada</option><option value="not_pursued">No continuó</option></select><Textarea value={note} onChange={event => setNote(event.target.value)} placeholder="Observación comercial" /><Button type="button" variant="outline" onClick={saveResponse} disabled={isPending}>Guardar respuesta</Button></div></div><div className="rounded-lg border border-slate-200 p-4"><p className="font-semibold">Revisión técnica</p><p className="mt-1 text-sm text-slate-600">{status(selected.technicalReview.status)} · {date(selected.technicalReview.reviewedAt)}</p><p className="mt-2 text-sm">{selected.technicalReview.note ?? 'Sin observaciones.'}</p></div></CardContent></Card><Card><CardHeader><CardTitle className="flex items-center gap-2"><Settings2 className="h-4 w-4" />Editar fórmulas de cálculo de precios</CardTitle><CardDescription>Aplican globalmente a todas las cotizaciones compartidas. Variables permitidas: costo_materia_prima, costo_ampliado, mc_pct, descuento_pct, precio_minimo y precio_maximo.</CardDescription></CardHeader><CardContent>{editingFormulas ? <div className="space-y-3"><div><Label>Precio mínimo</Label><Input value={formulas.minimumPrice} onChange={event => setFormulas(current => ({ ...current, minimumPrice: event.target.value }))} /></div><div><Label>Precio máximo</Label><Input value={formulas.maximumPrice} onChange={event => setFormulas(current => ({ ...current, maximumPrice: event.target.value }))} /></div><div><Label>PVP</Label><Input value={formulas.pvp} onChange={event => setFormulas(current => ({ ...current, pvp: event.target.value }))} /></div><div className="flex gap-2"><Button type="button" onClick={saveFormulas} disabled={isPending}>Guardar fórmulas</Button><Button type="button" variant="outline" onClick={() => setEditingFormulas(false)}>Cancelar</Button></div></div> : <Button type="button" variant="outline" onClick={() => setEditingFormulas(true)}>Editar fórmulas de cálculo de precios</Button>}</CardContent></Card></section></div>
 }
