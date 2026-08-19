@@ -34,15 +34,25 @@ test('separa peso neto, empaque y evita contar dos veces una subestructura', () 
   const result = calculateEstimationPhysicalWeights({
     estimatedMixtureKg: 6,
     estimatedGelcoatKg: 0.4,
+    wastePct: 0.05,
     lines: [
-      line({ id: 'mix', sapItemCode: 'PINP01-0006-000-0000' }),
-      line({ id: 'gel', sapItemCode: 'PGEL01-0003-000-0100' }),
+      line({ id: 'mix', sapItemCode: 'PINP01-0006-000-0000', quantity: 6, uom: 'KG' }),
+      line({ id: 'mix-child-1', parentId: 'mix', sapItemCode: 'CMPD01-0020-000-0000', quantity: 1.2, uom: 'KG' }),
+      line({ id: 'gel', sapItemCode: 'PGEL01-0003-000-0100', quantity: 0.4, uom: 'KG' }),
+      line({ id: 'gel-child-1', parentId: 'gel', sapItemCode: 'CMPD01-0022-000-0000', quantity: 0.4, uom: 'KG' }),
       line({ id: 'peroxide', quantity: 10, uom: 'GR', physicalWeightSnapshot: { kgPerUom: 0.001, source: 'prueba', note: null, capturedAt: null, extensions: {} } }),
-      line({ id: 'box', quantity: 2, costCategory: 'packaging', physicalWeightSnapshot: { kgPerUom: 0.3, source: 'prueba', note: null, capturedAt: null, extensions: {} } }),
-      line({ id: 'parent', physicalWeightPolicy: 'sub_bom_weight' }),
+      line({ id: 'box', quantity: 2, costCategory: 'packaging', physicalWeightCategory: 'packaging', physicalWeightSnapshot: { kgPerUom: 0.3, source: 'prueba', note: null, capturedAt: null, extensions: {} } }),
+      line({ id: 'parent', quantity: 1, uom: 'UN' }),
       line({ id: 'child', parentId: 'parent', quantity: 4, physicalWeightSnapshot: { kgPerUom: 0.2, source: 'prueba', note: null, capturedAt: null, extensions: {} } }),
     ],
   })
+  // mix: 6 * 0.95 = 5.7 kg (mix-child-1 no se suma dos veces)
+  // gel: 0.4 * 0.95 = 0.38 kg (gel-child-1 no se suma dos veces)
+  // peroxide: 10 GR = 0.01 kg
+  // parent (1 UN) -> child (4 * 0.2 kg) = 0.8 kg
+  // Total net = 5.7 + 0.38 + 0.01 + 0.8 = 6.89 kg
+  // Packaging = 2 * 0.3 = 0.6 kg
+  // Gross = 6.89 + 0.6 = 7.49 kg
   assert.ok(Math.abs((result.netWeightKg ?? 0) - 6.89) < 0.000_001)
   assert.ok(Math.abs((result.packagingWeightKg ?? 0) - 0.6) < 0.000_001)
   assert.ok(Math.abs((result.grossWeightKg ?? 0) - 7.49) < 0.000_001)
@@ -52,6 +62,7 @@ test('conserva un peso inicial y marca las líneas que todavía no tienen factor
   const result = calculateEstimationPhysicalWeights({
     estimatedMixtureKg: 1,
     estimatedGelcoatKg: 1,
+    wastePct: 0.05,
     lines: [line({ id: 'missing', uom: 'M', physicalWeightSnapshot: null })],
   })
   assert.ok(Math.abs((result.netWeightKg ?? 0) - 1.9) < 0.000_001)
@@ -60,16 +71,14 @@ test('conserva un peso inicial y marca las líneas que todavía no tienen factor
   assert.deepEqual(result.missingLineIds, ['missing'])
 })
 
-test('propone desperdicio a partir de una toma física completa sin modificar la cotización', () => {
-})
-
 test('asigna las cuatro categorías por unidad y estructura', () => {
   assert.equal(inferPhysicalWeightPolicy(line({ id: 'weight', uom: 'G' }), false), 'direct_weight')
+  assert.equal(inferPhysicalWeightPolicy(line({ id: 'weight-with-children', uom: 'KG' }), true), 'direct_weight')
   assert.equal(inferPhysicalWeightPolicy(line({ id: 'linear', uom: 'M' }), false), 'direct_weight')
   assert.equal(inferPhysicalWeightPolicy(line({ id: 'area', uom: 'M2' }), false), 'useful_weight')
   assert.equal(inferPhysicalWeightPolicy(line({ id: 'volume', uom: 'L' }), false), 'direct_weight')
   assert.equal(inferPhysicalWeightPolicy(line({ id: 'time', uom: 'MIN' }), false), 'no_weight')
-  assert.equal(inferPhysicalWeightPolicy(line({ id: 'sub-bom' }), true), 'sub_bom_weight')
+  assert.equal(inferPhysicalWeightPolicy(line({ id: 'sub-bom', uom: 'UN' }), true), 'sub_bom_weight')
 })
 
 test('normaliza peso, usa cantidad útil y aplica densidad por volumen', () => {
@@ -111,7 +120,11 @@ test('propone desperdicio desde una toma física completa', () => {
     actualMixtureKg: 6,
     actualGelcoatKg: 0.4,
     actualNetWeightKg: 6.15,
-    lines: [line({ id: 'mix', sapItemCode: 'PINP01-0006-000-0000' }), line({ id: 'gel', sapItemCode: 'PGEL01-0003-000-0100' }), line({ id: 'other', quantity: 1, physicalWeightSnapshot: { kgPerUom: 0.07, source: 'prueba', note: null, capturedAt: null, extensions: {} } })],
+    lines: [
+      line({ id: 'mix', sapItemCode: 'PINP01-0006-000-0000', quantity: 6, uom: 'KG' }),
+      line({ id: 'gel', sapItemCode: 'PGEL01-0003-000-0100', quantity: 0.4, uom: 'KG' }),
+      line({ id: 'other', quantity: 1, physicalWeightSnapshot: { kgPerUom: 0.07, source: 'prueba', note: null, capturedAt: null, extensions: {} } }),
+    ],
   })
   assert.ok(Math.abs((suggested ?? 0) - 0.05) < 0.000_001)
 })
