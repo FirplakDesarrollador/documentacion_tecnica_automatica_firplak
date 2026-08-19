@@ -126,6 +126,83 @@ test('normaliza el borrador completo con homólogo, geometría, color, gelcoat, 
   assert.equal(draft.commercialScenario.pvp, 250_000)
 })
 
+test('sincroniza a empaque el costo de líneas heredadas que ya pesan como empaque', () => {
+  const draft = normalizeEstimationDraft({
+    bomLines: [
+      {
+        id: 'legacy-code',
+        origin: 'sap',
+        sapItemCode: 'CEMP02-0110-000-0000',
+        itemName: 'INSTRUCCIONES LVR ESP/ING',
+        quantity: 1,
+        costCategory: 'material',
+        costStrategy: 'sap_direct',
+      },
+      {
+        id: 'legacy-manual-box',
+        origin: 'manual',
+        sapItemCode: null,
+        itemName: 'CAJA LAVARROPAS VERSA 40X50',
+        quantity: 1,
+        costCategory: 'material',
+        physicalWeightCategory: 'packaging',
+        costStrategy: 'manual_override',
+      },
+      {
+        id: 'mo-line',
+        origin: 'sap',
+        sapItemCode: 'PZCO01-0001-000-0000',
+        itemName: 'MANO OBRA POR MIN MARMOL SINTETICO',
+        quantity: 1,
+        costCategory: 'mo',
+        costStrategy: 'sap_direct',
+      },
+      {
+        id: 'cif-line',
+        origin: 'sap',
+        sapItemCode: 'PZCO01-0002-000-0000',
+        itemName: 'CIF POR MINUTO',
+        quantity: 1,
+        costCategory: 'cif',
+        costStrategy: 'sap_direct',
+      },
+      {
+        id: 'user-chose-product',
+        origin: 'sap',
+        sapItemCode: 'CEMP03-1730-000-0000',
+        itemName: 'LAMINA CARTON',
+        quantity: 1,
+        costCategory: 'material',
+        physicalWeightCategory: 'product',
+        extensions: { physicalWeightCategoryDefinedByUser: true },
+        costStrategy: 'sap_direct',
+      },
+      {
+        id: 'plain-material',
+        origin: 'sap',
+        sapItemCode: 'CMPD01-0020-000-0000',
+        itemName: 'CRISTALAN M202',
+        quantity: 1,
+        costCategory: 'material',
+        physicalWeightCategory: 'product',
+        costStrategy: 'sap_direct',
+      },
+    ],
+  })
+
+  const byId = Object.fromEntries(draft.bomLines.map((line) => [line.id, line]))
+  assert.equal(byId['legacy-code']?.costCategory, 'packaging')
+  assert.equal(byId['legacy-code']?.physicalWeightCategory, 'packaging')
+  assert.equal(byId['legacy-manual-box']?.costCategory, 'packaging')
+  assert.equal(byId['legacy-manual-box']?.physicalWeightCategory, 'packaging')
+  assert.equal(byId['mo-line']?.costCategory, 'mo')
+  assert.equal(byId['cif-line']?.costCategory, 'cif')
+  assert.equal(byId['user-chose-product']?.costCategory, 'material')
+  assert.equal(byId['user-chose-product']?.physicalWeightCategory, 'product')
+  assert.equal(byId['plain-material']?.costCategory, 'material')
+  assert.equal(byId['plain-material']?.physicalWeightCategory, 'product')
+})
+
 test('normaliza JSON desconocido sin coerciones y deja el borrador incompleto pero editable', () => {
   const malformedValues: unknown[] = [null, [], 'no es un objeto', 7]
   for (const value of malformedValues) {

@@ -39,7 +39,7 @@ export const ESTIMATION_DRAFT_PHYSICAL_WEIGHT_CATEGORIES = ['product', 'packagin
 export type EstimationDraftPhysicalWeightCategory = (typeof ESTIMATION_DRAFT_PHYSICAL_WEIGHT_CATEGORIES)[number]
 
 export function isPackagingPhysicalItemCode(itemCode: string | null): boolean {
-  return /EMP\d{2}/iu.test(itemCode ?? '')
+  return /^(?:[A-Z]?EMP\d{2}|EMP\b)/iu.test(itemCode ?? '')
 }
 
 export type EstimationDraftHomologue = {
@@ -632,6 +632,9 @@ function normalizeBomLines(value: unknown): EstimationDraftBomLine[] {
     const extensions = collectExtensions(record, BOM_LINE_KEYS)
     const storedPhysicalWeightCategory = readAllowedValue(record, 'physicalWeightCategory', ESTIMATION_DRAFT_PHYSICAL_WEIGHT_CATEGORIES)
     const physicalWeightCategoryDefinedByUser = extensions.physicalWeightCategoryDefinedByUser === true
+    const storedCostCategory = readAllowedValue(record, 'costCategory', COST_CATEGORIES)
+    const lineLooksPackaging = isPackagingPhysicalItemCode(sapItemCode) || storedPhysicalWeightCategory === 'packaging'
+    const syncCostToPackaging = !physicalWeightCategoryDefinedByUser && storedCostCategory === 'material' && lineLooksPackaging
 
     return [{
       id: normalizedUniqueLineId(readString(record, 'id'), index, seenIds),
@@ -641,7 +644,7 @@ function normalizeBomLines(value: unknown): EstimationDraftBomLine[] {
       itemName: readString(record, 'itemName'),
       quantity,
       uom: readString(record, 'uom'),
-      costCategory: readAllowedValue(record, 'costCategory', COST_CATEGORIES),
+      costCategory: syncCostToPackaging ? 'packaging' : storedCostCategory,
       costStrategy,
       unitCost: readFiniteNumber(record, 'unitCost'),
       costEvidence,
@@ -651,7 +654,7 @@ function normalizeBomLines(value: unknown): EstimationDraftBomLine[] {
       physicalWeightCategory: isPackagingPhysicalItemCode(sapItemCode) && !physicalWeightCategoryDefinedByUser
         ? 'packaging'
         : storedPhysicalWeightCategory
-        ?? (isPackagingPhysicalItemCode(sapItemCode) || readAllowedValue(record, 'costCategory', COST_CATEGORIES) === 'packaging' ? 'packaging' : readAllowedValue(record, 'costCategory', COST_CATEGORIES) === 'material' ? 'product' : null),
+        ?? (lineLooksPackaging || storedCostCategory === 'packaging' ? 'packaging' : storedCostCategory === 'material' ? 'product' : null),
       usefulQuantity: readFiniteNumber(record, 'usefulQuantity'),
       fixedWeightKg,
       physicalWeightSnapshot,
