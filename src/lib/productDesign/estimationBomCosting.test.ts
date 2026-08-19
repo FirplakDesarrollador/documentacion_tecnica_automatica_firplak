@@ -182,3 +182,13 @@ test('clasifica las líneas operativas SAP de mano de obra y CIF', () => {
   assert.equal(inferEstimationSapCostCategory('PZCO01-0002-000-0000', 'CIF POR MINUTO'), 'cif')
   assert.equal(inferEstimationSapCostCategory('CMPD01-0022-000-0000', 'GELCOAT'), 'material')
 })
+
+test('clasifica como empaque los códigos EMP y los nombres de empaque', () => {
+  assert.equal(inferEstimationSapCostCategory('EMP01-0001-000-0000', 'CAJA DE CARTÓN'), 'packaging')
+  assert.equal(inferEstimationSapCostCategory('CEMP01-0002-000-0000', 'EMPACADO POLIETILENO'), 'packaging')
+  assert.equal(inferEstimationSapCostCategory('VEMP02-0001-000-0000', 'CINTA ADHESIVA'), 'packaging')
+  assert.equal(inferEstimationSapCostCategory('PEMP03-0001-000-0000', 'EMBALAJE CORRUGADO'), 'packaging')
+  assert.equal(inferEstimationSapCostCategory('CMPD01-0023-000-0000', 'CAJAS CORRUGADAS 40X40'), 'packaging')
+  assert.equal(inferEstimationSapCostCategory('CMPD01-0024-000-0000', 'CARTÓN FLETE'), 'material')
+  assert.equal(inferEstimationSapCostCategory('PZCO01-0001-000-0000', 'CAJA'), 'mo')
+})
