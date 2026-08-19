@@ -20,6 +20,7 @@ import {
 import {
   createEmptyEstimationDraft,
   freezeSyntheticMarbleCalibration,
+  isPackagingPhysicalItemCode,
   normalizeEstimationDraft,
   serializeEstimationDraft,
   type EstimationDraft,
@@ -437,7 +438,7 @@ function toBomDraftLines(
       manualCostReason: null,
       notes: branchError ?? (node.cycleDetected ? 'SAP reporta un ciclo en esta sub-LdM.' : null),
       physicalWeightPolicy: hasExpandableStructure ? 'sub_bom_weight' : 'direct_weight',
-      physicalWeightCategory: /EMP\d{2}/iu.test(node.itemCode) || inferEstimationSapCostCategory(node.itemCode, node.itemName) === 'packaging' ? 'packaging' : 'product',
+      physicalWeightCategory: isPackagingPhysicalItemCode(node.itemCode) || inferEstimationSapCostCategory(node.itemCode, node.itemName) === 'packaging' ? 'packaging' : 'product',
       usefulQuantity: null,
       fixedWeightKg: null,
       physicalWeightSnapshot: null,
