@@ -75,6 +75,7 @@ import {
 } from './actions'
 import { CommercialColorSelector } from './CommercialColorSelector'
 import {
+  isPackagingPhysicalItemCode,
   type EstimationDraft,
   type EstimationDraftBomLine,
   type EstimationDraftPhysicalWeightPolicy,
@@ -287,9 +288,72 @@ function numberInput(value: number | null): string {
 
 function UnitInput({ unit, className, ...props }: ComponentProps<typeof Input> & { unit: string }) {
   return (
-    <div className="relative">
+    <div className="relative w-full">
       <Input {...props} className={`${className ?? ''} pr-11`} />
-      <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-medium text-slate-400">{unit}</span>
+      <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-medium text-slate-400 select-none">{unit}</span>
+    </div>
+  )
+}
+
+/**
+ * Numeric input that buffers the raw string while the user types,
+ * allowing intermediate states like "3." or "0," without losing the
+ * decimal separator. The parsed number is committed on every valid
+ * keystroke and normalized on blur.
+ */
+function DecimalInput({
+  numericValue,
+  onValueCommit,
+  onFocus: externalOnFocus,
+  onBlur: externalOnBlur,
+  ...inputProps
+}: Omit<ComponentProps<typeof Input>, 'value' | 'onChange'> & {
+  numericValue: number | null
+  onValueCommit: (value: number | null) => void
+}) {
+  const [raw, setRaw] = useState(() => numberInput(numericValue))
+  const [focused, setFocused] = useState(false)
+
+  // Sync from parent when value changes externally (e.g. save, homologue copy)
+  // and the user is NOT actively editing. Uses the getDerivedStateFromProps
+  // pattern (setState during render) instead of refs to comply with
+  // react-hooks/refs.
+  const [prevNumericValue, setPrevNumericValue] = useState(numericValue)
+  if (prevNumericValue !== numericValue) {
+    setPrevNumericValue(numericValue)
+    if (!focused) setRaw(numberInput(numericValue))
+  }
+
+  return (
+    <Input
+      {...inputProps}
+      value={raw}
+      onChange={(event) => {
+        const val = event.target.value
+        if (val !== '' && !isDecimalInput(val)) return
+        setRaw(val)
+        onValueCommit(parseDecimalInput(val))
+      }}
+      onFocus={(event) => {
+        setFocused(true)
+        externalOnFocus?.(event)
+      }}
+      onBlur={(event) => {
+        setFocused(false)
+        const parsed = parseDecimalInput(raw)
+        onValueCommit(parsed)
+        setRaw(numberInput(parsed))
+        externalOnBlur?.(event)
+      }}
+    />
+  )
+}
+
+function DecimalUnitInput({ unit, className, ...props }: ComponentProps<typeof DecimalInput> & { unit: string }) {
+  return (
+    <div className="relative w-full">
+      <DecimalInput {...props} className={`${className ?? ''} pr-11`} />
+      <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-medium text-slate-400 select-none">{unit}</span>
     </div>
   )
 }
@@ -304,12 +368,12 @@ function BomQuantityUomInput({
   onChange: (changes: Partial<EstimationDraftBomLine>) => void
 }) {
   if (line.origin !== 'manual') {
-    return <UnitInput aria-label="Cantidad y unidad" className="h-8 w-full pl-1.5" disabled={contentLocked} inputMode="decimal" unit={line.uom ?? '—'} value={numberInput(line.quantity)} onChange={(event) => onChange({ quantity: numberOrNull(event.target.value) })} />
+    return <DecimalUnitInput aria-label="Cantidad y unidad" className="h-8 w-full pl-1.5" disabled={contentLocked} inputMode="decimal" unit={line.uom ?? '—'} numericValue={line.quantity} onValueCommit={(quantity) => onChange({ quantity })} />
   }
 
   return (
     <div className="flex h-8 overflow-hidden rounded-md border border-input bg-white shadow-xs">
-      <Input aria-label="Cantidad" className="h-full min-w-0 flex-1 rounded-none border-0 px-2 shadow-none focus-visible:ring-0" disabled={contentLocked} inputMode="decimal" value={numberInput(line.quantity)} onChange={(event) => onChange({ quantity: numberOrNull(event.target.value) })} />
+      <DecimalInput aria-label="Cantidad" className="h-full min-w-0 flex-1 rounded-none border-0 px-2 shadow-none focus-visible:ring-0" disabled={contentLocked} inputMode="decimal" numericValue={line.quantity} onValueCommit={(quantity) => onChange({ quantity })} />
       <Input aria-label="Unidad" className="h-full w-12 rounded-none border-0 border-l border-input px-2 shadow-none focus-visible:ring-0" disabled={contentLocked} value={line.uom ?? ''} onChange={(event) => onChange({ uom: event.target.value || null })} />
     </div>
   )
@@ -413,11 +477,14 @@ function blankManualLine(parentId: string | null): EstimationDraftBomLine {
 }
 
 function sapLine(candidate: EstimationHomologueCandidate, parentId: string | null): EstimationDraftBomLine {
+  const costCategory = inferEstimationSapCostCategory(candidate.itemCode, candidate.itemName ?? '')
+  const isPkg = costCategory === 'packaging'
   return {
     ...blankManualLine(parentId),
     origin: 'sap',
     sapItemCode: candidate.itemCode,
-    physicalWeightCategory: /EMP\d{2}/iu.test(candidate.itemCode) ? 'packaging' : 'product',
+    costCategory,
+    physicalWeightCategory: isPkg ? 'packaging' : 'product',
     itemName: candidate.itemName || null,
     uom: null,
     costStrategy: 'sap_direct',
@@ -470,7 +537,7 @@ function substructureLines(
       extensions: { sourceReadAt: leafCost?.readAt ?? null },
     }
     line.physicalWeightPolicy = node.lines.length > 0 ? 'sub_bom_weight' : 'direct_weight'
-    line.physicalWeightCategory = /EMP\d{2}/iu.test(node.itemCode) || line.costCategory === 'packaging' ? 'packaging' : 'product'
+    line.physicalWeightCategory = isPackagingPhysicalItemCode(node.itemCode) || line.costCategory === 'packaging' ? 'packaging' : 'product'
     line.notes = node.cycleDetected ? 'SAP reporta un ciclo en esta rama.' : 'Línea copiada desde la sub-LdM SAP.'
     line.extensions = {
       sapLoaded: true,
@@ -1192,10 +1259,10 @@ export function EstimationEditorClient({
           </div>
           {suggestedCode && <p className="mt-1 text-[11px] text-amber-700">Sugerido, no reservado: {suggestedCode}</p>}
           {excludedByManualBoundary && <Badge className="mt-1 bg-amber-100 text-amber-800">Excluido por costo manual de la rama</Badge>}
-          <div className="mt-2 ml-[30px] flex items-center gap-2">{physicalWeightPolicyIsFixed ? <Badge variant="outline">{PHYSICAL_WEIGHT_POLICY_LABELS[physicalWeightPolicy]}</Badge> : <select aria-label="Tipo de peso" className="h-7 rounded border border-input bg-white px-2 text-[11px]" value={physicalWeightPolicy} onChange={(event) => updateBomLine(line.id, { physicalWeightPolicy: event.target.value as EstimationDraftPhysicalWeightPolicy })}>{PHYSICAL_WEIGHT_POLICY_CHOICES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>}{physicalWeightPolicy !== 'no_weight' && <select aria-label="Destino del peso" className="h-7 rounded border border-input bg-white px-2 text-[11px]" value={line.physicalWeightCategory ?? 'product'} onChange={(event) => updateBomLine(line.id, { physicalWeightCategory: event.target.value as 'product' | 'packaging', extensions: { ...line.extensions, physicalWeightCategoryDefinedByUser: true } })}><option value="product">Producto</option><option value="packaging">Empaque</option></select>}{physicalWeightPolicy === 'useful_weight' && <Input aria-label="Cantidad útil" className="h-7 w-24" disabled={contentLocked} inputMode="decimal" value={numberInput(line.usefulQuantity)} onChange={(event) => updateBomLine(line.id, { usefulQuantity: numberOrNull(event.target.value) })} placeholder="Cantidad útil" />}{!physicalWeightPolicyIsFixed && physicalWeightPolicy === 'direct_weight' && line.physicalWeightSnapshot?.kgPerUom === null && <Link href="/physical-weights" className="text-[11px] font-medium text-amber-700 hover:text-amber-900">Definir kg/{line.uom ?? 'UOM'}</Link>}</div>
+          <div className="mt-2 ml-[30px] flex items-center gap-2">{physicalWeightPolicyIsFixed ? <Badge variant="outline">{PHYSICAL_WEIGHT_POLICY_LABELS[physicalWeightPolicy]}</Badge> : <select aria-label="Tipo de peso" className="h-7 rounded border border-input bg-white px-2 text-[11px]" value={physicalWeightPolicy} onChange={(event) => updateBomLine(line.id, { physicalWeightPolicy: event.target.value as EstimationDraftPhysicalWeightPolicy })}>{PHYSICAL_WEIGHT_POLICY_CHOICES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>}{physicalWeightPolicy !== 'no_weight' && <select aria-label="Destino del peso" className="h-7 rounded border border-input bg-white px-2 text-[11px]" value={line.physicalWeightCategory ?? 'product'} onChange={(event) => { const nextCategory = event.target.value as 'product' | 'packaging'; updateBomLine(line.id, { physicalWeightCategory: nextCategory, ...(line.costCategory === 'mo' || line.costCategory === 'cif' ? {} : { costCategory: nextCategory === 'packaging' ? 'packaging' : 'material' }), extensions: { ...line.extensions, physicalWeightCategoryDefinedByUser: true } }) }}><option value="product">Producto</option><option value="packaging">Empaque</option></select>}{physicalWeightPolicy === 'useful_weight' && <DecimalInput aria-label="Cantidad útil" className="h-7 w-24" disabled={contentLocked} inputMode="decimal" numericValue={line.usefulQuantity} onValueCommit={(usefulQuantity) => updateBomLine(line.id, { usefulQuantity })} placeholder="Cantidad útil" />}{!physicalWeightPolicyIsFixed && physicalWeightPolicy === 'direct_weight' && line.physicalWeightSnapshot?.kgPerUom === null && <Link href="/physical-weights" className="text-[11px] font-medium text-amber-700 hover:text-amber-900">Definir kg/{line.uom ?? 'UOM'}</Link>}</div>
         </div>
         <div className="flex justify-center p-2"><BomQuantityUomInput line={line} contentLocked={contentLocked} onChange={(changes) => updateBomLine(line.id, changes)} /></div>
-        <div className="flex flex-col items-center p-2 text-center">{isManual && <select value={line.costStrategy ?? ''} disabled={contentLocked} onChange={(event) => { const costStrategy = (event.target.value || null) as EstimationBomCostStrategy | null; if (costStrategy === 'manual_override' && hasChildren && !window.confirm('El costo manual excluirá expresamente todos los descendientes del cálculo. ¿Continuar?')) return; updateBomLine(line.id, costStrategy === 'expand_children' ? { costStrategy, unitCost: null, costEvidence: null, manualCostReason: null } : { costStrategy }) }} className="mb-1 h-7 max-w-full rounded border border-input bg-white px-1 text-[11px]">{COST_STRATEGIES.map(strategy => <option key={strategy.value} value={strategy.value}>{strategy.label}</option>)}</select>}{isManual && line.costStrategy === 'manual_override' ? <Input className="h-8 w-24" inputMode="decimal" value={numberInput(line.unitCost)} onChange={(event) => { const unitCost = numberOrNull(event.target.value); updateBomLine(line.id, { unitCost, costEvidence: unitCost === null ? null : { source: 'manual', candidateId: null, warehouseCode: null, documentType: 'Manual', documentNumber: null, documentDate: new Date().toISOString(), originalCurrency: 'COP', sourceUom: line.uom, warning: null, extensions: {} } }) }} /> : <span className="font-semibold text-slate-800">{valuation?.structuralUnitCost === null || valuation?.structuralUnitCost === undefined ? 'Pendiente' : formatCurrency(valuation.structuralUnitCost)}</span>}</div>
+        <div className="flex flex-col items-center p-2 text-center">{isManual && <select value={line.costStrategy ?? ''} disabled={contentLocked} onChange={(event) => { const costStrategy = (event.target.value || null) as EstimationBomCostStrategy | null; if (costStrategy === 'manual_override' && hasChildren && !window.confirm('El costo manual excluirá expresamente todos los descendientes del cálculo. ¿Continuar?')) return; updateBomLine(line.id, costStrategy === 'expand_children' ? { costStrategy, unitCost: null, costEvidence: null, manualCostReason: null } : { costStrategy }) }} className="mb-1 h-7 max-w-full rounded border border-input bg-white px-1 text-[11px]">{COST_STRATEGIES.map(strategy => <option key={strategy.value} value={strategy.value}>{strategy.label}</option>)}</select>}{isManual && line.costStrategy === 'manual_override' ? <DecimalInput className="h-8 w-24" inputMode="decimal" numericValue={line.unitCost} onValueCommit={(unitCost) => { updateBomLine(line.id, { unitCost, costEvidence: unitCost === null ? null : { source: 'manual', candidateId: null, warehouseCode: null, documentType: 'Manual', documentNumber: null, documentDate: new Date().toISOString(), originalCurrency: 'COP', sourceUom: line.uom, warning: null, extensions: {} } }) }} /> : <span className="font-semibold text-slate-800">{valuation?.structuralUnitCost === null || valuation?.structuralUnitCost === undefined ? 'Pendiente' : formatCurrency(valuation.structuralUnitCost)}</span>}</div>
         <div className="p-2 text-center font-semibold text-slate-800">{valuation ? formatCurrency(valuation.totalCost) : 'Pendiente'}</div>
         <div className="px-4 py-3"><div className="flex min-w-40 flex-col gap-1">{isManual && <><Button type="button" size="sm" variant="outline" onClick={() => prepareSapChildSearch(line.id)}><GitBranchPlus className="h-3.5 w-3.5" />Agregar hijo SAP</Button><Button type="button" size="sm" variant="outline" onClick={() => addManualChild(line.id)}><PackagePlus className="h-3.5 w-3.5" />Agregar manual</Button></>}{line.origin === 'sap' && hasChildren && <Button type="button" size="sm" variant="outline" disabled={isPending} onClick={() => convertSapSubstructure(line)}><Copy className="h-3.5 w-3.5" />Copiar sub-LdM</Button>}<Button type="button" variant="ghost" size="sm" disabled={contentLocked} onClick={() => removeBomLine(line.id)}><Trash2 className="h-3.5 w-3.5 text-red-600" />Eliminar rama</Button></div></div>
       </SortableBomRow>
@@ -1325,20 +1392,24 @@ export function EstimationEditorClient({
               <CardTitle>Estimaciones según CAD | Mármol sintético</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid items-end gap-4 rounded-xl border border-slate-200 bg-white p-4 sm:grid-cols-2 2xl:grid-cols-3">
+              <div className="grid items-end gap-4 rounded-xl border border-slate-200 bg-white p-4 sm:grid-cols-2">
                 <div className="space-y-2"><Label htmlFor="cad-volume">Volumen</Label><UnitInput id="cad-volume" unit="mm³" inputMode="decimal" value={numberInput(estimation.draft.geometry.volumeMm3)} onChange={(event) => updateGeometry('volumeMm3', event.target.value)} /></div>
                 <div className="space-y-2"><Label>Mezcla</Label><UnitInput unit="kg" readOnly value={formatQuantity(estimation.draft.geometry.estimatedMixtureKg)} className="bg-slate-50" /></div>
                 <div className="space-y-2"><Label htmlFor="paint-area">Área</Label><UnitInput id="paint-area" unit="mm²" inputMode="decimal" value={numberInput(estimation.draft.geometry.paintAreaMm2)} onChange={(event) => updateGeometry('paintAreaMm2', event.target.value)} /></div>
                 <div className="space-y-2"><Label>Gelcoat</Label><UnitInput unit="kg" readOnly value={formatQuantity(estimation.draft.geometry.estimatedGelcoatKg)} className="bg-slate-50" /></div>
-                <div className="space-y-2"><Label>Peróxido</Label><UnitInput unit="g" readOnly value={formatQuantity(estimatedPeroxideGrams, 2)} className="bg-slate-50" /></div>
+                <div className="space-y-2 sm:col-span-2 md:col-span-1"><Label>Peróxido</Label><UnitInput unit="g" readOnly value={formatQuantity(estimatedPeroxideGrams, 2)} className="bg-slate-50" /></div>
               </div>
-              <div className="grid items-end gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2 2xl:grid-cols-3">
-                <div className="space-y-2"><Label htmlFor="casting-waste">Merma vaciado</Label><UnitInput id="casting-waste" unit="%" inputMode="decimal" value={numberInput(estimation.draft.geometry.castingWastePct === null ? null : estimation.draft.geometry.castingWastePct * 100)} onChange={(event) => { const value = numberOrNull(event.target.value); updateGeometry('castingWastePct', value === null ? '' : String(value / 100)) }} /></div>
-                <div className="space-y-2"><Label htmlFor="post-waste">Merma pos-desmolde</Label><UnitInput id="post-waste" unit="%" inputMode="decimal" value={numberInput(estimation.draft.geometry.postDemoldWastePct === null ? null : estimation.draft.geometry.postDemoldWastePct * 100)} onChange={(event) => { const value = numberOrNull(event.target.value); updateGeometry('postDemoldWastePct', value === null ? '' : String(value / 100)) }} /></div>
-                <div className="space-y-2"><Label>Peso neto</Label><UnitInput unit="kg" readOnly value={formatQuantity(estimation.draft.geometry.estimatedNetWeightKg, 2)} className="bg-white" /></div>
-                <div className="space-y-2"><Label>Peso empaque</Label><UnitInput unit="kg" readOnly value={formatQuantity(estimation.draft.geometry.estimatedPackagingWeightKg, 2)} className="bg-white" /></div>
-                <div className="space-y-2"><Label>Peso bruto</Label><UnitInput unit="kg" readOnly value={formatQuantity(estimation.draft.geometry.estimatedGrossWeightKg, 2)} className="bg-white" /></div>
-                {hasIncompletePhysicalWeight && <p className="text-xs font-medium text-red-700 sm:col-span-2 xl:col-span-5">Faltan pesos por detallar; estos valores son una estimación inicial.</p>}
+              <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2"><Label htmlFor="casting-waste">Merma vaciado</Label><UnitInput id="casting-waste" unit="%" inputMode="decimal" value={numberInput(estimation.draft.geometry.castingWastePct === null ? null : estimation.draft.geometry.castingWastePct * 100)} onChange={(event) => { const value = numberOrNull(event.target.value); updateGeometry('castingWastePct', value === null ? '' : String(value / 100)) }} /></div>
+                  <div className="space-y-2"><Label htmlFor="post-waste">Merma pos-desmolde</Label><UnitInput id="post-waste" unit="%" inputMode="decimal" value={numberInput(estimation.draft.geometry.postDemoldWastePct === null ? null : estimation.draft.geometry.postDemoldWastePct * 100)} onChange={(event) => { const value = numberOrNull(event.target.value); updateGeometry('postDemoldWastePct', value === null ? '' : String(value / 100)) }} /></div>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <div className="space-y-2"><Label>Peso neto</Label><UnitInput unit="kg" readOnly value={formatQuantity(estimation.draft.geometry.estimatedNetWeightKg, 2)} className="bg-white" /></div>
+                  <div className="space-y-2"><Label>Peso empaque</Label><UnitInput unit="kg" readOnly value={formatQuantity(estimation.draft.geometry.estimatedPackagingWeightKg, 2)} className="bg-white" /></div>
+                  <div className="space-y-2"><Label>Peso bruto</Label><UnitInput unit="kg" readOnly value={formatQuantity(estimation.draft.geometry.estimatedGrossWeightKg, 2)} className="bg-white" /></div>
+                </div>
+                {hasIncompletePhysicalWeight && <p className="text-xs font-medium text-red-700">Faltan pesos por detallar; estos valores son una estimación inicial.</p>}
               </div>
               <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-slate-600">Completa volumen, área y ambas mermas para calcular.</p><Button type="button" variant="outline" onClick={freezeCalibration} disabled={isPending || !canCalculateCad}><Calculator className="h-4 w-4" />Calcular y congelar con muestras válidas</Button></div>
               <div className="grid items-end gap-4 rounded-xl border border-sky-200 bg-sky-50 p-4 sm:grid-cols-2 [&>.w-full]:sm:col-span-2">
