@@ -8,8 +8,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { AlertTriangle, Download, FileUp, Loader2, PackageSearch, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { getOrphanReferencesAction, inactivateOrphanReferencesAction, type OrphanReferenceRow } from '@/app/assets/orphans-actions'
+import { getOrphanResourcesAction, inactivateOrphanReferencesAction, type OrphanResourceRow } from '@/app/assets/orphans-actions'
+import { getDocumentSlugPrefixesAction } from '@/app/assets/actions'
 import { normalizeText } from '@/lib/isometrics/bulkMatch'
+import { RESOURCE_TYPES, RESOURCE_TYPE_DEFINITIONS, type ResourceType } from '@/lib/resources/resourceTypes'
 import { directoryInputProps } from '@/lib/ui/directoryInputProps'
 import { createClient } from '@/utils/supabase/client'
 
@@ -18,8 +20,10 @@ type ParsedExcel = {
     similarity_code: string
     expected_svg_filename: string
     reference_ids: string[]
+    version_ids: string[]
     family_codes: string[]
     reference_labels: Record<string, string>
+    version_labels: Record<string, string>
   }>
   allowed_reference_ids: string[]
   expected_filename_to_group: Record<string, string>
@@ -35,7 +39,19 @@ type WizardItem = {
   expected_svg_filename: string
   match_status: 'OK' | 'NO_MATCH_EXPECTED_NAME' | 'DUPLICATE_EXPECTED_NAME'
   target_reference_ids: string[]
+  target_version_ids: string[]
   target_reference_labels: Record<string, string>
+  target_version_labels: Record<string, string>
+}
+
+type DocumentPrefixOption = {
+  document_slot: string
+  label: string
+  active: boolean
+}
+
+function targetKey(type: 'reference' | 'version', id: string) {
+  return `${type}:${id}`
 }
 
 function stripExtension(fileName: string) {
@@ -64,7 +80,8 @@ export function OrphanProductsDialog() {
   const [open, setOpen] = React.useState(false)
   const [step, setStep] = React.useState<'list' | 'associate'>('list')
   const [loading, setLoading] = React.useState(false)
-  const [orphans, setOrphans] = React.useState<OrphanReferenceRow[]>([])
+  const [resourceType, setResourceType] = React.useState<ResourceType>('isometric')
+  const [orphans, setOrphans] = React.useState<OrphanResourceRow[]>([])
   const [lastLoadedAt, setLastLoadedAt] = React.useState<Date | null>(null)
   const [selectedOrphanIds, setSelectedOrphanIds] = React.useState<Record<string, boolean>>({})
 
@@ -82,6 +99,9 @@ export function OrphanProductsDialog() {
 
   const [isApplying, setIsApplying] = React.useState(false)
   const [progress, setProgress] = React.useState<{ phase: string; current: number; total: number } | null>(null)
+  const [documentPrefixes, setDocumentPrefixes] = React.useState<DocumentPrefixOption[]>([])
+  const [publishInstruction, setPublishInstruction] = React.useState(true)
+  const [documentSlot, setDocumentSlot] = React.useState('manual_instalacion')
 
   const resetDialogState = React.useCallback(() => {
     setStep('list')
@@ -95,12 +115,16 @@ export function OrphanProductsDialog() {
     setTargetSelectionByItemId({})
     setProgress(null)
     setSelectedOrphanIds({})
+    setResourceType('isometric')
+    setDocumentPrefixes([])
+    setPublishInstruction(true)
+    setDocumentSlot('manual_instalacion')
   }, [])
 
-  const loadOrphans = async () => {
+  const loadOrphans = React.useCallback(async (type = resourceType) => {
     setLoading(true)
     try {
-      const data = await getOrphanReferencesAction()
+      const data = await getOrphanResourcesAction(type)
       setOrphans(Array.isArray(data) ? data : [])
       setLastLoadedAt(new Date())
     } catch (e: unknown) {
@@ -108,7 +132,7 @@ export function OrphanProductsDialog() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [resourceType])
 
   const handleOpenChange = React.useCallback(
     (nextOpen: boolean) => {
@@ -119,7 +143,7 @@ export function OrphanProductsDialog() {
       }
       resetDialogState()
     },
-    [resetDialogState]
+    [loadOrphans, resetDialogState]
   )
 
   const selectedOrphanCount = React.useMemo(() => Object.values(selectedOrphanIds).filter(Boolean).length, [selectedOrphanIds])
@@ -161,7 +185,7 @@ export function OrphanProductsDialog() {
 
   const downloadExcel = async () => {
     try {
-      const res = await fetch('/api/assets/orphans/export')
+      const res = await fetch(`/api/assets/orphans/export?type=${encodeURIComponent(resourceType)}`)
       if (!res.ok) {
         const j = await res.json().catch(() => null)
         throw new Error(j?.error || 'No se pudo exportar')
@@ -170,7 +194,9 @@ export function OrphanProductsDialog() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `ORPHAN_REFERENCES_${new Date().toISOString().slice(0, 10)}.xlsx`
+      a.download = resourceType === 'isometric'
+        ? `ORPHAN_REFERENCES_${new Date().toISOString().slice(0, 10)}.xlsx`
+        : `ORPHAN_${resourceType.toUpperCase()}_${new Date().toISOString().slice(0, 10)}.xlsx`
       document.body.appendChild(a)
       a.click()
       a.remove()
@@ -186,7 +212,7 @@ export function OrphanProductsDialog() {
     try {
       const fd = new FormData()
       fd.append('file', file)
-      const res = await fetch('/api/assets/orphans/parse', { method: 'POST', body: fd })
+      const res = await fetch(`/api/assets/orphans/parse?type=${encodeURIComponent(resourceType)}`, { method: 'POST', body: fd })
       const j = (await res.json().catch(() => null)) as Record<string, unknown> | null
       if (!res.ok || !j?.success) throw new Error(String(j?.error || 'No se pudo leer el Excel'))
       const parsed = j as ParsedExcel & { success: true }
@@ -263,8 +289,10 @@ export function OrphanProductsDialog() {
           similarity_code: '',
           expected_svg_filename: '',
           match_status: 'NO_MATCH_EXPECTED_NAME',
-          target_reference_ids: [],
-          target_reference_labels: {},
+           target_reference_ids: [],
+            target_version_ids: [],
+            target_reference_labels: {},
+            target_version_labels: {},
         })
         continue
       }
@@ -278,8 +306,10 @@ export function OrphanProductsDialog() {
         similarity_code: sim,
         expected_svg_filename: group.expected_svg_filename,
         match_status: 'OK',
-        target_reference_ids: group.reference_ids.slice(),
-        target_reference_labels: group.reference_labels || {},
+          target_reference_ids: group.reference_ids.slice(),
+          target_version_ids: group.version_ids.slice(),
+          target_reference_labels: group.reference_labels || {},
+          target_version_labels: group.version_labels || {},
       }
       const list = matchedByExpected.get(normBase) || []
       list.push(it)
@@ -312,7 +342,10 @@ export function OrphanProductsDialog() {
       const next: Record<string, string[]> = {}
       for (const it of previewItems) {
         if (it.match_status !== 'OK') continue
-        next[it.id] = it.target_reference_ids.slice()
+        next[it.id] = [
+          ...it.target_reference_ids.map(id => targetKey('reference', id)),
+          ...it.target_version_ids.map(id => targetKey('version', id)),
+        ]
       }
       return next
     })
@@ -323,11 +356,11 @@ export function OrphanProductsDialog() {
     toast.success(`Preview: OK=${ok} · ignorados=${ignored} · duplicados=${dup} · faltan grupos=${missing.length}`)
   }
 
-  const toggleRefTarget = (itemId: string, refId: string) => {
+  const toggleTarget = (itemId: string, key: string) => {
     setTargetSelectionByItemId(prev => {
       const current = prev[itemId] || []
-      const exists = current.includes(refId)
-      const next = exists ? current.filter(x => x !== refId) : [...current, refId]
+      const exists = current.includes(key)
+      const next = exists ? current.filter(x => x !== key) : [...current, key]
       return { ...prev, [itemId]: next }
     })
   }
@@ -347,7 +380,7 @@ export function OrphanProductsDialog() {
     for (const it of okItems) {
       const selected = targetSelectionByItemId[it.id] || []
       if (selected.length === 0) {
-        toast.error(`No hay referencias seleccionadas para: ${it.relative_path}`)
+        toast.error(`No hay destinos seleccionados para: ${it.relative_path}`)
         return
       }
     }
@@ -372,6 +405,7 @@ export function OrphanProductsDialog() {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
+          resource_type: resourceType,
           files: itemToHash.map(i => ({ sha256: i.sha256, ext: i.ext, content_type: i.contentType })),
         }),
       })
@@ -384,7 +418,9 @@ export function OrphanProductsDialog() {
       setProgress({ phase: 'upload', current: 0, total: itemToHash.length })
       for (let i = 0; i < itemToHash.length; i++) {
         const x = itemToHash[i]
-        const storagePath = `assets/isometrics/${x.sha256}${x.ext && x.ext.startsWith('.') ? x.ext : '.svg'}`
+        const storagePath = resourceType === 'isometric'
+          ? `assets/isometrics/${x.sha256}${x.ext && x.ext.startsWith('.') ? x.ext : '.svg'}`
+          : `assets/resources/${resourceType}/${x.sha256}${x.ext && x.ext.startsWith('.') ? x.ext : '.svg'}`
         const tok = tokenByStoragePath.get(storagePath)?.token
         if (!tok) throw new Error(`No token for ${storagePath}`)
         if (!uploaded.has(storagePath)) {
@@ -405,11 +441,19 @@ export function OrphanProductsDialog() {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             overwriteExisting: true,
+            resource_type: resourceType,
+            public_document: resourceType === 'instruction_pdf'
+              ? { enabled: publishInstruction, document_slot: documentSlot }
+              : undefined,
             items: chunk.map(c => ({
               relative_path: c.item.relative_path,
-              target_granularity: 'reference',
-              target_reference_ids: targetSelectionByItemId[c.item.id] || c.item.target_reference_ids,
-              target_version_ids: [],
+              target_granularity: c.item.target_version_ids.length > 0 ? 'version' : 'reference',
+              target_reference_ids: (targetSelectionByItemId[c.item.id] || [])
+                .filter(key => key.startsWith('reference:'))
+                .map(key => key.slice('reference:'.length)),
+              target_version_ids: (targetSelectionByItemId[c.item.id] || [])
+                .filter(key => key.startsWith('version:'))
+                .map(key => key.slice('version:'.length)),
               sha256: c.sha256,
               ext: c.ext,
             })),
@@ -431,6 +475,34 @@ export function OrphanProductsDialog() {
   }
 
   const orphanCount = orphans.length
+  const resourceDefinition = RESOURCE_TYPE_DEFINITIONS[resourceType]
+  const isInstructionPdf = resourceType === 'instruction_pdf'
+
+  const changeResourceType = async (nextType: ResourceType) => {
+    setResourceType(nextType)
+    setExcel(null)
+    setSelectedFiles([])
+    setFileByRelativePath(new Map())
+    setItems([])
+    setMissingGroups([])
+    setTargetSelectionByItemId({})
+    setSelectedOrphanIds({})
+    if (nextType === 'instruction_pdf') {
+      try {
+        const prefixes = await getDocumentSlugPrefixesAction()
+        setDocumentPrefixes(prefixes.filter(prefix => prefix.active).map(prefix => ({
+          document_slot: prefix.document_slot,
+          label: prefix.label,
+          active: prefix.active,
+        })))
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'No se pudieron cargar los tipos funcionales de documento')
+      }
+    } else {
+      setDocumentPrefixes([])
+    }
+    await loadOrphans(nextType)
+  }
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -444,7 +516,7 @@ export function OrphanProductsDialog() {
         <DialogHeader className="p-6 pb-2 shrink-0">
           <DialogTitle className="text-xl font-bold text-slate-900 flex items-center gap-2">
             <PackageSearch className="h-5 w-5 text-slate-700" />
-            Productos huérfanos (sin isométrico y sin sugerencia usable)
+            Productos sin {resourceDefinition.label.toLowerCase()}
           </DialogTitle>
           <DialogDescription className="text-slate-500">
             Descarga un Excel con nombres esperados + grupos S#. Luego sube el Excel y asocia por carpeta (100% determinístico).
@@ -455,10 +527,21 @@ export function OrphanProductsDialog() {
           {step === 'list' && (
             <>
               <div className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  Tipo
+                  <select
+                    value={resourceType}
+                    onChange={event => void changeResourceType(event.currentTarget.value as ResourceType)}
+                    disabled={loading}
+                    className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                  >
+                    {RESOURCE_TYPES.map(type => <option key={type} value={type}>{RESOURCE_TYPE_DEFINITIONS[type].label}</option>)}
+                  </select>
+                </label>
                 <Badge className="bg-slate-100 text-slate-700 border border-slate-200">Huérfanos: {loading ? '…' : orphanCount}</Badge>
                 {lastLoadedAt && <div className="text-xs text-muted-foreground">Actualizado: {lastLoadedAt.toLocaleString()}</div>}
                 <div className="flex-1" />
-                <Button variant="outline" onClick={loadOrphans} disabled={loading}>
+                <Button variant="outline" onClick={() => void loadOrphans()} disabled={loading}>
                   {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
                   Refrescar
                 </Button>
@@ -469,9 +552,11 @@ export function OrphanProductsDialog() {
                   <Download className="h-4 w-4 mr-2" />
                   Descargar referencias
                 </Button>
-                <Button variant="destructive" onClick={inactivateSelected} disabled={loading || selectedOrphanCount === 0}>
-                  Inactivar ({selectedOrphanCount})
-                </Button>
+                {resourceType === 'isometric' && (
+                  <Button variant="destructive" onClick={inactivateSelected} disabled={loading || selectedOrphanCount === 0}>
+                    Inactivar ({selectedOrphanCount})
+                  </Button>
+                )}
                 <div className="flex items-center gap-2">
                   <input
                     type="file"
@@ -525,7 +610,7 @@ export function OrphanProductsDialog() {
                       </TableRow>
                     ) : (
                       orphans.slice(0, 500).map(o => (
-                        <TableRow key={o.reference_id}>
+                        <TableRow key={targetKey(o.target_type, o.target_id)}>
                           <TableCell>
                             <input
                               type="checkbox"
@@ -566,7 +651,7 @@ export function OrphanProductsDialog() {
               </div>
 
               <div className="space-y-2">
-                <div className="text-xs text-muted-foreground">Carpeta con SVGs</div>
+                <div className="text-xs text-muted-foreground">Carpeta con archivos de {resourceDefinition.label.toLowerCase()}</div>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -580,6 +665,23 @@ export function OrphanProductsDialog() {
                 />
                 <div className="text-xs text-muted-foreground">Ignorados .ai: {ignoredAiCount}</div>
               </div>
+
+              {isInstructionPdf && (
+                <div className="rounded-md border border-slate-200 p-3 space-y-3">
+                  <label className="flex items-center gap-2 text-sm font-medium">
+                    <input type="checkbox" checked={publishInstruction} onChange={event => setPublishInstruction(event.currentTarget.checked)} />
+                    Publicar instructivos con QR
+                  </label>
+                  {publishInstruction && (
+                    <label className="block text-sm font-medium">
+                      Tipo funcional del documento
+                      <select value={documentSlot} onChange={event => setDocumentSlot(event.currentTarget.value)} className="mt-1 h-9 w-full rounded-md border border-input bg-background px-2 text-sm">
+                        {documentPrefixes.map(prefix => <option key={prefix.document_slot} value={prefix.document_slot}>{prefix.label}</option>)}
+                      </select>
+                    </label>
+                  )}
+                </div>
+              )}
 
               <div className="flex flex-wrap items-center gap-2">
                 <Button variant="outline" onClick={buildPreview} disabled={!excel || selectedFiles.length === 0}>
@@ -631,17 +733,28 @@ export function OrphanProductsDialog() {
                             ) : (
                               <details>
                                 <summary className="cursor-pointer text-muted-foreground">
-                                  refs={(targetSelectionByItemId[it.id] || it.target_reference_ids).length} · {it.expected_svg_filename}
+                                  destinos={(targetSelectionByItemId[it.id] || []).length} · {it.expected_svg_filename}
                                 </summary>
                                 <div className="mt-2 space-y-1">
                                   {it.target_reference_ids.map(refId => {
-                                    const selected = targetSelectionByItemId[it.id] || it.target_reference_ids
-                                    const checked = selected.includes(refId)
+                                    const selected = targetSelectionByItemId[it.id] || []
+                                    const key = targetKey('reference', refId)
+                                    const checked = selected.includes(key)
                                     const label = it.target_reference_labels?.[refId] || refId
                                     return (
                                       <label key={refId} className="flex items-start gap-2 text-muted-foreground">
-                                        <input type="checkbox" checked={checked} onChange={() => toggleRefTarget(it.id, refId)} />
-                                        <span className="whitespace-normal break-words">{label}</span>
+                                        <input type="checkbox" checked={checked} onChange={() => toggleTarget(it.id, key)} />
+                                        <span className="whitespace-normal break-words">Referencia · {label}</span>
+                                      </label>
+                                    )
+                                  })}
+                                  {it.target_version_ids.map(versionId => {
+                                    const selected = targetSelectionByItemId[it.id] || []
+                                    const key = targetKey('version', versionId)
+                                    return (
+                                      <label key={versionId} className="flex items-start gap-2 text-muted-foreground">
+                                        <input type="checkbox" checked={selected.includes(key)} onChange={() => toggleTarget(it.id, key)} />
+                                        <span className="whitespace-normal break-words">Versión · {it.target_version_labels?.[versionId] || versionId}</span>
                                       </label>
                                     )
                                   })}
@@ -650,7 +763,13 @@ export function OrphanProductsDialog() {
                                       variant="outline"
                                       size="sm"
                                       className="h-7 px-2 text-[11px]"
-                                      onClick={() => setTargetSelectionByItemId(prev => ({ ...prev, [it.id]: it.target_reference_ids.slice() }))}
+                                      onClick={() => setTargetSelectionByItemId(prev => ({
+                                        ...prev,
+                                        [it.id]: [
+                                          ...it.target_reference_ids.map(id => targetKey('reference', id)),
+                                          ...it.target_version_ids.map(id => targetKey('version', id)),
+                                        ],
+                                      }))}
                                     >
                                       Seleccionar todo
                                     </Button>

@@ -3,6 +3,7 @@
 import { dbQuery } from '@/lib/supabase'
 import { revalidatePath, revalidateTag, unstable_noStore as noStore } from 'next/cache'
 import { assertPermission } from '@/utils/auth/access'
+import { RESOURCE_TYPE_DEFINITIONS, type NonIsometricResourceType, type ResourceType } from '@/lib/resources/resourceTypes'
 
 async function assertAdminAccess() {
   await assertPermission('module:assets')
@@ -20,6 +21,13 @@ export type OrphanReferenceRow = {
   accessory_text: string | null
   sample_sku_complete: string | null
   sample_final_name_es: string | null
+}
+
+export type OrphanResourceRow = OrphanReferenceRow & {
+  target_type: 'reference' | 'version'
+  target_id: string
+  version_code: string | null
+  isometric_asset_id: string | null
 }
 
 function buildMissingIsometricWhere() {
@@ -155,6 +163,126 @@ export async function getOrphanReferencesAction(): Promise<OrphanReferenceRow[]>
       WHERE us.reference_id IS NULL
       ORDER BY mr.family_code NULLS LAST, mr.reference_code NULLS LAST
     `)) as OrphanReferenceRow[]
+
+  return Array.isArray(rows) ? rows : []
+}
+
+export async function getOrphanResourcesAction(resourceType: ResourceType): Promise<OrphanResourceRow[]> {
+  await assertAdminAccess()
+  if (resourceType === 'isometric') {
+    const references = await getOrphanReferencesAction()
+    return references.map((reference) => ({
+      ...reference,
+      target_type: 'reference' as const,
+      target_id: reference.reference_id,
+      version_code: null,
+      isometric_asset_id: null,
+    }))
+  }
+
+  const safeType = resourceType as NonIsometricResourceType
+  if (!RESOURCE_TYPE_DEFINITIONS[safeType]) throw new Error('Tipo de recurso no soportado.')
+  noStore()
+
+  const rows = await dbQuery(`
+    WITH active_references AS (
+      SELECT DISTINCT ON (v.reference_id)
+        v.reference_id,
+        v.id AS sample_version_id,
+        v.version_code AS sample_version_code,
+        r.isometric_asset_id::text AS reference_isometric_asset_id,
+        f.family_code,
+        r.reference_code,
+        r.designation,
+        r.product_name,
+        r.commercial_measure,
+        r.line,
+        r.special_label,
+        COALESCE(r.ref_attrs->>'accessory_text', 'NA') AS accessory_text,
+        sku.sku_complete AS sample_sku_complete,
+        sku.final_complete_name_es AS sample_final_name_es
+      FROM public.product_references r
+      JOIN public.product_versions v ON v.reference_id = r.id
+      LEFT JOIN LATERAL (
+        SELECT s.sku_complete, s.final_complete_name_es
+        FROM public.product_skus s
+        WHERE s.version_id = v.id
+        ORDER BY s.sku_complete NULLS LAST
+        LIMIT 1
+      ) sku ON true
+      LEFT JOIN public.families f ON f.family_code = r.family_code
+      WHERE (r.status IS NULL OR r.status <> 'INACTIVO')
+      ORDER BY v.reference_id, v.version_code NULLS LAST
+    ),
+    reference_targets AS (
+      SELECT
+        ar.reference_id,
+        ar.reference_id AS target_id,
+        'reference'::text AS target_type,
+        NULL::text AS version_code,
+        ar.reference_isometric_asset_id AS isometric_asset_id,
+        ar.family_code,
+        ar.reference_code,
+        ar.designation,
+        ar.product_name,
+        ar.commercial_measure,
+        ar.line,
+        ar.special_label,
+        ar.accessory_text,
+        ar.sample_sku_complete,
+        ar.sample_final_name_es
+      FROM active_references ar
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM public.product_asset_links pal
+        JOIN public.assets a ON a.id = pal.asset_id
+        WHERE a.type = '${safeType}'
+          AND pal.status <> 'replaced'
+          AND (
+            pal.reference_id = ar.reference_id
+            OR pal.version_id IN (
+              SELECT v.id
+              FROM public.product_versions v
+              WHERE v.reference_id = ar.reference_id
+            )
+          )
+      )
+    ),
+    version_targets AS (
+      SELECT
+        v.reference_id,
+        v.id AS target_id,
+        'version'::text AS target_type,
+        v.version_code,
+        v.version_attrs->>'isometric_asset_id' AS isometric_asset_id,
+        ar.family_code,
+        ar.reference_code,
+        ar.designation,
+        ar.product_name,
+        ar.commercial_measure,
+        ar.line,
+        ar.special_label,
+        ar.accessory_text,
+        ar.sample_sku_complete,
+        ar.sample_final_name_es
+      FROM public.product_versions v
+      JOIN active_references ar ON ar.reference_id = v.reference_id
+      WHERE COALESCE(v.version_attrs->>'isometric_asset_id', '') <> ''
+        AND COALESCE(v.version_attrs->>'isometric_asset_id', '') <> COALESCE(ar.reference_isometric_asset_id, '')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM public.product_asset_links pal
+          JOIN public.assets a ON a.id = pal.asset_id
+          WHERE a.type = '${safeType}'
+            AND pal.status <> 'replaced'
+            AND pal.version_id = v.id
+        )
+    )
+    SELECT * FROM reference_targets
+    UNION ALL
+    SELECT * FROM version_targets
+    ORDER BY family_code NULLS LAST, reference_code NULLS LAST, target_type, version_code NULLS LAST
+  `) as OrphanResourceRow[]
 
   return Array.isArray(rows) ? rows : []
 }

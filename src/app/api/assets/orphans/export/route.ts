@@ -1,14 +1,15 @@
 import { NextResponse } from 'next/server'
 import ExcelJS from 'exceljs'
 import crypto from 'crypto'
-import { getOrphanReferencesAction, type OrphanReferenceRow } from '@/app/assets/orphans-actions'
+import { getOrphanResourcesAction, type OrphanResourceRow } from '@/app/assets/orphans-actions'
 import { normalizeAccessory, normalizeLine, normalizeSpecialLabel, normalizeText, normalizeProductName, normalizeCommercialMeasure } from '@/lib/isometrics/bulkMatch'
+import { getResourceType, RESOURCE_TYPE_DEFINITIONS, type ResourceType } from '@/lib/resources/resourceTypes'
 import { apiGuard } from '@/utils/auth/access'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
-function buildGroupKeyNorm(r: {
+function buildAttributeGroupKeyNorm(r: {
   family_code: string | null
   designation: string | null
   commercial_measure: string | null
@@ -28,7 +29,15 @@ function buildGroupKeyNorm(r: {
   ].join('|||')
 }
 
-function buildExpectedSvgFilename(similarityCode: string, g: OrphanReferenceRow) {
+function buildGroupKeyNorm(resourceType: ResourceType, row: OrphanResourceRow) {
+  const definition = RESOURCE_TYPE_DEFINITIONS[resourceType]
+  if (definition.groupByIsometricAsset && row.isometric_asset_id) {
+    return `isometric_asset_id|||${row.isometric_asset_id}`
+  }
+  return buildAttributeGroupKeyNorm(row)
+}
+
+function buildExpectedFilename(similarityCode: string, g: OrphanResourceRow, resourceType: ResourceType) {
   const parts: string[] = []
   const designation = normalizeText(g.designation)
   const productNameRaw = String(g.product_name || '').trim()
@@ -44,21 +53,24 @@ function buildExpectedSvgFilename(similarityCode: string, g: OrphanReferenceRow)
   if (special && special !== 'NA') parts.push(special)
   if (accessory && accessory !== 'NA') parts.push(accessory)
 
+  const suffix = RESOURCE_TYPE_DEFINITIONS[resourceType].expectedFilenameSuffix
+  if (suffix) parts.push(suffix)
   const base = `${similarityCode} - ${parts.join(' ')}`.replace(/\s+/g, ' ').trim()
   // NOTE: We intentionally do NOT append ".svg" so the suggested name is extension-agnostic.
   return base
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const guard = await apiGuard('module:assets')
   if (guard.response) return guard.response
 
   try {
-    const orphans = await getOrphanReferencesAction()
+    const resourceType = getResourceType(new URL(req.url).searchParams.get('type')) || 'isometric'
+    const orphans = await getOrphanResourcesAction(resourceType)
 
     const groupKeyToRefs = new Map<string, typeof orphans>()
     for (const r of orphans) {
-      const key = buildGroupKeyNorm(r)
+      const key = buildGroupKeyNorm(resourceType, r)
       const list = groupKeyToRefs.get(key) || []
       list.push(r)
       groupKeyToRefs.set(key, list)
@@ -68,13 +80,13 @@ export async function GET() {
     const groupMeta = new Map<string, { similarity_code: string; group_key_norm: string; expected_svg_filename: string }>()
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i]!
-      const similarityCode = `S${i + 1}`
+      const similarityCode = `S${String(i + 1).padStart(4, '0')}`
       const groupHash = crypto.createHash('sha256').update(key).digest('hex')
       const sample = groupKeyToRefs.get(key)![0]!
       groupMeta.set(key, {
         similarity_code: similarityCode,
         group_key_norm: groupHash,
-        expected_svg_filename: buildExpectedSvgFilename(similarityCode, sample),
+        expected_svg_filename: buildExpectedFilename(similarityCode, sample, resourceType),
       })
     }
 
@@ -95,11 +107,16 @@ export async function GET() {
       { header: 'special_label', key: 'special_label', width: 26 },
       { header: 'line', key: 'line', width: 14 },
       { header: 'reference_id', key: 'reference_id', width: 36, hidden: true },
+      ...(resourceType === 'isometric' ? [] : [
+        { header: 'target_type', key: 'target_type', width: 12 },
+        { header: 'version_code', key: 'version_code', width: 14 },
+        { header: 'version_id', key: 'version_id', width: 36, hidden: true },
+      ]),
       { header: 'group_key_norm', key: 'group_key_norm', width: 64, hidden: true },
     ]
 
     for (const r of orphans) {
-      const key = buildGroupKeyNorm(r)
+      const key = buildGroupKeyNorm(resourceType, r)
       const meta = groupMeta.get(key)!
       ws.addRow({
         family_code: r.family_code || '',
@@ -113,6 +130,11 @@ export async function GET() {
         special_label: r.special_label || '',
         line: r.line || '',
         reference_id: r.reference_id,
+        ...(resourceType === 'isometric' ? {} : {
+          target_type: r.target_type,
+          version_code: r.version_code || '',
+          version_id: r.target_type === 'version' ? r.target_id : '',
+        }),
         group_key_norm: meta.group_key_norm,
       })
     }
@@ -122,7 +144,9 @@ export async function GET() {
     ws.views = [{ state: 'frozen', ySplit: 1 }]
 
     const buffer = await wb.xlsx.writeBuffer()
-    const filename = `ORPHAN_REFERENCES_${new Date().toISOString().slice(0, 10)}.xlsx`
+    const filename = resourceType === 'isometric'
+      ? `ORPHAN_REFERENCES_${new Date().toISOString().slice(0, 10)}.xlsx`
+      : `ORPHAN_${resourceType.toUpperCase()}_${new Date().toISOString().slice(0, 10)}.xlsx`
     return new NextResponse(buffer as BodyInit, {
       status: 200,
       headers: {

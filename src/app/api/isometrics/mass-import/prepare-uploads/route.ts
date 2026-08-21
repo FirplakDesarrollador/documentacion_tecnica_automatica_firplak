@@ -3,12 +3,14 @@ import { supabaseServer } from '@/lib/supabase'
 import { normalizeText } from '@/lib/isometrics/bulkMatch'
 import { getIsometricMassImportSettings } from '@/lib/isometrics/massImportSettings'
 import { apiGuard } from '@/utils/auth/access'
+import { getResourceType, type ResourceType } from '@/lib/resources/resourceTypes'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
 type PrepareUploadsRequest = {
   job_id?: string
+  resource_type?: ResourceType
   files: Array<{ sha256: string; ext: string; content_type?: string }>
 }
 
@@ -37,6 +39,10 @@ export async function POST(req: Request) {
     if (!body || !Array.isArray(body.files)) {
       return NextResponse.json({ success: false, error: 'Invalid payload.' }, { status: 400 })
     }
+    const resourceType = body.resource_type === undefined ? null : getResourceType(body.resource_type)
+    if (body.resource_type !== undefined && !resourceType) {
+      return NextResponse.json({ success: false, error: 'Invalid resource_type.' }, { status: 400 })
+    }
 
     const unique = new Map<string, { sha256: string; ext: string; content_type?: string }>()
     for (const f of body.files) {
@@ -63,7 +69,9 @@ export async function POST(req: Request) {
 
     const out: Array<{ sha256: string; storage_path: string; token: string; signed_url: string }> = []
     for (const f of list) {
-      const storagePath = `assets/isometrics/${f.sha256}${f.ext}`
+      const storagePath = resourceType && resourceType !== 'isometric'
+        ? `assets/resources/${resourceType}/${f.sha256}${f.ext}`
+        : `assets/isometrics/${f.sha256}${f.ext}`
       const { data, error } = await supabaseServer.storage.from('assets').createSignedUploadUrl(storagePath, {
         upsert: true,
       })

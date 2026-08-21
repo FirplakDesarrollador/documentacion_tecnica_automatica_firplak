@@ -3,6 +3,9 @@ import { dbQuery } from '@/lib/supabase'
 import { getIsometricMassImportSettings } from '@/lib/isometrics/massImportSettings'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { apiGuard } from '@/utils/auth/access'
+import { buildProductAssetSlugBody, composePublicSlug, getDocumentPrefixBySlot } from '@/lib/productDocuments'
+import { normalizeDocumentSlot } from '@/lib/documentLinks'
+import { getResourceType, type ResourceType } from '@/lib/resources/resourceTypes'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -10,6 +13,12 @@ export const maxDuration = 60
 type ApplyChunkRequest = {
   job_id?: string
   overwriteExisting?: boolean
+  resource_type?: ResourceType
+  public_document?: {
+    enabled?: boolean
+    document_slot?: string
+    document_label?: string
+  }
   items: Array<{
     // Stateful mode (with DB job/items)
     item_id?: string
@@ -71,13 +80,13 @@ function pickDesiredAssetName(relativePath: string, storagePath: string) {
   return stripExtension(fallback).trim() || 'isometric'
 }
 
-async function getOrCreateIsometricAsset(storagePath: string, desiredName: string) {
+async function getOrCreateAsset(storagePath: string, desiredName: string, assetType: ResourceType) {
   const publicUrl = getPublicAssetUrlForStoragePath(storagePath)
   const existing =
     (await dbQuery(`
       SELECT id, name, file_path
       FROM public.assets
-      WHERE type = 'isometric'
+        WHERE type = '${assetType}'
         AND (file_path = '${publicUrl.replace(/'/g, "''")}' OR file_path = '${storagePath.replace(/'/g, "''")}')
       ORDER BY created_at DESC
       LIMIT 1
@@ -109,13 +118,97 @@ async function getOrCreateIsometricAsset(storagePath: string, desiredName: strin
     (await dbQuery(`
       INSERT INTO public.assets (name, type, file_path)
       VALUES (
-        '${desiredName.replace(/'/g, "''") || 'isometric'}',
-        'isometric',
+        '${desiredName.replace(/'/g, "''") || assetType}',
+        '${assetType}',
         '${publicUrl.replace(/'/g, "''")}'
       )
       RETURNING id
     `)) || []
   return String(created?.[0]?.id || '')
+}
+
+function escapeSql(value: unknown) {
+  return String(value ?? '').replace(/'/g, "''")
+}
+
+async function insertResourceLinks(params: {
+  assetId: string
+  assetType: Exclude<ResourceType, 'isometric'>
+  assetName: string
+  referenceIds: string[]
+  versionIds: string[]
+  publicDocument?: ApplyChunkRequest['public_document']
+}) {
+  const targets = [
+    ...params.referenceIds.map((id) => ({ scope: 'reference' as const, id })),
+    ...params.versionIds.map((id) => ({ scope: 'version' as const, id })),
+  ]
+  let inserted = 0
+  const publicEnabled = params.assetType === 'instruction_pdf' && Boolean(params.publicDocument?.enabled)
+  const documentSlot = normalizeDocumentSlot(params.publicDocument?.document_slot)
+  const prefix = publicEnabled ? await getDocumentPrefixBySlot(documentSlot) : null
+  if (publicEnabled && !prefix) throw new Error('Selecciona un tipo funcional de documento con prefijo activo para publicar el instructivo.')
+
+  for (const target of targets) {
+    let publicValues = {
+      isPublic: false,
+      documentSlot: null as string | null,
+      documentLabel: null as string | null,
+      slugPrefix: null as string | null,
+      slugBody: null as string | null,
+      publicSlug: null as string | null,
+    }
+    if (publicEnabled && prefix) {
+      const slugBody = await buildProductAssetSlugBody({
+        target: {
+          scope: target.scope,
+          ids: [target.id],
+          values: [target.id],
+        },
+        documentLabel: String(params.publicDocument?.document_label || '').trim() || prefix.label,
+        assetName: params.assetName,
+      })
+      const slug = composePublicSlug(prefix.prefix, slugBody)
+      publicValues = {
+        isPublic: true,
+        documentSlot,
+        documentLabel: String(params.publicDocument?.document_label || '').trim() || prefix.label,
+        slugPrefix: slug.slugPrefix,
+        slugBody: slug.slugBody,
+        publicSlug: slug.publicSlug,
+      }
+    }
+
+    const targetColumn = target.scope === 'reference' ? 'reference_id' : 'version_id'
+    const result = await dbQuery(`
+      INSERT INTO public.product_asset_links (
+        asset_id, reference_id, version_id, is_public, document_slot, document_label,
+        slug_prefix, slug_body, public_slug, slug_strategy_version, version_number, status, sort_order
+      )
+      SELECT
+        '${escapeSql(params.assetId)}',
+        ${target.scope === 'reference' ? `'${escapeSql(target.id)}'` : 'NULL'},
+        ${target.scope === 'version' ? `'${escapeSql(target.id)}'` : 'NULL'},
+        ${publicValues.isPublic ? 'true' : 'false'},
+        ${publicValues.documentSlot ? `'${escapeSql(publicValues.documentSlot)}'` : 'NULL'},
+        ${publicValues.documentLabel ? `'${escapeSql(publicValues.documentLabel)}'` : 'NULL'},
+        ${publicValues.slugPrefix ? `'${escapeSql(publicValues.slugPrefix)}'` : 'NULL'},
+        ${publicValues.slugBody ? `'${escapeSql(publicValues.slugBody)}'` : 'NULL'},
+        ${publicValues.publicSlug ? `'${escapeSql(publicValues.publicSlug)}'` : 'NULL'},
+        1, 1, 'approved', 0
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM public.product_asset_links pal
+        JOIN public.assets a ON a.id = pal.asset_id
+        WHERE a.type = '${params.assetType}'
+          AND pal.status <> 'replaced'
+          AND pal.${targetColumn} = '${escapeSql(target.id)}'
+      )
+      RETURNING id
+    `) as Array<{ id?: string }>
+    inserted += result.length
+  }
+  return inserted
 }
 
 export async function POST(req: Request) {
@@ -138,6 +231,10 @@ export async function POST(req: Request) {
     const body = (await req.json().catch(() => null)) as ApplyChunkRequest | null
     if (!body || !Array.isArray(body.items)) {
       return NextResponse.json({ success: false, error: 'Invalid payload.' }, { status: 400 })
+    }
+    const resourceType = body.resource_type === undefined ? null : getResourceType(body.resource_type)
+    if (body.resource_type !== undefined && !resourceType) {
+      return NextResponse.json({ success: false, error: 'Invalid resource_type.' }, { status: 400 })
     }
 
     const jobId = body.job_id ? String(body.job_id) : ''
@@ -185,7 +282,9 @@ export async function POST(req: Request) {
     let appliedErr = 0
 
     for (const it of items) {
-      const storagePath = `assets/isometrics/${it.sha256}${it.ext && it.ext.startsWith('.') ? it.ext : '.svg'}`
+        const storagePath = resourceType && resourceType !== 'isometric'
+          ? `assets/resources/${resourceType}/${it.sha256}${it.ext && it.ext.startsWith('.') ? it.ext : '.svg'}`
+          : `assets/isometrics/${it.sha256}${it.ext && it.ext.startsWith('.') ? it.ext : '.svg'}`
       try {
         const publicUrl = getPublicAssetUrlForStoragePath(storagePath)
         const desiredName = pickDesiredAssetName(it.relative_path, storagePath)
@@ -248,7 +347,7 @@ export async function POST(req: Request) {
           if (it.target_granularity === 'reference' && refIds.length === 0) throw new Error('No target_reference_ids provided.')
         }
 
-        const assetId = await getOrCreateIsometricAsset(storagePath, desiredName)
+        const assetId = await getOrCreateAsset(storagePath, desiredName, resourceType || 'isometric')
         if (!assetId) throw new Error('Failed to create/reuse asset.')
 
         if (jobId && it.item_id) {
@@ -264,7 +363,16 @@ export async function POST(req: Request) {
         let updatedRefs = 0
         let updatedVersions = 0
 
-        if (verIds.length > 0) {
+        if (resourceType && resourceType !== 'isometric') {
+          updatedRefs = await insertResourceLinks({
+            assetId,
+            assetType: resourceType,
+            assetName: desiredName,
+            referenceIds: refIds,
+            versionIds: verIds,
+            publicDocument: body.public_document,
+          })
+        } else if (verIds.length > 0) {
           const filter = `(${verIds.map(id => `'${id.replace(/'/g, "''")}'`).join(',')})`
           if (!overwrite) {
             await dbQuery(`
