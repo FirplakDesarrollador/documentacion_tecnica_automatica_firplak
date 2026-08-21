@@ -176,14 +176,19 @@ function itemGroupsPath({ filter, top, skip, orderBy }) {
   return `/ItemGroups${query}${query ? '&' : '?'}$orderby=${encodeURIComponent(orderBy)}`
 }
 
-function buildItemGroupCreatePayload(sourceGroup, groupName) {
+function buildItemGroupCreatePayload(sourceGroup, groupName, overrides = {}) {
   if (!sourceGroup || typeof sourceGroup !== 'object' || Array.isArray(sourceGroup)) {
     throw new SapMcpError('El grupo fuente de SAP no tiene un payload vÃ¡lido', 502, 'SAP_INVALID_ITEM_GROUP_PAYLOAD')
   }
   const inheritedSettings = Object.fromEntries(
-    Object.entries(sourceGroup).filter(([key]) => key !== 'Number' && key !== 'GroupName' && !key.startsWith('odata.')),
+    Object.entries(sourceGroup).filter(([key]) => (
+      key !== 'Number'
+      && key !== 'GroupName'
+      && !key.startsWith('odata.')
+      && !key.startsWith('U_')
+    )),
   )
-  return { ...inheritedSettings, GroupName: groupName }
+  return { ...inheritedSettings, ...overrides, GroupName: groupName }
 }
 
 async function sapRequest(path, options = {}, retry = true) {
@@ -425,11 +430,12 @@ server.registerTool('sap_create_item_group', {
   inputSchema: {
     groupName: z.string().trim().min(1).max(100),
     sourceGroupCode: z.number().int().min(0).optional(),
+    overrides: jsonObjectSchema.optional(),
     dryRun: z.boolean().optional(),
     confirmed: z.boolean().optional(),
   },
   annotations: writeAnnotations,
-}, async ({ groupName, sourceGroupCode, dryRun = true, confirmed = false }) => withToolErrors(async () => {
+}, async ({ groupName, sourceGroupCode, overrides = {}, dryRun = true, confirmed = false }) => withToolErrors(async () => {
   const normalizedName = groupName.trim()
   const existing = await sapRequest(itemGroupsPath({
     filter: `GroupName eq ${encodeODataString(normalizedName)}`,
@@ -451,7 +457,9 @@ server.registerTool('sap_create_item_group', {
   if (sourceGroupCode !== undefined && !sourceGroup) {
     throw new SapMcpError(`El grupo fuente no existe: ${sourceGroupCode}`, 404, 'SAP_ITEM_GROUP_SOURCE_NOT_FOUND')
   }
-  const createPayload = sourceGroup ? buildItemGroupCreatePayload(sourceGroup, normalizedName) : { GroupName: normalizedName }
+  const createPayload = sourceGroup
+    ? buildItemGroupCreatePayload(sourceGroup, normalizedName, overrides)
+    : { ...overrides, GroupName: normalizedName }
 
   if (dryRun) {
     return {

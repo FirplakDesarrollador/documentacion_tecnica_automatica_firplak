@@ -29,7 +29,7 @@ No se deben pegar estos valores en el chat ni versionarlos en el repositorio. El
 - `sap_search_items_by_prefix`: consulta Items por prefijo.
 - `sap_list_item_groups`: consulta grupos de artÃ­culos SAP (OITB), con filtro opcional por el inicio del nombre.
 - `sap_get_item_group`: consulta un grupo de artÃ­culos por su nÃºmero, incluida su configuraciÃ³n de determinaciÃ³n contable.
-- `sap_create_item_group`: prepara o crea un grupo de artÃ­culos. Con `sourceGroupCode` duplica su configuraciÃ³n contable y de planeaciÃ³n; el *dry-run* devuelve una estimaciÃ³n del siguiente nÃºmero. SAP asigna el nÃºmero definitivo al crear y la operaciÃ³n real requiere `confirmed=true`.
+- `sap_create_item_group`: prepara o crea un grupo de artÃ­culos. Con `sourceGroupCode` duplica su configuraciÃ³n contable y de planeaciÃ³n, excluyendo UDFs del origen; `overrides` permite declarar los UDFs o valores autorizados para el grupo nuevo. El *dry-run* devuelve una estimaciÃ³n del siguiente nÃºmero. SAP asigna el nÃºmero definitivo al crear y la operaciÃ³n real requiere `confirmed=true`.
 
 ## Registro en Codex
 
