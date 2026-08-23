@@ -2,11 +2,10 @@
 
 import { revalidatePath } from 'next/cache'
 
-import { evaluateEstimationBomCosting, type EstimationBomCostLine } from '@/lib/productDesign/estimationBomCosting'
-import { getEstimationBomDescendantIds } from '@/lib/productDesign/estimationBomHierarchy'
-import { normalizeEstimationDraft, serializeEstimationDraft, type EstimationDraft, type EstimationDraftBomLine } from '@/lib/productDesign/estimationDraft'
-import { buildEstimationBomExportRows, type EstimationBomExportRow } from '@/lib/sales/estimationBomExport'
-import { DEFAULT_SALES_PRICING_FORMULAS, normalizeSalesPercentage, normalizeSalesPricingFormulaConfig, SALES_PRICING_FORMULAS_SETTING_KEY, type SalesPricingFormulaConfig } from '@/lib/productDesign/salesPricingFormulas'
+import { evaluateEstimationBomCosting, type EstimationBomCostLine, type EstimationBomCostingSuccess } from '@/lib/productDesign/estimationBomCosting'
+import { normalizeEstimationDraft, serializeEstimationDraft, type EstimationDraft } from '@/lib/productDesign/estimationDraft'
+import { buildEstimationBomCostLines, buildEstimationBomExportRows, evaluateEstimationBomExportCosting, type EstimationBomExportRow } from '@/lib/sales/estimationBomExport'
+import { DEFAULT_SALES_PRICING_FORMULAS, evaluateSalesPricing, normalizeSalesPercentage, normalizeSalesPricingFormulaConfig, SALES_PRICING_FORMULAS_SETTING_KEY, type SalesPricingFormulaConfig, type SalesPricingResult } from '@/lib/productDesign/salesPricingFormulas'
 import { dbQuery } from '@/lib/supabase'
 import { assertPermission } from '@/utils/auth/access'
 
@@ -33,32 +32,10 @@ function required(value: unknown, label: string): string { const result = text(v
 function number(value: unknown): number | null { if (typeof value === 'number' && Number.isFinite(value)) return value; if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value); return null }
 function parseJson(value: unknown): unknown { if (typeof value !== 'string') return value; try { return JSON.parse(value) as unknown } catch { return {} } }
 function currency(value: string | null): string { return value && /^[A-Z]{3}$/u.test(value.toUpperCase()) ? value.toUpperCase() : 'COP' }
-function toCostLine(line: EstimationDraftBomLine): EstimationBomCostLine | null {
-  if (line.quantity === null || line.costCategory === null || line.costStrategy === null) return null
-  if (line.costEvidence?.source === 'manual' && !line.manualCostReason?.trim()) return null
-  const rawBomQuantity = line.extensions.sapBomQuantity
-  return {
-    id: line.id,
-    parentId: line.parentId,
-    quantity: line.quantity,
-    uom: line.uom,
-    costCategory: line.costCategory,
-    costStrategy: line.costStrategy,
-    origin: line.origin,
-    bomQuantity: typeof rawBomQuantity === 'number' && Number.isFinite(rawBomQuantity) ? rawBomQuantity : null,
-    unitCost: line.unitCost,
-  }
-}
 function snapshot(draft: EstimationDraft): SalesEstimationCostSnapshot {
   const unit = currency(draft.commercialScenario.currency)
   if (draft.bomLines.length === 0) return { state: 'pending', currency: unit, message: 'La cotización aún no tiene líneas de LdM costeables.' }
-  const ignoredLineIds = new Set<string>()
-  draft.bomLines.forEach(line => {
-    if (line.origin === 'manual' && line.costStrategy === 'manual_override') {
-      getEstimationBomDescendantIds(draft.bomLines, line.id).forEach(id => ignoredLineIds.add(id))
-    }
-  })
-  const lines = draft.bomLines.filter(line => !ignoredLineIds.has(line.id)).map(toCostLine)
+  const lines = buildEstimationBomCostLines(draft.bomLines)
   if (lines.some(line => line === null)) return { state: 'pending', currency: unit, message: 'Faltan cantidad, categoría o estrategia de costo en una o más líneas de la LdM.' }
   const result = evaluateEstimationBomCosting({ lines: lines.filter((line): line is EstimationBomCostLine => line !== null) })
   return result.ok ? { state: 'available', currency: unit, materialsAndPackaging: result.totals.materialsAndPackaging, expandedTotal: result.totals.expandedTotal } : { state: 'pending', currency: unit, message: result.issues[0]?.message ?? 'La LdM requiere ajustes antes de presentar un total.' }
@@ -78,12 +55,46 @@ export async function saveSalesEstimationPricingAction(input: { id: string; cont
 export async function saveSalesEstimationCommercialResponseAction(input: { id: string; outcome: 'pending' | 'approved' | 'rejected' | 'not_pursued'; contactName?: string | null; note?: string | null }): Promise<SalesEstimationView> { const user = await requireSalesAccess(); const id = required(input.id, 'Cotización'); if (!['pending', 'approved', 'rejected', 'not_pursued'].includes(input.outcome)) throw new Error('Resultado comercial no válido.'); await getSharedDraft(id); await dbQuery('UPDATE public.product_design_estimations SET commercial_outcome = $1, commercial_contact_name = $2, commercial_outcome_at = now(), commercial_recorded_by = $3::uuid, commercial_recorded_at = now(), commercial_note = $4, updated_by = $3::uuid WHERE id = $5::uuid AND shared_with_sales IS TRUE', [input.outcome, text(input.contactName), user.id, text(input.note), id]); const { row } = await getSharedDraft(id); revalidatePath('/sales/estimations'); return mapRow(row) }
 export async function saveSalesPricingFormulaConfigAction(input: SalesPricingFormulaConfig): Promise<SalesPricingFormulaConfig> { await requireSalesAccess(); const config = normalizeSalesPricingFormulaConfig(input); await dbQuery('INSERT INTO public.app_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()', [SALES_PRICING_FORMULAS_SETTING_KEY, JSON.stringify(config)]); revalidatePath('/sales/estimations'); return config }
 
-export type EstimationBomExportData = { name: string; rows: EstimationBomExportRow[] }
+export type EstimationBomExportPricing = {
+  currency: string
+  contributionMarginPct: number | null
+  discountPct: number | null
+  formulaConfig: SalesPricingFormulaConfig
+  totals: EstimationBomCostingSuccess['totals'] | null
+  calculated: SalesPricingResult | null
+}
+
+export type EstimationBomExportData = { name: string; rows: EstimationBomExportRow[]; pricing: EstimationBomExportPricing }
 
 export async function getEstimationBomLinesForExport(id: string): Promise<EstimationBomExportData> {
   await requireSalesAccess()
   const { draft, row } = await getSharedDraft(id)
   const productInfo = { itemCode: text(row.homologue_sap_item_code) ?? text(row.proposed_reference_code) ?? '', itemName: String(row.provisional_name ?? 'Cotización') }
   const rows = buildEstimationBomExportRows(draft.bomLines, productInfo)
-  return { name: String(row.provisional_name ?? 'Cotización'), rows }
+  const costing = evaluateEstimationBomExportCosting(draft.bomLines)
+  const settings = await dbQuery('SELECT value FROM public.app_settings WHERE key = $1 LIMIT 1', [SALES_PRICING_FORMULAS_SETTING_KEY])
+  let formulaConfig = DEFAULT_SALES_PRICING_FORMULAS
+  try { formulaConfig = normalizeSalesPricingFormulaConfig(parseJson(settings[0]?.value)) } catch { formulaConfig = DEFAULT_SALES_PRICING_FORMULAS }
+  const contributionMarginPct = draft.commercialScenario.contributionMarginPct
+  const discountPct = draft.commercialScenario.discountPct
+  const calculated = costing.ok && contributionMarginPct !== null && discountPct !== null
+    ? evaluateSalesPricing(formulaConfig, {
+        materialCost: costing.totals.materialsAndPackaging,
+        expandedCost: costing.totals.expandedTotal,
+        mcPct: contributionMarginPct,
+        discountPct,
+      })
+    : null
+  return {
+    name: String(row.provisional_name ?? 'Cotización'),
+    rows,
+    pricing: {
+      currency: currency(draft.commercialScenario.currency),
+      contributionMarginPct,
+      discountPct,
+      formulaConfig,
+      totals: costing.ok ? costing.totals : null,
+      calculated,
+    },
+  }
 }

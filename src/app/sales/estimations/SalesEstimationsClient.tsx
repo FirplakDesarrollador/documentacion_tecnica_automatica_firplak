@@ -63,10 +63,13 @@ function BomTreeRows({ node, depth }: { node: BomTreeNode; depth: number }) {
           </div>
         </td>
         <td className="px-3 py-1.5 whitespace-normal break-words leading-5 text-slate-600">{row.itemName || '—'}</td>
+        <td className="px-3 py-1.5 text-center align-top tabular-nums text-slate-600">{row.level}</td>
         <td className="px-3 py-1.5 text-right align-top tabular-nums text-slate-800">{row.quantity > 0 ? number(row.quantity, 4) : '—'}</td>
         <td className="px-3 py-1.5 text-center align-top text-slate-600">{row.uom || '—'}</td>
         <td className="px-3 py-1.5 text-right align-top tabular-nums text-slate-800">{row.unitCost !== null ? money(row.unitCost, 'COP') : '—'}</td>
-        <td className="px-3 py-1.5 text-right align-top tabular-nums text-slate-800">{row.subtotal !== null ? money(row.subtotal, 'COP') : '—'}</td>
+        <td className="px-3 py-1.5 text-right align-top tabular-nums text-slate-800">{row.subtotalMP !== null ? money(row.subtotalMP, 'COP') : ''}</td>
+        <td className="px-3 py-1.5 text-right align-top tabular-nums text-slate-800">{row.subtotalMO !== null ? money(row.subtotalMO, 'COP') : ''}</td>
+        <td className="px-3 py-1.5 text-right align-top tabular-nums text-slate-800">{row.subtotalCIF !== null ? money(row.subtotalCIF, 'COP') : ''}</td>
       </tr>
       {expanded && hasChildren && node.children.map(child => (
         <BomTreeRows key={child.row.id} node={child} depth={depth + 1} />
@@ -80,15 +83,18 @@ function BomPreviewTable({ bomLines }: { bomLines: SalesEstimationView['bomLines
   const tree = buildBomTree(bomLines)
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-200">
-      <table className="w-full min-w-[780px] border-collapse text-sm">
+      <table className="w-full min-w-[1080px] border-collapse text-sm">
         <thead>
           <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
             <th className="px-3 py-2">Código</th>
             <th className="px-3 py-2">Descripción</th>
+            <th className="px-3 py-2 text-center">Nivel</th>
             <th className="px-3 py-2 text-right">Cantidad</th>
             <th className="px-3 py-2 text-center">Unidad</th>
             <th className="px-3 py-2 text-right">Costo und.</th>
-            <th className="px-3 py-2 text-right">Subtotal</th>
+            <th className="px-3 py-2 text-right">Sub MP</th>
+            <th className="px-3 py-2 text-right">Sub MO</th>
+            <th className="px-3 py-2 text-right">Sub CIF</th>
           </tr>
         </thead>
         <tbody>

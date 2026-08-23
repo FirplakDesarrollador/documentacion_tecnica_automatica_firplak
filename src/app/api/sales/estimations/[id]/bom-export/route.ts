@@ -12,7 +12,7 @@ export async function GET(
   try {
     const { id } = await paramsPromise
     const data = await getEstimationBomLinesForExport(id)
-    const workbook = await buildEstimationBomWorkbook(data.name, data.rows)
+    const workbook = await buildEstimationBomWorkbook(data.name, data.rows, data.pricing)
     const filename = `LDM_${data.name.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0, 10)}.xlsx`
     return new NextResponse(workbook as BodyInit, {
       headers: {
