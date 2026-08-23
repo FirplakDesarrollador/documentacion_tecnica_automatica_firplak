@@ -9,6 +9,7 @@ import {
   getSapItemsByCodes,
   getSapItemsWithWarehouseAverage,
   getSapWarehouseAverageCost,
+  listSapItemGroups,
   searchSapItems,
 } from '@/lib/sap/serviceLayer'
 import { loadFullSapBomHierarchy, type FullSapBomNode } from '@/lib/sap/fullBomHierarchy'
@@ -141,7 +142,7 @@ export type EstimationHomologueCandidate = {
 export type EstimationSapFamilyCandidate = {
   sapPrefix: string
   familyCode: string
-  sampleItemCode: string
+  sampleItemCode: string | null
   sampleItemName: string
   localFamilyName: string | null
 }
@@ -271,6 +272,13 @@ function normalizeSapPrefix(value: unknown): string {
   const normalized = requiredText(value, 'U_Prefijo SAP').toUpperCase()
   deriveEstimationFamilyCode(normalized)
   return normalized
+}
+
+function familyCodeFromSapItemGroupName(groupName: string): string | null {
+  const prefix = groupName.trim().toUpperCase().match(/^[A-Z][A-Z0-9]*(?=-|\s|$)/u)?.[0] ?? null
+  if (!prefix) return null
+  deriveEstimationFamilyCode(`V${prefix}`)
+  return prefix
 }
 
 function normalizeReferenceCode(value: unknown): string | null {
@@ -1400,24 +1408,17 @@ export async function getEstimationFamilyCreationOptionsAction(): Promise<Estima
 export async function searchEstimationSapFamiliesAction(query: string): Promise<EstimationSapFamilyCandidate[]> {
   await requireProductDesignAccess()
   const normalizedQuery = requiredText(query, 'Búsqueda de familia SAP').toUpperCase()
-  const compactQuery = normalizedQuery.replace(/[^A-Z0-9]/gu, '').replace(/^V/u, '')
-  const [byCode, byDescription] = await Promise.all([
-    searchSapItems({ code: `V${compactQuery}` }, { limit: SAP_PAGE_LIMIT }),
-    searchSapItems({ code: 'V', description: normalizedQuery }, { limit: SAP_PAGE_LIMIT }),
-  ])
+  const groups = await listSapItemGroups({ namePrefix: normalizedQuery, top: 200 })
   const candidates = new Map<string, Omit<EstimationSapFamilyCandidate, 'localFamilyName'>>()
-  for (const item of [...byCode.items, ...byDescription.items]) {
-    const itemCode = stringOrNull(item.ItemCode)?.toUpperCase()
-    if (!itemCode) continue
-    const sapPrefix = itemCode.split('-')[0] ?? ''
-    if (!/^V[A-Z0-9]+$/u.test(sapPrefix)) continue
-    const familyCode = deriveEstimationFamilyCode(sapPrefix)
+  for (const group of groups) {
+    const familyCode = familyCodeFromSapItemGroupName(group.groupName)
+    if (!familyCode) continue
     if (!candidates.has(familyCode)) {
       candidates.set(familyCode, {
-        sapPrefix,
+        sapPrefix: `V${familyCode}`,
         familyCode,
-        sampleItemCode: itemCode,
-        sampleItemName: stringOrNull(item.ItemName) ?? '',
+        sampleItemCode: null,
+        sampleItemName: group.groupName,
       })
     }
   }

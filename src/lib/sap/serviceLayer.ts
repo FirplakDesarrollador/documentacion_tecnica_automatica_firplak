@@ -487,6 +487,36 @@ export async function getSapItemGroup(groupCode: number): Promise<SapItemGroup> 
   return { groupCode: resolvedGroupCode, groupName }
 }
 
+export type SapItemGroupsOptions = {
+  namePrefix?: string
+  top?: number
+}
+
+/** Lists the SAP item-group master used as the source of estimation families. */
+export async function listSapItemGroups(options: SapItemGroupsOptions = {}): Promise<SapItemGroup[]> {
+  const namePrefix = options.namePrefix?.trim().toUpperCase() ?? ''
+  const requestedTop = Number.isInteger(options.top) && (options.top ?? 0) > 0
+    ? options.top ?? 200
+    : 200
+  const top = Math.min(requestedTop, 200)
+  const query = buildCollectionQuery({
+    select: ['Number', 'GroupName'],
+    filter: namePrefix ? `startswith(GroupName, ${encodeODataString(namePrefix)})` : undefined,
+    orderby: 'GroupName asc',
+    top,
+  })
+  const response = await sapServiceLayerRequest<unknown>(`/ItemGroups${query}`)
+  const rows = isRecord(response) && Array.isArray(response.value)
+    ? response.value.filter(isRecord)
+    : []
+
+  return rows.flatMap(row => {
+    const groupCode = readNumberField(row, 'Number') ?? readNumberField(row, 'GroupCode')
+    const groupName = readStringField(row, 'GroupName')
+    return groupCode === null || !groupName ? [] : [{ groupCode, groupName }]
+  })
+}
+
 function readSapYesFlag(value: unknown): boolean {
   return value === true || (typeof value === 'string' && ['tyes', 'yes', 'true', '1'].includes(value.trim().toLowerCase()))
 }
