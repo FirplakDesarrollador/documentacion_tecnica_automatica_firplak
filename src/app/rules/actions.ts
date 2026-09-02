@@ -20,6 +20,7 @@ import {
     loadNamingComponents,
     loadNamingComponentsByProductType,
     replaceNamingComponents,
+    resetNamingComponentsCache,
     type NamingComponent,
 } from '@/lib/engine/namingComponents'
 import {
@@ -105,7 +106,6 @@ async function resolveNamingModelTypesFromStorage(): Promise<string[]> {
         ORDER BY product_type ASC
     `) || []
     const fromComponents = parseProductTypesValue(componentRows.map((r: any) => r.product_type))
-    if (fromComponents.length > 0) return fromComponents
 
     const settingRow = await dbQuery(`
         SELECT value
@@ -115,9 +115,8 @@ async function resolveNamingModelTypesFromStorage(): Promise<string[]> {
     `) || []
 
     const fromSetting = parseProductTypesValue(settingRow?.[0]?.value)
-    if (fromSetting.length > 0) return fromSetting
-
-    return []
+    const allTypes = new Set([...fromComponents, ...fromSetting])
+    return Array.from(allTypes).sort((a, b) => a.localeCompare(b))
 }
 
 async function saveNamingModelTypesToStorage(types: string[]) {
@@ -565,11 +564,13 @@ export async function getNamingModelStatusAction() {
     }
 }
 
-export async function addNamingModelAction(rawProductType: string) {
+export async function addNamingModelAction(rawProductType: string, rawCopyFromProductType?: string) {
     await assertAdminAccess()
 
     const productType = normalizeProductType(rawProductType)
+    const copyFromProductType = normalizeProductType(rawCopyFromProductType || '')
     if (!productType) throw new Error('Debes seleccionar un tipo de producto válido')
+    if (copyFromProductType === productType) throw new Error('El modelo base debe ser diferente al nuevo modelo')
 
     const [familyTypes, modelTypes] = await Promise.all([
         getFamiliesProductTypes(),
@@ -582,8 +583,45 @@ export async function addNamingModelAction(rawProductType: string) {
     if (modelTypes.includes(productType)) {
         throw new Error('Ese modelo de nomenclatura ya existe')
     }
+    if (copyFromProductType && !modelTypes.includes(copyFromProductType)) {
+        throw new Error('El modelo base seleccionado no existe')
+    }
 
     await saveNamingModelTypesToStorage([...modelTypes, productType])
+
+    if (copyFromProductType) {
+        await dbQuery(`
+            INSERT INTO public.naming_components (
+                naming_type,
+                product_type,
+                component_key,
+                condition_expression,
+                payload_es,
+                order_es,
+                order_en,
+                behavior_en,
+                updated_at
+            )
+            SELECT
+                naming_type,
+                ${esc(productType)},
+                component_key,
+                condition_expression,
+                payload_es,
+                order_es,
+                order_en,
+                behavior_en,
+                now()
+            FROM public.naming_components
+            WHERE product_type = ${esc(copyFromProductType)}
+        `)
+        resetNamingComponentsCache(productType)
+        resetMasterNamingModelCache()
+        resetTranslatorConfigCache()
+        await markNamingStaleForProductType(productType, null, 'naming_model_copy')
+        await processNamingJobsInline()
+    }
+
     revalidatePath('/configuration')
     return { success: true }
 }
@@ -594,14 +632,7 @@ export async function deleteNamingModelAction(rawProductType: string) {
     const productType = normalizeProductType(rawProductType)
     if (!productType) throw new Error('Tipo de producto inválido')
 
-    const [familyTypes, modelTypes] = await Promise.all([
-        getFamiliesProductTypes(),
-        resolveNamingModelTypesFromStorage(),
-    ])
-
-    if (familyTypes.includes(productType)) {
-        throw new Error('No se puede eliminar: aún existen familias usando este product_type')
-    }
+    const modelTypes = await resolveNamingModelTypesFromStorage()
 
     await saveNamingModelTypesToStorage(modelTypes.filter(type => type !== productType))
 
