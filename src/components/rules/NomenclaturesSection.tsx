@@ -58,9 +58,13 @@ export function NomenclaturesSection({
     const [showAddDialog, setShowAddDialog] = useState(false)
     const [showDeleteDialog, setShowDeleteDialog] = useState(false)
     const [selectedOrphanType, setSelectedOrphanType] = useState('')
+    const [copyFromProductType, setCopyFromProductType] = useState('')
     const [deleteTargetType, setDeleteTargetType] = useState('')
     const [isSaving, setIsSaving] = useState(false)
     const router = useRouter()
+    const copySourceTypes = namingModelTypes.filter(type =>
+        type !== selectedOrphanType && namingComponents.some(component => component.product_type === type)
+    )
 
     // Helper to generate a preview string of the structure
     const generatePreview = (type: string, namingType: string) => {
@@ -94,6 +98,7 @@ export function NomenclaturesSection({
             return
         }
         setSelectedOrphanType(orphanFamilyTypes[0])
+        setCopyFromProductType('')
         setShowAddDialog(true)
     }
 
@@ -101,7 +106,7 @@ export function NomenclaturesSection({
         if (!selectedOrphanType) return
         setIsSaving(true)
         try {
-            await addNamingModelAction(selectedOrphanType)
+            await addNamingModelAction(selectedOrphanType, copyFromProductType || undefined)
             toast.success(`Modelo de nomenclatura creado para ${selectedOrphanType}`)
             setShowAddDialog(false)
             router.refresh()
@@ -163,7 +168,7 @@ export function NomenclaturesSection({
                             {isOrphanModel && (
                                 <CardDescription className="text-amber-700 text-xs flex items-center gap-1 mt-2">
                                     <AlertTriangle className="w-3.5 h-3.5" />
-                                    Puedes eliminar este modelo porque no tiene familias activas.
+                                    Este modelo no tiene familias activas.
                                 </CardDescription>
                             )}
                         </CardHeader>
@@ -188,18 +193,16 @@ export function NomenclaturesSection({
                             <div className="bg-slate-50/50 border border-slate-100 p-4 rounded-xl w-full min-h-[70px] flex items-center shadow-inner group-hover:bg-white transition-colors">
                                 {generatePreview(productType, editingModel?.productType === productType ? editingModel.namingType : 'final_complete_name')}
                             </div>
-                            {isOrphanModel && (
-                                <div className="mt-3 flex justify-end">
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="text-rose-700 border-rose-200 hover:bg-rose-50"
-                                        onClick={() => openDeleteDialog(productType)}
-                                    >
-                                        <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Eliminar modelo
-                                    </Button>
-                                </div>
-                            )}
+                            <div className="mt-3 flex justify-end">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="text-rose-700 border-rose-200 hover:bg-rose-50"
+                                    onClick={() => openDeleteDialog(productType)}
+                                >
+                                    <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Eliminar modelo
+                                </Button>
+                            </div>
                         </CardContent>
 
                         {editingModel?.productType === productType && (
@@ -254,7 +257,7 @@ export function NomenclaturesSection({
                     <DialogHeader>
                         <DialogTitle>Crear modelo de nomenclatura</DialogTitle>
                         <DialogDescription>
-                            Solo puedes crear modelos para product_type existentes en familias y que aun no tengan modelo.
+                            Crea el modelo desde cero o copia la configuración de otro tipo para usarla como base editable.
                         </DialogDescription>
                     </DialogHeader>
 
@@ -271,6 +274,23 @@ export function NomenclaturesSection({
                         </select>
                     </div>
 
+                    <div className="space-y-2">
+                        <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Copiar variables de</label>
+                        <select
+                            value={copyFromProductType}
+                            onChange={(e) => setCopyFromProductType(e.target.value)}
+                            className="w-full rounded-md border border-slate-300 bg-white p-2 text-sm"
+                        >
+                            <option value="">Sin copia, modelo vacío</option>
+                            {copySourceTypes.map(type => (
+                                <option key={type} value={type}>{type}</option>
+                            ))}
+                        </select>
+                        <p className="text-xs text-muted-foreground">
+                            Se copiarán las configuraciones Base, Completo y SAP recomendado.
+                        </p>
+                    </div>
+
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setShowAddDialog(false)} disabled={isSaving}>Cancelar</Button>
                         <Button onClick={handleCreateModel} disabled={isSaving || !selectedOrphanType}>Crear modelo</Button>
@@ -283,7 +303,7 @@ export function NomenclaturesSection({
                     <DialogHeader>
                         <DialogTitle>Eliminar modelo de nomenclatura</DialogTitle>
                         <DialogDescription>
-                            Se eliminaran reglas ES y configuracion EN para <strong>{deleteTargetType}</strong>. Esta accion no se puede deshacer.
+                            Se eliminarán las reglas ES y la configuración EN de <strong>{deleteTargetType}</strong>. Las familias se conservarán y el tipo volverá a estar disponible para crear un modelo. Esta acción no se puede deshacer.
                         </DialogDescription>
                     </DialogHeader>
                     <DialogFooter>
