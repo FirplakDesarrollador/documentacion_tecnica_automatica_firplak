@@ -3,6 +3,8 @@
 import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ChevronDown, ChevronRight, Copy, Download, Layers, Loader2, RefreshCw, Search, X } from 'lucide-react'
 import { OrderConsultaPanel } from './OrderConsultaPanel'
+import { DEFAULT_SALES_PRICING_FORMULAS, evaluateSalesPricing, type SalesPricingFormulaConfig } from '@/lib/productDesign/salesPricingFormulas'
+import { buildEstimationBomClipboardText, type EstimationBomExportRow } from '@/lib/sales/estimationBomExport'
 
 type SapItem = Record<string, unknown>
 
@@ -92,6 +94,7 @@ type BomNode = {
   pendingCostCount: number
   isPartial: boolean
   costSource: CostSource
+  costCategory: 'material' | 'packaging' | 'mo' | 'cif'
   loaded: boolean
 }
 
@@ -100,7 +103,7 @@ type CostedBomNode = Omit<BomNode, 'lines' | 'loaded'> & {
 }
 
 type BomApiResponse =
-  | { success: true; hasBom: true; tree: CostedBomNode; rows: CostedBomExportRow[]; costsAsOf: string; costCacheTtlSeconds: number }
+  | { success: true; hasBom: true; tree: CostedBomNode; rows: CostedBomExportRow[]; costsAsOf: string; costCacheTtlSeconds: number; pricingFormulaConfig: SalesPricingFormulaConfig }
   | { success: true; hasBom: false }
   | { success: false; error: string }
 
@@ -142,6 +145,10 @@ type CostedBomExportRow = {
   isPartial: boolean
   pendingCostCount: number
   warning: string | null
+  costCategory: 'material' | 'packaging' | 'mo' | 'cif'
+  subtotalMP: number | null
+  subtotalMO: number | null
+  subtotalCIF: number | null
 }
 
 type PriceRow = {
@@ -474,19 +481,6 @@ function countBomComponents(node: BomNode): number {
   return node.lines.reduce((total, child) => total + 1 + countBomComponents(child), 0)
 }
 
-function costSourceLabel(source: CostSource): string {
-  switch (source) {
-    case 'last_purchase_receipt_warehouse_average':
-      return 'Promedio de última entrada'
-    case 'mp01_warehouse_average':
-      return 'Promedio vigente MP-01'
-    case 'bom_rollup':
-      return 'Sub-LdM calculada'
-    default:
-      return 'Costo pendiente'
-  }
-}
-
 function formatCost(value: number | null, isPartial: boolean, knownValue: number, maximumFractionDigits = 6): string {
   if (value !== null) return formatNumber(value, maximumFractionDigits)
   if (isPartial && knownValue > 0) return formatNumber(knownValue, maximumFractionDigits) + ' parcial'
@@ -540,6 +534,7 @@ function createPendingCostBomNode(node: FastBomNode): BomNode {
     pendingCostCount,
     isPartial: true,
     costSource: 'unavailable',
+    costCategory: 'material',
   }
 }
 
@@ -1032,7 +1027,7 @@ function BomRowView({
   }
 
   const rowColumns = costsReady
-    ? 'grid min-w-[1080px] grid-cols-[minmax(250px,1.05fr)_minmax(320px,2.25fr)_82px_64px_150px_160px]'
+    ? 'grid min-w-[1260px] grid-cols-[minmax(220px,1fr)_minmax(300px,2fr)_82px_64px_110px_130px_130px_130px]'
     : 'grid min-w-[680px] grid-cols-[minmax(175px,0.9fr)_minmax(260px,2fr)_96px_72px]'
 
   return (
@@ -1064,10 +1059,13 @@ function BomRowView({
           {localError ? <span className="ml-2 text-xs font-medium text-amber-700">({localError})</span> : null}
         </div>
         <div className="px-3 py-2 text-right tabular-nums text-slate-800">{formatSapQuantity(node.quantity)}</div>
-        <div className="px-3 py-2 text-center text-slate-600">{node.inventoryUom || '—'}</div>
-        {costsReady ? <>
+          <div className="px-3 py-2 text-center text-slate-600">{node.inventoryUom || '—'}</div>
+          {costsReady ? <>
+          <div className="px-3 py-2 text-center text-xs font-medium text-slate-600">{node.costCategory === 'mo' ? 'MO' : node.costCategory.toUpperCase()}</div>
           <div className={['px-3 py-2 text-right tabular-nums', node.isPartial ? 'text-amber-700' : 'text-slate-900'].join(' ')}>{formatCost(node.structuralUnitCost, node.isPartial, node.knownStructuralUnitCost, depth === 0 ? 2 : 6)}</div>
-          <div className={['px-3 py-2 text-right font-semibold tabular-nums', node.isPartial ? 'text-amber-700' : 'text-emerald-700'].join(' ')}>{formatCost(node.lineSubtotalCost, node.isPartial, node.knownLineSubtotalCost, depth === 0 ? 2 : 6)}</div>
+          <div className="px-3 py-2 text-right tabular-nums text-slate-700">{node.level === 1 || node.lines.length > 0 ? '—' : node.costCategory === 'material' || node.costCategory === 'packaging' ? formatNumber(node.knownLineSubtotalCost, 2) : '—'}</div>
+          <div className="px-3 py-2 text-right tabular-nums text-slate-700">{node.level === 1 || node.lines.length > 0 || node.costCategory !== 'mo' ? '—' : formatNumber(node.knownLineSubtotalCost, 2)}</div>
+          <div className="px-3 py-2 text-right tabular-nums text-slate-700">{node.level === 1 || node.lines.length > 0 || node.costCategory !== 'cif' ? '—' : formatNumber(node.knownLineSubtotalCost, 2)}</div>
         </> : null}
       </div>
       {expanded && node.lines.length > 0 ? (
@@ -1108,6 +1106,8 @@ function BomPanel({
   onRefreshCosts,
   onLoadChildren,
   onNodeUpdated,
+  exportRows,
+  pricingFormulaConfig,
 }: {
   activeCode: string
   bomTree: BomNode | null
@@ -1121,12 +1121,16 @@ function BomPanel({
   costsReady: boolean
   exportLoading: boolean
   copyFeedback: string | null
-  onDownload: () => void
+  onDownload: (mcPct: number, discountPct: number) => void
   onCopy: () => void
   onRefreshCosts: () => void
   onLoadChildren: (itemCode: string) => Promise<FastBomNode[] | null>
   onNodeUpdated: (path: number[], updated: BomNode) => void
+  exportRows: CostedBomExportRow[]
+  pricingFormulaConfig: SalesPricingFormulaConfig
 }) {
+  const [mcPct, setMcPct] = useState(40)
+  const [discountPct, setDiscountPct] = useState(0)
   const componentWarehouses = bomTree
     ? [...new Set(bomTree.lines.flatMap(line => line.componentWarehouse ? [line.componentWarehouse] : []))]
     : []
@@ -1134,6 +1138,14 @@ function BomPanel({
   const costDuration = formatDuration(costDurationMs)
   const costSnapshotDate = formatCostSnapshotDate(costsAsOf)
   const costCacheTtl = formatCacheTtl(costCacheTtlSeconds)
+  const categoryTotals = useMemo(() => ({
+    mp: exportRows.reduce((total, row) => total + (row.subtotalMP ?? 0), 0),
+    mo: exportRows.reduce((total, row) => total + (row.subtotalMO ?? 0), 0),
+    cif: exportRows.reduce((total, row) => total + (row.subtotalCIF ?? 0), 0),
+  }), [exportRows])
+  const pricing = mcPct > 0 && mcPct < 100 && discountPct >= 0 && discountPct < 100
+    ? evaluateSalesPricing(pricingFormulaConfig, { materialCost: categoryTotals.mp, expandedCost: categoryTotals.mp + categoryTotals.mo + categoryTotals.cif, mcPct: mcPct / 100, discountPct: discountPct / 100 })
+    : null
 
   return (
     <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -1146,7 +1158,7 @@ function BomPanel({
           <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">{String(countBomComponents(bomTree)) + ' componentes cargados'}</span>
           {costsReady ? <>
             <button type="button" onClick={onCopy} disabled={exportLoading} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"><Copy className="size-3.5" /> Copiar para Excel</button>
-            <button type="button" onClick={onDownload} disabled={exportLoading} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-indigo-600 px-3 text-xs font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60">{exportLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />} Descargar Excel</button>
+            <button type="button" onClick={() => onDownload(mcPct, discountPct)} disabled={exportLoading || pricing === null} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-indigo-600 px-3 text-xs font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60">{exportLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />} Descargar Excel</button>
           </> : null}
           <button type="button" onClick={onRefreshCosts} disabled={costLoading || bomLoading || exportLoading} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60">{costLoading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}{costsReady ? 'Actualizar costos' : 'Encontrar costos'}</button>
         </div> : null}
@@ -1177,6 +1189,14 @@ function BomPanel({
           {costDuration ? <span className="ml-3 text-xs text-slate-500">Costos: {costDuration}</span> : null}
           {copyFeedback ? <span role="status" className="ml-3 text-xs font-medium text-emerald-700">{copyFeedback}</span> : null}
         </div>
+        {costsReady ? <div className="grid gap-3 border-b border-slate-200 bg-white p-4 sm:grid-cols-4 sm:px-6">
+          {[['Total general', categoryTotals.mp + categoryTotals.mo + categoryTotals.cif], ['MP', categoryTotals.mp], ['MO', categoryTotals.mo], ['CIF', categoryTotals.cif]].map(([label, total]) => <div key={String(label)} className="rounded-lg border border-slate-200 bg-slate-50 p-3"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p><p className="mt-1 text-lg font-bold tabular-nums text-slate-900">{formatNumber(Number(total), 2)}</p></div>)}
+        </div> : null}
+        {costsReady ? <div className="grid gap-3 border-b border-slate-200 bg-slate-50 p-4 text-sm sm:grid-cols-[auto_auto_1fr] sm:items-end sm:px-6">
+          <label className="grid gap-1 font-semibold text-slate-700">MC %<input type="number" min="0.01" max="99.99" step="0.01" value={mcPct} onChange={event => setMcPct(Number(event.target.value))} className="h-9 w-28 rounded border border-slate-300 bg-white px-2 font-normal" /></label>
+          <label className="grid gap-1 font-semibold text-slate-700">Descuento %<input type="number" min="0" max="99.99" step="0.01" value={discountPct} onChange={event => setDiscountPct(Number(event.target.value))} className="h-9 w-28 rounded border border-slate-300 bg-white px-2 font-normal" /></label>
+          <div className="text-slate-700">{pricing ? <><span className="font-semibold">Pricing:</span> mínimo {formatNumber(pricing.minimumPrice, 2)} · máximo {formatNumber(pricing.maximumPrice, 2)} · PVP {formatNumber(pricing.pvp, 2)}</> : <span className="text-amber-700">MC debe ser mayor que 0 y ambos porcentajes menores que 100.</span>}</div>
+        </div> : null}
         <div className="flex flex-wrap gap-x-5 gap-y-1 border-b border-slate-200 bg-white px-4 py-2.5 text-xs text-slate-600 sm:px-6">
           {costsReady ? <>
             <span><span className="font-semibold text-slate-800">Componentes descargan de:</span> {componentWarehouses.length > 0 ? componentWarehouses.join(', ') : 'Sin bodega configurada en SAP'}</span>
@@ -1190,7 +1210,7 @@ function BomPanel({
           <div className={[
             'grid border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-500',
             costsReady
-              ? 'min-w-[1080px] grid-cols-[minmax(250px,1.05fr)_minmax(320px,2.25fr)_82px_64px_150px_160px]'
+              ? 'min-w-[1260px] grid-cols-[minmax(220px,1fr)_minmax(300px,2fr)_82px_64px_110px_130px_130px_130px]'
               : 'min-w-[680px] grid-cols-[minmax(175px,0.9fr)_minmax(260px,2fr)_96px_72px]',
           ].join(' ')}>
             <span className="px-4 py-2.5">Código</span>
@@ -1198,8 +1218,11 @@ function BomPanel({
             <span className="px-3 py-2.5 text-right">CANT.</span>
             <span className="px-3 py-2.5 text-center">UN</span>
             {costsReady ? <>
-              <span className="px-3 py-2.5 text-right">COSTO UND.</span>
-              <span className="px-3 py-2.5 text-right">Subtotal</span>
+               <span className="px-3 py-2.5 text-center">Categoría</span>
+               <span className="px-3 py-2.5 text-right">Costo und.</span>
+               <span className="px-3 py-2.5 text-right">Sub MP</span>
+               <span className="px-3 py-2.5 text-right">Sub MO</span>
+               <span className="px-3 py-2.5 text-right">Sub CIF</span>
             </> : null}
           </div>
           <BomRowView node={bomTree} path={[]} costsReady={costsReady} onLoadChildren={onLoadChildren} onNodeUpdated={onNodeUpdated} />
@@ -1318,6 +1341,7 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
   const [bomCostsAsOf, setBomCostsAsOf] = useState<string | null>(null)
   const [bomCostCacheTtlSeconds, setBomCostCacheTtlSeconds] = useState<number | null>(null)
   const [bomExportRows, setBomExportRows] = useState<CostedBomExportRow[]>([])
+  const [bomPricingFormulaConfig, setBomPricingFormulaConfig] = useState<SalesPricingFormulaConfig>(DEFAULT_SALES_PRICING_FORMULAS)
   const [bomExportLoading, setBomExportLoading] = useState(false)
   const [bomCopyFeedback, setBomCopyFeedback] = useState<string | null>(null)
   const [showBom, setShowBom] = useState(false)
@@ -1383,6 +1407,7 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
     setBomCostsAsOf(null)
     setBomCostCacheTtlSeconds(null)
     setBomExportRows([])
+    setBomPricingFormulaConfig(DEFAULT_SALES_PRICING_FORMULAS)
     setBomCopyFeedback(null)
   }
 
@@ -1529,6 +1554,7 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
 
       setBomTree(createCostedBomNode(costPayload.tree))
       setBomExportRows(costPayload.rows)
+      setBomPricingFormulaConfig(costPayload.pricingFormulaConfig)
       setBomCostsAsOf(costPayload.costsAsOf)
       setBomCostCacheTtlSeconds(costPayload.costCacheTtlSeconds)
       setBomCostDurationMs(Math.round(performance.now() - costStartedAt))
@@ -1561,6 +1587,7 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
     setBomCostsAsOf(null)
     setBomCostCacheTtlSeconds(null)
     setBomExportRows([])
+    setBomPricingFormulaConfig(DEFAULT_SALES_PRICING_FORMULAS)
 
     try {
       const response = await fetch('/api/sap/items/' + encodeURIComponent(codeToFetch) + '/bom', {
@@ -1655,12 +1682,13 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
     void fetchBom()
   }
 
-  async function handleDownloadBom() {
+  async function handleDownloadBom(mcPct: number, discountPct: number) {
     if (!activeCode) return
     setBomExportLoading(true)
     setBomCopyFeedback(null)
     try {
-      const response = await fetch('/api/sap/items/' + encodeURIComponent(activeCode) + '/bom-costed/export')
+      const params = new URLSearchParams({ mcPct: String(mcPct), discountPct: String(discountPct) })
+      const response = await fetch('/api/sap/items/' + encodeURIComponent(activeCode) + '/bom-costed/export-estimation?' + params.toString())
       if (!response.ok) {
         const payload = await response.json().catch(() => null) as { error?: string } | null
         throw new Error(payload?.error ?? 'No se pudo generar el Excel de la LdM.')
@@ -1669,7 +1697,7 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
       const objectUrl = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = objectUrl
-      link.download = `LDM_COSTADA_${activeCode}.xlsx`
+      link.download = `LdM_Costeo_${activeCode}.xlsx`
       document.body.appendChild(link)
       link.click()
       link.remove()
@@ -1684,25 +1712,22 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
 
   async function handleCopyBom() {
     if (bomExportRows.length === 0) return
-    const header = ['Nivel', 'Código', 'Descripción', 'Cantidad', 'Cantidad acumulada', 'Unidad', 'Bodega descarga componente', 'Bodega destino LdM', 'Bodega costo', 'Fecha última entrada', 'Documento entrada', 'Fuente costo', 'Costo unitario', 'Subtotal', 'Estado', 'Advertencia']
-    const text = [header.join('\t'), ...bomExportRows.map(row => [
-      row.level,
-      row.itemCode,
-      row.itemName,
-      row.quantity,
-      row.accumulatedQuantity,
-      row.inventoryUom ?? '',
-      row.componentWarehouse ?? '',
-      row.outputWarehouse ?? '',
-      row.warehouseCode ?? '',
-      row.receiptDate ?? '',
-      row.receiptDocument ?? '',
-      costSourceLabel(row.costSource),
-      row.unitCost ?? '',
-      row.subtotalCost ?? row.knownSubtotalCost,
-      row.isPartial ? 'Parcial' : 'Completo',
-      row.warning ?? '',
-    ].map(value => String(value).replace(/[\t\r\n]+/g, ' ')).join('\t'))].join('\n')
+    const rows: EstimationBomExportRow[] = bomExportRows.map((row, index) => ({
+      id: String(index),
+      parentId: null,
+      level: row.level,
+      itemCode: row.itemCode,
+      itemName: row.itemName,
+      costCategory: row.level === 1 ? '' : row.costCategory === 'mo' ? 'Mano de obra' : row.costCategory === 'cif' ? 'CIF' : row.costCategory === 'packaging' ? 'Empaque' : 'Material',
+      quantity: row.quantity,
+      uom: row.inventoryUom ?? '',
+      unitCost: row.unitCost,
+      subtotalMP: row.subtotalMP,
+      subtotalMO: row.subtotalMO,
+      subtotalCIF: row.subtotalCIF,
+      isContainer: false,
+    }))
+    const text = buildEstimationBomClipboardText(rows)
     try {
       await navigator.clipboard.writeText(text)
       setBomCopyFeedback('LdM copiada. Pégala directamente en Excel.')
@@ -1864,11 +1889,13 @@ export function ConsultaSapClient({ initialCode, initialItem, initialError }: Co
             costsReady={bomCostsReady}
             exportLoading={bomExportLoading}
             copyFeedback={bomCopyFeedback}
-            onDownload={() => void handleDownloadBom()}
+            onDownload={(mcPct, discountPct) => void handleDownloadBom(mcPct, discountPct)}
             onCopy={() => void handleCopyBom()}
             onRefreshCosts={handleRefreshBomCosts}
             onLoadChildren={loadBomChildren}
             onNodeUpdated={handleBomNodeUpdated}
+            exportRows={bomExportRows}
+            pricingFormulaConfig={bomPricingFormulaConfig}
           />
         ) : (
           <MasterDataPanel

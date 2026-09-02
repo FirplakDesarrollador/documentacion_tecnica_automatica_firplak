@@ -2,11 +2,13 @@ import { NomenclaturesSection } from '@/components/rules/NomenclaturesSection'
 import { MassImportSettingsSection } from '@/components/rules/MassImportSettingsSection'
 import { PrintSettingsSection } from '@/components/configuration/PrintSettingsSection'
 import { SapWriteSettingsSection } from '@/components/configuration/SapWriteSettingsSection'
+import { SapBomCostCategorySettingsSection } from '@/components/configuration/SapBomCostCategorySettingsSection'
 import { ModuleHub } from '@/components/navigation/ModuleHub'
 import { getNamingComponentsAction, getNamingModelStatusAction } from '@/app/rules/actions'
 import { CONFIGURATION_NAVIGATION } from '@/lib/navigation/moduleHierarchy'
 import { dbQuery } from '@/lib/supabase'
 import { requirePagePermission } from '@/utils/auth/access'
+import { normalizeSapBomCostCategoryMapping, SAP_BOM_COST_CATEGORY_MAPPING_SETTING_KEY } from '@/lib/sap/costCategoryResolver'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,12 +33,13 @@ export default async function ConfigurationPage() {
   let initialExecuteEnabled = false
   let initialSafeMaxRows = 15
   let initialSapWritesEnabled = false
+  let initialSapBomCostCategoryMapping = normalizeSapBomCostCategoryMapping(null)
 
   if (access.isAdmin) {
     const settingsRows = (await dbQuery(`
       SELECT key, value
       FROM public.app_settings
-      WHERE key IN ('mass_import_execute_enabled','mass_import_safe_max_rows','sap_writes_enabled')
+      WHERE key IN ('mass_import_execute_enabled','mass_import_safe_max_rows','sap_writes_enabled','sap_bom_cost_category_mapping')
     `) || []) as AppSettingRow[]
     const settingsByKey = new Map<string, unknown>()
 
@@ -46,6 +49,7 @@ export default async function ConfigurationPage() {
     const configuredSafeMaxRows = Number(settingsByKey.get('mass_import_safe_max_rows') ?? 15)
     initialSafeMaxRows = Number.isFinite(configuredSafeMaxRows) ? configuredSafeMaxRows : 15
     initialSapWritesEnabled = readBooleanSetting(settingsByKey.get('sap_writes_enabled'))
+    initialSapBomCostCategoryMapping = normalizeSapBomCostCategoryMapping(settingsByKey.get(SAP_BOM_COST_CATEGORY_MAPPING_SETTING_KEY))
   }
 
   return (
@@ -74,6 +78,7 @@ export default async function ConfigurationPage() {
           </div>
           <PrintSettingsSection />
           <SapWriteSettingsSection initialEnabled={initialSapWritesEnabled} />
+          <SapBomCostCategorySettingsSection initialMapping={initialSapBomCostCategoryMapping} />
           <MassImportSettingsSection
             initialExecuteEnabled={initialExecuteEnabled}
             initialSafeMaxRows={initialSafeMaxRows}
