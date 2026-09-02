@@ -14,6 +14,8 @@ export type DirectSapCost = {
   warning: string | null
 }
 
+export type CostedBomCategory = 'material' | 'packaging' | 'mo' | 'cif'
+
 export type CostedBomInputNode = {
   itemCode: string
   itemName: string
@@ -24,6 +26,7 @@ export type CostedBomInputNode = {
   outputWarehouse: string | null
   lines: CostedBomInputNode[]
   directCost: DirectSapCost
+  costCategory: CostedBomCategory
 }
 
 export type CostedBomNode = Omit<CostedBomInputNode, 'lines'> & {
@@ -112,6 +115,10 @@ export type CostedBomExportRow = {
   isPartial: boolean
   pendingCostCount: number
   warning: string | null
+  costCategory: CostedBomCategory
+  subtotalMP: number | null
+  subtotalMO: number | null
+  subtotalCIF: number | null
 }
 
 export function flattenCostedBomTree(tree: CostedBomNode): CostedBomExportRow[] {
@@ -121,6 +128,8 @@ export function flattenCostedBomTree(tree: CostedBomNode): CostedBomExportRow[] 
     const normalizedAccumulatedQuantity = parentBomQuantity === null
       ? 1
       : accumulatedQuantity * node.quantity / safeQuantity(parentBomQuantity)
+    const knownSubtotal = node.knownLineSubtotalCost
+    const categorizedSubtotal = node.level === 1 || node.lines.length > 0 ? null : knownSubtotal
     rows.push({
       level: node.level,
       itemCode: node.itemCode,
@@ -136,10 +145,14 @@ export function flattenCostedBomTree(tree: CostedBomNode): CostedBomExportRow[] 
       costSource: node.costSource,
       unitCost: node.structuralUnitCost,
       subtotalCost: node.lineSubtotalCost,
-      knownSubtotalCost: node.knownLineSubtotalCost,
+      knownSubtotalCost: knownSubtotal,
       isPartial: node.isPartial,
       pendingCostCount: node.pendingCostCount,
       warning: node.directCost.warning,
+      costCategory: node.costCategory,
+      subtotalMP: categorizedSubtotal !== null && (node.costCategory === 'material' || node.costCategory === 'packaging') ? categorizedSubtotal : null,
+      subtotalMO: categorizedSubtotal !== null && node.costCategory === 'mo' ? categorizedSubtotal : null,
+      subtotalCIF: categorizedSubtotal !== null && node.costCategory === 'cif' ? categorizedSubtotal : null,
     })
     for (const line of node.lines) visit(line, normalizedAccumulatedQuantity, node.bomQuantity)
   }

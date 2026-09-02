@@ -23,6 +23,7 @@ function node(overrides: Partial<CostedBomInputNode> = {}): CostedBomInputNode {
     outputWarehouse: null,
     lines: [],
     directCost: directCost(null),
+    costCategory: 'material',
     ...overrides,
   }
 }
@@ -46,6 +47,24 @@ test('rollup costs sub-BOM children once and multiplies by parent quantity', () 
   assert.equal(tree.lines[0]?.structuralUnitCost, 35)
   assert.equal(tree.lines[0]?.lineSubtotalCost, 70)
   assert.equal(tree.lines[1]?.lineSubtotalCost, 7)
+})
+
+test('assigns leaf subtotals only to their configured cost category', () => {
+  const tree = buildCostedBomTree(node({
+    lines: [
+      node({ itemCode: 'MP', directCost: directCost(10), costCategory: 'material' }),
+      node({ itemCode: 'MO', directCost: directCost(5), costCategory: 'mo' }),
+      node({ itemCode: 'CIF', directCost: directCost(2), costCategory: 'cif' }),
+    ],
+  }))
+  const rows = flattenCostedBomTree(tree)
+
+  assert.deepEqual(rows.map(row => [row.itemCode, row.subtotalMP, row.subtotalMO, row.subtotalCIF]), [
+    ['ROOT', null, null, null],
+    ['MP', 10, null, null],
+    ['MO', null, 5, null],
+    ['CIF', null, null, 2],
+  ])
 })
 
 test('marks root totals partial when a leaf cost is unavailable', () => {

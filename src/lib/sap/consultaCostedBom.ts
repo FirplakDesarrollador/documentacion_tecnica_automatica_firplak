@@ -13,6 +13,13 @@ import {
   type CostedBomNode,
   type DirectSapCost,
 } from './costedBom'
+import {
+  normalizeSapBomCostCategoryMapping,
+  resolveSapBomCostCategory,
+  SAP_BOM_COST_CATEGORY_MAPPING_SETTING_KEY,
+  type SapBomCostCategory,
+} from './costCategoryResolver'
+import { dbQuery } from '@/lib/supabase'
 
 export const SAP_MP01_COST_CACHE_SECONDS = 60 * 60 * 48
 export const SAP_MP01_COST_CACHE_TAG = 'consulta-sap-mp01-costs'
@@ -24,6 +31,10 @@ type CachedMp01CostSnapshot = {
     itemCode: string
     itemName: string | null
     inventoryUom: string | null
+    itemsGroupCode: string | null
+    materialGroup: string | null
+    family: string | null
+    group: string | null
   }>
 }
 
@@ -39,7 +50,9 @@ export type SapCostedBomResult = {
 }
 
 function textValue(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null
+  if (typeof value === 'string' && value.trim()) return value.trim()
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  return null
 }
 
 function positiveFinite(value: number | null | undefined): value is number {
@@ -60,7 +73,7 @@ async function loadMp01CostSnapshot(itemCodesKey: string): Promise<CachedMp01Cos
   const itemCodes = itemCodesKey.split('|').filter(Boolean)
   const [averages, itemMasters] = await Promise.all([
     getSapItemsWithWarehouseAverage(itemCodes, 'MP-01'),
-    getSapItemsByCodes(itemCodes, ['ItemCode', 'ItemName', 'InventoryUOM']),
+    getSapItemsByCodes(itemCodes, ['ItemCode', 'ItemName', 'InventoryUOM', 'ItemsGroupCode', 'MaterialGroup', 'U_Familia', 'U_Grupo']),
   ])
   return {
     capturedAt: new Date().toISOString(),
@@ -69,6 +82,10 @@ async function loadMp01CostSnapshot(itemCodesKey: string): Promise<CachedMp01Cos
       itemCode,
       itemName: textValue(item.ItemName),
       inventoryUom: textValue(item.InventoryUOM),
+      itemsGroupCode: textValue(item.ItemsGroupCode),
+      materialGroup: textValue(item.MaterialGroup),
+      family: textValue(item.U_Familia),
+      group: textValue(item.U_Grupo),
     })),
   }
 }
@@ -140,10 +157,18 @@ export async function getSapCostedBom(
   const costSnapshotMs = Math.round(performance.now() - costSnapshotStartedAt)
   const itemMasterByCode = new Map(costSnapshot.itemMasters.map(item => [item.itemCode, item]))
   const averagesByCode = new Map(costSnapshot.averages.map(average => [average.itemCode, average]))
+  const mappingRows = await dbQuery('SELECT value FROM public.app_settings WHERE key = $1 LIMIT 1', [SAP_BOM_COST_CATEGORY_MAPPING_SETTING_KEY])
+  const costCategoryMapping = normalizeSapBomCostCategoryMapping(mappingRows[0]?.value)
 
-  function toCostedInput(node: FullSapBomNode): CostedBomInputNode {
+  function toCostedInput(node: FullSapBomNode, parentCategory: SapBomCostCategory | null = null): CostedBomInputNode {
     const itemMaster = itemMasterByCode.get(node.itemCode)
     const average = averagesByCode.get(node.itemCode)
+    const costCategory = resolveSapBomCostCategory({
+      itemsGroupCode: itemMaster?.itemsGroupCode ?? node.itemsGroupCode ?? null,
+      materialGroup: itemMaster?.materialGroup ?? node.materialGroup ?? null,
+      family: itemMaster?.family ?? node.family ?? null,
+      group: itemMaster?.group ?? node.group ?? null,
+    }, costCategoryMapping, parentCategory)
     return {
       itemCode: node.itemCode,
       itemName: itemMaster?.itemName ?? average?.itemName ?? node.itemName,
@@ -152,8 +177,9 @@ export async function getSapCostedBom(
       bomQuantity: node.bomQuantity,
       componentWarehouse: node.componentWarehouse,
       outputWarehouse: node.outputWarehouse,
-      lines: node.lines.map(toCostedInput),
+      lines: node.lines.map(line => toCostedInput(line, costCategory)),
       directCost: resolveDirectCost(average, node.cycleDetected),
+      costCategory,
     }
   }
 

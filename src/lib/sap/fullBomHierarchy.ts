@@ -75,7 +75,15 @@ export async function loadFullSapBomHierarchy(rootItemCode: string): Promise<Ful
     ...bomsByCode.keys(),
     ...[...bomsByCode.values()].flatMap(bom => bom.lines.map(line => normalizedCode(line.ItemCode))),
   ])]
-  const itemMasters = await getSapItemsByCodes(itemCodes, ['ItemCode', 'ItemName', 'InventoryUOM'])
+  const itemMasters = await getSapItemsByCodes(itemCodes, [
+    'ItemCode',
+    'ItemName',
+    'InventoryUOM',
+    'ItemsGroupCode',
+    'MaterialGroup',
+    'U_Familia',
+    'U_Grupo',
+  ])
 
   return buildFullSapBomHierarchy(rootCode, bomsByCode, itemMasters, branchErrors)
 }
