@@ -203,6 +203,14 @@ function isPlaceholder(val: unknown): boolean {
     return PLACEHOLDERS.includes(str) || str === ''
 }
 
+function composeResolvedTypeKey(...values: unknown[]): string {
+    return values
+        .filter(value => !isPlaceholder(value))
+        .map(value => normalizeTechnicalText(value))
+        .filter(Boolean)
+        .join(' ')
+}
+
 function isSymbolOnly(val: string): boolean {
     // Returns true if name is just symbols like "+", "&", "*", etc.
     return /^[^a-zA-Z0-9]+$/.test(val.trim())
@@ -309,7 +317,7 @@ function resolveTypeBlock(product: ProductPayload, glossary?: Record<string, Glo
 
     // 1. Unified Glossary Strategy (Category: RESOLVED_TYPE)
     // Keys are stored in DB as: "MUEBLE ELEVADO LAVAMANOS"
-    const glossaryKey = `${rawType} ${rawDesig} ${rawDest}`.replace(/\s+/g, ' ').trim()
+    const glossaryKey = composeResolvedTypeKey(rawType, rawDesig, rawDest)
     if (glossary && glossary[glossaryKey] && glossary[glossaryKey].category === 'RESOLVED_TYPE') {
         const result = glossary[glossaryKey].en
         if (result && !isPlaceholder(result)) return result
@@ -317,9 +325,9 @@ function resolveTypeBlock(product: ProductPayload, glossary?: Record<string, Glo
 
     // 2. Fallbacks con sub-combos en Glosario (Greedy Match)
     const subKeys = [
-        `${rawType} ${rawDesig}`,
-        `${rawType} ${rawDest}`
-    ].map(k => k.trim())
+        composeResolvedTypeKey(rawType, rawDesig),
+        composeResolvedTypeKey(rawType, rawDest),
+    ]
 
     for (const skey of subKeys) {
         if (glossary && glossary[skey] && glossary[skey].category === 'RESOLVED_TYPE') {

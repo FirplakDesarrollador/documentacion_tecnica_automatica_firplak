@@ -36,11 +36,15 @@ function normalizeGlossaryValue(value: unknown) {
         .trim()
 }
 
+function isGlossaryPlaceholder(value: string) {
+    return ['NA', 'N/A', 'NULL', 'NONE', 'UNDEFINED', '-'].includes(value)
+}
+
 function uniqueNonEmpty(values: Array<string | null | undefined>) {
     return Array.from(new Set(
         values
             .map(normalizeGlossaryValue)
-            .filter(Boolean)
+            .filter(value => value && !isGlossaryPlaceholder(value))
     ))
 }
 
@@ -90,11 +94,14 @@ function getResolvedTypeGlossaryKeys(product: Record<string, unknown>) {
     const productType = normalizeGlossaryValue(product.product_type || 'MUEBLE')
     const designation = normalizeGlossaryValue(product.designation)
     const useDestination = normalizeGlossaryValue(product.use_destination)
+    const composedKey = (...values: string[]) => values
+        .filter(value => !isGlossaryPlaceholder(value))
+        .join(' ')
 
     return uniqueNonEmpty([
-        `${productType} ${designation} ${useDestination}`,
-        `${productType} ${designation}`,
-        `${productType} ${useDestination}`,
+        composedKey(productType, designation, useDestination),
+        composedKey(productType, designation),
+        composedKey(productType, useDestination),
     ])
 }
 
