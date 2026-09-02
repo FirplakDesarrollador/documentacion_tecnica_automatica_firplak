@@ -74,6 +74,7 @@ import {
   type ProductDesignEstimationStatus,
 } from './actions'
 import { CommercialColorSelector } from './CommercialColorSelector'
+import { CreateSapCodeButton } from './CreateSapCodeButton'
 import {
   isPackagingPhysicalItemCode,
   type EstimationDraft,
@@ -122,7 +123,7 @@ const ESTIMATION_STATUSES: Array<{ value: ProductDesignEstimationStatus; label: 
   { value: 'archived', label: 'Archivada' },
 ]
 
-const BOM_GRID_COLUMNS = 'grid-cols-[28px_minmax(420px,1fr)_128px_128px_128px_200px]'
+const BOM_GRID_COLUMNS = 'grid-cols-[28px_minmax(280px,1fr)_112px_112px_112px_156px]'
 
 function SortableBomRow({
   lineId,
@@ -818,7 +819,7 @@ export function EstimationEditorClient({
         const suggestion = await suggestEstimationSubBomCodeAction(line.sapItemCode ?? '')
         updateBomLine(line.id, {
           origin: 'manual',
-          sapItemCode: null,
+          sapItemCode: suggestion.suggestedItemCode,
           costStrategy: estimation.draft.bomLines.some(candidate => candidate.parentId === line.id) ? 'expand_children' : 'manual_override',
           unitCost: null,
           costEvidence: null,
@@ -834,7 +835,7 @@ export function EstimationEditorClient({
             sapStructureLocked: false,
           },
         })
-        toast.success(`Sub-LdM convertida. Código sugerido no reservado: ${suggestion.suggestedItemCode}.`)
+        toast.success(`Sub-LdM convertida. Se cargó el código sugerido ${suggestion.suggestedItemCode}; puedes editarlo antes de crear.`)
       } catch (error) {
         toast.error(errorMessage(error))
       }
@@ -1247,6 +1248,7 @@ export function EstimationEditorClient({
     const physicalWeightPolicy = inferPhysicalWeightPolicy(line, hasChildren)
     const physicalWeightPolicyIsFixed = isPhysicalWeightPolicyFixed(line, hasChildren)
     const suggestedCode = extensionText(line.extensions, 'suggestedSapItemCode')
+    const createdCode = extensionText(line.extensions, 'sapCreatedItemCode')
     const excludedByManualBoundary = isExcludedByManualBoundary(line, estimation.draft.bomLines)
     return (
       <SortableBomRow key={line.id} lineId={line.id} excluded={excludedByManualBoundary} dropPosition={bomDropHint?.targetId === line.id ? bomDropHint.position : null}>
@@ -1254,17 +1256,19 @@ export function EstimationEditorClient({
           <div className="flex items-center gap-1.5">
             {chevron}
             <Badge variant={hasChildren ? 'secondary' : 'outline'}>Nivel {getEstimationBomDisplayLevel(level)}</Badge>
-            <span className="font-semibold text-slate-900">{line.sapItemCode ?? suggestedCode ?? 'Manual'}</span>
+            {!isManual && <span className="font-semibold text-slate-900">{line.sapItemCode ?? suggestedCode ?? 'Manual'}</span>}
             {isManual ? <Input className="h-7 min-w-0 flex-1" value={line.itemName ?? ''} onChange={(event) => updateBomLine(line.id, { itemName: event.target.value || null })} placeholder="Nombre" /> : <span className="min-w-0 flex-1 break-words leading-tight text-slate-700">{line.itemName}</span>}
           </div>
-          {suggestedCode && <p className="mt-1 text-[11px] text-amber-700">Sugerido, no reservado: {suggestedCode}</p>}
+          {isManual && <div className="mt-1 ml-[30px]"><Input className="h-7 text-[11px]" value={line.sapItemCode ?? suggestedCode ?? ''} onChange={(event) => updateBomLine(line.id, { sapItemCode: event.target.value.trim().toUpperCase() || null })} placeholder={hasChildren ? 'Código sugerido de la sub-LdM' : 'Código SAP existente'} /></div>}
+          {suggestedCode && <p className="mt-1 text-[11px] text-amber-700">Código sugerido: {suggestedCode}. Puedes ajustarlo antes de crear.</p>}
+          {createdCode !== null && createdCode === line.sapItemCode && <p className="mt-1 text-[11px] text-emerald-700">SAP creado: {createdCode}. Puedes ajustarlo si necesitas editar la cotización.</p>}
           {excludedByManualBoundary && <Badge className="mt-1 bg-amber-100 text-amber-800">Excluido por costo manual de la rama</Badge>}
-          <div className="mt-2 ml-[30px] flex items-center gap-2">{physicalWeightPolicyIsFixed ? <Badge variant="outline">{PHYSICAL_WEIGHT_POLICY_LABELS[physicalWeightPolicy]}</Badge> : <select aria-label="Tipo de peso" className="h-7 rounded border border-input bg-white px-2 text-[11px]" value={physicalWeightPolicy} onChange={(event) => updateBomLine(line.id, { physicalWeightPolicy: event.target.value as EstimationDraftPhysicalWeightPolicy })}>{PHYSICAL_WEIGHT_POLICY_CHOICES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>}{physicalWeightPolicy !== 'no_weight' && <select aria-label="Destino del peso" className="h-7 rounded border border-input bg-white px-2 text-[11px]" value={line.physicalWeightCategory ?? 'product'} onChange={(event) => { const nextCategory = event.target.value as 'product' | 'packaging'; updateBomLine(line.id, { physicalWeightCategory: nextCategory, ...(line.costCategory === 'mo' || line.costCategory === 'cif' ? {} : { costCategory: nextCategory === 'packaging' ? 'packaging' : 'material' }), extensions: { ...line.extensions, physicalWeightCategoryDefinedByUser: true } }) }}><option value="product">Producto</option><option value="packaging">Empaque</option></select>}{physicalWeightPolicy === 'useful_weight' && <DecimalInput aria-label="Cantidad útil" className="h-7 w-24" disabled={contentLocked} inputMode="decimal" numericValue={line.usefulQuantity} onValueCommit={(usefulQuantity) => updateBomLine(line.id, { usefulQuantity })} placeholder="Cantidad útil" />}{!physicalWeightPolicyIsFixed && physicalWeightPolicy === 'direct_weight' && line.physicalWeightSnapshot?.kgPerUom === null && <Link href="/physical-weights" className="text-[11px] font-medium text-amber-700 hover:text-amber-900">Definir kg/{line.uom ?? 'UOM'}</Link>}</div>
+          <div className="mt-2 ml-[30px] flex flex-wrap items-center gap-2">{physicalWeightPolicyIsFixed ? <Badge variant="outline">{PHYSICAL_WEIGHT_POLICY_LABELS[physicalWeightPolicy]}</Badge> : <select aria-label="Tipo de peso" className="h-7 max-w-full rounded border border-input bg-white px-2 text-[11px]" value={physicalWeightPolicy} onChange={(event) => updateBomLine(line.id, { physicalWeightPolicy: event.target.value as EstimationDraftPhysicalWeightPolicy })}>{PHYSICAL_WEIGHT_POLICY_CHOICES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>}{physicalWeightPolicy !== 'no_weight' && <select aria-label="Destino del peso" className="h-7 max-w-full rounded border border-input bg-white px-2 text-[11px]" value={line.physicalWeightCategory ?? 'product'} onChange={(event) => { const nextCategory = event.target.value as 'product' | 'packaging'; updateBomLine(line.id, { physicalWeightCategory: nextCategory, ...(line.costCategory === 'mo' || line.costCategory === 'cif' ? {} : { costCategory: nextCategory === 'packaging' ? 'packaging' : 'material' }), extensions: { ...line.extensions, physicalWeightCategoryDefinedByUser: true } }) }}><option value="product">Producto</option><option value="packaging">Empaque</option></select>}{physicalWeightPolicy === 'useful_weight' && <DecimalInput aria-label="Cantidad útil" className="h-7 w-24 max-w-full" disabled={contentLocked} inputMode="decimal" numericValue={line.usefulQuantity} onValueCommit={(usefulQuantity) => updateBomLine(line.id, { usefulQuantity })} placeholder="Cantidad útil" />}{!physicalWeightPolicyIsFixed && physicalWeightPolicy === 'direct_weight' && line.physicalWeightSnapshot?.kgPerUom === null && <Link href="/physical-weights" className="text-[11px] font-medium text-amber-700 hover:text-amber-900">Definir kg/{line.uom ?? 'UOM'}</Link>}</div>
         </div>
         <div className="flex justify-center p-2"><BomQuantityUomInput line={line} contentLocked={contentLocked} onChange={(changes) => updateBomLine(line.id, changes)} /></div>
         <div className="flex flex-col items-center p-2 text-center">{isManual && <select value={line.costStrategy ?? ''} disabled={contentLocked} onChange={(event) => { const costStrategy = (event.target.value || null) as EstimationBomCostStrategy | null; if (costStrategy === 'manual_override' && hasChildren && !window.confirm('El costo manual excluirá expresamente todos los descendientes del cálculo. ¿Continuar?')) return; updateBomLine(line.id, costStrategy === 'expand_children' ? { costStrategy, unitCost: null, costEvidence: null, manualCostReason: null } : { costStrategy }) }} className="mb-1 h-7 max-w-full rounded border border-input bg-white px-1 text-[11px]">{COST_STRATEGIES.map(strategy => <option key={strategy.value} value={strategy.value}>{strategy.label}</option>)}</select>}{isManual && line.costStrategy === 'manual_override' ? <DecimalInput className="h-8 w-24" inputMode="decimal" numericValue={line.unitCost} onValueCommit={(unitCost) => { updateBomLine(line.id, { unitCost, costEvidence: unitCost === null ? null : { source: 'manual', candidateId: null, warehouseCode: null, documentType: 'Manual', documentNumber: null, documentDate: new Date().toISOString(), originalCurrency: 'COP', sourceUom: line.uom, warning: null, extensions: {} } }) }} /> : <span className="font-semibold text-slate-800">{valuation?.structuralUnitCost === null || valuation?.structuralUnitCost === undefined ? 'Pendiente' : formatCurrency(valuation.structuralUnitCost)}</span>}</div>
         <div className="p-2 text-center font-semibold text-slate-800">{valuation ? formatCurrency(valuation.totalCost) : 'Pendiente'}</div>
-        <div className="px-4 py-3"><div className="flex min-w-40 flex-col gap-1">{isManual && <><Button type="button" size="sm" variant="outline" onClick={() => prepareSapChildSearch(line.id)}><GitBranchPlus className="h-3.5 w-3.5" />Agregar hijo SAP</Button><Button type="button" size="sm" variant="outline" onClick={() => addManualChild(line.id)}><PackagePlus className="h-3.5 w-3.5" />Agregar manual</Button></>}{line.origin === 'sap' && hasChildren && <Button type="button" size="sm" variant="outline" disabled={isPending} onClick={() => convertSapSubstructure(line)}><Copy className="h-3.5 w-3.5" />Copiar sub-LdM</Button>}<Button type="button" variant="ghost" size="sm" disabled={contentLocked} onClick={() => removeBomLine(line.id)}><Trash2 className="h-3.5 w-3.5 text-red-600" />Eliminar rama</Button></div></div>
+        <div className="p-2"><div className="flex min-w-0 flex-col gap-1">{isManual && <><Button type="button" size="sm" variant="outline" className="h-auto min-h-8 w-full whitespace-normal" onClick={() => prepareSapChildSearch(line.id)}><GitBranchPlus className="h-3.5 w-3.5 shrink-0" />Agregar hijo SAP</Button><Button type="button" size="sm" variant="outline" className="h-auto min-h-8 w-full whitespace-normal" onClick={() => addManualChild(line.id)}><PackagePlus className="h-3.5 w-3.5 shrink-0" />Agregar manual</Button></>}{line.origin === 'sap' && hasChildren && <Button type="button" size="sm" variant="outline" className="h-auto min-h-8 w-full whitespace-normal" disabled={isPending} onClick={() => convertSapSubstructure(line)}><Copy className="h-3.5 w-3.5 shrink-0" />Copiar sub-LdM</Button>}<Button type="button" variant="ghost" size="sm" className="h-auto min-h-8 w-full whitespace-normal" disabled={contentLocked} onClick={() => removeBomLine(line.id)}><Trash2 className="h-3.5 w-3.5 shrink-0 text-red-600" />Eliminar rama</Button></div></div>
       </SortableBomRow>
     )
   }
@@ -1438,29 +1442,34 @@ export function EstimationEditorClient({
             </CardHeader>
             <CardContent className="space-y-4">
               {gelcoatReplacementProposals.length > 0 && <div className="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 md:flex-row md:items-center md:justify-between"><div><p className="font-semibold">La LdM usa gelcoat de otro color</p><p className="mt-1">Se propone reemplazar {gelcoatReplacementProposals.map(item => `${item.currentItemCode} por ${item.proposedItemCode}`).join(', ')} directamente en la LdM.</p></div><Button type="button" variant="outline" onClick={replaceGelcoatForSelectedColor} disabled={isPending}>Actualizar gelcoat en LdM</Button></div>}
-              <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 md:flex-row">
-                <Input value={componentQuery} onChange={(event) => setComponentQuery(event.target.value)} placeholder="Buscar ítem SAP para agregar" />
-                <select value={componentParentId} onChange={(event) => setComponentParentId(event.target.value)} className="h-10 rounded-lg border border-input bg-white px-3 text-sm">
+              <div className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]">
+                <Input className="min-w-0 sm:col-span-2 xl:col-span-1" value={componentQuery} onChange={(event) => setComponentQuery(event.target.value)} placeholder="Buscar ítem SAP para agregar" />
+                <select value={componentParentId} onChange={(event) => setComponentParentId(event.target.value)} className="h-10 min-w-0 rounded-lg border border-input bg-white px-3 text-sm">
                   <option value="">En nivel 2</option>
                   {hierarchyRows.map(({ line, level }) => <option key={line.id} value={line.id}>{'— '.repeat(level)}{line.itemName ?? line.sapItemCode ?? line.id}</option>)}
                 </select>
-                <Button type="button" variant="outline" onClick={searchComponents}><Search className="h-4 w-4" />Buscar SAP</Button>
-                <Button type="button" variant="outline" onClick={() => addManualChild(componentParentId || null)}><PackagePlus className="h-4 w-4" />Agregar manual</Button>
+                <div className="grid grid-cols-2 gap-2 sm:col-span-2 xl:col-span-2 xl:contents">
+                  <Button type="button" variant="outline" className="min-w-0 whitespace-normal" onClick={searchComponents}><Search className="h-4 w-4 shrink-0" />Buscar SAP</Button>
+                  <Button type="button" variant="outline" className="min-w-0 whitespace-normal" onClick={() => addManualChild(componentParentId || null)}><PackagePlus className="h-4 w-4 shrink-0" />Agregar manual</Button>
+                </div>
               </div>
               {componentCandidates.length > 0 && <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200 p-1">{componentCandidates.map((candidate) => <button key={candidate.itemCode} type="button" onClick={() => addSapComponent(candidate)} className="block w-full rounded-md px-3 py-2 text-left text-sm hover:bg-sky-50"><strong>{candidate.itemCode}</strong><span className="ml-2 text-slate-500">{candidate.itemName}</span></button>)}</div>}
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <div className="flex items-center gap-3">
-                  <Badge className="bg-slate-900 text-white">Nivel 1</Badge>
-                  <div><p className="font-semibold text-slate-950">{estimation.provisionalName}</p><p className="text-xs text-slate-600">Estructura basada en {estimation.draft.homologue?.sapItemCode ?? 'un homólogo pendiente'}</p></div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Badge className="shrink-0 bg-slate-900 text-white">Nivel 1</Badge>
+                    <div className="min-w-0"><p className="break-words font-semibold text-slate-950">{estimation.provisionalName}</p><p className="text-xs text-slate-600">Estructura basada en {estimation.draft.homologue?.sapItemCode ?? 'un homólogo pendiente'}</p></div>
+                  </div>
+                  <CreateSapCodeButton estimation={estimation} onConverted={setSaved} />
                 </div>
               </div>
               <div className="overflow-x-auto rounded-lg border border-slate-200">
-                <div className={`grid min-w-[788px] ${BOM_GRID_COLUMNS} bg-slate-100 text-xs font-semibold text-slate-600`}>
+                <div className={`grid min-w-[700px] ${BOM_GRID_COLUMNS} bg-slate-100 text-xs font-semibold text-slate-600`}>
                   <div className="p-2" aria-hidden="true" /><div className="p-2 text-center">Nivel / componente</div><div className="p-2 text-center">Cant./Und</div><div className="p-2 text-center">Costo unit.</div><div className="p-2 text-center">Subtotal</div><div className="p-2 text-center">Acciones</div>
                 </div>
                 <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragStart={handleBomDragStart} onDragOver={handleBomDragOver} onDragEnd={handleBomDragEnd} onDragCancel={() => { setActiveBomLineId(null); setBomDropHint(null) }}>
                   <SortableContext items={visibleHierarchyRows.map(row => row.line.id)} strategy={verticalListSortingStrategy}>
-                    <div className="min-w-[788px]">
+                    <div className="min-w-[700px]">
                       {(hierarchyRowsByParentId.get(null) ?? []).map((row) => (
                         <EstimationBomTreeBranch
                           key={row.line.id}

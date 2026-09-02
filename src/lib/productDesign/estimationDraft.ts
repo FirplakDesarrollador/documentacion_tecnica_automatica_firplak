@@ -196,6 +196,7 @@ const COST_SOURCES: readonly EstimationCostSource[] = [
   'receipt_verified',
   'inventory_gen_entry_temporary',
   'warehouse_average',
+  'supabase_initial',
   'manual',
   'unavailable',
 ]
