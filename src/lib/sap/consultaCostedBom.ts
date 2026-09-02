@@ -14,12 +14,10 @@ import {
   type DirectSapCost,
 } from './costedBom'
 import {
-  normalizeSapBomCostCategoryMapping,
-  resolveSapBomCostCategory,
-  SAP_BOM_COST_CATEGORY_MAPPING_SETTING_KEY,
+  resolveComponentCostCategory,
   type SapBomCostCategory,
 } from './costCategoryResolver'
-import { dbQuery } from '@/lib/supabase'
+import { supabaseTable } from '@/lib/supabaseDynamic'
 
 export const SAP_MP01_COST_CACHE_SECONDS = 60 * 60 * 48
 export const SAP_MP01_COST_CACHE_TAG = 'consulta-sap-mp01-costs'
@@ -35,6 +33,7 @@ type CachedMp01CostSnapshot = {
     materialGroup: string | null
     family: string | null
     group: string | null
+    componentCategory: string | null
   }>
 }
 
@@ -71,10 +70,15 @@ function normalizeItemCodes(itemCodes: string[]): string[] {
 
 async function loadMp01CostSnapshot(itemCodesKey: string): Promise<CachedMp01CostSnapshot> {
   const itemCodes = itemCodesKey.split('|').filter(Boolean)
-  const [averages, itemMasters] = await Promise.all([
+  const [averages, itemMasters, componentItems] = await Promise.all([
     getSapItemsWithWarehouseAverage(itemCodes, 'MP-01'),
     getSapItemsByCodes(itemCodes, ['ItemCode', 'ItemName', 'InventoryUOM', 'ItemsGroupCode', 'MaterialGroup', 'U_Familia', 'U_Grupo']),
+    supabaseTable('component_items')
+      .select<Array<{ item_code: string; component_category: string | null }>>('item_code, component_category')
+      .in('item_code', itemCodes),
   ])
+  if (componentItems.error) throw new Error(`No se pudo consultar la clasificación de component_items: ${componentItems.error.message}`)
+  const componentCategoryByCode = new Map((componentItems.data ?? []).map(item => [item.item_code.trim().toUpperCase(), textValue(item.component_category)]))
   return {
     capturedAt: new Date().toISOString(),
     averages: [...averages.values()],
@@ -86,13 +90,14 @@ async function loadMp01CostSnapshot(itemCodesKey: string): Promise<CachedMp01Cos
       materialGroup: textValue(item.MaterialGroup),
       family: textValue(item.U_Familia),
       group: textValue(item.U_Grupo),
+      componentCategory: componentCategoryByCode.get(itemCode) ?? null,
     })),
   }
 }
 
 const getCachedMp01CostSnapshot = unstable_cache(
   loadMp01CostSnapshot,
-  ['consulta-sap-mp01-costs-v3'],
+  ['consulta-sap-mp01-costs-v4'],
   {
     revalidate: SAP_MP01_COST_CACHE_SECONDS,
     tags: [SAP_MP01_COST_CACHE_TAG],
@@ -157,18 +162,10 @@ export async function getSapCostedBom(
   const costSnapshotMs = Math.round(performance.now() - costSnapshotStartedAt)
   const itemMasterByCode = new Map(costSnapshot.itemMasters.map(item => [item.itemCode, item]))
   const averagesByCode = new Map(costSnapshot.averages.map(average => [average.itemCode, average]))
-  const mappingRows = await dbQuery('SELECT value FROM public.app_settings WHERE key = $1 LIMIT 1', [SAP_BOM_COST_CATEGORY_MAPPING_SETTING_KEY])
-  const costCategoryMapping = normalizeSapBomCostCategoryMapping(mappingRows[0]?.value)
-
   function toCostedInput(node: FullSapBomNode, parentCategory: SapBomCostCategory | null = null): CostedBomInputNode {
     const itemMaster = itemMasterByCode.get(node.itemCode)
     const average = averagesByCode.get(node.itemCode)
-    const costCategory = resolveSapBomCostCategory({
-      itemsGroupCode: itemMaster?.itemsGroupCode ?? node.itemsGroupCode ?? null,
-      materialGroup: itemMaster?.materialGroup ?? node.materialGroup ?? null,
-      family: itemMaster?.family ?? node.family ?? null,
-      group: itemMaster?.group ?? node.group ?? null,
-    }, costCategoryMapping, parentCategory)
+    const costCategory = resolveComponentCostCategory(itemMaster?.componentCategory, parentCategory)
     return {
       itemCode: node.itemCode,
       itemName: itemMaster?.itemName ?? average?.itemName ?? node.itemName,

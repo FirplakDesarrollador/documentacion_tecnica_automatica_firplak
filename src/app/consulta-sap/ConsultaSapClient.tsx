@@ -1027,7 +1027,7 @@ function BomRowView({
   }
 
   const rowColumns = costsReady
-    ? 'grid min-w-[1260px] grid-cols-[minmax(220px,1fr)_minmax(300px,2fr)_82px_64px_110px_130px_130px_130px]'
+    ? 'grid min-w-[1390px] grid-cols-[minmax(220px,1fr)_minmax(300px,2fr)_82px_64px_110px_130px_130px_130px_130px]'
     : 'grid min-w-[680px] grid-cols-[minmax(175px,0.9fr)_minmax(260px,2fr)_96px_72px]'
 
   return (
@@ -1210,7 +1210,7 @@ function BomPanel({
           <div className={[
             'grid border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-500',
             costsReady
-              ? 'min-w-[1260px] grid-cols-[minmax(220px,1fr)_minmax(300px,2fr)_82px_64px_110px_130px_130px_130px]'
+              ? 'min-w-[1390px] grid-cols-[minmax(220px,1fr)_minmax(300px,2fr)_82px_64px_110px_130px_130px_130px_130px]'
               : 'min-w-[680px] grid-cols-[minmax(175px,0.9fr)_minmax(260px,2fr)_96px_72px]',
           ].join(' ')}>
             <span className="px-4 py-2.5">Código</span>

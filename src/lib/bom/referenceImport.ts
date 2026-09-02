@@ -1210,6 +1210,9 @@ export async function upsertExpandedComponents(
 
     const existingHasSubstructure = Array.isArray(existing?.itemBomStructure.lines)
       && existing.itemBomStructure.lines.length > 0
+    const existingCostCategory = existing?.componentCategory === 'mo' || existing?.componentCategory === 'cif'
+      ? existing.componentCategory
+      : null
     return {
       item_code: itemCode,
       base_item_code: source.baseItemCode,
@@ -1219,7 +1222,7 @@ export async function upsertExpandedComponents(
       uom,
       component_category: (tree && tree.lines.length > 0) || existingHasSubstructure
         ? 'substructure'
-        : inferComponentCategory(itemCode, itemName),
+        : existingCostCategory ?? inferComponentCategory(itemCode, itemName),
       default_issue_method: source.issueMethod ?? existing?.defaultIssueMethod ?? null,
       sap_valid: sapItem ? readSapValid(sapItem) : existing?.sapValid ?? null,
       sap_frozen: sapItem ? readSapFrozen(sapItem) : existing?.sapFrozen ?? null,

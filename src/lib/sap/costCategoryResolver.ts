@@ -18,6 +18,15 @@ export type SapItemCostClassification = {
   group: string | null
 }
 
+export function resolveComponentCostCategory(
+  componentCategory: unknown,
+  parentCategory: SapBomCostCategory | null = null,
+): SapBomCostCategory {
+  if (componentCategory === 'material' || componentCategory === 'packaging'
+    || componentCategory === 'mo' || componentCategory === 'cif') return componentCategory
+  return parentCategory ?? 'material'
+}
+
 export const EMPTY_SAP_BOM_COST_CATEGORY_MAPPING: SapBomCostCategoryMapping = {
   itemsGroupCode: {},
   materialGroup: {},

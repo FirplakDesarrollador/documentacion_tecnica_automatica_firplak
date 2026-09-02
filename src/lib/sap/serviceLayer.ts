@@ -1950,7 +1950,22 @@ export async function getSapItemBomsByCodes(itemCodes: string[]): Promise<Map<st
         QueryOption: queryOption,
       },
     })
-    return recordsFromCollectionResponse(response)
+    const rows = recordsFromCollectionResponse(response)
+    let requestPath: string | null = isRecord(response)
+      ? readStringField(response, 'odata.nextLink') ?? readStringField(response, '@odata.nextLink')
+      : null
+    const visitedPaths = new Set<string>()
+
+    while (requestPath && !visitedPaths.has(requestPath)) {
+      visitedPaths.add(requestPath)
+      const nextResponse = await sapServiceLayerRequest<unknown>(requestPath)
+      rows.push(...recordsFromCollectionResponse(nextResponse))
+      requestPath = isRecord(nextResponse)
+        ? readStringField(nextResponse, 'odata.nextLink') ?? readStringField(nextResponse, '@odata.nextLink')
+        : null
+    }
+
+    return rows
   }))
 
   const boms = new Map<string, SapItemBom>()

@@ -160,6 +160,8 @@ export type ComponentCategory =
   | 'material'
   | 'hardware'
   | 'packaging'
+  | 'mo'
+  | 'cif'
   | 'process'
   | 'substructure'
   | 'child_sku'
