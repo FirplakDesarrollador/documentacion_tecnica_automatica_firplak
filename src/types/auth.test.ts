@@ -50,3 +50,12 @@ test('una API de otro submodulo no queda autorizada por el contenedor', () => {
     false
   )
 })
+
+test('Compras muestra el contenedor y define inicio para un acceso parcial a proveedores', () => {
+  const permissions = permissionsFromModules('purchasing', ['module:compras:proveedores'])
+
+  assert.equal(hasPermission(permissions, 'module:compras:proveedores'), true)
+  assert.equal(hasModuleAccess(permissions, 'module:compras'), true)
+  assert.equal(getRoleHomePath('purchasing', permissions), '/compras/proveedores')
+  assert.equal(isAllowedUserApi('/api/compras/proveedores', 'purchasing', permissions), true)
+})

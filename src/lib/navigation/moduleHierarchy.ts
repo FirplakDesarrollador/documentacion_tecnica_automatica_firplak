@@ -5,6 +5,7 @@ import {
   Calculator,
   ClipboardCheck,
   ClipboardList,
+  ContactRound,
   Database,
   DatabaseZap,
   FileOutput,
@@ -320,6 +321,29 @@ export const ENGINEERING_NAVIGATION: ModuleNavigationNode = {
   ],
 }
 
+export const PURCHASES_NAVIGATION: ModuleNavigationNode = {
+  id: 'compras',
+  label: 'Compras',
+  description: 'Consulta proveedores y evidencia comercial sincronizada desde SAP.',
+  icon: ContactRound,
+  tone: 'bg-amber-50 text-amber-700',
+  href: '/compras',
+  permission: 'module:compras',
+  summaryTitle: 'Herramientas de Compras',
+  summaryDescription: 'Mantiene disponible el maestro de proveedores de SAP para consulta y costeo.',
+  children: [
+    {
+      id: 'purchases-suppliers',
+      label: 'Proveedores',
+      description: 'Busca y sincroniza proveedores SAP bajo confirmación explícita.',
+      icon: ContactRound,
+      tone: 'bg-amber-50 text-amber-700',
+      href: '/compras/proveedores',
+      permission: 'module:compras:proveedores',
+    },
+  ],
+}
+
 export const CONFIGURATION_NAVIGATION: ModuleNavigationNode = {
   id: 'configuration',
   label: 'Configuración',
@@ -431,6 +455,7 @@ export const MODULE_NAVIGATION_TREE: readonly ModuleNavigationNode[] = [
   SALES_NAVIGATION,
   PRODUCTIVE_MODULES_NAVIGATION,
   ENGINEERING_NAVIGATION,
+  PURCHASES_NAVIGATION,
   CONFIGURATION_NAVIGATION,
 ]
 

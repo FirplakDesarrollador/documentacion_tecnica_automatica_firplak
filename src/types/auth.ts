@@ -46,6 +46,8 @@ export const PERMISSIONS = [
   'module:engineering:sap-auditories',
   'module:engineering:estimations',
   'module:engineering:sap-code-creation',
+  'module:compras',
+  'module:compras:proveedores',
   'module:configuration',
   'module:configuration:families',
   'module:configuration:references',
@@ -175,6 +177,15 @@ export const APP_MODULES: AppModuleDefinition[] = [
     ],
   },
   {
+    key: 'module:compras',
+    label: 'Compras',
+    href: '/compras',
+    assignable: false,
+    children: [
+      { key: 'module:compras:proveedores', label: 'Proveedores', href: '/compras/proveedores', description: 'Consulta y sincroniza proveedores desde SAP.' },
+    ],
+  },
+  {
     key: 'module:configuration',
     label: 'Configuración',
     href: '/configuration',
@@ -300,6 +311,8 @@ const ROUTE_PERMISSION_PREFIXES: Array<{ prefix: string; permission: ModulePermi
   { prefix: '/engineering/estimations', permission: 'module:engineering:estimations' },
   { prefix: '/engineering/sap-consulting', permission: 'module:consulta-sap' },
   { prefix: '/engineering', permission: 'module:engineering' },
+  { prefix: '/compras/proveedores', permission: 'module:compras:proveedores' },
+  { prefix: '/compras', permission: 'module:compras:proveedores' },
   { prefix: '/configuration/families', permission: 'module:configuration:families' },
   { prefix: '/configuration/reference-editor', permission: 'module:configuration:references' },
   { prefix: '/configuration/version-editor', permission: 'module:configuration:versioning' },
@@ -332,6 +345,7 @@ const HOME_PRIORITY: ModulePermission[] = [
   'module:engineering:sap-auditories',
   'module:engineering:estimations',
   'module:engineering:sap-code-creation',
+  'module:compras:proveedores',
   'module:consulta-sap',
   'module:generate',
   'module:templates',
@@ -527,6 +541,7 @@ const API_PERMISSION_PREFIXES: Array<{ prefix: string; permission: ModulePermiss
   { prefix: '/api/engineering/sap-operations/transfer-requests', permission: 'module:engineering:transfer-requests' },
   { prefix: '/api/engineering/sap-operations/sap-code-creation', permission: 'module:engineering:sap-code-creation' },
   { prefix: '/api/engineering/sap-auditories', permission: 'module:engineering:sap-auditories' },
+  { prefix: '/api/compras', permission: 'module:compras:proveedores' },
 ]
 
 export function isAllowedUserApi(pathname: string, role: UserRole, permissions: Permission[] = []): boolean {
