@@ -64,3 +64,7 @@ artifacts/HOJA DE RUTA MUEBLE BASICO ELEVAO 48X38.xlsx
 !/artifacts/Orborn/
 !/artifacts/mozaic-font-family-2/
 SAMIGEN_AUDITORIA_FUNCIONAL.md
+
+# MCP SAP readonly interno (herramienta local, no del aplicativo)
+opencode.sap-readonly.example.json
+scripts/mcp-sap-readonly-server.mjs
