@@ -3,14 +3,27 @@
 import { revalidatePath } from 'next/cache'
 
 import {
+  assertSapWritesEnabled,
+  buildSapItemDuplicatePayload,
+  buildSapWithholdingAssignmentForTarget,
+  createSapItem,
+  createSapProductTree,
+  createSapWithholdingAssignment,
   getSapItem,
+  getSapItemBom,
   getSapItemBomsByCodes,
   getSapItemGroup,
   getSapItemsByCodes,
+  getSapWithholdingAssignments,
   getSapItemsWithWarehouseAverage,
   getSapWarehouseAverageCost,
   listSapItemGroups,
   searchSapItems,
+  sapSalesWithholdingFields,
+  SapServiceLayerError,
+  type SapEntityPayload,
+  type SapWithholdingAssignment,
+  updateSapItem,
 } from '@/lib/sap/serviceLayer'
 import { loadFullSapBomHierarchy, type FullSapBomNode } from '@/lib/sap/fullBomHierarchy'
 import { dbQuery } from '@/lib/supabase'
@@ -44,6 +57,12 @@ import {
   inferPhysicalWeightPolicy,
 } from '@/lib/productDesign/estimationPhysicalWeights'
 import { calculateEstimationMaterialBalance } from '@/lib/productDesign/estimationMaterialBalance'
+import { estimationBomToBomV2 } from '@/lib/productDesign/estimationBomToBomV2'
+import { estimationBomToSapProductTree, type EstimationSapProductTreePlan } from '@/lib/productDesign/estimationBomToSapProductTree'
+import { computeNameWithNamingComponents } from '@/lib/engine/namingComponentsEngine'
+import type { ProductPayload } from '@/lib/engine/translator'
+import { resetGlossaryCache } from '@/lib/engine/translator'
+import { SAP_CODE_MANAGEMENT_PERMISSION } from '@/types/auth'
 import { assertPermission, type AccessContext } from '@/utils/auth/access'
 
 const ESTIMATION_STATUSES = ['draft', 'active', 'closed', 'archived'] as const
@@ -112,7 +131,51 @@ export type ProductDesignEstimation = ProductDesignEstimationSummary & {
   commercialNote: string | null
   createdBy: string | null
   updatedBy: string | null
+  convertedToSap: boolean
+  convertedReferenceId: string | null
+  convertedVersionId: string | null
+  convertedSkuId: string | null
+  convertedAt: string | null
+  convertedBy: string | null
+  sapCreatedItemCode: string | null
   draft: EstimationDraft
+}
+
+export type EstimationSapProductInput = {
+  productName: string
+  specialLabel?: string | null
+  commercialMeasure?: string | null
+  designation?: string | null
+  line?: string | null
+  stackingMax?: number | null
+  initialCost?: number | null
+  initialCostUom?: string | null
+  attributes?: Record<string, string | number | boolean | null>
+}
+
+export type EstimationSapCreationPreview = {
+  itemCode: string
+  referenceCode: string
+  designation: string
+  finalBaseName: string
+  finalBaseNameEn: string
+  finalCompleteName: string
+  finalCompleteNameEn: string
+  sapDescription: string
+  sapDescriptionEn: string
+  withholdings: EstimationSapWithholdingPreview[]
+  outputWarehouse: string
+  itemsGroupCode: number
+  itemPayload: SapEntityPayload
+  tree: EstimationSapProductTreePlan
+  bomV2: ReturnType<typeof estimationBomToBomV2>
+  warnings: string[]
+}
+
+export type EstimationSapWithholdingPreview = {
+  sourceItemCode: string
+  targetItemCode: string
+  fields: Array<{ field: string; value: string }>
 }
 
 export type CreateProductDesignEstimationInput = {
@@ -168,6 +231,8 @@ export type EstimationSapLeafCost = {
   inventoryUom: string | null
   warehouseCode: string
   readAt: string
+  source: 'warehouse_average' | 'supabase_initial'
+  warning: string | null
 }
 
 export type EstimationFamilyInput = {
@@ -343,6 +408,13 @@ function mapEstimation(row: RawRow): ProductDesignEstimation {
     commercialNote: stringOrNull(row.commercial_note),
     createdBy: stringOrNull(row.created_by),
     updatedBy: stringOrNull(row.updated_by),
+    convertedToSap: booleanValue(row.converted_to_sap),
+    convertedReferenceId: stringOrNull(row.converted_reference_id),
+    convertedVersionId: stringOrNull(row.converted_version_id),
+    convertedSkuId: stringOrNull(row.converted_sku_id),
+    convertedAt: stringOrNull(row.converted_at),
+    convertedBy: stringOrNull(row.converted_by),
+    sapCreatedItemCode: stringOrNull(row.sap_created_item_code),
     draft: normalizeEstimationDraft(parseDraftJson(row.draft_data_json)),
   }
 }
@@ -355,7 +427,9 @@ const ESTIMATION_COLUMNS = `
   shared_with_sales, shared_with_sales_at, shared_with_sales_by,
   commercial_outcome, commercial_contact_name, commercial_outcome_at,
   commercial_recorded_by, commercial_recorded_at, commercial_note,
-  draft_data_json, created_by, updated_by, created_at, updated_at
+   draft_data_json, created_by, updated_by, created_at, updated_at,
+   converted_to_sap, converted_reference_id, converted_version_id, converted_sku_id,
+   converted_at, converted_by, sap_created_item_code
 `
 
 async function getEstimationRecord(id: string): Promise<ProductDesignEstimation | null> {
@@ -428,16 +502,18 @@ function toBomDraftLines(
       costStrategy: hasExpandableStructure ? 'expand_children' : 'sap_direct',
       unitCost: hasCompatibleLeafCost ? leafCost.unitCost : null,
       costEvidence: hasExpandableStructure ? null : {
-        source: hasCompatibleLeafCost ? 'warehouse_average' : 'unavailable',
-        candidateId: hasCompatibleLeafCost ? `warehouse-average:${node.itemCode}:MP-01` : null,
-        warehouseCode: 'MP-01',
-        documentType: hasCompatibleLeafCost ? 'WarehouseAverage' : null,
+        source: hasCompatibleLeafCost ? leafCost?.source ?? 'warehouse_average' : 'unavailable',
+        candidateId: hasCompatibleLeafCost
+          ? leafCost?.source === 'supabase_initial' ? `supabase-initial:${node.itemCode}` : `warehouse-average:${node.itemCode}:MP-01`
+          : null,
+        warehouseCode: leafCost?.source === 'supabase_initial' ? 'SUPABASE' : 'MP-01',
+        documentType: hasCompatibleLeafCost ? leafCost?.source === 'supabase_initial' ? 'SupabaseInitialCost' : 'WarehouseAverage' : null,
         documentNumber: null,
         documentDate: leafCost?.readAt ?? null,
         originalCurrency: hasCompatibleLeafCost ? ESTIMATION_COST_CURRENCY : null,
         sourceUom,
         warning: hasCompatibleLeafCost
-          ? 'Costo temporal: promedio/estándar vigente de MP-01. No representa la última compra ni una recepción de proveedor.'
+          ? leafCost?.warning ?? 'Costo temporal: promedio/estándar vigente de MP-01. No representa la última compra ni una recepción de proveedor.'
           : sourceUom && lineUom && sourceUom !== lineUom
             ? `El promedio MP-01 está en ${sourceUom} y la línea usa ${lineUom}; el costo queda pendiente.`
             : 'SAP no reporta un promedio/estándar positivo en MP-01; el costo queda pendiente.',
@@ -480,13 +556,63 @@ function collectFullSapLeafCodes(node: FullSapBomNode): string[] {
 async function loadEstimationSapLeafCosts(tree: FullSapBomNode | null): Promise<Record<string, EstimationSapLeafCost>> {
   if (!tree) return {}
   const readAt = timestampNow()
-  const averages = await getSapItemsWithWarehouseAverage(collectFullSapLeafCodes(tree), 'MP-01')
-  return Object.fromEntries([...averages].map(([itemCode, average]) => [itemCode, {
-    unitCost: average.standardAveragePrice,
-    inventoryUom: average.inventoryUom,
-    warehouseCode: average.warehouseCode,
-    readAt,
-  }]))
+  const itemCodes = collectFullSapLeafCodes(tree)
+  const [averages, fallbackCosts] = await Promise.all([
+    getSapItemsWithWarehouseAverage(itemCodes, 'MP-01'),
+    loadSupabaseInitialCosts(itemCodes),
+  ])
+  return Object.fromEntries(itemCodes.map(itemCode => {
+    const average = averages.get(itemCode)
+    const averageCost = average?.standardAveragePrice
+    if (average && averageCost !== null && averageCost !== undefined && Number.isFinite(averageCost) && averageCost > 0) {
+      return [itemCode, {
+        unitCost: averageCost, inventoryUom: average.inventoryUom, warehouseCode: average.warehouseCode, readAt,
+        source: 'warehouse_average' as const, warning: 'Costo temporal: promedio/estándar vigente de MP-01. No representa la última compra ni una recepción de proveedor.',
+      }]
+    }
+    const fallback = fallbackCosts.get(itemCode)
+    return [itemCode, fallback
+      ? {
+          unitCost: fallback.unitCost, inventoryUom: fallback.uom, warehouseCode: 'SUPABASE', readAt: fallback.capturedAt,
+          source: 'supabase_initial' as const, warning: 'Costo inicial de respaldo en Supabase: SAP no reporta un promedio positivo en MP-01.',
+        }
+      : {
+          unitCost: null, inventoryUom: average?.inventoryUom ?? null, warehouseCode: average?.warehouseCode ?? 'MP-01', readAt,
+          source: 'warehouse_average' as const, warning: null,
+        }]
+  }))
+}
+
+type SupabaseInitialCost = { unitCost: number; uom: string; capturedAt: string }
+
+function readInitialCost(value: unknown): SupabaseInitialCost | null {
+  const record = value && typeof value === 'object' && !Array.isArray(value) ? value as RawRow : null
+  const unitCost = numberOrNull(record?.amount)
+  const uom = stringOrNull(record?.uom)?.toUpperCase()
+  const capturedAt = stringOrNull(record?.captured_at)
+  if (unitCost === null || unitCost <= 0 || !uom || !capturedAt) return null
+  return { unitCost, uom, capturedAt }
+}
+
+async function loadSupabaseInitialCosts(itemCodes: readonly string[]): Promise<Map<string, SupabaseInitialCost>> {
+  const normalizedCodes = [...new Set(itemCodes.map(code => code.trim().toUpperCase()).filter(Boolean))]
+  if (normalizedCodes.length === 0) return new Map()
+  const placeholders = normalizedCodes.map((_, index) => `$${index + 1}`).join(', ')
+  const rows = await dbQuery(
+    `SELECT s.sku_complete, r.ref_attrs -> 'initial_cost_fallback' AS initial_cost
+       FROM public.product_skus s
+       JOIN public.product_versions v ON v.id = s.version_id
+       JOIN public.product_references r ON r.id = v.reference_id
+      WHERE s.sku_complete IN (${placeholders})`,
+    normalizedCodes,
+  )
+  const costs = new Map<string, SupabaseInitialCost>()
+  for (const row of rows as RawRow[]) {
+    const itemCode = stringOrNull(row.sku_complete)?.toUpperCase()
+    const cost = readInitialCost(row.initial_cost)
+    if (itemCode && cost) costs.set(itemCode, cost)
+  }
+  return costs
 }
 
 function assertSapSubstructureIntegrity(
@@ -571,7 +697,9 @@ async function canonicalizeSapDraftLines(
     if (line.origin === 'manual') {
       return {
         ...line,
-        sapItemCode: null,
+        // A manual branch may carry the literal code selected for a future
+        // sub-LdM; the preflight verifies it before SAP receives any write.
+        sapItemCode: stringOrNull(line.sapItemCode)?.toUpperCase() ?? null,
         costStrategy: hasChildren && line.costStrategy === 'sap_direct'
           ? 'expand_children'
           : !hasChildren && line.costStrategy === 'sap_direct'
@@ -787,6 +915,26 @@ async function refreshSapDraftLineCost(
 
     const averageCost = warehouseAverage.standardAveragePrice
     if (averageCost === null || !Number.isFinite(averageCost) || averageCost <= 0) {
+      const fallback = (await loadSupabaseInitialCosts([itemCode])).get(itemCode)
+      if (fallback && fallback.uom === targetUom) {
+        return {
+          ...line,
+          uom: targetUom,
+          unitCost: fallback.unitCost,
+          costEvidence: {
+            source: 'supabase_initial',
+            candidateId: `supabase-initial:${itemCode}`,
+            warehouseCode: 'SUPABASE',
+            documentType: 'SupabaseInitialCost',
+            documentNumber: null,
+            documentDate: fallback.capturedAt,
+            originalCurrency: ESTIMATION_COST_CURRENCY,
+            sourceUom: fallback.uom,
+            warning: 'Costo inicial de respaldo en Supabase: SAP no reporta un promedio positivo en MP-01.',
+            extensions: { sourceReadAt: timestampNow() },
+          },
+        }
+      }
       return {
         ...line,
         uom: targetUom,
@@ -824,6 +972,26 @@ async function refreshSapDraftLineCost(
       },
     }
   } catch (error) {
+    const targetUom = line.uom?.trim().toUpperCase() ?? null
+    const fallback = targetUom ? (await loadSupabaseInitialCosts([itemCode])).get(itemCode) : null
+    if (fallback && fallback.uom === targetUom) {
+      return {
+        ...line,
+        unitCost: fallback.unitCost,
+        costEvidence: {
+          source: 'supabase_initial',
+          candidateId: `supabase-initial:${itemCode}`,
+          warehouseCode: 'SUPABASE',
+          documentType: 'SupabaseInitialCost',
+          documentNumber: null,
+          documentDate: fallback.capturedAt,
+          originalCurrency: ESTIMATION_COST_CURRENCY,
+          sourceUom: fallback.uom,
+          warning: 'Costo inicial de respaldo en Supabase: no se pudo leer el promedio de MP-01.',
+          extensions: { sourceReadAt: timestampNow() },
+        },
+      }
+    }
     return {
       ...line,
       unitCost: null,
@@ -1041,6 +1209,603 @@ export async function saveProductDesignEstimationAction(input: SaveProductDesign
   if (!saved) throw new Error('No fue posible releer la cotización guardada.')
   revalidatePath('/product-design/estimations')
   revalidatePath(`/product-design/estimations/${id}`)
+  return saved
+}
+
+function optionalPositiveCost(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null
+  const cost = numberOrNull(value)
+  if (cost === null || cost <= 0) throw new Error('El costo inicial debe ser mayor que cero.')
+  return cost
+}
+
+function requiredDesignation(value: unknown): string {
+  const designation = requiredText(value, 'Designación')
+  return designation
+}
+
+function buildEstimationItemPayload(
+  source: SapEntityPayload,
+  itemCode: string,
+  itemName: string,
+  itemsGroupCode: number,
+  withholdingFields: SapEntityPayload,
+  foreignName?: string,
+): SapEntityPayload {
+  return buildSapItemDuplicatePayload({
+    sourceItemCode: itemCode,
+    targetItemCode: itemCode,
+    sourceItem: source,
+    omitFields: ['ItemPrices', 'ItemWarehouseInfoCollection'],
+    overrides: {
+      ...withholdingFields,
+      ItemName: itemName,
+      ForeignName: foreignName ?? itemName,
+      ItemsGroupCode: itemsGroupCode,
+      U_Color: itemCode.split('-').at(-1) ?? null,
+      U_TypeOC: 'MTOSTD',
+      U_CodBarras: 'NO',
+      BarCode: null,
+      U_PLU: itemCode,
+      Valid: 'tYES',
+      Frozen: 'tNO',
+    },
+  })
+}
+
+type EstimationNamingResult = {
+  finalBaseName: string
+  finalBaseNameEn: string
+  finalCompleteName: string
+  finalCompleteNameEn: string
+  sapDescription: string
+  sapDescriptionEn: string
+}
+
+async function buildEstimationNaming(
+  estimation: ProductDesignEstimation,
+  input: EstimationSapProductInput,
+  itemCode: string,
+): Promise<EstimationNamingResult> {
+  const familyCode = requiredText(estimation.familyCode, 'Familia')
+  const familyRows = await dbQuery(
+    'SELECT product_type, use_destination, zone_home FROM public.families WHERE family_code = $1 LIMIT 1',
+    [familyCode],
+  )
+  const family = familyRows[0] as RawRow | undefined
+  const productType = requiredText(stringOrNull(family?.product_type), `Tipo de producto de la familia ${familyCode}`)
+  const product: ProductPayload = {
+    code: itemCode,
+    product_type: productType,
+    product_name: requiredText(input.productName, 'Nombre del producto'),
+    designation: requiredDesignation(input.designation),
+    line: optionalText(input.line),
+    use_destination: stringOrNull(family?.use_destination),
+    zone_home: stringOrNull(family?.zone_home),
+    commercial_measure: optionalText(input.commercialMeasure),
+    special_label: optionalText(input.specialLabel),
+    color_code: estimation.colorCode ?? estimation.draft.commercialColor.colorCode,
+    dynamic_attrs: input.attributes ?? {},
+  }
+  const [base, complete, sap] = await Promise.all([
+    computeNameWithNamingComponents(product, 'final_base_name'),
+    computeNameWithNamingComponents(product, 'final_complete_name'),
+    computeNameWithNamingComponents(product, 'sap_description_recommended'),
+  ])
+  const missingTranslations = [...new Set([
+    ...base.missingTerms,
+    ...complete.missingTerms,
+    ...sap.missingTerms,
+  ])]
+  if (missingTranslations.length > 0) {
+    throw new Error(`Faltan traducciones al inglés para: ${missingTranslations.join(', ')}. Regístralas en Configuración > Glosario y vuelve a ejecutar el dry-run.`)
+  }
+  if (!base.finalNameEs || !complete.finalNameEs || !sap.finalNameEs || !sap.storableFinalNameEn) {
+    throw new Error(`La nomenclatura de ${productType} no pudo generar Base final, Completo final y SAP recomendado en español e inglés. Configúrala y completa el glosario antes de crear el artículo.`)
+  }
+  return {
+    finalBaseName: base.finalNameEs,
+    finalBaseNameEn: base.storableFinalNameEn,
+    finalCompleteName: complete.finalNameEs,
+    finalCompleteNameEn: complete.storableFinalNameEn,
+    sapDescription: sap.finalNameEs,
+    sapDescriptionEn: sap.storableFinalNameEn,
+  }
+}
+
+async function getOptionalSapItem(itemCode: string): Promise<SapEntityPayload | null> {
+  try {
+    return await getSapItem(itemCode)
+  } catch (error) {
+    if (error instanceof SapServiceLayerError && error.statusCode === 404) return null
+    throw error
+  }
+}
+
+type SapWithholdingDefinition = {
+  assignments: SapWithholdingAssignment[]
+  previewFields: Array<{ field: string; value: string }>
+}
+
+function canonicalSapValue(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalSapValue).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .toSorted(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${key}:${canonicalSapValue(entry)}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'undefined'
+}
+
+function sapItemRequiresWithholding(item: SapEntityPayload): boolean {
+  const value = item.WTLiable
+  const isSalesItem = item.SalesItem === true || item.SalesItem === 'tYES' || item.SalesItem === 'YES'
+  return isSalesItem && (value === true || value === 'tYES' || value === 'YES')
+}
+
+async function readSapWithholdingDefinition(item: SapEntityPayload, itemCode: string): Promise<SapWithholdingDefinition> {
+  const assignments = await getSapWithholdingAssignments(itemCode)
+  if (sapItemRequiresWithholding(item) && assignments.length === 0) {
+    throw new Error(`El artículo origen ${itemCode} exige retención, pero SAP no expuso códigos, tarifas o vigencias asignados. La creación fue bloqueada.`)
+  }
+  return {
+    assignments,
+    previewFields: assignments.flatMap(assignment => [
+      { field: 'U_WTCode', value: assignment.U_WTCode },
+      { field: 'U_WTName', value: assignment.U_WTName },
+    ]),
+  }
+}
+
+async function withholdingDefinitionsMatch(expected: SapWithholdingDefinition, item: SapEntityPayload): Promise<boolean> {
+  const actual = await readSapWithholdingDefinition(item, String(item.ItemCode ?? 'artículo creado'))
+  const expectedCodes = expected.assignments.map(assignment => `${assignment.U_WTCode}|${assignment.U_WTName}`).sort()
+  const actualCodes = actual.assignments.map(assignment => `${assignment.U_WTCode}|${assignment.U_WTName}`).sort()
+  return canonicalSapValue(expectedCodes) === canonicalSapValue(actualCodes)
+}
+
+function normalizedSapName(value: unknown): string {
+  return stringOrNull(value)?.replace(/\s+/gu, ' ').toUpperCase() ?? ''
+}
+
+function subBomStructureMatches(plan: EstimationSapProductTreePlan['subBoms'][number], existingLines: Array<{
+  ItemCode: string
+  Quantity: number
+  Warehouse: string | null
+}>): boolean {
+  if (existingLines.length !== plan.lines.length) return false
+  const unmatchedLines = [...existingLines]
+  return plan.lines.every(expected => {
+    const index = unmatchedLines.findIndex(actual =>
+      actual.ItemCode.trim().toUpperCase() === expected.ItemCode
+      && actual.Quantity === expected.Quantity
+      && actual.Warehouse === expected.Warehouse,
+    )
+    if (index < 0) return false
+    unmatchedLines.splice(index, 1)
+    return true
+  })
+}
+
+async function buildEstimationSapCreationPreview(
+  estimation: ProductDesignEstimation,
+  input: EstimationSapProductInput,
+): Promise<EstimationSapCreationPreview> {
+  const familyCode = requiredText(estimation.familyCode, 'Familia')
+  let referenceCode = requiredText(estimation.proposedReferenceCode, 'Referencia propuesta')
+  const colorCode = requiredText(estimation.colorCode ?? estimation.draft.commercialColor.colorCode, 'Color').toUpperCase()
+  if (!/^\d{4}$/u.test(colorCode)) throw new Error('El color debe tener cuatro dígitos.')
+  const sourceItemCode = requiredText(estimation.homologueSapItemCode ?? estimation.draft.homologue?.sapItemCode, 'Homólogo SAP').toUpperCase()
+  let itemCode = `V${familyCode}-${referenceCode}-000-${colorCode}`.toUpperCase()
+  const groups = await listSapItemGroups({ namePrefix: familyCode, top: 20 })
+  if (groups.length !== 1) {
+    throw new Error(groups.length === 0
+      ? `SAP no tiene un grupo de artículos que empiece por ${familyCode}.`
+      : `SAP devolvió varios grupos para ${familyCode}; define la familia antes de crear el artículo.`)
+  }
+  const sourceItem = await getSapItem(sourceItemCode)
+  const sourceTree = await getSapItemBom(sourceItemCode)
+  const outputWarehouse = requiredText(sourceTree?.warehouse, `Bodega de salida de la LdM del homólogo ${sourceItemCode}`).toUpperCase()
+  const tree = estimationBomToSapProductTree(estimation.draft.bomLines, sourceItemCode)
+  const codeWarnings: string[] = []
+  if (await getOptionalSapItem(itemCode)) {
+    const proposal = await proposeEstimationReferenceForPrefix(
+      normalizeSapPrefix(requiredText(estimation.sapPrefix, 'Prefijo SAP')),
+      `V${familyCode}`,
+    )
+    referenceCode = proposal.referenceCode
+    itemCode = `V${familyCode}-${referenceCode}-000-${colorCode}`.toUpperCase()
+    codeWarnings.push(`El código recomendado original ya existe en SAP; se propone ${itemCode}.`)
+  }
+  const bomCodeOverrides = new Map<string, string>()
+  const existingSubBomCodes = await getSapItemsByCodes(tree.subBoms.map(plan => plan.itemCode), ['ItemCode', 'ItemName'], { timeoutMs: 30_000 })
+  const existingSubBomTrees = await getSapItemBomsByCodes([...existingSubBomCodes.keys()])
+  for (const plan of tree.subBoms) {
+    const existingItem = existingSubBomCodes.get(plan.itemCode)
+    if (!existingItem) continue
+    const existingTree = existingSubBomTrees.get(plan.itemCode)
+    if (
+      normalizedSapName(existingItem.ItemName) === normalizedSapName(plan.itemName)
+      && existingTree
+      && subBomStructureMatches(plan, existingTree.lines)
+    ) {
+      plan.reuseExisting = true
+      codeWarnings.push(`La sub-LdM ${plan.itemCode} ya existe en SAP con el mismo nombre y estructura; se reutilizará.`)
+      continue
+    }
+    const previousCode = plan.itemCode
+    const suggestion = await suggestEstimationSubBomCode(plan.sourceItemCode)
+    plan.itemCode = suggestion.suggestedItemCode
+    for (const line of [...tree.finalItemLines, ...tree.subBoms.flatMap(subBom => subBom.lines)]) {
+      if (line.ItemCode === previousCode) line.ItemCode = plan.itemCode
+    }
+    const draftLine = estimation.draft.bomLines.find(line =>
+      line.origin === 'manual'
+      && (line.sapItemCode ?? stringOrNull(line.extensions.suggestedSapItemCode))?.trim().toUpperCase() === previousCode
+      && line.parentId === null,
+    )
+    if (draftLine) bomCodeOverrides.set(draftLine.id, plan.itemCode)
+    codeWarnings.push(`La sub-LdM ${previousCode} ya existe en SAP; se propone ${plan.itemCode}.`)
+  }
+  const createdCodes = new Set([itemCode, ...tree.subBoms.map(plan => plan.itemCode)])
+  const referencedCodes = [...new Set([
+    ...tree.finalItemLines.map(line => line.ItemCode),
+    ...tree.subBoms.flatMap(plan => plan.lines.map(line => line.ItemCode)),
+  ])].filter(code => !createdCodes.has(code))
+  const referencedItems = await getSapItemsByCodes(referencedCodes, ['ItemCode'], { timeoutMs: 30_000 })
+  for (const code of referencedCodes) {
+    if (!referencedItems.has(code)) throw new Error(`La LdM referencia ${code}, pero SAP no tiene ese artículo.`)
+  }
+  const bomV2 = estimationBomToBomV2(estimation.draft.bomLines, bomCodeOverrides)
+  bomV2.output_warehouse_code = outputWarehouse
+  const naming = await buildEstimationNaming(estimation, input, itemCode)
+  const sourceItems = new Map<string, SapEntityPayload>([[sourceItemCode, sourceItem]])
+  for (const sourceCode of [...new Set(tree.subBoms.map(plan => plan.sourceItemCode))]) {
+    if (!sourceItems.has(sourceCode)) sourceItems.set(sourceCode, await getSapItem(sourceCode))
+  }
+  const withholdingDefinitions = new Map<string, SapWithholdingDefinition>()
+  const withholdingItems = [
+    { sourceItemCode, targetItemCode: itemCode },
+    ...tree.subBoms.map(plan => ({ sourceItemCode: plan.sourceItemCode, targetItemCode: plan.itemCode })),
+  ]
+  const resolvedWithholdings = await Promise.all(withholdingItems.map(async item => {
+    const definition = await readSapWithholdingDefinition(sourceItems.get(item.sourceItemCode)!, item.sourceItemCode)
+    withholdingDefinitions.set(item.targetItemCode, definition)
+    return { ...item, fields: definition.previewFields }
+  }))
+  const itemPayload = buildEstimationItemPayload(
+    sourceItem,
+    itemCode,
+    naming.sapDescription,
+    groups[0]!.groupCode,
+    sapSalesWithholdingFields(sourceItem),
+    naming.sapDescriptionEn,
+  )
+  const initialCost = optionalPositiveCost(input.initialCost)
+  return {
+    itemCode,
+    referenceCode,
+    designation: requiredDesignation(input.designation),
+    finalBaseName: naming.finalBaseName,
+    finalBaseNameEn: naming.finalBaseNameEn,
+    finalCompleteName: naming.finalCompleteName,
+    finalCompleteNameEn: naming.finalCompleteNameEn,
+    sapDescription: naming.sapDescription,
+    sapDescriptionEn: naming.sapDescriptionEn,
+    withholdings: resolvedWithholdings,
+    outputWarehouse,
+    itemsGroupCode: groups[0]!.groupCode,
+    itemPayload,
+    tree,
+    bomV2,
+    warnings: [
+      ...codeWarnings,
+      'El peso queda pendiente en el catálogo; no se infiere desde la cotización.',
+      'El apilamiento queda pendiente en el catálogo; no se infiere desde la cotización.',
+      'El precio de lista SAP no se modifica: no alimenta el StandardAveragePrice de MP-01 usado por el cotizador.',
+      ...(initialCost === null
+        ? []
+        : ['El costo inicial se guardará como fallback de Supabase; no crea un documento contable ni cambia la valoración de SAP.']),
+    ],
+  }
+}
+
+export async function prepareSapCodeFromEstimationAction(input: {
+  id: string
+  product: EstimationSapProductInput
+}): Promise<EstimationSapCreationPreview> {
+  await requireProductDesignAccess()
+  const estimation = await getEstimationRecord(requiredUuid(input.id, 'Cotización'))
+  if (!estimation) throw new Error('La cotización no existe.')
+  if (estimation.convertedAt || estimation.sapCreatedItemCode) throw new Error('La cotización ya fue convertida a un código SAP.')
+  return buildEstimationSapCreationPreview(estimation, input.product)
+}
+
+export async function saveEstimationMissingTranslationsAction(input: {
+  translations: Array<{ term: string; translation: string }>
+}): Promise<{ success: true }> {
+  await requireProductDesignAccess()
+  const translations = input.translations.map(({ term, translation }) => {
+    const rawTerm = requiredText(term, 'Término')
+    const termEs = rawTerm.startsWith('RESOLVED_TYPE_MISSING:')
+      ? requiredText(rawTerm.slice('RESOLVED_TYPE_MISSING:'.length), 'Término')
+      : rawTerm
+    return {
+      termEs: termEs.toUpperCase(),
+      termEn: requiredText(translation, `Traducción de ${termEs}`).toUpperCase(),
+      category: rawTerm.startsWith('RESOLVED_TYPE_MISSING:') ? 'RESOLVED_TYPE' : 'TECHNICAL_TERM',
+    }
+  })
+  if (translations.length === 0) throw new Error('Define al menos una traducción.')
+  for (const translation of translations) {
+    await dbQuery(
+      `INSERT INTO public.glossary (term_es, term_en, category, priority, active)
+       VALUES ($1, $2, $3, 10, true)
+       ON CONFLICT (term_es) DO UPDATE
+       SET term_en = EXCLUDED.term_en, category = EXCLUDED.category, active = true`,
+      [translation.termEs, translation.termEn, translation.category],
+    )
+  }
+  resetGlossaryCache()
+  // This term is requested for the product being prepared, which is not in the
+  // catalog yet. Global stale scanning belongs to the glossary maintenance flow.
+  revalidatePath('/configuration/glossary')
+  revalidatePath('/pending')
+  return { success: true }
+}
+
+export async function listEstimationDesignationsAction(input: { id: string }): Promise<string[]> {
+  await requireProductDesignAccess()
+  const estimation = await getEstimationRecord(requiredUuid(input.id, 'Cotización'))
+  if (!estimation) throw new Error('La cotización no existe.')
+  const rows = await dbQuery(
+    `SELECT DISTINCT designation
+       FROM public.product_references
+      WHERE designation IS NOT NULL AND btrim(designation) <> ''
+      ORDER BY designation ASC`,
+  )
+  const values = rows.flatMap((row: RawRow) => stringOrNull(row.designation))
+  return [...new Set(['NA', ...values])]
+}
+
+export async function createSapCodeFromEstimationAction(input: {
+  id: string
+  product: EstimationSapProductInput
+  confirmed: boolean
+}): Promise<{ estimation: ProductDesignEstimation; preview: EstimationSapCreationPreview }> {
+  const access = await requireProductDesignAccess()
+  await assertPermission(SAP_CODE_MANAGEMENT_PERMISSION)
+  if (!input.confirmed) throw new Error('Marca la confirmación explícita antes de crear el artículo y la LdM en SAP.')
+  const id = requiredUuid(input.id, 'Cotización')
+  const estimation = await getEstimationRecord(id)
+  if (!estimation) throw new Error('La cotización no existe.')
+  if (estimation.convertedAt || estimation.sapCreatedItemCode) throw new Error('La cotización ya fue convertida a un código SAP.')
+  const preview = await buildEstimationSapCreationPreview(estimation, input.product)
+
+  const existingCatalogRows = await dbQuery(
+    `SELECT r.id FROM public.product_references r WHERE r.family_code = $1 AND r.reference_code = $2
+     UNION ALL
+     SELECT s.id FROM public.product_skus s WHERE s.sku_complete = $3
+     LIMIT 1`,
+    [requiredText(estimation.familyCode, 'Familia'), preview.referenceCode, preview.itemCode],
+  )
+  if (existingCatalogRows.length > 0) throw new Error('El catálogo ya contiene la referencia o SKU propuesto; la creación fue bloqueada.')
+  const codesToCreate = [...preview.tree.subBoms.filter(plan => !plan.reuseExisting).map(plan => plan.itemCode), preview.itemCode]
+  for (const code of codesToCreate) {
+    if (await getOptionalSapItem(code)) throw new Error(`SAP ya tiene el artículo ${code}; la creación fue bloqueada.`)
+  }
+  await assertSapWritesEnabled()
+
+  for (const subBom of preview.tree.subBoms) {
+    if (subBom.reuseExisting) continue
+    const source = await getSapItem(subBom.sourceItemCode)
+    const withholdings = await readSapWithholdingDefinition(source, subBom.sourceItemCode)
+    await createSapItem(buildEstimationItemPayload(
+      source,
+      subBom.itemCode,
+      subBom.itemName,
+      preview.itemsGroupCode,
+      sapSalesWithholdingFields(source),
+    ))
+    for (const assignment of withholdings.assignments) {
+      await createSapWithholdingAssignment(buildSapWithholdingAssignmentForTarget(subBom.itemCode, assignment))
+    }
+    const sourceTree = await getSapItemBom(subBom.sourceItemCode)
+    const warehouse = requiredText(sourceTree?.warehouse, `Bodega de salida de la LdM origen ${subBom.sourceItemCode}`).toUpperCase()
+    await createSapProductTree({ treeCode: subBom.itemCode, lines: subBom.lines, warehouse })
+  }
+  await createSapItem(preview.itemPayload)
+  const finalWithholdings = preview.withholdings.find(item => item.targetItemCode === preview.itemCode)
+  const finalDefinition = finalWithholdings
+    ? await readSapWithholdingDefinition(
+        await getSapItem(finalWithholdings.sourceItemCode),
+        finalWithholdings.sourceItemCode,
+      )
+    : null
+  for (const assignment of finalDefinition?.assignments ?? []) {
+    await createSapWithholdingAssignment(buildSapWithholdingAssignmentForTarget(preview.itemCode, assignment))
+  }
+  await createSapProductTree({ treeCode: preview.itemCode, lines: preview.tree.finalItemLines, warehouse: preview.outputWarehouse })
+  await updateSapItem(preview.itemCode, { ItemName: preview.sapDescription })
+
+  for (const withholding of preview.withholdings) {
+    const expected = await readSapWithholdingDefinition(await getSapItem(withholding.sourceItemCode), withholding.sourceItemCode)
+    const created = await getSapItem(withholding.targetItemCode)
+    if (!await withholdingDefinitionsMatch(expected, created)) {
+      throw new Error(`SAP creó ${withholding.targetItemCode}, pero sus retenciones no coinciden exactamente con ${withholding.sourceItemCode}. Revisa SAP antes de reintentar.`)
+    }
+  }
+
+  const finalItem = await getSapItem(preview.itemCode)
+  const finalTree = await getSapItemBomsByCodes([preview.itemCode])
+  const treeReadback = finalTree.get(preview.itemCode)
+  const treeMatches = treeReadback?.lines.length === preview.tree.finalItemLines.length
+    && preview.tree.finalItemLines.every(expected => treeReadback.lines.some(actual => actual.ItemCode === expected.ItemCode && actual.Quantity === expected.Quantity))
+  if (finalItem.ItemCode !== preview.itemCode || !treeMatches || treeReadback?.warehouse !== preview.outputWarehouse) {
+    throw new Error('SAP creó el artículo, pero la relectura no confirmó la identidad o todas las líneas de LdM. Revisa SAP antes de reintentar.')
+  }
+
+  const familyCode = requiredText(estimation.familyCode, 'Familia')
+  const referenceCode = preview.referenceCode
+  const colorCode = requiredText(estimation.colorCode ?? estimation.draft.commercialColor.colorCode, 'Color').toUpperCase()
+  const initialCost = optionalPositiveCost(input.product.initialCost)
+  const refAttrs = {
+    ...(input.product.attributes ?? {}),
+    weight_needs_update: true,
+    stacking_needs_update: true,
+    ...(initialCost === null ? {} : {
+      initial_cost_fallback: {
+        amount: initialCost,
+        currency: 'COP',
+        uom: optionalText(input.product.initialCostUom) ?? 'UND',
+        source: 'product_design_estimation',
+        estimation_id: id,
+        captured_at: timestampNow(),
+      },
+    }),
+  }
+  const referenceRows = await dbQuery(
+    `INSERT INTO public.product_references (
+       family_code, reference_code, product_name, designation, line, commercial_measure,
+       special_label, width_cm, depth_cm, height_cm, weight_kg, stacking_max,
+       status, ref_attrs, product_bom_structure
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, $11, 'ACTIVO', $12::jsonb, $13::jsonb)
+     RETURNING id`,
+    [
+      familyCode, referenceCode, requiredText(input.product.productName, 'Nombre del producto'),
+      requiredDesignation(input.product.designation), optionalText(input.product.line) ?? 'NA',
+      optionalText(input.product.commercialMeasure), optionalText(input.product.specialLabel),
+      estimation.widthMm === null ? null : estimation.widthMm / 10,
+      estimation.depthMm === null ? null : estimation.depthMm / 10,
+      estimation.heightMm === null ? null : estimation.heightMm / 10,
+      optionalPositiveNumber(input.product.stackingMax, 'Apilamiento'),
+      JSON.stringify(refAttrs), JSON.stringify(preview.bomV2),
+    ],
+  )
+  const referenceId = requiredUuid(referenceRows[0]?.id, 'Referencia creada')
+  const versionRows = await dbQuery(
+    `INSERT INTO public.product_versions (reference_id, version_code, sku_base, final_base_name_es, final_base_name_en, status)
+     VALUES ($1::uuid, '000', $2, $3, $4, 'ACTIVO') RETURNING id`,
+    [referenceId, `V${familyCode}-${referenceCode}-000`, preview.finalBaseName, preview.finalBaseNameEn],
+  )
+  const versionId = requiredUuid(versionRows[0]?.id, 'Versión creada')
+  const skuRows = await dbQuery(
+    `INSERT INTO public.product_skus (
+       version_id, sku_complete, color_code, sap_description_original,
+       final_complete_name_es, final_complete_name_en,
+       sap_description_recommended_es, sap_description_recommended_en, status
+     ) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, 'ACTIVO') RETURNING id`,
+    [
+      versionId, preview.itemCode, colorCode, preview.sapDescription,
+      preview.finalCompleteName, preview.finalCompleteNameEn, preview.sapDescription, preview.sapDescriptionEn,
+    ],
+  )
+  const skuId = requiredUuid(skuRows[0]?.id, 'SKU creado')
+  await dbQuery('UPDATE public.families SET sap_item_group_code = $1 WHERE family_code = $2', [preview.itemsGroupCode, familyCode])
+  const createdSubBomCodes = new Map(preview.tree.subBoms.map(plan => [plan.lineId, plan.itemCode]))
+  const finalizedDraft: EstimationDraft = {
+    ...estimation.draft,
+    bomLines: estimation.draft.bomLines.map(line => {
+      const createdItemCode = createdSubBomCodes.get(line.id)
+      if (!createdItemCode) return line
+      const extensions = { ...line.extensions }
+      delete extensions.suggestedSapItemCode
+      delete extensions.suggestionReserved
+      return {
+        ...line,
+        sapItemCode: createdItemCode,
+        extensions: {
+          ...extensions,
+          sapCreatedItemCode: createdItemCode,
+          sapCreatedAt: timestampNow(),
+          sapStructureLocked: false,
+        },
+      }
+    }),
+  }
+  await dbQuery(
+    `UPDATE public.product_design_estimations
+        SET proposed_reference_code = $1, converted_to_sap = true, converted_reference_id = $2::uuid, converted_version_id = $3::uuid, converted_sku_id = $4::uuid,
+            converted_at = now(), converted_by = $5::uuid, sap_created_item_code = $6, draft_data_json = $7::jsonb, updated_by = $5::uuid
+      WHERE id = $8::uuid`,
+    [referenceCode, referenceId, versionId, skuId, access.user.id, preview.itemCode, JSON.stringify(serializeEstimationDraft(finalizedDraft)), id],
+  )
+  const saved = await getEstimationRecord(id)
+  const draftCodesPersisted = saved && preview.tree.subBoms.every(plan => saved.draft.bomLines.some(line =>
+    line.id === plan.lineId
+    && line.sapItemCode === plan.itemCode
+    && line.extensions.suggestedSapItemCode === undefined,
+  ))
+  if (!saved?.convertedAt || saved.sapCreatedItemCode !== preview.itemCode || !draftCodesPersisted) {
+    throw new Error('SAP y catálogo fueron creados, pero no se pudo verificar la trazabilidad de la cotización.')
+  }
+  revalidatePath(`/product-design/estimations/${id}`)
+  revalidatePath('/product-design/estimations')
+  return { estimation: saved, preview }
+}
+
+function sameSapSubBomPattern(recommendedCode: string, actualCode: string): boolean {
+  const recommendedParts = recommendedCode.trim().toUpperCase().split('-')
+  const actualParts = actualCode.trim().toUpperCase().split('-')
+  return recommendedParts.length === 4
+    && actualParts.length === 4
+    && recommendedParts[0] === actualParts[0]
+    && recommendedParts[2] === actualParts[2]
+    && recommendedParts[3] === actualParts[3]
+}
+
+export async function syncCreatedSubBomsFromSapAction(input: { id: string }): Promise<ProductDesignEstimation> {
+  const access = await requireProductDesignAccess()
+  const id = requiredUuid(input.id, 'Cotización')
+  const estimation = await getEstimationRecord(id)
+  const finalItemCode = estimation?.sapCreatedItemCode
+  if (!estimation || !finalItemCode) throw new Error('La cotización todavía no tiene un artículo final creado en SAP.')
+  const finalTree = (await getSapItemBomsByCodes([finalItemCode])).get(finalItemCode)
+  if (!finalTree) throw new Error(`SAP no devolvió la LdM del artículo ${finalItemCode}.`)
+  const finalTreeCodes = finalTree.lines.map(line => line.ItemCode.trim().toUpperCase())
+  const synchronizedLineIds: string[] = []
+  const draft: EstimationDraft = {
+    ...estimation.draft,
+    bomLines: estimation.draft.bomLines.map(line => {
+      if (line.parentId !== null || line.origin !== 'manual' || line.sapItemCode) return line
+      const recommendedCode = stringOrNull(line.extensions.suggestedSapItemCode)?.toUpperCase()
+      if (!recommendedCode) return line
+      const matches = finalTreeCodes.filter(code => sameSapSubBomPattern(recommendedCode, code))
+      if (matches.length !== 1) return line
+      const extensions = { ...line.extensions }
+      delete extensions.suggestedSapItemCode
+      delete extensions.suggestionReserved
+      synchronizedLineIds.push(line.id)
+      return {
+        ...line,
+        sapItemCode: matches[0]!,
+        extensions: {
+          ...extensions,
+          sapCreatedItemCode: matches[0]!,
+          sapCreatedAt: timestampNow(),
+          sapStructureLocked: false,
+        },
+      }
+    }),
+  }
+  if (synchronizedLineIds.length === 0) {
+    throw new Error('No se encontró una sub-LdM creada que coincida de forma única con las recomendaciones pendientes del lienzo.')
+  }
+  await dbQuery(
+    `UPDATE public.product_design_estimations
+        SET draft_data_json = $1::jsonb, updated_by = $2::uuid
+      WHERE id = $3::uuid`,
+    [JSON.stringify(serializeEstimationDraft(draft)), access.user.id, id],
+  )
+  const saved = await getEstimationRecord(id)
+  const persisted = saved && synchronizedLineIds.every(lineId => {
+    const line = saved.draft.bomLines.find(candidate => candidate.id === lineId)
+    return Boolean(line?.sapItemCode) && line?.extensions.suggestedSapItemCode === undefined
+  })
+  if (!saved || !persisted) throw new Error('SAP fue leído, pero el lienzo no pudo verificarse después de sincronizarlo.')
+  revalidatePath(`/product-design/estimations/${id}`)
+  revalidatePath('/product-design/estimations')
   return saved
 }
 
@@ -1609,18 +2374,19 @@ export async function getEstimationHomologueChildrenAction(itemCode: string): Pr
   }
 }
 
-export async function suggestEstimationSubBomCodeAction(itemCode: string): Promise<{
+type EstimationSubBomCodeSuggestion = {
   sourceItemCode: string
   familyPrefix: string
   suggestedItemCode: string
   reserved: false
-}> {
-  await requireProductDesignAccess()
+}
+
+async function suggestEstimationSubBomCode(itemCode: string): Promise<EstimationSubBomCodeSuggestion> {
   const sourceItemCode = requiredText(itemCode, 'Código SAP fuente').toUpperCase()
   const match = sourceItemCode.match(/^([A-Z0-9]+)-(\d+)-([A-Z0-9]+)-([A-Z0-9]+)$/u)
   if (!match) throw new Error(`El código ${sourceItemCode} no tiene el formato esperado para sugerir un consecutivo.`)
   const [, familyPrefix, sourceSequence, version, variant] = match
-  let maximumSequence = 0
+  const occupiedSequences = new Set<number>()
   let afterItemCode: string | null = null
   let hasMore = true
   let pagesRead = 0
@@ -1629,10 +2395,10 @@ export async function suggestEstimationSubBomCodeAction(itemCode: string): Promi
     const page = await searchSapItems({ code: familyPrefix }, { limit: SAP_PAGE_LIMIT, afterItemCode })
     page.items.forEach(item => {
       const candidateCode = stringOrNull(item.ItemCode)?.toUpperCase()
-      const candidateMatch = candidateCode?.match(new RegExp(`^${familyPrefix}-(\\d+)-`, 'u'))
+      const candidateMatch = candidateCode?.match(new RegExp(`^${familyPrefix}-(\\d+)-${version}-${variant}$`, 'u'))
       if (!candidateMatch) return
       const sequence = Number(candidateMatch[1])
-      if (Number.isSafeInteger(sequence)) maximumSequence = Math.max(maximumSequence, sequence)
+      if (Number.isSafeInteger(sequence)) occupiedSequences.add(sequence)
     })
     afterItemCode = page.lastItemCode
     hasMore = page.hasMore && Boolean(afterItemCode)
@@ -1640,13 +2406,20 @@ export async function suggestEstimationSubBomCodeAction(itemCode: string): Promi
   }
   if (hasMore) throw new Error(`La consulta SAP de ${familyPrefix} fue parcial; no se sugerirá un consecutivo incompleto.`)
 
-  const nextSequence = String(Math.max(maximumSequence + 1, Number(sourceSequence) + 1)).padStart(sourceSequence.length, '0')
+  let nextSequenceNumber = Math.max(Number(sourceSequence) + 1, 1)
+  while (occupiedSequences.has(nextSequenceNumber)) nextSequenceNumber += 1
+  const nextSequence = String(nextSequenceNumber).padStart(sourceSequence.length, '0')
   return {
     sourceItemCode,
     familyPrefix,
     suggestedItemCode: `${familyPrefix}-${nextSequence}-${version}-${variant}`,
     reserved: false,
   }
+}
+
+export async function suggestEstimationSubBomCodeAction(itemCode: string): Promise<EstimationSubBomCodeSuggestion> {
+  await requireProductDesignAccess()
+  return suggestEstimationSubBomCode(itemCode)
 }
 
 async function proposeEstimationReferenceForPrefix(

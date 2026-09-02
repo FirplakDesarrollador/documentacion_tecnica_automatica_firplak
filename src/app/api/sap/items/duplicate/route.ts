@@ -3,6 +3,7 @@ import { apiGuard } from '@/utils/auth/access'
 import {
   assertSapWritesEnabled,
   createSapItem,
+  createSapWithholdingAssignment,
   duplicateSapItem,
   type SapEntityPayload,
 } from '@/lib/sap/serviceLayer'
@@ -57,11 +58,16 @@ export async function POST(request: Request) {
         sourceItemCode: body.sourceItemCode,
         targetItemCode: body.targetItemCode,
         createPayload: duplicate.createPayload,
+        withholdingAssignments: duplicate.withholdingAssignments,
       })
     }
 
     await assertSapWritesEnabled()
     const createdItem = await createSapItem(duplicate.createPayload)
+    const createdWithholdingAssignments = []
+    for (const assignment of duplicate.withholdingAssignments) {
+      createdWithholdingAssignments.push(await createSapWithholdingAssignment(assignment))
+    }
 
     return NextResponse.json({
       success: true,
@@ -69,6 +75,7 @@ export async function POST(request: Request) {
       sourceItemCode: body.sourceItemCode,
       targetItemCode: body.targetItemCode,
       createdItem,
+      createdWithholdingAssignments,
     })
   } catch (error: unknown) {
     return sapApiErrorResponse(error)

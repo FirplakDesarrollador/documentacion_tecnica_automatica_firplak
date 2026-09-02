@@ -6,6 +6,14 @@ import { dbQuery } from '@/lib/supabase'
 
 export type SapEntityPayload = Record<string, unknown>
 
+export type SapWithholdingAssignment = {
+  Code: string
+  Name: string
+  U_ItemCode: string
+  U_WTCode: string
+  U_WTName: string
+}
+
 type SapHttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE'
 
 type SapConfig = {
@@ -37,6 +45,7 @@ type SapRequestOptions = {
   body?: SapEntityPayload
   headers?: Record<string, string>
   retryOnUnauthorized?: boolean
+  transportRetryCount?: number
   timeoutMs?: number
 }
 
@@ -52,6 +61,14 @@ const DEFAULT_SESSION_TIMEOUT_MINUTES = 30
 const DEFAULT_ITEM_CLONE_OMIT_FIELDS = [
   'odata.metadata',
   'odata.etag',
+  'ItemPrices',
+  'ItemWarehouseInfoCollection',
+  'QuantityOnStock',
+  'QuantityOrderedFromVendors',
+  'QuantityOrderedByCustomers',
+  'InStock',
+  'Committed',
+  'Ordered',
 ]
 const SAP_WRITES_SETTING_KEY = 'sap_writes_enabled'
 
@@ -346,21 +363,52 @@ function clearSapSession() {
   loginPromise = null
 }
 
+function isTransientSapTransportError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const code = 'code' in error && typeof error.code === 'string' ? error.code : ''
+  return ['ECONNRESET', 'ECONNABORTED', 'EPIPE', 'ETIMEDOUT'].includes(code)
+    || /socket hang up|connection reset|socket closed/iu.test(error.message)
+}
+
+function waitForSapTransportRetry(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, 250))
+}
+
 async function sapServiceLayerRequest<T = unknown>(
   path: string,
   options: SapRequestOptions = {}
 ): Promise<T> {
   const retryOnUnauthorized = options.retryOnUnauthorized ?? true
+  const method = options.method ?? 'GET'
   const session = await getSapSession()
-  const response = await sapHttpRequest(buildSapUrl(path), {
-    method: options.method ?? 'GET',
-    body: options.body,
-    timeoutMs: options.timeoutMs,
-    headers: {
-      Cookie: session.cookieHeader,
-      ...options.headers,
-    },
-  })
+  let response: SapHttpResponse
+  try {
+    response = await sapHttpRequest(buildSapUrl(path), {
+      method,
+      body: options.body,
+      timeoutMs: options.timeoutMs,
+      headers: {
+        Cookie: session.cookieHeader,
+        ...options.headers,
+      },
+    })
+  } catch (error) {
+    // Retrying a write could duplicate an SAP mutation after an unknown result.
+    if (method === 'GET' && options.transportRetryCount !== 1 && isTransientSapTransportError(error)) {
+      await waitForSapTransportRetry()
+      return sapServiceLayerRequest<T>(path, { ...options, transportRetryCount: 1 })
+    }
+    if (isTransientSapTransportError(error)) {
+      const message = method === 'GET'
+        ? 'SAP cerró la conexión durante la lectura. Reintenta el dry-run; si persiste, valida la disponibilidad de Service Layer.'
+        : 'SAP cerró la conexión durante una escritura. La operación no se reintentó automáticamente para evitar duplicados; verifica SAP antes de intentarla de nuevo.'
+      throw new SapServiceLayerError(message, {
+        statusCode: 503,
+        sapCode: 'SAP_CONNECTION_RESET',
+      })
+    }
+    throw error
+  }
 
   if (response.statusCode === 401 && retryOnUnauthorized) {
     clearSapSession()
@@ -392,6 +440,16 @@ function normalizeRequiredCode(value: string, fieldName: string): string {
     })
   }
   return normalized
+}
+
+function isSapFlagEnabled(value: unknown): boolean {
+  return value === true || value === 'tYES' || value === 'YES'
+}
+
+export function sapSalesWithholdingFields(sourceItem: SapEntityPayload): SapEntityPayload {
+  return {
+    WTLiable: isSapFlagEnabled(sourceItem.SalesItem) ? sourceItem.WTLiable : 'tNO',
+  }
 }
 
 export async function sapWritesEnabled(): Promise<boolean> {
@@ -454,6 +512,45 @@ export async function getSapItem(itemCode: string, select?: string[]): Promise<S
   return item
 }
 
+export async function getSapWithholdingAssignments(itemCode: string): Promise<SapWithholdingAssignment[]> {
+  const normalizedCode = normalizeRequiredCode(itemCode, 'itemCode')
+  const query = buildCollectionQuery({
+    filter: `U_ItemCode eq ${encodeODataString(normalizedCode)}`,
+  })
+  const response = await sapServiceLayerRequest<unknown>(`/U_HBT_ARTICULORET${query}`)
+  return recordsFromCollectionResponse(response).flatMap((row): SapWithholdingAssignment[] => {
+    const code = readStringField(row, 'Code')
+    const name = readStringField(row, 'Name')
+    const assignedItemCode = readStringField(row, 'U_ItemCode')
+    const withholdingCode = readStringField(row, 'U_WTCode')
+    const withholdingName = readStringField(row, 'U_WTName')
+    if (!code || !name || !assignedItemCode || !withholdingCode || !withholdingName) return []
+    return [{
+      Code: code,
+      Name: name,
+      U_ItemCode: assignedItemCode,
+      U_WTCode: withholdingCode,
+      U_WTName: withholdingName,
+    }]
+  })
+}
+
+export function buildSapWithholdingAssignmentForTarget(
+  targetItemCode: string,
+  assignment: SapWithholdingAssignment,
+): SapWithholdingAssignment {
+  const normalizedTarget = normalizeRequiredCode(targetItemCode, 'targetItemCode').toUpperCase()
+  const withholdingCode = normalizeRequiredCode(assignment.U_WTCode, 'U_WTCode')
+  const code = `${normalizedTarget}${withholdingCode}`
+  return {
+    Code: code,
+    Name: code,
+    U_ItemCode: normalizedTarget,
+    U_WTCode: withholdingCode,
+    U_WTName: assignment.U_WTName,
+  }
+}
+
 export type SapItemGroup = {
   groupCode: number
   groupName: string
@@ -514,6 +611,43 @@ export async function listSapItemGroups(options: SapItemGroupsOptions = {}): Pro
     const groupCode = readNumberField(row, 'Number') ?? readNumberField(row, 'GroupCode')
     const groupName = readStringField(row, 'GroupName')
     return groupCode === null || !groupName ? [] : [{ groupCode, groupName }]
+  })
+}
+
+export type SapSupplier = {
+  bpCode: string
+  cardName: string
+  defaultCurrency: string | null
+  phone1: string | null
+  emailAddress: string | null
+  isActive: boolean
+  updatedAt: string | null
+}
+
+/** Reads supplier business partners only; it never mutates SAP master data. */
+export async function listSapSuppliers(): Promise<SapSupplier[]> {
+  const query = buildCollectionQuery({
+    select: ['CardCode', 'CardName', 'Currency', 'Phone1', 'E_Mail', 'Valid', 'Frozen', 'UpdateDate'],
+    filter: `CardType eq 'cSupplier'`,
+    orderby: 'CardName asc',
+    top: 500,
+  })
+  const response = await sapServiceLayerRequest<unknown>(`/BusinessPartners${query}`)
+  return recordsFromCollectionResponse(response).flatMap(row => {
+    const bpCode = readStringField(row, 'CardCode')
+    const cardName = readStringField(row, 'CardName')
+    if (!bpCode || !cardName) return []
+    const valid = row.Valid
+    const frozen = row.Frozen
+    return [{
+      bpCode,
+      cardName,
+      defaultCurrency: readStringField(row, 'Currency'),
+      phone1: readStringField(row, 'Phone1'),
+      emailAddress: readStringField(row, 'E_Mail'),
+      isActive: valid !== false && valid !== 'tNO' && frozen !== true && frozen !== 'tYES',
+      updatedAt: readStringField(row, 'UpdateDate'),
+    }]
   })
 }
 
@@ -1588,6 +1722,8 @@ export function buildSapItemDuplicatePayload(input: SapItemDuplicateInput & { so
     }
   }
 
+  Object.assign(payload, sapSalesWithholdingFields(input.sourceItem))
+
   payload.ItemCode = targetItemCode
   return payload
 }
@@ -1613,6 +1749,7 @@ export async function createSapProductTree(input: {
   lines: SapProductTreeCreateLine[]
   quantity?: number
   treeType?: string
+  warehouse?: string | null
 }): Promise<unknown> {
   await assertSapWritesEnabled()
   const treeCode = normalizeRequiredCode(input.treeCode, 'treeCode')
@@ -1622,17 +1759,26 @@ export async function createSapProductTree(input: {
       sapCode: 'SAP_VALIDATION_ERROR',
     })
   }
+  const childItems = await getSapItemsByCodes(input.lines.map(line => line.ItemCode), ['ItemCode', 'InventoryItem'])
+  const nonInventoryItemCodes = new Set(
+    [...childItems.values()]
+      .filter(item => item.InventoryItem === false || item.InventoryItem === 'tNO')
+      .flatMap(item => readStringField(item, 'ItemCode')?.toUpperCase() ?? []),
+  )
   return sapServiceLayerRequest('/ProductTrees', {
     method: 'POST',
     body: {
       TreeCode: treeCode,
       Quantity: input.quantity ?? 1,
       TreeType: input.treeType ?? 'iProductionTree',
+      Warehouse: input.warehouse ?? null,
       ProductTreeLines: input.lines.map((line, index) => ({
         ItemCode: line.ItemCode,
         Quantity: line.Quantity,
         Warehouse: line.Warehouse ?? null,
-        IssueMethod: line.IssueMethod ?? 'im_Manual',
+        IssueMethod: nonInventoryItemCodes.has(line.ItemCode.trim().toUpperCase())
+          ? 'im_Backflush'
+          : line.IssueMethod ?? 'im_Manual',
         Comment: line.Comment ?? null,
         ChildNum: index,
       })),
@@ -1651,9 +1797,12 @@ export async function deleteSapItem(itemCode: string): Promise<unknown> {
 export async function duplicateSapItem(input: SapItemDuplicateInput): Promise<{
   sourceItem: SapEntityPayload
   createPayload: SapEntityPayload
+  withholdingAssignments: SapWithholdingAssignment[]
 }> {
   const sourceItemCode = normalizeRequiredCode(input.sourceItemCode, 'sourceItemCode')
   const sourceItem = await getSapItem(sourceItemCode)
+  const sourceAssignments = await getSapWithholdingAssignments(sourceItemCode)
+  const targetItemCode = normalizeRequiredCode(input.targetItemCode, 'targetItemCode')
   const createPayload = buildSapItemDuplicatePayload({
     ...input,
     sourceItem,
@@ -1662,6 +1811,8 @@ export async function duplicateSapItem(input: SapItemDuplicateInput): Promise<{
   return {
     sourceItem,
     createPayload,
+    withholdingAssignments: sourceAssignments.map(assignment =>
+      buildSapWithholdingAssignmentForTarget(targetItemCode, assignment)),
   }
 }
 
@@ -1727,6 +1878,27 @@ export type SapItemBom = {
   warehouse: string | null
   quantity: number
   lines: BomLine[]
+}
+
+export async function createSapWithholdingAssignment(
+  assignment: Omit<SapWithholdingAssignment, 'Code' | 'Name'> & { Code?: string; Name?: string },
+): Promise<unknown> {
+  await assertSapWritesEnabled()
+  const itemCode = normalizeRequiredCode(assignment.U_ItemCode, 'U_ItemCode')
+  const withholdingCode = normalizeRequiredCode(assignment.U_WTCode, 'U_WTCode')
+  const withholdingName = normalizeRequiredCode(assignment.U_WTName, 'U_WTName')
+  const code = assignment.Code?.trim() || `${itemCode}${withholdingCode}`
+  const name = assignment.Name?.trim() || code
+  return sapServiceLayerRequest('/U_HBT_ARTICULORET', {
+    method: 'POST',
+    body: {
+      Code: code,
+      Name: name,
+      U_ItemCode: itemCode,
+      U_WTCode: withholdingCode,
+      U_WTName: withholdingName,
+    },
+  })
 }
 
 export async function getSapItemBom(itemCode: string): Promise<SapItemBom | null> {
@@ -2391,4 +2563,10 @@ export async function updateSapItem(itemCode: string, fields: SapEntityPayload):
     method: 'PATCH',
     body: fields,
   })
+}
+
+export async function updateSapItemName(itemCode: string, itemName: string): Promise<unknown> {
+  const normalizedName = itemName.trim()
+  if (!normalizedName) throw new SapServiceLayerError('ItemName is required', { statusCode: 400, sapCode: 'SAP_ITEM_NAME_REQUIRED' })
+  return updateSapItem(itemCode, { ItemName: normalizedName })
 }
