@@ -360,6 +360,27 @@ server.registerTool('sap_create_product_tree', {
   return { dryRun: false, targetCode, created, verified }
 }))
 
+server.registerTool('sap_update_item', {
+  title: 'Update SAP item',
+  description: 'Dry-run by default. PATCHes selected SAP Item fields after explicit confirmation and verifies the result.',
+  inputSchema: {
+    itemCode: z.string().trim().min(1).max(100),
+    payload: jsonObjectSchema,
+    dryRun: z.boolean().optional(),
+    confirmation: z.string().optional(),
+  },
+  annotations: writeAnnotations,
+}, async ({ itemCode, payload, dryRun = true, confirmation }) => withToolErrors(async () => {
+  const targetCode = itemCode.trim()
+  const current = await getExisting(`/Items(${encodeODataString(targetCode)})`)
+  if (!current) throw new SapMcpError(`El artículo no existe: ${targetCode}`, 404, 'SAP_ITEM_NOT_FOUND')
+  assertWriteRequest({ dryRun, confirmation, targetCode })
+  if (dryRun) return { dryRun: true, targetCode, current, updatePayload: payload }
+  const updated = await sapRequest(`/Items(${encodeODataString(targetCode)})`, { method: 'PATCH', body: payload })
+  const verified = await sapRequest(`/Items(${encodeODataString(targetCode)})`)
+  return { dryRun: false, targetCode, updated, verified }
+}))
+
 server.registerTool('sap_update_product_tree', {
   title: 'Update SAP product tree',
   description: 'Dry-run by default. PATCHes a complete or partial ProductTree payload after explicit confirmation.',
