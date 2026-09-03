@@ -66,5 +66,6 @@ artifacts/HOJA DE RUTA MUEBLE BASICO ELEVAO 48X38.xlsx
 SAMIGEN_AUDITORIA_FUNCIONAL.md
 
 # MCP SAP readonly interno (herramienta local, no del aplicativo)
+opencode.json
 opencode.sap-readonly.example.json
 scripts/mcp-sap-readonly-server.mjs
