@@ -1,7 +1,7 @@
 'use client'
 
 import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChevronDown, ChevronRight, Copy, Download, Layers, Loader2, RefreshCw, Search, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronRight, Copy, Download, ExternalLink, Layers, Loader2, RefreshCw, Search, X } from 'lucide-react'
 import { OrderConsultaPanel } from './OrderConsultaPanel'
 import { DEFAULT_SALES_PRICING_FORMULAS, evaluateSalesPricing, type SalesPricingFormulaConfig } from '@/lib/productDesign/salesPricingFormulas'
 import { buildEstimationBomClipboardText, type EstimationBomExportRow } from '@/lib/sales/estimationBomExport'
@@ -126,6 +126,18 @@ type BomChildrenResponse =
   | { success: true; lines: FastBomNode[] }
   | { success: false; error: string }
 
+type ProductTreeUsage = {
+  treeCode: string
+  treeType: string | null
+  productDescription: string | null
+}
+
+type UsagesApiResponse =
+  | { success: true; usages: ProductTreeUsage[] }
+  | { success: false; error: string }
+
+const RELATIONS_PAGE_SIZE = 40
+
 type CostedBomExportRow = {
   level: number
   itemCode: string
@@ -224,6 +236,7 @@ const SAP_TABS = [
   { id: 'properties', label: 'Propiedades' },
   { id: 'comments', label: 'Comentarios' },
   { id: 'attachments', label: 'Anexos' },
+  { id: 'relations', label: 'Relaciones' },
 ] as const
 
 type SapTabId = (typeof SAP_TABS)[number]['id']
@@ -793,8 +806,103 @@ function AttachmentsTab({ item }: { item: SapItem }) {
   )
 }
 
+function RelationsTab({ activeCode }: { activeCode: string }) {
+  const [usages, setUsages] = useState<ProductTreeUsage[]>([])
+  const [visibleUsageCount, setVisibleUsageCount] = useState(RELATIONS_PAGE_SIZE)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadUsages() {
+      setLoading(true)
+      setError(null)
+      try {
+        const response = await fetch('/api/sap/items/' + encodeURIComponent(activeCode) + '/usages', {
+          headers: { Accept: 'application/json' },
+        })
+        const payload = await response.json() as UsagesApiResponse
+        if (!response.ok || !payload.success) {
+          if (!cancelled) setError(payload.success ? 'No se pudieron consultar las relaciones del artículo.' : payload.error)
+          return
+        }
+        if (!cancelled) {
+          setUsages(payload.usages)
+          setVisibleUsageCount(RELATIONS_PAGE_SIZE)
+        }
+      } catch (fetchError: unknown) {
+        if (!cancelled) setError(fetchError instanceof Error ? fetchError.message : 'No se pudieron consultar las relaciones del artículo.')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    void loadUsages()
+    return () => {
+      cancelled = true
+    }
+  }, [activeCode])
+
+  return (
+    <SectionCard title="Relaciones" description="Listas de materiales en las que este artículo aparece como componente.">
+      {loading ? (
+        <div className="flex items-center gap-2 p-6 text-sm text-slate-500"><Loader2 className="size-4 animate-spin" />Consultando relaciones en SAP…</div>
+      ) : error ? (
+        <div role="alert" className="flex items-start gap-2 p-6 text-sm text-red-800"><X className="mt-0.5 size-4 shrink-0" /><span>{error}</span></div>
+      ) : usages.length === 0 ? (
+        <EmptyPanel>Este artículo no es componente de ninguna LdM.</EmptyPanel>
+      ) : (
+        <div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-4 py-3 font-semibold">Código padre</th>
+                  <th className="px-4 py-3 font-semibold">Descripción</th>
+                  <th className="px-4 py-3 font-semibold">Tipo de BOM</th>
+                </tr>
+              </thead>
+              <tbody>
+                {usages.slice(0, visibleUsageCount).map(usage => (
+                  <tr key={usage.treeCode} className="border-b border-slate-100 last:border-0">
+                    <td className="px-4 py-3">
+                      <a
+                        href={'/engineering/sap-consulting?itemCode=' + encodeURIComponent(usage.treeCode)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 font-mono text-xs font-semibold text-indigo-700 underline decoration-indigo-200 underline-offset-2 hover:text-indigo-900"
+                      >
+                        {usage.treeCode}<ExternalLink className="size-3.5" aria-hidden="true" />
+                      </a>
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">{usage.productDescription || 'Sin descripción en SAP'}</td>
+                    <td className="px-4 py-3 text-slate-600">{usage.treeType || 'Sin tipo informado'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {visibleUsageCount < usages.length ? (
+            <div className="flex justify-center border-t border-slate-200 bg-slate-50 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setVisibleUsageCount(count => count + RELATIONS_PAGE_SIZE)}
+                className="inline-flex h-9 items-center rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                Cargar más
+              </button>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </SectionCard>
+  )
+}
+
 function ItemTabContent({
   activeTab,
+  activeCode,
   item,
   customFields,
   customFieldsVisible,
@@ -803,6 +911,7 @@ function ItemTabContent({
   activeProperties,
 }: {
   activeTab: SapTabId
+  activeCode: string
   item: SapItem
   customFields: FieldDefinition[]
   customFieldsVisible: boolean
@@ -874,6 +983,8 @@ function ItemTabContent({
       return <CommentsTab item={item} />
     case 'attachments':
       return <AttachmentsTab item={item} />
+    case 'relations':
+      return <RelationsTab activeCode={activeCode} />
   }
 }
 
@@ -957,6 +1068,7 @@ function MasterDataPanel({
           >
             <ItemTabContent
               activeTab={activeTab}
+              activeCode={activeCode}
               item={item}
               customFields={customFields}
               customFieldsVisible={customFieldsVisible}

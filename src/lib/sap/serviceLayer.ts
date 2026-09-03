@@ -1667,8 +1667,10 @@ export async function getSapProductTreeUsages(
       }
     }
 
-    if (rows.length >= pageSize) {
-      skip += pageSize
+    if (rows.length > 0) {
+      // SAP may enforce a smaller server-side page than the requested $top.
+      // Advance by the page actually returned so no parents are skipped.
+      skip += rows.length
     } else {
       hasMore = false
     }
