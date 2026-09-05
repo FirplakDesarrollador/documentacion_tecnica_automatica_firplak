@@ -11,12 +11,12 @@ import {
   type SapOperationLog,
 } from '@/lib/sap/operationAudit'
 import {
-  createAndVerifySapTransferRequestWithoutRefresh,
+  createAndVerifySapTransferRequest,
   getSapTransferRequestByDocEntry,
   SapTransferRequestCreationAmbiguousError,
   SapTransferRequestValidationError,
   type SapTransferRequestDocument,
-  type SapTransferRequestPreparedDraft,
+  type SapTransferRequestValidationSuccess,
 } from '@/lib/sap/transferRequests'
 import { SapServiceLayerError } from '@/lib/sap/serviceLayer'
 import { dbQuery } from '@/lib/supabase'
@@ -100,15 +100,17 @@ async function resolveResponsibleUser(userId: string): Promise<ResponsibleUser> 
   }
 }
 
-function operationItemsFromPreparedDraft(prepared: SapTransferRequestPreparedDraft): Array<Record<string, unknown>> {
-  return prepared.lines.map(line => ({
+function operationItemsFromValidation(validation: SapTransferRequestValidationSuccess): Array<Record<string, unknown>> {
+  return validation.lines.map(line => ({
     itemCode: line.itemCode,
     quantity: line.quantity,
     transferType: line.transferType,
-    sourceWarehouseCode: prepared.sourceWarehouseCode,
-    destinationWarehouseCode: prepared.destinationWarehouseCode,
+    sourceWarehouseCode: validation.sourceWarehouseCode,
+    destinationWarehouseCode: validation.destinationWarehouseCode,
     batchNumbers: line.batchNumbers,
     serialNumbers: line.serialNumbers,
+    allowZeroAvailable: line.allowZeroAvailable,
+    explodedFrom: line.explodedFrom,
   }))
 }
 
@@ -199,37 +201,40 @@ export async function POST(request: Request) {
     if (existing) return responseForExistingOperation(existing)
     const responsible = await resolveResponsibleUser(input.responsibleUserId)
 
-    const result = await createAndVerifySapTransferRequestWithoutRefresh(input.draft, {
-      beforeCreate: async ({ prepared, payload }) => {
+    const result = await createAndVerifySapTransferRequest(input.draft, {
+      beforeCreate: async ({ validation, payload }) => {
         operationContext = {
           workflow: 'engineering.sap-operations.transfer-requests',
           workflowVersion: 1,
-          validationSource: 'availability-consulted-while-adding-lines',
+          validationSource: 'server-revalidated-before-create',
           automaticComment: payload.Comments,
-          cardCode: prepared.defaults.cardCode,
-          contactPerson: prepared.defaults.contactPerson,
-          shipToCode: prepared.defaults.shipToCode,
-          series: prepared.defaults.series,
-          priceList: prepared.defaults.priceList,
+          cardCode: validation.defaults.cardCode,
+          contactPerson: validation.defaults.contactPerson,
+          shipToCode: validation.defaults.shipToCode,
+          series: validation.defaults.series,
+          priceList: validation.defaults.priceList,
           responsible,
+          stockOverrides: validation.lines
+            .map(line => line.allowZeroAvailable ? { lineIndex: line.lineIndex, itemCode: line.itemCode } : null)
+            .filter((entry): entry is { lineIndex: number; itemCode: string } => entry !== null),
         }
         const started = await startSapOperation({
           operationType: SAP_TRANSFER_REQUEST_CREATE_OPERATION_TYPE,
           idempotencyKey: input.idempotencyKey,
           subjectType: SAP_TRANSFER_REQUEST_SUBJECT_TYPE,
-          itemCode: prepared.lines.length === 1 ? prepared.lines[0]?.itemCode ?? null : null,
+          itemCode: validation.lines.length === 1 ? validation.lines[0]?.itemCode ?? null : null,
           confirmationText: 'CHECKED',
           sapPayload: payload,
-          operationItems: operationItemsFromPreparedDraft(prepared),
+          operationItems: operationItemsFromValidation(validation),
           operationContext,
-          businessComment: prepared.businessComment,
+          businessComment: validation.businessComment,
           actor: {
             id: guard.access?.user?.id ?? null,
             email: guard.access?.user?.email ?? null,
             role: guard.access?.role ?? null,
           },
-          sourceWarehouse: prepared.sourceWarehouseCode,
-          destinationWarehouse: prepared.destinationWarehouseCode,
+          sourceWarehouse: validation.sourceWarehouseCode,
+          destinationWarehouse: validation.destinationWarehouseCode,
         })
         if (!started.created) throw new ExistingIdempotentOperationError(started.operation)
         auditState.pendingOperation = started.operation

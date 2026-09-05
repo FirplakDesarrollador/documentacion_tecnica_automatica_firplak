@@ -92,6 +92,8 @@ function operationItemsFromValidation(validation: SapTransferRequestValidationSu
     itemManagement: line.management,
     batchNumbers: line.batchNumbers,
     serialNumbers: line.serialNumbers,
+    allowZeroAvailable: line.allowZeroAvailable,
+    explodedFrom: line.explodedFrom,
   }))
 }
 
@@ -167,6 +169,9 @@ export async function POST(
         operationContext = {
           ...existingDocumentOperation.operationContext,
           responsible,
+          stockOverrides: validation.lines
+            .map(line => line.allowZeroAvailable ? { lineIndex: line.lineIndex, itemCode: line.itemCode } : null)
+            .filter((entry): entry is { lineIndex: number; itemCode: string } => entry !== null),
           modificationHistory: [
             ...modificationHistory(existingDocumentOperation),
             {

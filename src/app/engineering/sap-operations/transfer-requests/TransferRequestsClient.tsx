@@ -60,6 +60,9 @@ type FormConfiguration = {
 type SearchItem = {
   itemCode: string
   itemName: string
+  sources?: Array<'SAP' | 'Catálogo'>
+  missingInSap?: boolean
+  missingInCatalog?: boolean
 }
 
 type BatchOption = {
@@ -81,6 +84,7 @@ type ItemAvailability = {
   itemName: string
   inventoryUom: string | null
   management: 'none' | 'batch' | 'serial'
+  hasBom?: boolean
   availability: {
     warehouseCode: string
     inventoryQuantity: number
@@ -130,6 +134,41 @@ type DraftLine = {
   batchQuantities: Record<string, string>
   selectedSerials: number[]
   suggestedSourceWarehouseCode: string | null
+  allowZeroAvailable: boolean
+  explodedFrom?: {
+    parentItemCode: string
+    parentQuantity: number
+    calculatedQuantity: number
+    rounded: boolean
+    path: string[]
+  }
+}
+
+type BomPreview = {
+  lineId: string
+  parentItemCode: string
+  parentQuantity: number
+  lines: Array<{
+    itemCode: string
+    itemName: string
+    quantity: number
+    inventoryUom: string | null
+    hasBom: boolean
+    availability: ItemAvailability['availability']
+    explodedFrom: string
+    explodedFromQuantity: number
+    explodedFromPath: string[]
+    rounded: boolean
+  }>
+}
+
+type CatalogReviewItem = {
+  itemCode: string
+  itemName: string
+  status: 'pending' | 'approved' | 'rejected'
+  firstSeenAt: string | null
+  reviewedAt: string | null
+  reviewedBy: string | null
 }
 
 type ValidationIssue = {
@@ -304,6 +343,7 @@ type InlineItemSearchRowsProps = {
   onSearch: () => void
   onSelectItem: (item: SearchItem) => void
   onCancelEdit: () => void
+  isAdmin: boolean
 }
 
 function InlineItemSearchRows({
@@ -318,6 +358,7 @@ function InlineItemSearchRows({
   onSearch,
   onSelectItem,
   onCancelEdit,
+  isAdmin,
 }: InlineItemSearchRowsProps) {
   const isEditing = mode === 'edit'
   const inputId = isEditing ? `item-search-edit-${lineNumber}` : 'item-search-new'
@@ -341,7 +382,7 @@ function InlineItemSearchRows({
             {isEditing ? <Button type="button" variant="ghost" onClick={onCancelEdit} className="shrink-0 text-slate-600">Cancelar</Button> : <span className="self-center px-2 text-xs text-slate-400">Nueva</span>}
           </div>
           {searchError ? <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{searchError}</p> : null}
-          {searchResults.length > 0 ? <div className="space-y-2">{searchResults.map(item => <div key={item.itemCode} className="grid gap-2 rounded-md border border-slate-200 bg-white p-2.5 md:grid-cols-[minmax(180px,0.32fr)_minmax(0,1fr)_auto] md:items-center"><span className="font-semibold text-slate-800">{item.itemCode}</span><span className="whitespace-normal break-words text-sm text-slate-700">{item.itemName}</span><Button type="button" size="sm" variant="outline" onClick={() => onSelectItem(item)} className="border-firplak-green/30 text-firplak-green">{actionLabel}</Button></div>)}</div> : null}
+            {searchResults.length > 0 ? <div className="space-y-2">{searchResults.map(item => <div key={item.itemCode} className="grid gap-2 rounded-md border border-slate-200 bg-white p-2.5 md:grid-cols-[minmax(180px,0.32fr)_minmax(0,1fr)_auto] md:items-center"><span className="font-semibold text-slate-800">{item.itemCode}</span><span className="min-w-0 whitespace-normal break-words text-sm text-slate-700">{item.itemName}{isAdmin ? <span className="ml-2 inline-flex flex-wrap gap-1 align-middle">{item.sources?.map(source => <Badge key={source} variant="outline" className="text-[10px]">{source}</Badge>)}{item.missingInSap ? <Badge variant="destructive" className="text-[10px]">Faltante en SAP</Badge> : null}{item.missingInCatalog ? <Badge variant="outline" className="border-amber-300 text-[10px] text-amber-800">Nuevo en catálogo</Badge> : null}</span> : null}</span><Button type="button" size="sm" variant="outline" onClick={() => onSelectItem(item)} disabled={item.missingInSap} className="border-firplak-green/30 text-firplak-green">{item.missingInSap ? 'No disponible en SAP' : actionLabel}</Button></div>)}</div> : null}
         </div>
       </TableCell>
     </TableRow>
@@ -358,7 +399,7 @@ function createDraftLine(): DraftLine {
     id: createClientId(),
     item: null,
     quantity: '',
-    transferType: '',
+    transferType: 'Físico',
     availability: null,
     availabilityLoading: false,
     availabilityError: null,
@@ -368,6 +409,7 @@ function createDraftLine(): DraftLine {
     batchQuantities: {},
     selectedSerials: [],
     suggestedSourceWarehouseCode: null,
+    allowZeroAvailable: false,
   }
 }
 
@@ -482,8 +524,11 @@ function getLineClientError(line: DraftLine): string | null {
   if (line.availabilityLoading) return 'Consultando disponibilidad SAP.'
   if (line.availabilityError) return line.availabilityError
   if (!line.availability) return 'Consulte la disponibilidad del artículo.'
-  if (quantity > line.availability.availability.availableQuantity) {
-    return `Disponible: ${formatNumber(line.availability.availability.availableQuantity)}.`
+  const stock = line.availability.availability
+  if (quantity > stock.availableQuantity && (stock.inventoryQuantity <= 0 || !line.allowZeroAvailable)) {
+    return stock.inventoryQuantity <= 0
+      ? 'No hay inventario físico disponible en la bodega de origen.'
+      : `ATP disponible: ${formatNumber(stock.availableQuantity)}. Marque el override para continuar con inventario físico.`
   }
 
   const allocation = line.availability.allocation
@@ -520,12 +565,15 @@ function serializeDraft(sourceWarehouseCode: string, destinationWarehouseCode: s
       serialNumbers: line.availability?.allocation.management === 'serial'
         ? line.selectedSerials.map(systemSerialNumber => ({ systemSerialNumber }))
         : [],
+      allowZeroAvailable: line.allowZeroAvailable,
+      explodedFrom: line.explodedFrom,
     })),
   }
 }
 
 export default function TransferRequestsClient() {
   const [configuration, setConfiguration] = useState<FormConfiguration | null>(null)
+  const [isAdmin, setIsAdmin] = useState(false)
   const [configurationError, setConfigurationError] = useState<string | null>(null)
   const [newRequestOpen, setNewRequestOpen] = useState(false)
   const [editingDocEntry, setEditingDocEntry] = useState<number | null>(null)
@@ -555,6 +603,15 @@ export default function TransferRequestsClient() {
   const [selectedDetail, setSelectedDetail] = useState<RequestDetail | null>(null)
   const [detailLoadingEntry, setDetailLoadingEntry] = useState<number | null>(null)
   const [detailError, setDetailError] = useState<string | null>(null)
+  const [bomPreview, setBomPreview] = useState<BomPreview | null>(null)
+  const [bomPreviewLoading, setBomPreviewLoading] = useState(false)
+  const [bomPreviewError, setBomPreviewError] = useState<string | null>(null)
+  const [bomConfirmed, setBomConfirmed] = useState(false)
+  const [catalogReviewItems, setCatalogReviewItems] = useState<CatalogReviewItem[] | null>(null)
+  const [catalogReviewLoading, setCatalogReviewLoading] = useState(false)
+  const [catalogReviewError, setCatalogReviewError] = useState<string | null>(null)
+  const [catalogReviewAction, setCatalogReviewAction] = useState<string | null>(null)
+  const [catalogReviewConfirmed, setCatalogReviewConfirmed] = useState<Record<string, boolean>>({})
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true)
@@ -584,6 +641,44 @@ export default function TransferRequestsClient() {
   useEffect(() => {
     void loadHistory()
   }, [loadHistory])
+
+  const loadCatalogReview = useCallback(async () => {
+    setCatalogReviewLoading(true)
+    setCatalogReviewError(null)
+    try {
+      const result = await apiRequest<{ items: CatalogReviewItem[] }>('/api/engineering/sap-operations/transfer-requests/items/catalog-review')
+      setCatalogReviewItems(result.items)
+    } catch (error) {
+      if (error instanceof RequestApiError && error.status === 403) {
+        setCatalogReviewItems(null)
+        return
+      }
+      setCatalogReviewError(error instanceof Error ? error.message : 'No fue posible cargar los pendientes de catálogo.')
+    } finally {
+      setCatalogReviewLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadCatalogReview()
+  }, [loadCatalogReview])
+
+  const reviewCatalogItem = useCallback(async (itemCode: string, status: 'approved' | 'rejected') => {
+    setCatalogReviewAction(itemCode)
+    setCatalogReviewError(null)
+    try {
+      await apiRequest<{ item: CatalogReviewItem }>('/api/engineering/sap-operations/transfer-requests/items/catalog-review', {
+        method: 'POST',
+        body: JSON.stringify({ itemCode, status, confirmed: true }),
+      })
+      await loadCatalogReview()
+      setCatalogReviewConfirmed(current => ({ ...current, [itemCode]: false }))
+    } catch (error) {
+      setCatalogReviewError(error instanceof Error ? error.message : 'No fue posible guardar la revisión.')
+    } finally {
+      setCatalogReviewAction(null)
+    }
+  }, [loadCatalogReview])
 
   const clientLineErrors = useMemo(() => lines.map(getLineClientError), [lines])
   const warehousesReady = Boolean(sourceWarehouseCode && destinationWarehouseCode && sourceWarehouseCode !== destinationWarehouseCode)
@@ -724,8 +819,9 @@ export default function TransferRequestsClient() {
     setSearching(true)
     setSearchError(null)
     try {
-      const result = await apiRequest<{ items: SearchItem[] }>('/api/engineering/sap-operations/transfer-requests/items?query=' + encodeURIComponent(query))
-      setSearchResults(result.items)
+       const result = await apiRequest<{ items: SearchItem[]; isAdmin: boolean }>('/api/engineering/sap-operations/transfer-requests/items/unified?query=' + encodeURIComponent(query))
+       setSearchResults(result.items)
+       setIsAdmin(result.isAdmin)
     } catch (error) {
       setSearchError(error instanceof Error ? error.message : 'No fue posible buscar artículos.')
       setSearchResults([])
@@ -733,6 +829,56 @@ export default function TransferRequestsClient() {
       setSearching(false)
     }
   }, [searchTerm])
+
+  const loadBomPreview = useCallback(async (lineId: string, itemCode: string, quantity: number, visitedItemCodes: string[] = [], previewIndex: number | null = null) => {
+    setBomPreviewLoading(true)
+    setBomPreviewError(null)
+    setBomConfirmed(false)
+    try {
+      const result = await apiRequest<Omit<BomPreview, 'lineId'>>('/api/engineering/sap-operations/transfer-requests/bom/explode', {
+        method: 'POST',
+        body: JSON.stringify({ itemCode, quantity, sourceWarehouseCode, visitedItemCodes }),
+      })
+      setBomPreview(current => current && current.lineId === lineId && previewIndex !== null
+        ? { ...current, lines: current.lines.flatMap((child, index) => index === previewIndex ? result.lines : [child]) }
+        : { ...result, lineId })
+    } catch (error) {
+      setBomPreviewError(error instanceof Error ? error.message : 'No fue posible leer la BOM SAP.')
+    } finally {
+      setBomPreviewLoading(false)
+    }
+  }, [sourceWarehouseCode])
+
+  const confirmBomExplosion = useCallback(() => {
+    if (!bomPreview || !bomConfirmed) return
+    const parentLine = lines.find(line => line.id === bomPreview.lineId)
+    if (!parentLine) return
+    const replacement = bomPreview.lines.map(child => ({
+      ...createDraftLine(),
+      item: { itemCode: child.itemCode, itemName: child.itemName, sources: ['SAP'] as Array<'SAP' | 'Catálogo'> },
+      quantity: String(child.quantity),
+      transferType: parentLine.transferType,
+      explodedFrom: {
+        parentItemCode: child.explodedFrom,
+        parentQuantity: child.explodedFromQuantity,
+        calculatedQuantity: child.quantity,
+        rounded: child.rounded,
+        path: child.explodedFromPath,
+      },
+    }))
+    setLines(current => {
+      const lineIndex = current.findIndex(line => line.id === bomPreview.lineId)
+      if (lineIndex < 0) return current
+      return [...current.slice(0, lineIndex), ...replacement, ...current.slice(lineIndex + 1)]
+    })
+    setBomPreview(null)
+    setBomConfirmed(false)
+    for (const child of replacement) {
+      if (!child.item) continue
+      void requestAvailability(child.id, child.item.itemCode, sourceWarehouseCode)
+      void requestPackagePattern(child.id, child.item.itemCode)
+    }
+  }, [bomConfirmed, bomPreview, lines, requestAvailability, requestPackagePattern, sourceWarehouseCode])
 
   const chooseItem = useCallback((item: SearchItem) => {
     const itemUpdate: Partial<DraftLine> = {
@@ -1014,7 +1160,7 @@ export default function TransferRequestsClient() {
                   <TableBody>{lines.flatMap((line, lineIndex) => {
                     if (editingLineId === line.id) {
                       return [
-                        <InlineItemSearchRows key={`${line.id}-item-editor`} mode="edit" lineNumber={lineIndex + 1} inputRef={itemSearchInputRef} searchTerm={searchTerm} searching={searching} searchError={searchError} searchResults={searchResults} onSearchTermChange={setSearchTerm} onSearch={() => void searchItems()} onSelectItem={chooseItem} onCancelEdit={cancelEditingLine} />,
+                         <InlineItemSearchRows key={`${line.id}-item-editor`} mode="edit" lineNumber={lineIndex + 1} inputRef={itemSearchInputRef} searchTerm={searchTerm} searching={searching} searchError={searchError} searchResults={searchResults} onSearchTermChange={setSearchTerm} onSearch={() => void searchItems()} onSelectItem={chooseItem} onCancelEdit={cancelEditingLine} isAdmin={isAdmin} />,
                       ]
                     }
                     const lineError = clientLineErrors[lineIndex]
@@ -1031,10 +1177,10 @@ export default function TransferRequestsClient() {
                     return [
                       <TableRow key={line.id} className={line.id === editingLineId ? 'bg-firplak-green/5' : undefined}>
                         <TableCell className="font-bold text-slate-700">{lineIndex + 1}</TableCell>
-                        <TableCell className="whitespace-normal break-words"><p className="font-semibold text-slate-800">{line.item?.itemCode ?? 'Por completar'}</p><p className="mt-1 max-h-10 overflow-hidden text-sm leading-5 text-slate-600">{line.item?.itemName ?? 'Busque el artículo y agréguelo a esta línea.'}</p><Button type="button" size="sm" variant="ghost" onClick={() => startEditingLine(line.id)} className="mt-1 h-7 px-1.5 text-xs text-firplak-green hover:bg-firplak-green/5"><Pencil className="mr-1 h-3.5 w-3.5" />Editar artículo</Button></TableCell>
+                         <TableCell className="whitespace-normal break-words"><p className="font-semibold text-slate-800">{line.item?.itemCode ?? 'Por completar'}</p><p className="mt-1 max-h-10 overflow-hidden text-sm leading-5 text-slate-600">{line.item?.itemName ?? 'Busque el artículo y agréguelo a esta línea.'}</p><Button type="button" size="sm" variant="ghost" onClick={() => startEditingLine(line.id)} className="mt-1 h-7 px-1.5 text-xs text-firplak-green hover:bg-firplak-green/5"><Pencil className="mr-1 h-3.5 w-3.5" />Editar artículo</Button>{line.item && line.availability?.hasBom ? <Button type="button" size="sm" variant="ghost" onClick={() => void loadBomPreview(line.id, line.item?.itemCode ?? '', Number(line.quantity))} disabled={bomPreviewLoading} className="mt-1 h-7 px-1.5 text-xs text-sky-700 hover:bg-sky-50"><PackageSearch className="mr-1 h-3.5 w-3.5" />Estallar BOM</Button> : null}</TableCell>
                         <TableCell className="whitespace-normal text-xs leading-4 text-slate-600">{line.packagePatternLoading ? <span className="inline-flex items-center gap-1"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Analizando</span> : pattern?.status === 'observed' ? <><strong className="block text-sm text-firplak-green">Paquete: {formatNumber(pattern.packageQuantity ?? 0)}</strong><span>{pattern.matchingTransfers} traslados MP-01</span></> : pattern || line.packagePatternError ? <strong className="text-sm text-slate-700">NA</strong> : '—'}</TableCell>
                         <TableCell>{stock ? formatNumber(stock.inventoryQuantity) : '—'}</TableCell><TableCell>{stock ? formatNumber(stock.committedQuantity) : '—'}</TableCell><TableCell className="font-semibold text-firplak-green">{stock ? formatNumber(stock.availableQuantity) : '—'}</TableCell><TableCell>{line.availability?.inventoryUom || '—'}</TableCell>
-                        <TableCell><SapQuantityInput id={`quantity-${line.id}`} ariaLabel={`Cantidad línea ${lineIndex + 1}`} value={line.quantity} onChange={quantity => updateLine(line.id, { quantity })} /></TableCell>
+                         <TableCell><SapQuantityInput id={`quantity-${line.id}`} ariaLabel={`Cantidad línea ${lineIndex + 1}`} value={line.quantity} onChange={quantity => updateLine(line.id, { quantity })} />{stock && Number(line.quantity) > stock.availableQuantity && stock.inventoryQuantity > 0 ? <label className="mt-2 flex items-start gap-1.5 text-[11px] leading-4 text-amber-800"><input type="checkbox" checked={line.allowZeroAvailable} onChange={event => updateLine(line.id, { allowZeroAvailable: event.target.checked })} className="mt-0.5 h-3.5 w-3.5 rounded accent-amber-700" />Hacer solicitud así no haya disponibles</label> : null}</TableCell>
                         <TableCell><select id={`transfer-type-${line.id}`} aria-label={`Tipo traslado línea ${lineIndex + 1}`} value={line.transferType} onChange={event => updateLine(line.id, { transferType: event.target.value as DraftLine['transferType'] })} className={SELECT_CLASS_NAME}><option value="">Seleccione tipo</option><option value="Físico">Físico</option><option value="Virtual">Virtual</option></select></TableCell>
                         <TableCell><Button type="button" size="icon-sm" variant="ghost" onClick={() => removeLine(line.id)} aria-label={`Eliminar línea ${lineIndex + 1}`}><Trash2 className="h-4 w-4 text-red-600" /></Button></TableCell>
                       </TableRow>,
@@ -1042,7 +1188,7 @@ export default function TransferRequestsClient() {
                       alternativeWarehouses.length > 0 ? <TableRow key={`${line.id}-alternative-warehouses`}><TableCell colSpan={10} className="bg-sky-50/70 p-3"><div className="rounded-lg border border-sky-200 bg-white p-3"><p className="text-sm font-semibold text-sky-950">Este artículo no tiene disponible en {sourceWarehouseCode}. Disponible en:</p><div className="mt-2 flex flex-wrap items-center gap-2">{alternativeWarehouses.map(warehouse => { const selected = line.suggestedSourceWarehouseCode === warehouse.warehouseCode; return <Button key={warehouse.warehouseCode} type="button" size="sm" variant="outline" onClick={() => chooseSuggestedSourceWarehouse(line.id, warehouse.warehouseCode)} className={selected ? 'h-auto border-firplak-green bg-firplak-green px-3 py-2 text-left text-white hover:bg-firplak-green/90' : 'h-auto border-sky-300 bg-sky-50 px-3 py-2 text-left text-sky-900 hover:bg-sky-100'}><span className="block font-semibold">{warehouse.warehouseCode} · {warehouse.warehouseName}</span><span className="block text-xs opacity-85">Disponible: {formatNumber(warehouse.availableQuantity)} {line.availability?.inventoryUom || ''}</span></Button> })}{line.suggestedSourceWarehouseCode ? <span className="text-xs font-medium text-firplak-green">Vuelve a dar clic para configurar esta bodega como origen.</span> : null}</div></div></TableCell></TableRow> : null,
                       <TableRow key={`${line.id}-status`}><TableCell colSpan={10} className={lineError ? 'bg-red-50 text-red-700' : 'bg-firplak-green/5 text-firplak-green'}><div className="flex items-center gap-2 text-sm font-medium">{line.availabilityLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : lineError ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}{lineError ?? 'Línea lista para validar.'}</div></TableCell></TableRow>,
                     ]
-                  })}{editingLineId === null ? <InlineItemSearchRows mode="append" lineNumber={lines.length + 1} inputRef={itemSearchInputRef} searchTerm={searchTerm} searching={searching} searchError={searchError} searchResults={searchResults} onSearchTermChange={setSearchTerm} onSearch={() => void searchItems()} onSelectItem={chooseItem} onCancelEdit={cancelEditingLine} /> : null}</TableBody>
+                   })}{editingLineId === null ? <InlineItemSearchRows mode="append" lineNumber={lines.length + 1} inputRef={itemSearchInputRef} searchTerm={searchTerm} searching={searching} searchError={searchError} searchResults={searchResults} onSearchTermChange={setSearchTerm} onSearch={() => void searchItems()} onSelectItem={chooseItem} onCancelEdit={cancelEditingLine} isAdmin={isAdmin} /> : null}</TableBody>
                 </Table>
               </div>
               </section>
@@ -1106,6 +1252,23 @@ export default function TransferRequestsClient() {
         </CardContent>
       </Card>
 
+      {bomPreview || bomPreviewLoading || bomPreviewError ? <Card className="border-sky-200 bg-sky-50/40">
+        <CardHeader className="border-b border-sky-100"><div className="flex items-start justify-between gap-3"><div><CardTitle className="text-sky-950">Preview de explosión BOM</CardTitle><CardDescription>El padre será reemplazado por sus hijos en la misma posición. La información se releerá antes de guardar en SAP.</CardDescription></div><Button type="button" variant="ghost" onClick={() => { setBomPreview(null); setBomPreviewError(null); setBomConfirmed(false) }} className="text-slate-600">Cerrar</Button></div></CardHeader>
+        <CardContent className="space-y-4 pt-4">
+          {bomPreviewLoading ? <div className="flex items-center gap-2 text-sm text-sky-900"><Loader2 className="h-4 w-4 animate-spin" />Consultando la LdM y disponibilidad de los hijos...</div> : null}
+          {bomPreviewError ? <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"><AlertCircle className="h-4 w-4" />{bomPreviewError}</div> : null}
+          {bomPreview ? <>
+            <p className="text-sm font-semibold text-slate-800">{bomPreview.parentItemCode} · cantidad padre: {formatNumber(bomPreview.parentQuantity)}</p>
+            <div className="overflow-x-auto rounded-lg border border-sky-200 bg-white"><Table><TableHeader><TableRow><TableHead>Hijo</TableHead><TableHead>Cantidad</TableHead><TableHead>Unidad</TableHead><TableHead>Stock</TableHead><TableHead>ATP</TableHead><TableHead>Estado</TableHead><TableHead /></TableRow></TableHeader><TableBody>{bomPreview.lines.map((child, index) => { const noStock = child.availability.inventoryQuantity <= 0; const lowAtp = child.quantity > child.availability.availableQuantity; return <TableRow key={`${child.itemCode}-${index}`}><TableCell><div className="font-semibold">{child.itemCode}</div><div className="text-xs text-slate-500">{child.itemName}</div></TableCell><TableCell>{formatNumber(child.quantity)}{child.rounded ? <div className="text-[11px] font-medium text-amber-700">Redondeada a 2 decimales</div> : null}</TableCell><TableCell>{child.inventoryUom || '-'}</TableCell><TableCell>{formatNumber(child.availability.inventoryQuantity)}</TableCell><TableCell>{formatNumber(child.availability.availableQuantity)}</TableCell><TableCell><label className="flex items-center gap-1.5 text-xs"><input type="checkbox" checked={!noStock} disabled className="h-3.5 w-3.5 rounded accent-firplak-green" />Con stock</label>{noStock ? <Badge variant="destructive">Línea bloqueada</Badge> : lowAtp ? <Badge variant="outline" className="border-amber-300 text-amber-800">Requiere override</Badge> : <Badge variant="secondary">Disponible</Badge>}</TableCell><TableCell>{child.hasBom ? <Button type="button" size="sm" variant="ghost" onClick={() => void loadBomPreview(bomPreview.lineId, child.itemCode, child.quantity, child.explodedFromPath.slice(0, -1), index)} disabled={bomPreviewLoading} className="text-sky-700">Estallar este componente</Button> : null}</TableCell></TableRow> })}</TableBody></Table></div>
+            <label className="flex items-start gap-2 text-sm text-slate-700"><input type="checkbox" checked={bomConfirmed} onChange={event => setBomConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4 rounded accent-firplak-green" /><span>Confirmo reemplazar el padre por estas líneas, conservando también los hijos sin stock como líneas bloqueadas.</span></label>
+            <Button type="button" onClick={confirmBomExplosion} disabled={!bomConfirmed || bomPreviewLoading || bomPreview.lines.length === 0} className="bg-firplak-green text-white hover:bg-firplak-green/90">Confirmar explosión BOM</Button>
+          </> : null}
+        </CardContent>
+      </Card> : null}
+      {catalogReviewItems ? <Card className="border-amber-200 bg-amber-50/30">
+        <CardHeader className="border-b border-amber-100"><div className="flex items-start justify-between gap-3"><div><CardTitle className="text-amber-950">Nuevos artículos pendientes</CardTitle><CardDescription>Solo visible para administradores. La revisión no bloquea las solicitudes; SAP continúa siendo la fuente de verdad.</CardDescription></div><Button type="button" variant="outline" onClick={() => void loadCatalogReview()} disabled={catalogReviewLoading}>{catalogReviewLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}Actualizar</Button></div></CardHeader>
+        <CardContent className="space-y-3 pt-4">{catalogReviewError ? <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{catalogReviewError}</p> : null}{catalogReviewItems.length === 0 ? <p className="text-sm text-slate-600">No hay artículos pendientes de revisión.</p> : catalogReviewItems.map(item => <div key={item.itemCode} className="grid gap-3 rounded-lg border border-amber-200 bg-white p-3 md:grid-cols-[minmax(0,1fr)_auto]"><div><p className="font-semibold text-slate-800">{item.itemCode}</p><p className="text-sm text-slate-600">{item.itemName}</p><label className="mt-2 flex items-start gap-2 text-xs text-slate-600"><input type="checkbox" checked={catalogReviewConfirmed[item.itemCode] === true} onChange={event => setCatalogReviewConfirmed(current => ({ ...current, [item.itemCode]: event.target.checked }))} className="mt-0.5 h-3.5 w-3.5 rounded accent-firplak-green" />Confirmo que revisé este registro contra SAP.</label></div><div className="flex flex-wrap items-center gap-2 md:justify-end"><Button type="button" size="sm" onClick={() => void reviewCatalogItem(item.itemCode, 'approved')} disabled={!catalogReviewConfirmed[item.itemCode] || catalogReviewAction === item.itemCode} className="bg-firplak-green text-white hover:bg-firplak-green/90">{catalogReviewAction === item.itemCode ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}Aprobar</Button><Button type="button" size="sm" variant="outline" onClick={() => void reviewCatalogItem(item.itemCode, 'rejected')} disabled={!catalogReviewConfirmed[item.itemCode] || catalogReviewAction === item.itemCode} className="border-red-200 text-red-700">Rechazar</Button></div></div>)}</CardContent>
+      </Card> : null}
       {detailError ? <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"><AlertCircle className="h-4 w-4" />{detailError}</div> : null}
       {selectedDetail ? (
         <Card className="border-firplak-green/20">

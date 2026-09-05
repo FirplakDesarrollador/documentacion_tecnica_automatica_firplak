@@ -1,6 +1,7 @@
 import 'server-only'
 
 import { dbQuery } from '@/lib/supabase'
+import { supabaseTable } from '@/lib/supabaseDynamic'
 import {
   createSapInventoryTransferRequest,
   getSapActiveWarehouses,
@@ -12,9 +13,12 @@ import {
   getSapSerialNumberDetails,
   SapServiceLayerError,
   searchSapItems,
+  getSapItemBom,
   updateSapInventoryTransferRequest,
   type SapEntityPayload,
 } from './serviceLayer'
+import { registerMissingSapComponentsToCatalog } from './componentCatalogSync'
+import { calculateProratedTransferQuantity, canUseStockOverride, isSyncableTransferRequestItem } from './transferRequestRules'
 
 export const SAP_TRANSFER_REQUEST_DEFAULTS_SETTING_KEY = 'sap_transfer_request_defaults'
 export const SAP_TRANSFER_REQUEST_AUTOMATIC_COMMENT = 'Solicitud de traslado - AC890927404-01'
@@ -238,6 +242,9 @@ export async function listSapTransferRequestWarehouses(): Promise<SapTransferReq
 export type SapTransferRequestItemSearchRow = {
   itemCode: string
   itemName: string
+  sources?: Array<'SAP' | 'Catálogo'>
+  missingInSap?: boolean
+  missingInCatalog?: boolean
 }
 
 export type SapTransferRequestItemSearchResult = {
@@ -568,6 +575,7 @@ export async function getSapTransferRequestItem(
 export type SapTransferRequestAvailabilityResult = {
   item: SapTransferRequestItem
   sourceAvailability: SapTransferRequestWarehouseAvailability
+  hasBom: boolean
 }
 
 export type SapTransferRequestPackagePattern = {
@@ -688,7 +696,10 @@ export async function getSapTransferRequestAvailability(
       sapCode: 'SAP_VALIDATION_ERROR',
     })
   }
-  const item = await getSapTransferRequestItem(itemCode, { sourceWarehouseCode: normalizedSourceWarehouse })
+  const [item, bom] = await Promise.all([
+    getSapTransferRequestItem(itemCode, { sourceWarehouseCode: normalizedSourceWarehouse }),
+    getSapItemBom(itemCode),
+  ])
   const sourceAvailability = item.warehouseAvailability.find(availability => availability.warehouseCode === normalizedSourceWarehouse)
     ?? {
       warehouseCode: normalizedSourceWarehouse,
@@ -698,7 +709,7 @@ export async function getSapTransferRequestAvailability(
       availableQuantity: 0,
     }
 
-  return { item, sourceAvailability }
+  return { item, sourceAvailability, hasBom: Boolean(bom && bom.lines.length > 0) }
 }
 
 export type SapTransferRequestBatchAllocation = {
@@ -716,6 +727,14 @@ export type SapTransferRequestDraftLine = {
   transferType: SapTransferRequestTransferType
   batchNumbers?: SapTransferRequestBatchAllocation[]
   serialNumbers?: SapTransferRequestSerialAllocation[]
+  allowZeroAvailable?: boolean
+  explodedFrom?: {
+    parentItemCode: string
+    parentQuantity: number
+    calculatedQuantity: number
+    rounded: boolean
+    path: string[]
+  }
 }
 
 export type SapTransferRequestDraft = {
@@ -762,7 +781,9 @@ export type SapTransferRequestValidationIssue = {
   requestedQuantity?: number
 }
 
-type NormalizedSapTransferRequestDraftLine = Required<SapTransferRequestDraftLine>
+type NormalizedSapTransferRequestDraftLine = Required<Omit<SapTransferRequestDraftLine, 'explodedFrom'>> & {
+  explodedFrom?: NonNullable<SapTransferRequestDraftLine['explodedFrom']>
+}
 
 type NormalizedSapTransferRequestDraft = {
   sourceWarehouseCode: string
@@ -908,6 +929,18 @@ function normalizeTransferRequestDraft(value: unknown): {
       transferType,
       batchNumbers,
       serialNumbers,
+      allowZeroAvailable: rawLine.allowZeroAvailable === true,
+      explodedFrom: isRecord(rawLine.explodedFrom) && typeof rawLine.explodedFrom.parentItemCode === 'string'
+        ? {
+            parentItemCode: rawLine.explodedFrom.parentItemCode,
+            parentQuantity: readNumber(rawLine.explodedFrom.parentQuantity) ?? 0,
+            calculatedQuantity: readNumber(rawLine.explodedFrom.calculatedQuantity) ?? quantity ?? 0,
+            rounded: rawLine.explodedFrom.rounded === true,
+            path: Array.isArray(rawLine.explodedFrom.path)
+              ? rawLine.explodedFrom.path.filter((value): value is string => typeof value === 'string')
+              : [rawLine.explodedFrom.parentItemCode],
+          }
+        : undefined,
     })
   }
 
@@ -940,6 +973,8 @@ export type SapTransferRequestValidatedLine = {
   allocation: SapTransferRequestAllocationState
   batchNumbers: SapTransferRequestBatchAllocation[]
   serialNumbers: SapTransferRequestSerialAllocation[]
+  allowZeroAvailable: boolean
+  explodedFrom?: NonNullable<SapTransferRequestDraftLine['explodedFrom']>
 }
 
 export type SapTransferRequestValidationSuccess = {
@@ -969,6 +1004,105 @@ export type SapTransferRequestPreparedDraft = {
   destinationWarehouseCode: string
   businessComment: string
   lines: NormalizedSapTransferRequestDraftLine[]
+}
+
+export async function searchUnifiedSapTransferRequestItems(query: string, limit = 20): Promise<SapTransferRequestItemSearchResult> {
+  const normalizedQuery = readText(query)
+  if (!normalizedQuery) throw new SapServiceLayerError('La búsqueda de artículo es obligatoria.', { statusCode: 400, sapCode: 'SAP_SEARCH_QUERY_REQUIRED' })
+  const safeLimit = Math.min(Math.max(Math.trunc(limit), 1), 50)
+  const [sapResult, catalogByCode, catalogByName] = await Promise.all([
+    searchSapTransferRequestItems(normalizedQuery, { limit: safeLimit }),
+    supabaseTable('component_items').select<Array<{ item_code: string; item_name: string | null; technical_metadata: unknown }>>('item_code, item_name, technical_metadata').ilike('item_code', `%${normalizedQuery}%`).limit(safeLimit),
+    supabaseTable('component_items').select<Array<{ item_code: string; item_name: string | null; technical_metadata: unknown }>>('item_code, item_name, technical_metadata').ilike('item_name', `%${normalizedQuery}%`).limit(safeLimit),
+  ])
+  const merged = new Map<string, SapTransferRequestItemSearchRow>()
+  for (const item of [...(catalogByCode.data ?? []), ...(catalogByName.data ?? [])]) {
+    const itemCode = normalizeItemCode(item.item_code)
+    const review = isRecord(item.technical_metadata) && isRecord(item.technical_metadata.catalog_review)
+      ? item.technical_metadata.catalog_review
+      : null
+    if (itemCode && review?.status !== 'rejected') merged.set(itemCode, { itemCode, itemName: item.item_name?.trim() || itemCode, sources: ['Catálogo'], missingInSap: true })
+  }
+  const sapCandidates = sapResult.items.map(item => ({ itemCode: item.itemCode, defaultIssueMethod: null }))
+  void registerMissingSapComponentsToCatalog(sapCandidates)
+  const catalogPresence = await supabaseTable('component_items')
+    .select<Array<{ item_code: string; technical_metadata: unknown }>>('item_code, technical_metadata')
+    .in('item_code', sapResult.items.map(item => item.itemCode))
+  const catalogCodes = new Set((catalogPresence.data ?? []).flatMap(item => {
+    const metadata = isRecord(item.technical_metadata) && isRecord(item.technical_metadata.catalog_review)
+      ? item.technical_metadata.catalog_review
+      : null
+    return metadata?.status === 'rejected' ? [] : [item.item_code.trim().toUpperCase()]
+  }))
+  for (const item of sapResult.items) {
+    const current = merged.get(item.itemCode)
+    const hasCatalogRecord = Boolean(current) || catalogCodes.has(item.itemCode)
+    merged.set(item.itemCode, {
+      itemCode: item.itemCode,
+      itemName: item.itemName,
+      sources: hasCatalogRecord ? ['SAP', 'Catálogo'] : ['SAP'],
+      missingInSap: false,
+      missingInCatalog: !hasCatalogRecord,
+    })
+  }
+  const items = [...merged.values()].sort((left, right) => left.itemCode.localeCompare(right.itemCode, 'es')).slice(0, safeLimit)
+  return { items, hasMore: sapResult.hasMore || merged.size > items.length }
+}
+
+export async function syncTransferRequestItemsToCatalog(itemCodes: string[]): Promise<Awaited<ReturnType<typeof registerMissingSapComponentsToCatalog>>> {
+  const candidates = [...new Set(itemCodes.map(normalizeItemCode).filter((code): code is string => Boolean(code)))]
+    .filter(code => !code.startsWith('V'))
+  return registerMissingSapComponentsToCatalog(candidates.filter(isSyncableTransferRequestItem).map(itemCode => ({ itemCode, defaultIssueMethod: null })))
+}
+
+export type SapTransferRequestBomExplosionLine = {
+  itemCode: string
+  itemName: string
+  quantity: number
+  inventoryUom: string | null
+  hasBom: boolean
+  availability: SapTransferRequestWarehouseAvailability
+  explodedFrom: string
+  explodedFromQuantity: number
+  explodedFromPath: string[]
+  rounded: boolean
+}
+
+export async function previewSapTransferRequestBomExplosion(input: {
+  itemCode: string
+  quantity: number
+  sourceWarehouseCode: string
+  visitedItemCodes?: string[]
+}): Promise<{ parentItemCode: string; parentQuantity: number; lines: SapTransferRequestBomExplosionLine[] }> {
+  const itemCode = normalizeItemCode(input.itemCode)
+  const warehouseCode = normalizeWarehouseCode(input.sourceWarehouseCode)
+  if (!itemCode || !warehouseCode || !Number.isFinite(input.quantity) || input.quantity <= 0) {
+    throw new SapServiceLayerError('Artículo, cantidad y bodega de origen son obligatorios.', { statusCode: 400, sapCode: 'SAP_VALIDATION_ERROR' })
+  }
+  const visited = new Set((input.visitedItemCodes ?? []).map(code => normalizeItemCode(code)).filter((code): code is string => Boolean(code)))
+  if (visited.has(itemCode)) throw new SapServiceLayerError('Se detectó un ciclo en la BOM.', { statusCode: 409, sapCode: 'SAP_BOM_CYCLE' })
+  const bom = await getSapItemBom(itemCode)
+  if (!bom || bom.lines.length === 0) throw new SapServiceLayerError('El artículo no tiene una BOM SAP estallable.', { statusCode: 404, sapCode: 'SAP_BOM_NOT_FOUND' })
+  const baseQuantity = bom.quantity > 0 ? bom.quantity : 1
+  const factor = input.quantity / baseQuantity
+  const lines = await Promise.all(bom.lines.map(async line => {
+    const rawQuantity = line.Quantity * factor
+    const quantity = calculateProratedTransferQuantity(input.quantity, line.Quantity, baseQuantity)
+    const availability = await getSapTransferRequestAvailability(line.ItemCode, warehouseCode)
+    return {
+      itemCode: line.ItemCode,
+      itemName: line.ItemName || line.ItemCode,
+      quantity,
+      inventoryUom: availability.item.inventoryUom ?? line.InventoryUOM,
+      hasBom: availability.hasBom,
+      availability: availability.sourceAvailability,
+      explodedFrom: itemCode,
+      explodedFromQuantity: input.quantity,
+      explodedFromPath: [...visited, itemCode],
+      rounded: Math.abs(rawQuantity - quantity) > 0.000001,
+    }
+  }))
+  return { parentItemCode: itemCode, parentQuantity: input.quantity, lines }
 }
 
 function emptyAvailability(warehouseCode: string): SapTransferRequestWarehouseAvailability {
@@ -1126,6 +1260,7 @@ export async function validateSapTransferRequest(input: unknown): Promise<SapTra
       allocation: item.allocation,
       batchNumbers: line.batchNumbers,
       serialNumbers: line.serialNumbers,
+      allowZeroAvailable: line.allowZeroAvailable,
     }
   })
   const issues = [...normalized.issues]
@@ -1144,9 +1279,13 @@ export async function validateSapTransferRequest(input: unknown): Promise<SapTra
   for (const [itemCode, requestedQuantity] of requestedByItem) {
     const matchingLines = lines.filter(line => line.itemCode === itemCode)
     const availableQuantity = matchingLines[0]?.availability.availableQuantity ?? 0
-    if (requestedQuantity <= availableQuantity + 0.000001) continue
+    const inventoryQuantity = matchingLines[0]?.availability.inventoryQuantity ?? 0
+    const overrideAllowed = matchingLines.every(line => canUseStockOverride(inventoryQuantity, availableQuantity, requestedQuantity, line.allowZeroAvailable))
+    if (requestedQuantity <= availableQuantity + 0.000001 || overrideAllowed) continue
     for (const line of matchingLines) {
-      addIssue(issues, 'INSUFFICIENT_STOCK', `La cantidad solicitada excede la disponibilidad actual (${availableQuantity}) en ${line.sourceWarehouseCode}.`, {
+      addIssue(issues, 'INSUFFICIENT_STOCK', inventoryQuantity > 0
+        ? `La cantidad solicitada excede la disponibilidad ATP (${availableQuantity}) en ${line.sourceWarehouseCode}. Marque el override para continuar con inventario físico.`
+        : `No hay inventario físico disponible en ${line.sourceWarehouseCode}.`, {
         lineIndex: line.lineIndex,
         availableQuantity,
         requestedQuantity,

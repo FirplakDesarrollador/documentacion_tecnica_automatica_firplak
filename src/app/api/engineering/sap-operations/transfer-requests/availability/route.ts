@@ -26,7 +26,8 @@ export async function POST(request: Request) {
         management: result.item.management,
         availability: result.sourceAvailability,
         warehouseAvailability: result.item.warehouseAvailability,
-        allocation: result.item.allocation,
+         allocation: result.item.allocation,
+         hasBom: result.hasBom,
       },
     })
   } catch (error) {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-import { searchSapTransferRequestItems } from '@/lib/sap/transferRequests'
+import { searchUnifiedSapTransferRequestItems } from '@/lib/sap/transferRequests'
 import { apiGuard } from '@/utils/auth/access'
 
 import { transferRequestErrorResponse } from '../_utils'
@@ -13,8 +13,8 @@ export async function GET(request: NextRequest) {
 
   try {
     const query = request.nextUrl.searchParams.get('query') ?? ''
-    const result = await searchSapTransferRequestItems(query)
-    return NextResponse.json({ success: true, ...result })
+    const result = await searchUnifiedSapTransferRequestItems(query)
+    return NextResponse.json({ success: true, isAdmin: Boolean(guard.access?.isAdmin), ...result })
   } catch (error) {
     return transferRequestErrorResponse(error)
   }

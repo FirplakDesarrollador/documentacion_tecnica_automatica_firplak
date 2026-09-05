@@ -14,6 +14,8 @@ type DynamicSupabaseQuery<T = unknown> = PromiseLike<SupabaseQueryResult<T>> & {
     select(columns?: string): DynamicSupabaseQuery<T>
     eq(column: string, value: unknown): DynamicSupabaseQuery<T>
     in(column: string, values: readonly unknown[]): DynamicSupabaseQuery<T>
+    ilike(column: string, pattern: string): DynamicSupabaseQuery<T>
+    limit(count: number): DynamicSupabaseQuery<T>
     maybeSingle(): Promise<SupabaseQueryResult<T>>
     single(): Promise<SupabaseQueryResult<T>>
 }
