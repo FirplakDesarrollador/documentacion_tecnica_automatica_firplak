@@ -5,16 +5,19 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { 
-  Package, AlertTriangle, LayoutTemplate, GitMerge, FileImage, 
-  FileText, PlusCircle, ArrowRight, Upload, Database, Printer
+  Package, AlertTriangle, LayoutTemplate,
+  FileText, PlusCircle, ArrowRight, Upload
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { decodeGenerateLastUrl, GENERATE_LAST_URL_COOKIE } from '@/lib/navigation/generateLastUrl'
-import { TECHNICAL_DOCUMENTATION_MODULES } from '@/lib/navigation/moduleHierarchy'
+import {
+  getNavigationHref,
+  resolveModuleNavigationTree,
+  type ResolvedModuleNavigationNode,
+} from '@/lib/navigation/moduleHierarchy'
 
 import { getPendingStructuralSummary } from '@/lib/engine/pendingStructural'
 import { requirePagePermission } from '@/utils/auth/access'
-import type { Permission } from '@/types/auth'
 
 interface RecentProduct {
   id: string
@@ -24,15 +27,40 @@ interface RecentProduct {
   updated_at: string
 }
 
+const QUICK_ACTION_IDS = [
+  'sap-consulting',
+  'transfer-requests',
+  'generate',
+  'print',
+  'templates',
+  'datasets',
+] as const
+
+function findNavigationNodes(
+  nodes: readonly ResolvedModuleNavigationNode[],
+  ids: readonly string[],
+): ResolvedModuleNavigationNode[] {
+  const matches: ResolvedModuleNavigationNode[] = []
+
+  for (const node of nodes) {
+    if (ids.includes(node.id)) matches.push(node)
+    matches.push(...findNavigationNodes(node.children, ids))
+  }
+
+  return matches
+}
+
 export default async function Home() {
   const access = await requirePagePermission('module:dashboard')
   const cookieStore = await cookies()
   const generateHref =
     decodeGenerateLastUrl(cookieStore.get(GENERATE_LAST_URL_COOKIE)?.value) ?? '/generate'
 
-  const canAccess = (permission: Permission) => access.permissions.includes(permission)
-  const canOpenProductivePrint = canAccess('module:productive-modules')
-    && canAccess('module:print')
+  const navigationTree = resolveModuleNavigationTree(access.permissions, access.isAdmin)
+  const availableQuickActions = findNavigationNodes(navigationTree, QUICK_ACTION_IDS)
+  const quickActionNodes = QUICK_ACTION_IDS.flatMap((id) =>
+    availableQuickActions.filter((action) => action.id === id),
+  )
 
   // Fetch real KPIs and validation state
   const pendingSummary = await getPendingStructuralSummary()
@@ -60,77 +88,6 @@ export default async function Home() {
 
   // Mock data for unconnected features
   const generatedDocs = 48
-
-  const documentationShortcuts = !canAccess('module:product-design')
-    ? TECHNICAL_DOCUMENTATION_MODULES
-      .filter((module) => canAccess(module.permission))
-      .map((module) => {
-        const visual = {
-          generate: {
-            icon: <FileText className="h-6 w-6 text-purple-500" />,
-            color: 'bg-purple-50 border-purple-100',
-          },
-          assets: {
-            icon: <FileImage className="h-6 w-6 text-amber-500" />,
-            color: 'bg-amber-50 border-amber-100',
-          },
-          datasets: {
-            icon: <Database className="h-6 w-6 text-sky-600" />,
-            color: 'bg-sky-50 border-sky-100',
-          },
-          templates: {
-            icon: <LayoutTemplate className="h-6 w-6 text-emerald-500" />,
-            color: 'bg-emerald-50 border-emerald-100',
-          },
-          pending: {
-            icon: <AlertTriangle className="h-6 w-6 text-amber-600" />,
-            color: 'bg-amber-50 border-amber-100',
-          },
-        }[module.id]
-
-        return {
-          title: module.label,
-          description: module.description,
-          icon: visual.icon,
-          href: module.id === 'generate' ? generateHref : module.directHref,
-          color: visual.color,
-        }
-      })
-    : []
-
-  const modules = [
-    ...(canAccess('module:product-design') ? [{
-      title: 'Diseño de producto',
-      description: 'BOM, cotizaciones y hojas de ruta de diseño.',
-      icon: <Package className="h-6 w-6 text-indigo-600" />,
-      href: '/product-design',
-      color: 'bg-indigo-50 border-indigo-100',
-    }] : []),
-    ...documentationShortcuts,
-    ...(canAccess('module:productive-modules') ? [{
-      title: 'Módulos productivos',
-      description: canOpenProductivePrint
-        ? 'Hojas de ruta e impresión operativa para planta.'
-        : 'Consulta de hojas de ruta aprobadas para planta.',
-      icon: <Package className="h-6 w-6 text-emerald-600" />,
-      href: '/productive-modules',
-      color: 'bg-emerald-50 border-emerald-100',
-    }] : []),
-    ...(canAccess('module:print') && !canAccess('module:productive-modules') ? [{
-      title: 'Impresión de etiquetas',
-      description: 'Selecciona productos y envía las etiquetas a imprimir.',
-      icon: <Printer className="h-6 w-6 text-indigo-600" />,
-      href: '/print',
-      color: 'bg-indigo-50 border-indigo-100',
-    }] : []),
-    ...(canAccess('module:configuration') ? [{
-      title: 'Configuración',
-      description: 'Ajustes, diccionarios y reglas.',
-      icon: <GitMerge className="h-6 w-6 text-blue-500" />,
-      href: '/configuration',
-      color: 'bg-blue-50 border-blue-100',
-    }] : []),
-  ]
 
   return (
     <div className="flex flex-col gap-8 text-foreground pb-10">
@@ -219,24 +176,30 @@ export default async function Home() {
         
         {/* Modules Grid */}
         <div className="lg:col-span-2 flex flex-col gap-4">
-          <h2 className="text-xl font-bold text-slate-900">Accesos Rapidos</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {modules.map((m) => (
-              <Link key={m.href} href={m.href} className="group outline-none">
-                <Card className="relative overflow-hidden shadow-soft hover:shadow-premium border-slate-200 hover:border-indigo-300 transition-all duration-200 cursor-pointer h-full group-focus-visible:ring-2 group-focus-visible:ring-indigo-500 group-focus-visible:ring-offset-2">
-                  <CardContent className="p-6 flex items-start gap-4 h-full">
-                    <div className={`p-3 rounded-xl border ${m.color}`}>
-                      {m.icon}
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-semibold text-slate-900 group-hover:text-indigo-700 transition-colors">{m.title}</h3>
-                      <p className="text-sm text-slate-500 mt-1 leading-snug">{m.description}</p>
-                    </div>
-                    <ArrowRight className="h-5 w-5 text-slate-300 group-hover:text-indigo-500 group-hover:-translate-x-1 transition-all self-center absolute right-6 opacity-0 group-hover:opacity-100 group-hover:translate-x-0" />
-                  </CardContent>
-                </Card>
-              </Link>
-            ))}
+          <h2 className="text-xl font-bold text-slate-900">Accesos rápidos</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+            {quickActionNodes.map((action) => {
+              const Icon = action.icon
+
+              return (
+                <Link key={action.id} href={getNavigationHref(action, generateHref)} className="group outline-none">
+                  <Card className="relative h-full overflow-hidden border-slate-200 shadow-soft transition-all duration-200 hover:border-indigo-300 hover:shadow-premium group-focus-visible:ring-2 group-focus-visible:ring-indigo-500 group-focus-visible:ring-offset-2">
+                    <CardContent className="flex min-h-24 items-center gap-3 p-4">
+                      <div className={`shrink-0 rounded-lg p-2.5 ${action.tone}`}>
+                        <Icon className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="font-semibold text-slate-900 transition-colors group-hover:text-indigo-700">
+                          {action.id === 'sap-consulting' ? 'Consultas SAP' : action.id === 'print' ? 'Imprimir' : action.label}
+                        </h3>
+                        <p className="mt-1 text-xs leading-snug text-slate-500">{action.description}</p>
+                      </div>
+                      <ArrowRight className="h-4 w-4 shrink-0 text-slate-300 transition-all group-hover:translate-x-0.5 group-hover:text-indigo-500" />
+                    </CardContent>
+                  </Card>
+                </Link>
+              )
+            })}
           </div>
         </div>
 
