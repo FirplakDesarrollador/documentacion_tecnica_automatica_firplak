@@ -46,12 +46,12 @@ export type TechnicalDocumentationModule = {
  */
 export const TECHNICAL_DOCUMENTATION_MODULES: readonly TechnicalDocumentationModule[] = [
   {
-    id: 'generate',
-    label: 'Generar',
-    description: 'Selecciona productos y genera la documentación técnica.',
-    permission: 'module:generate',
-    directHref: '/generate',
-    nestedHref: '/product-design/documentacion-tecnica/generar',
+    id: 'templates',
+    label: 'Plantillas',
+    description: 'Diseña y administra las plantillas de documentación.',
+    permission: 'module:templates',
+    directHref: '/templates',
+    nestedHref: '/product-design/documentacion-tecnica/plantillas',
   },
   {
     id: 'assets',
@@ -62,20 +62,20 @@ export const TECHNICAL_DOCUMENTATION_MODULES: readonly TechnicalDocumentationMod
     nestedHref: '/product-design/documentacion-tecnica/recursos',
   },
   {
+    id: 'generate',
+    label: 'Generar',
+    description: 'Selecciona productos y genera la documentación técnica.',
+    permission: 'module:generate',
+    directHref: '/generate',
+    nestedHref: '/product-design/documentacion-tecnica/generar',
+  },
+  {
     id: 'datasets',
     label: 'Bases de datos',
     description: 'Carga y relaciona fuentes externas para las plantillas.',
     permission: 'module:datasets',
     directHref: '/datasets',
     nestedHref: '/product-design/documentacion-tecnica/bases-de-datos',
-  },
-  {
-    id: 'templates',
-    label: 'Plantillas',
-    description: 'Diseña y administra las plantillas de documentación.',
-    permission: 'module:templates',
-    directHref: '/templates',
-    nestedHref: '/product-design/documentacion-tecnica/plantillas',
   },
   {
     id: 'pending',
@@ -166,6 +166,7 @@ export const PRODUCT_DESIGN_NAVIGATION: ModuleNavigationNode = {
   summaryTitle: 'Herramientas técnicas de producto',
   summaryDescription: 'Prepara cotizaciones, alinea LdM/BOM y construye la información productiva.',
   children: [
+    TECHNICAL_DOCUMENTATION_NAVIGATION,
     {
       id: 'product-design-estimations',
       label: 'Cotizaciones',
@@ -193,7 +194,6 @@ export const PRODUCT_DESIGN_NAVIGATION: ModuleNavigationNode = {
       href: '/product-design/route-sheets/cabinets',
       permission: 'module:product-design:route-sheets',
     },
-    TECHNICAL_DOCUMENTATION_NAVIGATION,
   ],
 }
 
