@@ -129,3 +129,31 @@ test('shows the full hierarchy for an administrator', () => {
   assert.ok(findNodeOrNull(tree, 'technical-documentation'))
   assert.ok(findNodeOrNull(tree, 'configuration-users'))
 })
+
+test('puts technical documentation first with its requested module order', () => {
+  const productDesign = findNode(
+    resolve([
+      'module:product-design',
+      'module:product-design:estimations',
+      'module:product-design:bom',
+      'module:product-design:route-sheets',
+      'module:generate',
+      'module:assets',
+      'module:datasets',
+      'module:templates',
+      'module:pending',
+    ]),
+    'product-design'
+  )
+
+  assert.deepEqual(productDesign.children.map((node) => node.id), [
+    'technical-documentation',
+    'product-design-estimations',
+    'product-design-bom',
+    'product-design-route-sheets',
+  ])
+  assert.deepEqual(
+    findNode(productDesign.children, 'technical-documentation').children.map((node) => node.id),
+    ['templates', 'assets', 'generate', 'datasets', 'pending']
+  )
+})
