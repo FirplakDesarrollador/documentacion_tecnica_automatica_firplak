@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { 
   Package, AlertTriangle, LayoutTemplate,
-  FileText, PlusCircle, ArrowRight, Upload
+  PlusCircle, ArrowRight, Upload, Printer
 } from 'lucide-react'
 import { hasModuleAccess } from '@/types/auth'
 import { decodeGenerateLastUrl, GENERATE_LAST_URL_COOKIE } from '@/lib/navigation/generateLastUrl'
@@ -62,7 +62,9 @@ export default async function Home() {
   const kpiRows = await dbQuery(`
     SELECT
       (SELECT COUNT(*) FROM public.product_skus) as total_products,
-      (SELECT COUNT(*) FROM public.plantillas_doc_tec WHERE active = true) as active_templates
+      (SELECT COUNT(*) FROM public.plantillas_doc_tec WHERE active = true) as active_templates,
+      (SELECT COALESCE(SUM(copies), 0) FROM public.print_activity_events
+       WHERE status = 'accepted' AND created_at >= now() - interval '30 days') as print_count
   `)
   
   const kpi = kpiRows?.[0] || {}
@@ -70,11 +72,10 @@ export default async function Home() {
   const pendingCount = pendingSummary.pendingCount
   const pendingCriticalCount = pendingSummary.criticalCount
   const activeTemplates = parseInt(kpi.active_templates || '0')
+  const printCount = parseInt(kpi.print_count || '0')
 
   const activity = await getDashboardActivityFeed(access.permissions)
 
-  // Mock data for unconnected features
-  const generatedDocs = 48
   const canAccessPending = hasModuleAccess(access.permissions, 'module:pending')
 
   return (
@@ -163,13 +164,13 @@ export default async function Home() {
         <Card className="shadow-soft border-slate-200/60 rounded-xl overflow-hidden group hover:shadow-premium transition-all duration-300">
           <CardContent className="p-6">
             <div className="flex items-center justify-between space-y-0 pb-2">
-              <p className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">Docs. Generados</p>
+              <p className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">Impresiones</p>
               <div className="p-1.5 bg-purple-50 rounded-md">
-                <FileText className="h-4 w-4 text-purple-500" />
+                <Printer className="h-4 w-4 text-purple-500" />
               </div>
             </div>
-            <div className="text-3xl font-extrabold text-slate-900 mt-3 tabular-nums">{generatedDocs}</div>
-            <p className="text-[10px] text-slate-400 mt-1 font-medium">Historial 24h</p>
+            <div className="text-3xl font-extrabold text-slate-900 mt-3 tabular-nums">{printCount}</div>
+            <p className="text-[10px] text-slate-400 mt-1 font-medium">Últimos 30 días</p>
           </CardContent>
         </Card>
       </div>

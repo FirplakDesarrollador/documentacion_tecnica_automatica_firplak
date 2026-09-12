@@ -301,6 +301,32 @@ function getAgentCheckErrorMessage(err: unknown) {
     return (err as Error)?.message || 'No se pudo comprobar el agente local.'
 }
 
+type PrintActivityInput = {
+    status: 'accepted' | 'failed'
+    transport: 'local_agent' | 'webusb'
+    copies: number
+    templateId: string
+    productId: string | null
+    ofNumber: string | null | undefined
+    errorMessage?: string | null
+}
+
+async function recordPrintActivity(input: PrintActivityInput) {
+    try {
+        await fetch('/api/print/activity', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                idempotencyKey: crypto.randomUUID(),
+                ...input,
+            }),
+            keepalive: true,
+        })
+    } catch {
+        // La telemetria nunca debe bloquear una impresion ya aceptada.
+    }
+}
+
 export function PrintClient({ templates, rules }: PrintClientProps) {
     const [textFilter, setTextFilter] = useState('')
     const [products, setProducts] = useState<GenerateProduct[]>([])
@@ -755,6 +781,14 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                         rotation: thermalLayout.rotation,
                     })
                     await sendWebUsbPrintJob(webUsbConnection, tspl.bytes)
+                    void recordPrintActivity({
+                        status: 'accepted',
+                        transport: 'webusb',
+                        copies: printCopies,
+                        templateId: selectedTemplate.id,
+                        productId: product.id,
+                        ofNumber: runtimeOverrides.ofNumber,
+                    })
                     return
                 }
 
@@ -784,6 +818,15 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                     const payload = await agentResponse.json().catch(() => null)
                     throw new Error(payload?.error || 'Error al enviar a la impresora local')
                 }
+
+                void recordPrintActivity({
+                    status: 'accepted',
+                    transport: 'local_agent',
+                    copies: printCopies,
+                    templateId: selectedTemplate.id,
+                    productId: product.id,
+                    ofNumber: runtimeOverrides.ofNumber,
+                })
             }
 
             for (const preparedJob of preparedJobs) {
