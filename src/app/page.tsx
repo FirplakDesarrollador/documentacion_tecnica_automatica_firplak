@@ -70,7 +70,6 @@ export default async function Home() {
   const kpi = kpiRows?.[0] || {}
   const totalProducts = parseInt(kpi.total_products || '0')
   const pendingCount = pendingSummary.pendingCount
-  const pendingCriticalCount = pendingSummary.criticalCount
   const activeTemplates = parseInt(kpi.active_templates || '0')
   const printCount = parseInt(kpi.print_count || '0')
 
@@ -129,8 +128,8 @@ export default async function Home() {
                   <div className="p-1.5 bg-amber-50 rounded-md"><AlertTriangle className="h-4 w-4 text-amber-600" /></div>
                 </div>
                 <div className="text-3xl font-extrabold text-slate-900 mt-3 tabular-nums">{pendingCount}</div>
-                <p className="text-[10px] text-amber-700 mt-1 font-bold">ACCION REQUERIDA</p>
-                <p className="text-[10px] text-slate-400 mt-1 font-medium">Criticos: {pendingCriticalCount}</p>
+                <p className="text-[10px] text-amber-700 mt-1 font-bold">REQUIEREN COMPLETAR DATOS</p>
+                <p className="text-[10px] text-slate-400 mt-1 font-medium">Según requisitos de plantillas asociadas</p>
               </CardContent>
             </Card>
           </Link>
@@ -142,8 +141,8 @@ export default async function Home() {
                 <div className="p-1.5 bg-amber-50 rounded-md"><AlertTriangle className="h-4 w-4 text-amber-600" /></div>
               </div>
               <div className="text-3xl font-extrabold text-slate-900 mt-3 tabular-nums">{pendingCount}</div>
-              <p className="text-[10px] text-amber-700 mt-1 font-bold">ACCION REQUERIDA</p>
-              <p className="text-[10px] text-slate-400 mt-1 font-medium">Criticos: {pendingCriticalCount}</p>
+              <p className="text-[10px] text-amber-700 mt-1 font-bold">REQUIEREN COMPLETAR DATOS</p>
+              <p className="text-[10px] text-slate-400 mt-1 font-medium">Según requisitos de plantillas asociadas</p>
             </CardContent>
           </Card>
         )}
@@ -157,7 +156,7 @@ export default async function Home() {
               </div>
             </div>
             <div className="text-3xl font-extrabold text-slate-900 mt-3 tabular-nums">{activeTemplates}</div>
-            <p className="text-[10px] text-emerald-600 mt-1 font-bold">SISTEMA LISTO</p>
+            <p className="text-[10px] text-emerald-600 mt-1 font-bold">DISPONIBLES PARA USO</p>
           </CardContent>
         </Card>
 
