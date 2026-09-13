@@ -28,7 +28,6 @@ import {
     CheckCircle2, 
     AlertCircle, 
     Loader2,
-    Filter,
     Settings,
     Layers,
     Table as TableIcon,
@@ -62,6 +61,27 @@ interface DatasetIngestorProps {
 }
 
 type Step = 'name_file' | 'strategy' | 'mapping' | 'associate_templates' | 'preview'
+type WorkflowStep = { id: Step; label: string }
+
+const NEW_DATASET_STEPS: WorkflowStep[] = [
+    { id: 'name_file', label: 'Archivo' },
+    { id: 'mapping', label: 'Variables' },
+    { id: 'associate_templates', label: 'Plantilla' },
+    { id: 'preview', label: 'Confirmar' },
+]
+
+const UPDATE_DATASET_STEPS: WorkflowStep[] = [
+    { id: 'name_file', label: 'Archivo' },
+    { id: 'strategy', label: 'Estrategia' },
+    { id: 'mapping', label: 'Variables' },
+    { id: 'preview', label: 'Confirmar' },
+]
+
+const STRATEGY_LABELS = {
+    overwrite: 'Sobrescribir todo',
+    append: 'Añadir al final',
+    merge: 'Fusionar / Actualizar',
+} as const
 
 function getImportErrorMessage(error: unknown) {
     if (error instanceof Error) return error.message
@@ -78,6 +98,7 @@ function getImportErrorMessage(error: unknown) {
 export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: DatasetIngestorProps) {
     const isNew = mode === 'new'
     const supabase = useMemo(() => createClient(), [])
+    const workflowSteps = isNew ? NEW_DATASET_STEPS : UPDATE_DATASET_STEPS
     
     const [step, setStep] = useState<Step>('name_file')
     const [datasetName, setDatasetName] = useState(isNew ? '' : mode.name)
@@ -105,6 +126,19 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
     const [availableTemplates, setAvailableTemplates] = useState<{ id: string; name: string; elements_json: string; data_source: string }[]>([])
     const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([])
     const [templateVarToHeader, setTemplateVarToHeader] = useState<Record<string, string>>({})
+
+    const currentStepIndex = workflowSteps.findIndex((workflowStep) => workflowStep.id === step)
+    const currentStep = workflowSteps[currentStepIndex]
+    const hasLoadedFile = csvHeaders.length > 0
+    const selectedTemplateNames = useMemo(
+        () => availableTemplates.filter((template) => selectedTemplateIds.includes(template.id)).map((template) => template.name),
+        [availableTemplates, selectedTemplateIds]
+    )
+    const templateSummary = selectedTemplateNames.length === 0
+        ? 'Ninguna'
+        : selectedTemplateNames.length === 1
+            ? selectedTemplateNames[0]
+            : `${selectedTemplateNames.length} plantillas asociadas`
 
     const stripDiacritics = (value: string) =>
         value.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -517,105 +551,129 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
 
     return (
         <Dialog open={true} onOpenChange={onClose}>
-            <DialogContent className="sm:max-w-[650px] p-0 overflow-hidden border-none shadow-2xl rounded-3xl">
-                <DialogHeader className="px-8 py-6 bg-gradient-to-br from-slate-900 to-indigo-950 text-white relative">
+            <DialogContent className="flex max-h-[85dvh] w-[calc(100%-1rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white p-0 shadow-2xl sm:max-w-[860px] md:max-w-[900px]">
+                <DialogHeader className="shrink-0 gap-0 bg-[#162c39] px-5 py-4 pr-12 text-white sm:px-6">
                     <div className="flex items-center gap-3">
-                        <div className="bg-white/10 p-2.5 rounded-2xl backdrop-blur-md">
-                            <Database className="h-6 w-6 text-indigo-300" />
+                        <div className="rounded-xl bg-white/10 p-2 text-firplak-ivory ring-1 ring-white/15">
+                            <Database className="h-5 w-5" />
                         </div>
-                        <div>
-                            <DialogTitle className="text-xl font-black tracking-tight underline-offset-4 decoration-indigo-500/50">
+                        <div className="min-w-0">
+                            <DialogTitle className="text-lg font-bold text-white sm:text-xl">
                                 {isNew ? 'Nueva Base de Datos' : 'Actualizar Datos'}
                             </DialogTitle>
-                            <DialogDescription className="text-slate-400 text-xs font-medium uppercase tracking-widest mt-0.5">
-                                {datasetName || 'Configuración de Origen'}
+                            <DialogDescription className="truncate text-xs text-slate-300 sm:text-sm">
+                                {datasetName || 'Configuración de origen'}
                             </DialogDescription>
+                            {hasLoadedFile && <p className="mt-0.5 text-[11px] text-slate-400">{csvRows.length.toLocaleString()} registros · {csvHeaders.length} columnas</p>}
                         </div>
                     </div>
                 </DialogHeader>
 
-                <div className="px-8 py-6 max-h-[70vh] overflow-y-auto bg-slate-50/30 custom-scrollbar">
+                <div className="shrink-0 border-b border-slate-200 bg-white px-5 py-3 sm:px-6">
+                    <div className="sm:hidden">
+                        <p className="text-xs font-semibold text-slate-600">Paso {currentStepIndex + 1} de {workflowSteps.length} · <span className="text-indigo-700">{currentStep?.label}</span></p>
+                        <div className="mt-2 h-1 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-indigo-600" style={{ width: `${((currentStepIndex + 1) / workflowSteps.length) * 100}%` }} /></div>
+                    </div>
+                    <ol className="hidden items-center gap-2 sm:flex" aria-label="Progreso de importación">
+                        {workflowSteps.map((workflowStep, index) => {
+                            const isComplete = index < currentStepIndex
+                            const isCurrent = index === currentStepIndex
+                            return (
+                                <li key={workflowStep.id} className="flex min-w-0 flex-1 items-center gap-2 last:flex-none" aria-current={isCurrent ? 'step' : undefined}>
+                                    <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${isComplete ? 'bg-emerald-600 text-white' : isCurrent ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                                        {isComplete ? <CheckCircle2 className="h-3.5 w-3.5" /> : index + 1}
+                                    </span>
+                                    <span className={`truncate text-xs font-semibold ${isCurrent ? 'text-indigo-700' : isComplete ? 'text-emerald-700' : 'text-slate-500'}`}>{workflowStep.label}</span>
+                                    {index < workflowSteps.length - 1 && <span className="h-px min-w-3 flex-1 bg-slate-200" />}
+                                </li>
+                            )
+                        })}
+                    </ol>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/40 px-5 py-4 custom-scrollbar sm:px-6 sm:py-5">
                     
                     {/* ── PASO 1: NOMBRE Y ARCHIVO ────────────────────────────── */}
                     {step === 'name_file' && (
-                        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
                             {isNew && (
-                                <div className="space-y-2">
-                                    <Label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 ml-1">Nombre de la Base de Datos</Label>
+                                <div className="space-y-1.5">
+                                    <Label className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Nombre de la Base de Datos</Label>
                                     <Input 
                                         placeholder="Ej: Base de Precios 2024" 
                                         value={datasetName}
                                         onChange={(e) => setDatasetName(e.target.value)}
-                                        className="h-12 border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-50 transition-all font-bold text-slate-700 shadow-sm"
+                                        className="h-10 rounded-lg border-slate-200 bg-white font-semibold text-slate-700 shadow-sm"
                                     />
                                 </div>
                             )}
 
-                            <div className="relative group">
+                            <div className="relative">
                                 <Input
+                                    id="dataset-file"
                                     type="file"
                                     accept=".csv"
                                     onChange={handleFileUpload}
-                                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                    className="sr-only"
                                 />
-                                <div className={`border-2 border-dashed rounded-2xl p-10 flex flex-col items-center justify-center gap-3 transition-all duration-300 ${
-                                    csvHeaders.length > 0 
-                                        ? 'border-green-200 bg-green-50/30' 
-                                        : 'border-slate-200 bg-white group-hover:border-indigo-400 group-hover:bg-indigo-50/50'
-                                } shadow-sm`}>
-                                    <div className={`w-16 h-16 rounded-2xl flex items-center justify-center transition-transform group-hover:scale-110 ${
-                                         csvHeaders.length > 0 ? 'bg-green-100 text-green-600' : 'bg-slate-50 text-slate-400 group-hover:text-indigo-500'
-                                    }`}>
-                                        {csvHeaders.length > 0 ? <CheckCircle2 className="h-8 w-8" /> : <FileSpreadsheet className="h-8 w-8" />}
-                                    </div>
-                                    <div className="text-center">
-                                        <p className="font-black text-slate-800 tracking-tight">
-                                            {csvHeaders.length > 0 ? '¡Archivo Cargado!' : 'Seleccionar archivo CSV'}
-                                        </p>
-                                        <p className="text-xs text-slate-400 font-medium">
-                                            {csvHeaders.length > 0 ? `${csvRows.length.toLocaleString()} filas detectadas` : 'Haga clic o arrastre su archivo .csv aquí'}
-                                        </p>
-                                    </div>
-                                </div>
+                                <label htmlFor="dataset-file" className={`flex cursor-pointer items-center border transition-colors ${
+                                    hasLoadedFile
+                                        ? 'gap-3 rounded-xl border-emerald-200 bg-emerald-50/50 p-3.5 hover:border-emerald-300'
+                                        : 'min-h-40 flex-col justify-center gap-2 rounded-xl border-dashed border-slate-300 bg-white p-6 hover:border-indigo-400 hover:bg-indigo-50/30'
+                                }`}>
+                                    <span className={`flex shrink-0 items-center justify-center rounded-lg ${hasLoadedFile ? 'h-9 w-9 bg-emerald-100 text-emerald-700' : 'h-12 w-12 bg-slate-100 text-slate-500'}`}>
+                                        {hasLoadedFile ? <CheckCircle2 className="h-5 w-5" /> : <FileSpreadsheet className="h-6 w-6" />}
+                                    </span>
+                                    <span className={hasLoadedFile ? 'min-w-0 flex-1' : 'text-center'}>
+                                        <span className="block truncate text-sm font-bold text-slate-800">
+                                            {hasLoadedFile ? 'Archivo cargado' : 'Seleccionar archivo CSV'}
+                                        </span>
+                                        <span className="mt-0.5 block text-xs text-slate-500">
+                                            {hasLoadedFile
+                                                ? `${selectedFile?.name || 'Archivo seleccionado'} · ${csvRows.length.toLocaleString()} filas · ${csvHeaders.length} columnas`
+                                                : 'Haz clic o arrastra tu archivo .csv aquí'}
+                                        </span>
+                                    </span>
+                                    {hasLoadedFile && <span className="text-xs font-semibold text-indigo-700">Reemplazar archivo</span>}
+                                </label>
                             </div>
 
-                            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-                                <div className="flex items-center justify-between">
+                            <div className="rounded-xl border border-slate-200 bg-white p-3.5">
+                                <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                                     <div>
-                                        <Label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 ml-1">Codificación del Archivo</Label>
-                                        <p className="text-[9px] text-slate-400 font-medium ml-1">Cambia esto si las tildes no se ven bien</p>
+                                        <Label className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Codificación del archivo</Label>
+                                        <p className="mt-0.5 text-[11px] text-slate-500">Cámbiala solo si las tildes no se ven bien.</p>
                                     </div>
-                                    <Badge variant="outline" className="text-[8px] font-black uppercase">{encoding}</Badge>
-                                </div>
-                                <Select value={encoding} onValueChange={(val) => setEncoding(val || 'UTF-8')}>
-                                    <SelectTrigger className="h-10 border-slate-100 bg-slate-50 rounded-xl font-bold text-slate-700 shadow-none">
+                                    <Select value={encoding} onValueChange={(val) => setEncoding(val || 'UTF-8')}>
+                                    <SelectTrigger className="h-9 w-full rounded-lg border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 sm:w-[300px]">
                                         <SelectValue placeholder="Selecciona codificación" />
                                     </SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="UTF-8" className="font-bold">Automática / Internacional (UTF-8)</SelectItem>
                                         <SelectItem value="ISO-8859-1" className="font-bold">Excel Español / Occidental (ANSI / ISO-8859-1)</SelectItem>
                                     </SelectContent>
-                                </Select>
+                                    </Select>
+                                </div>
                                 {encoding === 'UTF-8' ? (
-                                    <div className="flex items-start gap-2 p-2.5 bg-indigo-50/50 rounded-lg border border-indigo-100">
-                                        <Info className="h-4 w-4 text-indigo-500 mt-0.5" />
-                                        <p className="text-[10px] text-indigo-700 font-medium leading-tight">
-                                            <b>Recomendado</b> para archivos modernos. Si ves rombos con &quot;?&quot; en las tildes, cambia a la opción &quot;Occidental&quot;.
+                                    <div className="mt-3 flex items-start gap-2 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-indigo-700">
+                                        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                        <p className="text-[11px] leading-snug">
+                                            Recomendado para archivos modernos. Si ves rombos con &quot;?&quot; en las tildes, cambia a &quot;Occidental&quot;.
                                         </p>
                                     </div>
                                 ) : (
-                                    <div className="flex items-start gap-2 p-2.5 bg-amber-50 rounded-lg border border-amber-100">
-                                        <AlertCircle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
-                                        <p className="text-[10px] text-amber-700 font-medium leading-tight">
-                                            Usa esta opción si el archivo viene directamente de un <b>Excel antiguo</b> o con configuración regional en español (ANSI).
+                                    <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-amber-700">
+                                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                        <p className="text-[11px] leading-snug">
+                                            Usa esta opción si el archivo viene de Excel antiguo o con configuración regional ANSI.
                                         </p>
                                     </div>
                                 )}
                             </div>
                             
-                            <div className="bg-amber-50 border border-amber-100 p-4 rounded-xl flex gap-3">
-                                <Info className="h-5 w-5 text-amber-500 shrink-0" />
-                                <p className="text-[11px] text-amber-900 font-medium leading-relaxed">
+                            <div className="flex gap-2 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2.5 text-amber-900">
+                                <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                                <p className="text-[11px] leading-snug">
                                     Asegúrate de que tu archivo CSV use comas (,) o punto y coma (;) como separadores y que la primera fila contenga los nombres de las columnas.
                                 </p>
                             </div>
@@ -624,8 +682,11 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
 
                     {/* ── PASO 2: ESTRATEGIA (SOLO SI NO ES NUEVO) ───────────────── */}
                     {step === 'strategy' && (
-                        <div className="grid grid-cols-1 gap-4 animate-in fade-in slide-in-from-right-4 duration-300">
-                            <Label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 ml-1">¿Qué deseas hacer con los datos?</Label>
+                        <div className="grid grid-cols-1 gap-3 animate-in fade-in slide-in-from-right-4 duration-300">
+                            <div>
+                                <h3 className="text-base font-bold text-slate-900">Estrategia de actualización</h3>
+                                <p className="mt-1 text-sm text-slate-500">Elige cómo aplicar las filas del archivo a la base existente.</p>
+                            </div>
                             {[
                                 { id: 'overwrite' as const, icon: RotateCcw, title: 'Sobrescribir todo', desc: 'Borra los datos actuales y carga el nuevo archivo completo.' },
                                 { id: 'append' as const, icon: PlusCircle, title: 'Añadir al final', desc: 'Agrega las nuevas filas sin tocar lo que ya existe.' },
@@ -634,18 +695,18 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                                 <button
                                     key={opt.id}
                                     onClick={() => setStrategy(opt.id)}
-                                    className={`flex items-start gap-4 p-5 rounded-2xl border-2 transition-all group ${
+                                    className={`flex items-start gap-3 rounded-xl border p-3 text-left transition-colors ${
                                         strategy === opt.id 
-                                            ? 'border-indigo-600 bg-indigo-50 shadow-md ring-4 ring-indigo-50' 
-                                            : 'border-slate-100 bg-white hover:border-slate-200'
+                                            ? 'border-indigo-300 bg-indigo-50/60 ring-1 ring-indigo-100'
+                                            : 'border-slate-200 bg-white hover:border-slate-300'
                                     }`}
                                 >
-                                    <div className={`p-2.5 rounded-xl ${strategy === opt.id ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                                        <opt.icon className="h-5 w-5" />
+                                    <div className={`rounded-lg p-2 ${strategy === opt.id ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                                        <opt.icon className="h-4 w-4" />
                                     </div>
                                     <div className="text-left">
-                                        <p className="font-black text-slate-800">{opt.title}</p>
-                                        <p className="text-xs text-slate-500 font-medium leading-relaxed">{opt.desc}</p>
+                                        <p className="text-sm font-bold text-slate-800">{opt.title}</p>
+                                        <p className="mt-0.5 text-xs leading-snug text-slate-500">{opt.desc}</p>
                                     </div>
                                 </button>
                             ))}
@@ -654,28 +715,28 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
 
                     {/* ── PASO 3: MAPEO Y SELECCIÓN DE COLUMNAS ─────────────────── */}
                     {step === 'mapping' && (
-                        <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-300">
+                        <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300">
                              {/* Configuración de Identificadores */}
                              <div className="space-y-4">
-                                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2">
-                                    <Layers className="h-4 w-4" /> Mapeo de Identificadores Críticos
+                                <h4 className="flex items-center gap-2 text-base font-bold text-slate-900">
+                                    <Layers className="h-4 w-4 text-slate-500" /> Identificadores
                                 </h4>
                                 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     {/* Mapeo de ID/SKU */}
-                                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                                    <div className="space-y-2.5 rounded-xl border border-slate-200 bg-white p-3.5">
                                         <div className="flex items-start justify-between">
                                             <div>
-                                                <p className="font-black text-sm text-slate-800">Columna Identificadora</p>
-                                                <p className="text-[10px] text-indigo-500 font-bold uppercase tracking-wider">Esencial para filtros</p>
+                                                <p className="text-sm font-bold text-slate-800">Columna identificadora</p>
+                                                <p className="mt-0.5 text-[11px] text-slate-500">Se usa para buscar y distinguir cada registro.</p>
                                             </div>
-                                            <Badge className="bg-red-50 text-red-600 border-red-100 font-black text-[9px]">OBLIGATORIO</Badge>
+                                            <Badge className="border-red-100 bg-red-50 text-[9px] font-bold text-red-600">OBLIGATORIO</Badge>
                                         </div>
                                         <Select 
                                             value={fieldMap.code || ""} 
                                             onValueChange={(val) => setFieldMap(p => ({ ...p, code: val || '' }))}
                                         >
-                                            <SelectTrigger className="w-full h-11 rounded-xl border-slate-200 bg-slate-50 font-bold text-slate-700">
+                                            <SelectTrigger className="h-9 w-full rounded-lg border-slate-200 bg-slate-50 text-sm font-semibold text-slate-700">
                                                 <SelectValue placeholder="Selecciona columna ID" />
                                             </SelectTrigger>
                                             <SelectContent>
@@ -684,23 +745,22 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                                                 ))}
                                             </SelectContent>
                                         </Select>
-                                        <p className="text-[9px] text-slate-400 italic">Esta columna se usará para buscar y filtrar los productos al generar etiquetas.</p>
                                     </div>
 
                                     {/* Mapeo de Nombre */}
-                                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                                    <div className="space-y-2.5 rounded-xl border border-slate-200 bg-white p-3.5">
                                         <div className="flex items-start justify-between">
                                             <div>
-                                                <p className="font-black text-sm text-slate-800">Columna de Nombre</p>
-                                                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Muestra en tabla</p>
+                                                <p className="text-sm font-bold text-slate-800">Columna de nombre</p>
+                                                <p className="mt-0.5 text-[11px] text-slate-500">Nombre legible mostrado al usuario.</p>
                                             </div>
-                                            <Badge variant="secondary" className="bg-slate-50 text-slate-400 border-slate-100 font-black text-[9px]">OPCIONAL</Badge>
+                                            <Badge variant="secondary" className="border-slate-200 bg-slate-100 text-[9px] font-bold text-slate-500">OPCIONAL</Badge>
                                         </div>
                                         <Select 
                                             value={fieldMap.final_name_es || ""} 
                                             onValueChange={(val) => setFieldMap(p => ({ ...p, final_name_es: val || '' }))}
                                         >
-                                            <SelectTrigger className="w-full h-11 rounded-xl border-slate-200 bg-slate-50 font-bold text-slate-700">
+                                            <SelectTrigger className="h-9 w-full rounded-lg border-slate-200 bg-slate-50 text-sm font-semibold text-slate-700">
                                                 <SelectValue placeholder="Selecciona columna Nombre" />
                                             </SelectTrigger>
                                             <SelectContent>
@@ -710,34 +770,34 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                                                 ))}
                                             </SelectContent>
                                         </Select>
-                                        <p className="text-[9px] text-slate-400 italic">Se usa solo para que identifiques el producto visualmente en la tabla de generación.</p>
                                     </div>
                                 </div>
                              </div>
 
                               {/* Selección y Mapeo de columnas (Configuración de Variables) */}
-                              <div className="space-y-4">
-                                 <div className="flex items-center justify-between">
-                                     <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2">
-                                         <TableIcon className="h-4 w-4" /> Configuración de Variables
-                                     </h4>
-                                     <div className="flex gap-2">
-                                         <Button variant="ghost" size="sm" onClick={() => setSelectedColumns(csvHeaders)} className="text-[9px] font-black text-indigo-600 p-0 h-auto px-2">MARCAR TODAS</Button>
-                                         <Button variant="ghost" size="sm" onClick={() => setSelectedColumns([])} className="text-[9px] font-black text-slate-400 p-0 h-auto px-2">DESMARCAR TODAS</Button>
-                                     </div>
-                                 </div>
+                               <div className="space-y-3">
+                                  <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                                      <div>
+                                      <h4 className="flex items-center gap-2 text-base font-bold text-slate-900">
+                                          <TableIcon className="h-4 w-4 text-slate-500" /> Configuración de variables
+                                      </h4>
+                                      <p className="mt-1 text-xs text-slate-500">Las propuestas son editables. La variable interna no admite espacios ni tildes.</p>
+                                      </div>
+                                      <div className="flex gap-2">
+                                          <Button variant="ghost" size="sm" onClick={() => setSelectedColumns(csvHeaders)} className="h-auto p-0 text-xs font-semibold text-indigo-700 hover:bg-transparent">Marcar todas</Button>
+                                          <Button variant="ghost" size="sm" onClick={() => setSelectedColumns([])} className="h-auto p-0 text-xs font-semibold text-slate-500 hover:bg-transparent">Desmarcar todas</Button>
+                                      </div>
+                                  </div>
 
-                                 <p className="text-[9px] text-slate-400 italic">La variable interna no debe tener espacios ni tildes. El nombre visible sí.</p>
-
-                                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                                     <div className="max-h-[350px] overflow-y-auto custom-scrollbar">
-                                         <table className="w-full text-left border-collapse">
+                                 <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                                     <div className="max-h-[300px] min-w-[720px] overflow-y-auto custom-scrollbar">
+                                         <table className="w-full border-collapse text-left">
                                              <thead className="bg-slate-50 sticky top-0 z-10 border-b border-slate-100">
                                                  <tr>
-                                                     <th className="p-3 pl-6 text-[9px] font-black text-slate-400 uppercase w-[80px]">Importar</th>
-                                                     <th className="p-3 text-[9px] font-black text-slate-400 uppercase">Original</th>
-                                                     <th className="p-3 text-[9px] font-black text-slate-400 uppercase w-[220px]">Variable interna (para plantillas)</th>
-                                                     <th className="p-3 pr-6 text-[9px] font-black text-slate-400 uppercase w-[220px]">Nombre visible (en la app)</th>
+                                                      <th className="w-[76px] px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Importar</th>
+                                                      <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Columna original</th>
+                                                      <th className="w-[230px] px-3 py-2.5 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Variable interna</th>
+                                                      <th className="w-[230px] px-3 py-2.5 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Nombre visible</th>
                                                  </tr>
                                              </thead>
                                              <tbody className="divide-y divide-slate-50">
@@ -745,8 +805,8 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                                                      const isCores = header === fieldMap.code || header === fieldMap.final_name_es
                                                      const isSelected = selectedColumns.includes(header) || isCores
                                                      return (
-                                                         <tr key={header} className={`group transition-colors ${isSelected ? 'bg-indigo-50/20' : 'opacity-60'}`}>
-                                                             <td className="p-3 pl-6 text-center">
+                                                          <tr key={header} className={isSelected ? 'bg-white' : 'bg-slate-50/50 text-slate-400'}>
+                                                              <td className="px-3 py-2 text-center">
                                                                  <Checkbox 
                                                                      checked={isSelected} 
                                                                      onCheckedChange={() => !isCores && toggleColumn(header)}
@@ -754,26 +814,26 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                                                                      className="rounded-md border-slate-300"
                                                                  />
                                                              </td>
-                                                             <td className="p-3">
-                                                                 <p className="text-[11px] font-bold text-slate-600 truncate max-w-[120px]" title={header}>{header}</p>
-                                                                 {isCores && <Badge className="mt-1 bg-indigo-50 text-indigo-500 border-indigo-100 text-[8px] px-1 font-black uppercase tracking-tighter">Obligatorio</Badge>}
-                                                             </td>
-                                                             <td className="p-3">
+                                                              <td className="px-3 py-2">
+                                                                  <p className="max-w-[180px] truncate text-xs font-semibold text-slate-700" title={header}>{header}</p>
+                                                                  {isCores && <span className="text-[9px] font-semibold text-indigo-600">Requerida</span>}
+                                                              </td>
+                                                              <td className="px-3 py-2">
                                                                  <Input 
                                                                      value={columnConfigs[header]?.key || ''} 
                                                                      onChange={(e) => setColumnConfigs(p => ({ ...p, [header]: { ...p[header], key: e.target.value } }))}
                                                                      disabled={!isSelected}
                                                                      placeholder="Ej: sku"
-                                                                     className="h-8 text-[11px] font-mono border-slate-100 bg-white shadow-none focus:ring-1 focus:ring-indigo-200 transition-all rounded-lg"
+                                                                      className="h-8 rounded-md border-slate-200 bg-white font-mono text-xs shadow-none"
                                                                  />
                                                              </td>
-                                                             <td className="p-3 pr-6">
+                                                              <td className="px-3 py-2">
                                                                  <Input 
                                                                      value={columnConfigs[header]?.label || ''} 
                                                                      onChange={(e) => setColumnConfigs(p => ({ ...p, [header]: { ...p[header], label: e.target.value } }))}
                                                                      disabled={!isSelected}
                                                                      placeholder="Ej: Referencia"
-                                                                     className="h-8 text-[11px] font-bold border-slate-100 bg-white shadow-none focus:ring-1 focus:ring-indigo-200 transition-all rounded-lg"
+                                                                      className="h-8 rounded-md border-slate-200 bg-white text-xs font-medium shadow-none"
                                                                  />
                                                              </td>
                                                          </tr>
@@ -789,56 +849,53 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
 
                     {/* ── PASO 4: ASOCIAR PLANTILLAS (OPCIONAL) ───────────────── */}
                     {step === 'associate_templates' && (
-                        <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
-                            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                        <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                            <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
                                 <div className="flex items-start justify-between gap-4">
                                     <div>
-                                        <p className="font-black text-sm text-slate-800">Asociar plantillas</p>
-                                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Opcional (recomendado)</p>
-                                        <p className="text-[11px] text-slate-500 mt-2 leading-relaxed">
-                                            Si eliges plantillas, el sistema te pedirá asociar variables internas de la plantilla con columnas del CSV
-                                            para asegurar que la exportación funcione.
-                                        </p>
+                                        <p className="text-base font-bold text-slate-900">Asociar con una plantilla</p>
+                                        <p className="mt-1 text-sm text-slate-500">Puedes conectar esta fuente con una plantilla existente ahora o hacerlo después.</p>
                                     </div>
-                                    <Badge variant="secondary" className="bg-slate-50 text-slate-500 border-slate-100 font-black text-[9px]">OPCIONAL</Badge>
+                                    <Badge variant="secondary" className="border-slate-200 bg-slate-100 text-[9px] font-bold text-slate-500">OPCIONAL</Badge>
                                 </div>
 
                                 {availableTemplates.length === 0 ? (
                                     <div className="text-sm text-slate-400 italic">No hay plantillas activas en modo Bases de Datos.</div>
                                 ) : (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                                         {availableTemplates.map((t) => {
                                             const checked = selectedTemplateIds.includes(t.id)
                                             return (
-                                                <label key={t.id} className={`flex items-start gap-3 p-4 rounded-2xl border transition-colors cursor-pointer ${checked ? 'border-indigo-200 bg-indigo-50/30' : 'border-slate-100 bg-white hover:border-slate-200'}`}>
+                                                <label key={t.id} className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors ${checked ? 'border-indigo-300 bg-indigo-50/60' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
                                                     <Checkbox
                                                         checked={checked}
                                                         onCheckedChange={(v) => {
                                                             const next = Boolean(v)
                                                             setSelectedTemplateIds(prev => next ? Array.from(new Set([...prev, t.id])) : prev.filter(x => x !== t.id))
                                                         }}
-                                                        className="rounded-md border-slate-300 mt-0.5"
+                                                        className="rounded border-slate-300"
                                                     />
                                                     <div className="min-w-0">
-                                                        <p className="font-black text-slate-800 text-sm truncate">{t.name}</p>
+                                                        <p className="truncate text-sm font-semibold text-slate-800">{t.name}</p>
                                                     </div>
                                                 </label>
                                             )
                                         })}
                                     </div>
                                 )}
+                                {selectedTemplateIds.length === 0 && <p className="text-xs text-slate-500">Continuar sin seleccionar una plantilla no cambia la importación.</p>}
                             </div>
 
                             {selectedTemplateIds.length > 0 && (
-                                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                                <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
                                     <div className="flex items-center justify-between gap-4">
                                         <div>
-                                            <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2">
+                                            <h4 className="flex items-center gap-2 text-sm font-bold text-slate-900">
                                                 <Settings className="h-4 w-4" /> Asociación de variables
                                             </h4>
-                                            <p className="text-[11px] text-slate-500 mt-1">Se renombrará la key interna del dataset para que coincida con la variable de la plantilla.</p>
+                                            <p className="mt-1 text-xs text-slate-500">Variable de plantilla → columna de la fuente.</p>
                                         </div>
-                                        <Badge className="bg-indigo-50 text-indigo-600 border-indigo-100 font-black text-[9px]">
+                                        <Badge className="border-indigo-100 bg-indigo-50 text-[9px] font-bold text-indigo-600">
                                             {requiredTemplateVars.length} variables
                                         </Badge>
                                     </div>
@@ -846,26 +903,26 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                                     {requiredTemplateVars.length === 0 ? (
                                         <p className="text-sm text-slate-400 italic">Las plantillas seleccionadas no usan variables detectables.</p>
                                     ) : (
-                                        <div className="rounded-2xl border border-slate-200 overflow-hidden">
+                                        <div className="overflow-x-auto rounded-lg border border-slate-200">
                                             <table className="w-full text-left border-collapse">
                                                 <thead className="bg-slate-50 border-b border-slate-100">
                                                     <tr>
-                                                        <th className="p-3 pl-5 text-[9px] font-black text-slate-400 uppercase">Variable plantilla</th>
-                                                        <th className="p-3 pr-5 text-[9px] font-black text-slate-400 uppercase">Columna CSV</th>
+                                                    <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Variable de plantilla</th>
+                                                    <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Columna de la fuente</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y divide-slate-50">
                                                     {requiredTemplateVars.map((v) => (
                                                         <tr key={v}>
-                                                            <td className="p-3 pl-5">
-                                                                <span className="font-mono text-[11px] font-bold text-slate-700">{`{${v}}`}</span>
+                                                            <td className="px-3 py-2">
+                                                                <span className="font-mono text-xs font-semibold text-slate-700">{`{${v}}`}</span>
                                                             </td>
-                                                            <td className="p-3 pr-5">
+                                                            <td className="px-3 py-2">
                                                                 <Select
                                                                     value={templateVarToHeader[v] || ''}
                                                                     onValueChange={(val) => setTemplateVarToHeader(p => ({ ...p, [v]: val || '' }))}
                                                                 >
-                                                                    <SelectTrigger className="w-full h-10 rounded-xl border-slate-200 bg-slate-50 font-bold text-slate-700">
+                                                                    <SelectTrigger className="h-8 w-full rounded-md border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700">
                                                                         <SelectValue placeholder="Selecciona columna" />
                                                                     </SelectTrigger>
                                                                     <SelectContent>
@@ -889,53 +946,27 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
 
                     {/* ── PASO 5: PREVIEW FINAL ───────────────────────────────── */}
                     {step === 'preview' && (
-                        <div className="space-y-6 animate-in fade-in zoom-in-95 duration-300">
-                             <div className="bg-gradient-to-br from-indigo-600 to-indigo-800 rounded-3xl p-8 text-white shadow-2xl shadow-indigo-200 flex items-center justify-between overflow-hidden relative">
-                                <div className="absolute top-0 right-0 p-12 bg-white/5 rounded-full -mr-16 -mt-16 blur-2xl" />
-                                <div className="relative z-10">
-                                    <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 mb-1">Confirmar Operación</p>
-                                    <h3 className="text-3xl font-black tracking-tight">{datasetName}</h3>
-                                </div>
-                                <div className="bg-white/20 p-4 rounded-2xl backdrop-blur-md relative z-10 border border-white/10">
-                                    <Database className="h-10 w-10" />
-                                </div>
-                            </div>
+                        <div className="space-y-4 animate-in fade-in zoom-in-95 duration-300">
+                             <div>
+                                <h3 className="text-lg font-bold text-slate-900">Confirmar operación</h3>
+                                <p className="mt-1 text-sm text-slate-500">Revisa la configuración antes de procesar el archivo.</p>
+                             </div>
+                             <dl className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
+                                <div className="grid gap-1 px-4 py-3 sm:grid-cols-[170px_1fr] sm:gap-4"><dt className="text-xs font-semibold text-slate-500">Nombre</dt><dd className="text-sm font-semibold text-slate-800">{datasetName}</dd></div>
+                                <div className="grid gap-1 px-4 py-3 sm:grid-cols-[170px_1fr] sm:gap-4"><dt className="text-xs font-semibold text-slate-500">Estrategia</dt><dd className="text-sm font-semibold text-slate-800">{isNew ? 'Creación' : STRATEGY_LABELS[strategy]}</dd></div>
+                                <div className="grid gap-1 px-4 py-3 sm:grid-cols-[170px_1fr] sm:gap-4"><dt className="text-xs font-semibold text-slate-500">Registros</dt><dd className="text-sm font-semibold text-slate-800">{csvRows.length.toLocaleString()}</dd></div>
+                                <div className="grid gap-1 px-4 py-3 sm:grid-cols-[170px_1fr] sm:gap-4"><dt className="text-xs font-semibold text-slate-500">Columnas</dt><dd className="text-sm font-semibold text-slate-800">{selectedColumns.length}</dd></div>
+                                {isNew && <div className="grid gap-1 px-4 py-3 sm:grid-cols-[170px_1fr] sm:gap-4"><dt className="text-xs font-semibold text-slate-500">Plantilla asociada</dt><dd className="text-sm font-semibold text-slate-800">{templateSummary}</dd></div>}
+                             </dl>
 
-                            <div className="grid grid-cols-3 gap-4">
-                                <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm">
-                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                        <Filter className="h-3 w-3" /> Estrategia
-                                    </p>
-                                    <p className="text-sm font-black text-slate-800 capitalize">
-                                        {isNew ? 'Creación' : strategy}
-                                    </p>
-                                </div>
-                                <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm">
-                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                        <FileSpreadsheet className="h-3 w-3" /> Filas
-                                    </p>
-                                    <p className="text-sm font-black text-indigo-600">
-                                        {csvRows.length.toLocaleString()}
-                                    </p>
-                                </div>
-                                <div className="bg-white border border-slate-100 p-5 rounded-2xl shadow-sm">
-                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                        <Layers className="h-3 w-3" /> Columnas
-                                    </p>
-                                    <p className="text-sm font-black text-slate-800">
-                                        {selectedColumns.length} seleccionadas
-                                    </p>
-                                </div>
-                            </div>
-
-                            <div className="bg-slate-900 rounded-2xl p-6 text-indigo-300">
-                                <div className="flex gap-4 items-center">
-                                    <div className="shrink-0 w-10 h-10 rounded-full bg-indigo-500/20 flex items-center justify-center border border-indigo-500/30">
-                                        <CheckCircle2 className="h-5 w-5" />
-                                    </div>
-                                    <div>
-                                        <p className="font-bold text-white text-sm">Todo listo para procesar</p>
-                                        <p className="text-xs text-indigo-300/70">Pulsa el botón &quot;Subir&quot; para finalizar el proceso.</p>
+                             <div className="rounded-xl bg-slate-900 px-4 py-3 text-white">
+                                 <div className="flex items-center gap-3">
+                                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-500/20 text-indigo-200">
+                                         <CheckCircle2 className="h-4 w-4" />
+                                     </div>
+                                     <div>
+                                         <p className="text-sm font-semibold">Todo listo para procesar</p>
+                                         <p className="mt-0.5 text-xs text-slate-300">Confirma para finalizar la operación.</p>
                                     </div>
                                 </div>
                             </div>
@@ -943,28 +974,28 @@ export function DatasetIngestor({ mode, existingDatasets, onClose, onDone }: Dat
                     )}
                 </div>
 
-                <DialogFooter className="px-8 py-6 border-t border-slate-100 bg-white sm:justify-between items-center">
+                <DialogFooter className="mx-0 mb-0 shrink-0 flex-row items-center justify-between gap-3 border-t border-slate-200 bg-white px-5 py-3.5 sm:px-6">
                     <Button 
                         variant="ghost" 
                         onClick={step === 'name_file' ? onClose : handleBack} 
                         disabled={loading} 
-                        className="font-black text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-xl h-11 px-6 transition-all"
+                        className="h-10 rounded-lg px-3 text-sm font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-800"
                     >
-                        {step === 'name_file' ? 'CANCELAR' : 'ANTERIOR'}
+                        {step === 'name_file' ? 'Cancelar' : 'Anterior'}
                     </Button>
 
                     <Button
                         onClick={step === 'preview' ? handleFinish : handleNext}
-                        disabled={loading || (step === 'name_file' && csvHeaders.length === 0)}
-                        className={`min-w-[140px] h-11 rounded-xl font-black tracking-tight transition-all active:scale-95 shadow-xl ${
+                        disabled={loading || (step === 'name_file' && !hasLoadedFile)}
+                        className={`h-10 min-w-[140px] rounded-lg px-4 text-sm font-bold ${
                             step === 'preview' 
-                            ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-100' 
-                            : 'bg-slate-900 hover:bg-slate-800 text-white shadow-slate-100'
+                            ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                            : 'bg-slate-900 text-white hover:bg-slate-800'
                         }`}
                     >
-                        {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                        {step === 'preview' ? 'SUBIR BASE DE DATOS' : 'CONTINUAR'}
-                        {!loading && step !== 'preview' && <ChevronRight className="h-4 w-4 ml-2" />}
+                        {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        {step === 'preview' ? (isNew ? 'Crear base de datos' : 'Actualizar datos') : 'Continuar'}
+                        {!loading && step !== 'preview' && <ChevronRight className="ml-2 h-4 w-4" />}
                     </Button>
                 </DialogFooter>
             </DialogContent>
