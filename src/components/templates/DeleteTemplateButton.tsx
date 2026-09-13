@@ -57,18 +57,18 @@ export function DeleteTemplateButton({ id }: { id: string }) {
             </Button>
 
             <Dialog open={open} onOpenChange={(val) => !val && handleCancel()}>
-                <DialogContent>
+                <DialogContent className="max-h-none w-[calc(100%-2rem)] max-w-lg overflow-hidden sm:max-w-lg">
                     <DialogHeader>
                         <DialogTitle>Eliminar Plantilla {step > 2 ? '🔥' : '⚠️'}</DialogTitle>
                         <DialogDescription className="pt-4 text-base font-medium text-slate-800">
                             {CONFIRMATION_STEPS[step]}
                         </DialogDescription>
                     </DialogHeader>
-                    <DialogFooter className="mt-6 flex justify-between sm:justify-between items-center w-full">
-                        <Button variant="outline" onClick={handleCancel}>
+                    <DialogFooter className="mt-2 gap-2 sm:items-center sm:justify-between">
+                        <Button variant="outline" className="whitespace-nowrap" onClick={handleCancel}>
                             ¡No, me arrepentí! (Cancelar)
                         </Button>
-                        <Button variant="destructive" onClick={handleConfirm} disabled={isDeleting}>
+                        <Button variant="destructive" className="whitespace-nowrap" onClick={handleConfirm} disabled={isDeleting}>
                             {isDeleting ? 'Eliminando...' : 'Sí, continuar'}
                         </Button>
                     </DialogFooter>

@@ -91,6 +91,16 @@ function parsePackageWeightInput(value: string) {
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
 }
 
+const DIMENSION_SOURCE_LABELS: Record<string, string> = {
+    sap_desc: 'Autocompletadas por reglas',
+    family: 'Heredadas de familia',
+    version_rule: 'Autocompletadas por reglas',
+    version_code: 'Autocompletadas por reglas',
+    historic_sku: 'Heredadas de SKU',
+    historic_version: 'Heredadas de versión',
+    historic_reference: 'Heredadas de referencia',
+}
+
 export function ProductForm({ initialData, backHref, readOnly = false }: ProductFormProps) {
     const isEdit = !!initialData
     const router = useRouter()
@@ -243,6 +253,12 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
     const packageWeightTotalKg = labelBoxWeightInputs.length > 0 && labelBoxWeightInputs.every(isValidPackageWeightInput)
         ? labelBoxWeightInputs.reduce((sum, value) => sum + (parsePackageWeightInput(value) ?? 0), 0)
         : null
+    const dimensionFields = ['width_cm', 'depth_cm', 'height_cm', 'weight_kg', 'stacking_max']
+    const dimensionSources = dimensionFields.map(field => fieldSources[field])
+    const dimensionSource = dimensionSources.every(source => source && source === dimensionSources[0])
+        ? dimensionSources[0]
+        : null
+    const dimensionSourceLabel = dimensionSource ? DIMENSION_SOURCE_LABELS[dimensionSource] : null
 
     // Cargar reglas y opciones una vez
     useEffect(() => {
@@ -1031,132 +1047,136 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                             <CardTitle className="text-lg font-bold">Detalles Principales</CardTitle>
                             <CardDescription>Ingresa el código y la descripción para autocompletar el resto de campos.</CardDescription>
                         </CardHeader>
-                        <CardContent className="p-6 space-y-4">
-                            <div className="grid gap-2">
-                                <Label htmlFor="code" className="font-semibold text-slate-700">Código de Producto (FAM-REF-VER-COL) *</Label>
-                                <Input
-                                    id="code" name="code" required
-                                    placeholder="VBAN12-0032-000-0368"
-                                    className="h-12 text-lg font-mono border-slate-300 focus:ring-blue-500"
-                                    value={formData.code} onChange={handleChange}
-                                    readOnly={isEdit || readOnly}
-                                />
-                            </div>
+                        <CardContent className="p-5 space-y-3">
+                            <div className="grid grid-cols-1 gap-3 lg:grid-cols-5">
+                                <div className="grid gap-1.5 lg:col-span-2">
+                                    <Label htmlFor="code" className="font-semibold text-slate-700">Código de Producto (FAM-REF-VER-COL) *</Label>
+                                    <Input
+                                        id="code" name="code" required
+                                        placeholder="VBAN12-0032-000-0368"
+                                        className="h-11 text-base font-mono border-slate-300 focus:ring-blue-500"
+                                        value={formData.code} onChange={handleChange}
+                                        readOnly={isEdit || readOnly}
+                                    />
+                                </div>
 
-                            <div className="grid gap-2">
-                                <Label htmlFor="sap_description" className="font-semibold text-slate-700">Descripción cruda SAP</Label>
-                                <Input
-                                    id="sap_description" name="sap_description"
-                                    placeholder="MUEBLE VITELI LVM 79X48..."
-                                    className="h-12 border-slate-300"
-                                    value={formData.sap_description} onChange={handleChange}
-                                    disabled={readOnly}
-                                />
+                                <div className="grid gap-1.5 lg:col-span-3">
+                                    <Label htmlFor="sap_description" className="font-semibold text-slate-700">Descripción cruda SAP</Label>
+                                    <Input
+                                        id="sap_description" name="sap_description"
+                                        placeholder="MUEBLE VITELI LVM 79X48..."
+                                        className="h-11 border-slate-300"
+                                        value={formData.sap_description} onChange={handleChange}
+                                        disabled={readOnly}
+                                    />
+                                </div>
                             </div>
 
                             {/* Marca Propia Section (sin flag; derivado por nombre) */}
-                            <div className="mt-4 p-4 bg-indigo-50/50 rounded-xl border border-indigo-100 space-y-4">
-                                <div className="flex items-center justify-between gap-4">
-                                    <div className="flex items-center gap-2">
-                                        <Building2 className="w-5 h-5 text-indigo-600" />
-                                        <div>
-                                            <p className="text-sm font-bold text-indigo-900">Marca propia</p>
-                                            <p className="text-[10px] text-indigo-700/70">Se activa si hay un cliente (por versión o por override).</p>
-                                        </div>
-                                    </div>
-                                    {versionPrivateLabelName ? (
+                            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-stretch">
+                                <div className="min-w-0 p-3 bg-indigo-50/50 rounded-xl border border-indigo-100 space-y-3">
+                                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(260px,0.7fr)_minmax(0,1.3fr)] lg:items-end">
+                                    <div className="flex items-center justify-between gap-3">
                                         <div className="flex items-center gap-2">
-                                            <Label htmlFor="overridePrivateLabel" className="text-[11px] font-semibold text-indigo-800">Override</Label>
-                                            <Checkbox
-                                                id="overridePrivateLabel"
-                                                checked={overridePrivateLabel}
-                                                onCheckedChange={(c) => setOverridePrivateLabel(!!c)}
-                                                disabled={readOnly}
-                                                className="h-6 w-6 border-indigo-300 data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600"
-                                            />
+                                            <Building2 className="w-4 h-4 text-indigo-600" />
+                                            <div>
+                                                <p className="text-sm font-bold text-indigo-900">Marca propia / cliente</p>
+                                                <p className="text-[10px] text-indigo-700/70">Se activa si hay un cliente (por versión o por override).</p>
+                                            </div>
                                         </div>
-                                    ) : null}
-                                </div>
-
-                                {versionPrivateLabelName && !overridePrivateLabel && (
-                                    <div className="text-xs text-indigo-900 bg-white/70 border border-indigo-100 rounded-md px-3 py-2">
-                                        Detectado por versión: <span className="font-bold">{versionPrivateLabelName}</span>
+                                        {versionPrivateLabelName ? (
+                                            <div className="flex items-center gap-2">
+                                                <Label htmlFor="overridePrivateLabel" className="text-[11px] font-semibold text-indigo-800">Override</Label>
+                                                <Checkbox
+                                                    id="overridePrivateLabel"
+                                                    checked={overridePrivateLabel}
+                                                    onCheckedChange={(c) => setOverridePrivateLabel(!!c)}
+                                                    disabled={readOnly}
+                                                    className="h-6 w-6 border-indigo-300 data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600"
+                                                />
+                                            </div>
+                                        ) : null}
                                     </div>
-                                )}
 
-                                {(!versionPrivateLabelName || overridePrivateLabel) && (
-                                    <div className="grid gap-4 animate-in fade-in slide-in-from-top-2 duration-200">
-                                        <div className="grid gap-2">
-                                            <Label className="text-xs font-bold text-indigo-700 uppercase">Cliente / Marca</Label>
-                                            <select 
-                                                className="flex h-10 w-full rounded-md border border-indigo-200 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none disabled:opacity-50"
-                                                value={privateLabelData.client_key}
-                                                disabled={readOnly}
-                                                onChange={(e) => setPrivateLabelData(p => ({ ...p, client_key: e.target.value, client_name: e.target.value === '__NEW__' ? '' : p.client_name }))}
-                                            >
-                                                <option value="">(Vacío / No aplica)</option>
-                                                {clients.map(c => (
-                                                    <option key={c.id} value={c.name}>{c.name}</option>
-                                                ))}
-                                                {!readOnly && <option value="__NEW__" className="font-bold text-indigo-600 bg-indigo-50">➕ Agregar nueva marca...</option>}
-                                            </select>
-                                        </div>
+                                    <div>
+                                        {versionPrivateLabelName && !overridePrivateLabel && (
+                                            <div className="text-xs text-indigo-900 bg-white/70 border border-indigo-100 rounded-md px-3 py-2">
+                                                Detectado por versión: <span className="font-bold">{versionPrivateLabelName}</span>
+                                            </div>
+                                        )}
 
-                                        {privateLabelData.client_key === '__NEW__' && (
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-white rounded-lg border border-indigo-100 shadow-sm animate-in zoom-in-95 duration-200">
-                                                <div className="grid gap-2">
-                                                    <Label className="text-xs font-bold text-slate-500 uppercase">Nombre de la Marca</Label>
-                                                    <Input 
-                                                        placeholder="Ej: SODIMAC"
-                                                        value={privateLabelData.client_name}
-                                                        onChange={(e) => setPrivateLabelData(p => ({ ...p, client_name: e.target.value }))}
-                                                        className="border-indigo-100"
-                                                        disabled={readOnly}
-                                                    />
-                                                </div>
-                                                <div className="grid gap-2">
-                                                    <Label className="text-xs font-bold text-slate-500 uppercase">Logo de Cliente</Label>
-                                                    <div className="flex items-center gap-2">
-                                                        {!readOnly && (
-                                                            <UploadAssetButton 
-                                                                onUploadComplete={(asset) => setPrivateLabelData(p => ({ ...p, logo_id: asset.id }))}
-                                                                variant="outline"
-                                                                className="flex-1 border-indigo-100 text-indigo-700 hover:bg-indigo-50"
-                                                                label="Subir Logo"
-                                                                type="logo"
-                                                            />
-                                                        )}
-                                                        {readOnly && privateLabelData.logo_id && (
-                                                            <div className="flex-1 p-2 bg-slate-50 border border-slate-200 rounded text-xs text-slate-500 font-medium italic">
-                                                                Logo vinculado
-                                                            </div>
-                                                        )}
-                                                        {privateLabelData.logo_id && (
-                                                            <div className="w-10 h-10 bg-green-50 border border-green-200 rounded flex items-center justify-center">
-                                                                <ImageIcon className="w-5 h-5 text-green-600" />
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </div>
+                                        {(!versionPrivateLabelName || overridePrivateLabel) && (
+                                            <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+                                                <select
+                                                    className="flex h-10 w-full rounded-md border border-indigo-200 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none disabled:opacity-50"
+                                                    value={privateLabelData.client_key}
+                                                    disabled={readOnly}
+                                                    onChange={(e) => setPrivateLabelData(p => ({ ...p, client_key: e.target.value, client_name: e.target.value === '__NEW__' ? '' : p.client_name }))}
+                                                >
+                                                    <option value="">(Vacío / No aplica)</option>
+                                                    {clients.map(c => (
+                                                        <option key={c.id} value={c.name}>{c.name}</option>
+                                                    ))}
+                                                    {!readOnly && <option value="__NEW__" className="font-bold text-indigo-600 bg-indigo-50">➕ Agregar nueva marca...</option>}
+                                                </select>
                                             </div>
                                         )}
                                     </div>
-                                )}
-                            </div>
+                                </div>
 
-                            <div className="pt-2 flex justify-end gap-3">
-                                <Button 
-                                    type="button" 
-                                    onClick={handleAutoProcess}
-                                    disabled={readOnly}
-                                    className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-md transition-all gap-2"
-                                >
-                                    <Sparkles className="w-4 h-4" />
-                                    Generar Automáticamente
-                                </Button>
+                                    {(!versionPrivateLabelName || overridePrivateLabel) && privateLabelData.client_key === '__NEW__' && (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3 bg-white rounded-lg border border-indigo-100 shadow-sm animate-in zoom-in-95 duration-200">
+                                        <div className="grid gap-1.5">
+                                            <Label className="text-xs font-bold text-slate-500 uppercase">Nombre de la Marca</Label>
+                                            <Input
+                                                placeholder="Ej: SODIMAC"
+                                                value={privateLabelData.client_name}
+                                                onChange={(e) => setPrivateLabelData(p => ({ ...p, client_name: e.target.value }))}
+                                                className="border-indigo-100"
+                                                disabled={readOnly}
+                                            />
+                                        </div>
+                                        <div className="grid gap-1.5">
+                                            <Label className="text-xs font-bold text-slate-500 uppercase">Logo de Cliente</Label>
+                                            <div className="flex items-center gap-2">
+                                                {!readOnly && (
+                                                    <UploadAssetButton
+                                                        onUploadComplete={(asset) => setPrivateLabelData(p => ({ ...p, logo_id: asset.id }))}
+                                                        variant="outline"
+                                                        className="flex-1 border-indigo-100 text-indigo-700 hover:bg-indigo-50"
+                                                        label="Subir Logo"
+                                                        type="logo"
+                                                    />
+                                                )}
+                                                {readOnly && privateLabelData.logo_id && (
+                                                    <div className="flex-1 p-2 bg-slate-50 border border-slate-200 rounded text-xs text-slate-500 font-medium italic">
+                                                        Logo vinculado
+                                                    </div>
+                                                )}
+                                                {privateLabelData.logo_id && (
+                                                    <div className="w-10 h-10 bg-green-50 border border-green-200 rounded flex items-center justify-center">
+                                                        <ImageIcon className="w-5 h-5 text-green-600" />
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    )}
+                                </div>
+                                <div className="flex lg:items-center">
+                                    <Button
+                                        type="button"
+                                        onClick={handleAutoProcess}
+                                        disabled={readOnly}
+                                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white shadow-md transition-all gap-2 lg:w-auto"
+                                    >
+                                        <Sparkles className="w-4 h-4" />
+                                        Generar Automáticamente
+                                    </Button>
+                                </div>
                             </div>
                             {analysisSource && (
-                                <div className={`mt-4 p-3 rounded-lg border flex items-start gap-3 animate-in fade-in slide-in-from-top-1 duration-300 ${
+                                <div className={`px-3 py-2.5 rounded-lg border flex items-start gap-2.5 animate-in fade-in slide-in-from-top-1 duration-300 ${
                                     analysisSource === 'sku_match' ? 'bg-amber-50 border-amber-200 text-amber-800' : 
                                     analysisSource === 'version_match' ? 'bg-blue-50 border-blue-200 text-blue-800' :
                                     analysisSource === 'reference_match' ? 'bg-indigo-50 border-indigo-200 text-indigo-800' :
@@ -1593,113 +1613,91 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                 <CardHeader className="bg-slate-50/50 border-b border-slate-100">
                                     <CardTitle className="text-lg font-bold">Validación de propiedades</CardTitle>
                                 </CardHeader>
-                                <CardContent className="p-6 space-y-6">
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="grid gap-2">
+                                <CardContent className="p-5 space-y-4">
+                                    <div className="grid grid-cols-1 gap-x-4 gap-y-3 md:grid-cols-2 lg:grid-cols-3">
+                                        <div className="grid gap-1.5">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Tipo de Producto</Label>
                                             {renderFormField('product_type', datalistOptions.productTypes, 'TIPO DE PRODUCTO')}
                                         </div>
-                                        <div className="grid gap-2">
+                                        <div className="grid gap-1.5">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Nombre del Producto</Label>
                                             {renderFormField('product_name', datalistOptions.productNames || [], 'NOMBRE DEL PRODUCTO')}
                                         </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="grid gap-2">
+                                        <div className="grid gap-1.5">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Código Color (4 dígitos)</Label>
                                             <div className="flex gap-2">
                                                 <div className="w-28 text-sm">{renderCreatableSelect('color_code', (datalistOptions.colors || []).map(c=>c.code), 'CÓDIGO COLOR')}</div>
                                                 <Input name="color_name" value={getEffectiveColorName()} onChange={handleChange} className="flex-1 bg-slate-50" readOnly />
                                             </div>
                                         </div>
-                                        <div className="grid gap-2">
-                                            <Label className="text-xs font-bold text-slate-500 uppercase">Línea</Label>
-                                            {renderFormField('line', datalistOptions.lines, 'LÍNEA')}
-                                        </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="grid gap-2">
+                                        <div className="grid gap-1.5">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Destino de Uso</Label>
                                             {renderFormField('use_destination', datalistOptions.useDestinations, 'DESTINO DE USO')}
                                         </div>
-                                        <div className="grid gap-2">
+                                        <div className="grid gap-1.5">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Designación</Label>
                                             {renderFormField('designation', datalistOptions.designations, 'DESIGNACIÓN')}
                                         </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="grid gap-2">
+                                        <div className="grid gap-1.5">
+                                            <Label className="text-xs font-bold text-slate-500 uppercase">Línea</Label>
+                                            {renderFormField('line', datalistOptions.lines, 'LÍNEA')}
+                                        </div>
+                                        <div className="grid gap-1.5">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Medida Comercial</Label>
                                             {renderFormField('commercial_measure', datalistOptions.commercialMeasures || [], 'MEDIDA COMERCIAL')}
                                         </div>
-                                        <div className="grid gap-2">
+                                        <div className="grid gap-1.5">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Canto Puertas</Label>
                                             {renderFormField('canto_puertas', datalistOptions.cantoPuertas || [], 'CANTO PUERTAS')}
                                         </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="grid gap-2">
+                                        <div className="grid gap-1.5">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Material / RH</Label>
                                             {renderFormField('rh', datalistOptions.rh || [], 'MATERIAL / RH')}
                                         </div>
-                                        <div className="grid gap-2">
-                                            <Label className="text-xs font-bold text-slate-500 uppercase">Accesorios / Rieles</Label>
-                                            {renderFormField('accessory_text', datalistOptions.accessoryTexts || [], 'ACCESORIO/RIEL')}
+                                        <div className="grid gap-x-4 gap-y-3 md:col-span-2 md:grid-cols-2 lg:col-span-3">
+                                            <div className="grid gap-1.5">
+                                                <Label className="text-xs font-bold text-slate-500 uppercase">Accesorios / Rieles</Label>
+                                                {renderFormField('accessory_text', datalistOptions.accessoryTexts || [], 'ACCESORIO/RIEL')}
+                                            </div>
+                                            <div className="grid gap-1.5">
+                                                <Label className="text-xs font-bold text-slate-500 uppercase">Etiqueta Especial</Label>
+                                                {renderFormField('special_label', datalistOptions.specialLabels || [], 'ETIQUETA ESPECIAL')}
+                                            </div>
                                         </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="grid gap-2">
+                                        <div className="grid gap-1.5">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Bisagras</Label>
                                             {renderFormField('bisagras', datalistOptions.bisagras || [], 'BISAGRAS')}
                                         </div>
-                                        <div className="grid gap-2">
+                                        <div className="grid gap-1.5">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">CARB2</Label>
                                             {renderFormField('carb2', datalistOptions.carb2 || [], 'CARB2')}
                                         </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="grid gap-2">
+                                        <div className="grid gap-1.5">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Zona</Label>
                                             {renderFormField('zone_home', datalistOptions.zoneHomes || [], 'ZONA')}
                                         </div>
-                                    <div className="grid gap-2">
-                                        <Label className="text-xs font-bold text-slate-500 uppercase">Etiqueta Especial</Label>
-                                        {renderFormField('special_label', datalistOptions.specialLabels || [], 'ETIQUETA ESPECIAL')}
+                                        <div className="grid gap-1.5">
+                                            <Label className="text-xs font-bold text-slate-500 uppercase">Etiqueta de Versión</Label>
+                                            {renderFormField('version_label', datalistOptions.versionLabels || [], 'ETIQUETA DE VERSIÓN')}
+                                        </div>
+                                        <div className="grid gap-1.5">
+                                            <Label className="text-xs font-bold text-slate-500 uppercase">Cantidad de cajas</Label>
+                                            <Input
+                                                type="number"
+                                                min="1"
+                                                max="20"
+                                                step="1"
+                                                value={formData.package_box_count}
+                                                onChange={(event) => handlePackageBoxCountChange(event.target.value)}
+                                                disabled={readOnly}
+                                                className="border-slate-200 bg-white"
+                                            />
+                                        </div>
+                                        <div className="grid gap-1.5">
+                                            <Label className="text-xs font-bold text-slate-500 uppercase">Color Puerta</Label>
+                                            {renderFormField('door_color_text', datalistOptions.doorColorTexts || [], 'COLOR PUERTA')}
+                                        </div>
                                     </div>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="grid gap-2">
-                                        <Label className="text-xs font-bold text-slate-500 uppercase">Etiqueta de Versión</Label>
-                                        {renderFormField('version_label', datalistOptions.versionLabels || [], 'ETIQUETA DE VERSIÓN')}
-                                    </div>
-                                    <div className="grid gap-2">
-                                        <Label className="text-xs font-bold text-slate-500 uppercase">Cantidad de cajas</Label>
-                                        <Input
-                                            type="number"
-                                            min="1"
-                                            max="20"
-                                            step="1"
-                                            value={formData.package_box_count}
-                                            onChange={(event) => handlePackageBoxCountChange(event.target.value)}
-                                            disabled={readOnly}
-                                            className="border-slate-200 bg-white"
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="grid gap-2">
-                                        <Label className="text-xs font-bold text-slate-500 uppercase">Color Puerta</Label>
-                                        {renderFormField('door_color_text', datalistOptions.doorColorTexts || [], 'COLOR PUERTA')}
-                                    </div>
-                                </div>
 
                                 {labelBoxWeightInputs.length > 0 && (
                                     <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50/70 p-4">
@@ -1736,10 +1734,10 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                     </div>
                                 )}
 
-                                    <div className="pt-4 border-t border-slate-100 mt-2">
-                                        <div className="flex flex-col lg:flex-row items-center justify-between gap-4">
+                                    <div className="pt-3 border-t border-slate-100">
+                                        <div className="flex flex-col lg:flex-row items-center justify-between gap-3">
                                             {/* Technical Flags Group */}
-                                            <div className="flex items-center gap-6 p-2 px-4 bg-slate-50 rounded-xl border border-slate-100 w-full lg:w-auto">
+                                            <div className="flex flex-wrap items-center gap-4 p-2 px-3 bg-slate-50 rounded-xl border border-slate-100 w-full lg:w-auto">
                                                 <div className="flex items-center space-x-2">
                                                     <Checkbox 
                                                         id="assembled_flag" 
@@ -1750,7 +1748,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                                     <Label htmlFor="assembled_flag" className={`text-xs font-bold ${isFieldLocked('assembled_flag') ? 'text-slate-400' : 'text-slate-700'} cursor-pointer`}>Es Armado</Label>
                                                 </div>
 
-                                                <div className="flex items-center space-x-2 border-l border-slate-200 pl-6">
+                                                <div className="flex items-center space-x-2 border-l border-slate-200 pl-4">
                                                     <Checkbox 
                                                         id="has_barcode" 
                                                         checked={hasBarcode} 
@@ -1775,7 +1773,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                                 )}
 
                                                 {formData.assembled_flag && (
-                                                    <div className="flex items-center gap-2 border-l border-slate-200 pl-6 animate-in slide-in-from-left-2 duration-200">
+                                                    <div className="flex items-center gap-2 border-l border-slate-200 pl-4 animate-in slide-in-from-left-2 duration-200">
                                                         <Label htmlFor="armado_con_lvm" className="text-[10px] font-bold text-slate-500 uppercase shrink-0">LVM</Label>
                                                         <Input 
                                                             id="armado_con_lvm"
@@ -1793,7 +1791,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                             {/* Isometric Action Group */}
                                             <div className="w-full lg:w-auto">
                                                  {formData.ref_code && !readOnly && (
-                                                     <div className="flex flex-col sm:flex-row items-center gap-3">
+                                                      <div className="flex flex-col sm:flex-row items-center gap-2">
                                                          {formData.isometric_path && (
                                                              <div className={cn(
                                                                  "flex items-center gap-2 p-2 px-4 rounded-xl border shadow-sm whitespace-nowrap",
@@ -1932,7 +1930,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                             )}
 
                             <Card className="border-blue-200 border-2 shadow-md bg-blue-50/30">
-                                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                                <CardHeader className="flex flex-row items-center justify-between py-4 pb-2">
                                     <div>
                                         <CardTitle className="text-lg font-bold text-blue-900">Nomenclatura Generada</CardTitle>
                                         <CardDescription>Vista previa de cómo aparecerán los nombres en los documentos.</CardDescription>
@@ -1943,14 +1941,14 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                         </Button>
                                     )}
                                 </CardHeader>
-                                <CardContent className="p-6 space-y-4">
-                                    <div className="grid gap-2">
+                                <CardContent className="p-5 space-y-3">
+                                    <div className="grid gap-1.5">
                                         <Label className="text-xs font-extrabold text-blue-700 uppercase">Nombre Final (ES)</Label>
                                         <div className="p-3 bg-white border border-blue-200 rounded-lg text-sm font-semibold text-blue-900 shadow-inner min-h-[40px]">
                                             {formData.final_name_es || <span className="text-slate-400 italic font-normal">No se generó nombre...</span>}
                                         </div>
                                     </div>
-                                    <div className="grid gap-2">
+                                    <div className="grid gap-1.5">
                                         <Label className="text-xs font-extrabold text-blue-700 uppercase">Nombre Final (EN)</Label>
                                         <div className="p-3 bg-white border border-blue-200 rounded-lg text-sm font-semibold text-blue-900 shadow-inner italic min-h-[40px]">
                                             {formData.final_name_en || <span className="text-slate-400 font-normal">No se generó nombre...</span>}
@@ -1960,26 +1958,31 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                             </Card>
 
                             <Card className="border-slate-200 shadow-sm">
-                                <CardHeader className="bg-slate-50/50 border-b border-slate-100">
-                                    <CardTitle className="text-lg font-bold font-outfit">Dimensiones (Autocompletadas)</CardTitle>
+                                <CardHeader className="bg-slate-50/50 border-b border-slate-100 py-4">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <CardTitle className="text-lg font-bold font-outfit">Dimensiones</CardTitle>
+                                        {dimensionSourceLabel && (
+                                            <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                                                {dimensionSourceLabel}
+                                            </span>
+                                        )}
+                                    </div>
                                 </CardHeader>
-                                <CardContent className="p-6 space-y-6">
-                                    <div className="grid grid-cols-3 gap-4">
-                                        <div className="grid gap-2">
+                                <CardContent className="p-5 space-y-3">
+                                    <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-5">
+                                        <div className="grid gap-1.5">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Ancho (cm)</Label>
                                             <Input type="number" step="0.1" name="width_cm" value={formData.width_cm} onChange={handleChange} className={`border-orange-200 bg-orange-50/20 ${lockedInputClass('width_cm')}`} disabled={readOnly || isFieldLocked('width_cm')} />
                                         </div>
-                                        <div className="grid gap-2">
+                                        <div className="grid gap-1.5">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Fondo (cm)</Label>
                                             <Input type="number" step="0.1" name="depth_cm" value={formData.depth_cm} onChange={handleChange} className={`border-orange-200 bg-orange-50/20 ${lockedInputClass('depth_cm')}`} disabled={readOnly || isFieldLocked('depth_cm')} />
                                         </div>
-                                        <div className="grid gap-2">
+                                        <div className="grid gap-1.5">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Alto (cm)</Label>
                                             <Input type="number" step="0.1" name="height_cm" value={formData.height_cm} onChange={handleChange} className={`border-orange-200 bg-orange-50/20 ${lockedInputClass('height_cm')}`} disabled={readOnly || isFieldLocked('height_cm')} />
                                         </div>
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="grid gap-2">
+                                        <div className="grid gap-1.5">
                                             {packageBoxCount > 1 ? (
                                                 <>
                                                     <Label className="text-xs font-bold text-slate-500 uppercase">Peso total calculado (kg)</Label>
@@ -1998,7 +2001,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                                 </>
                                             )}
                                         </div>
-                                        <div className="grid gap-2">
+                                        <div className="grid gap-1.5">
                                             <Label className="text-xs font-bold text-slate-500 uppercase">Apilamiento Max</Label>
                                             <Input type="number" name="stacking_max" value={formData.stacking_max} onChange={handleChange} disabled={readOnly || isFieldLocked('stacking_max')} />
                                         </div>
@@ -2007,7 +2010,7 @@ export function ProductForm({ initialData, backHref, readOnly = false }: Product
                                 </CardContent>
                             </Card>
 
-                            <div className="flex gap-2 justify-end mt-4">
+                            <div className="flex gap-2 justify-end mt-2">
                                 <Link href="/">
                                     <Button variant="outline" type="button" className="h-11 px-8">Cancelar</Button>
                                 </Link>

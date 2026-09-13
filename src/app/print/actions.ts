@@ -5,6 +5,7 @@ import { composeProductsByFilters, type ProductFilters } from '@/lib/engine/prod
 import { dbQuery, supabaseServer } from '@/lib/supabase'
 import { listCatalogTargetContexts } from '@/lib/templates/catalogScopeServer'
 import { normalizeCatalogScope, type CatalogScope, type TemplateBrandScope } from '@/lib/templates/catalogScope'
+import { isExternalDatasetSchemaCompatible } from '@/lib/templates/externalDatasetCompatibility'
 
 type PrintTemplateSource = {
     id: string
@@ -12,6 +13,7 @@ type PrintTemplateSource = {
     brand_scope: string | null
     private_label_client_name: string | null
     catalog_scope: CatalogScope | null
+    elements_json: string | null
 }
 
 type DatasetRow = {
@@ -93,7 +95,7 @@ async function getTemplateSource(templateId: string | null): Promise<PrintTempla
     if (!templateId) return null
 
     const rows = await dbQuery(
-        `SELECT id, data_source, brand_scope, private_label_client_name,
+        `SELECT id, data_source, brand_scope, private_label_client_name, elements_json,
                 to_jsonb(plantillas_doc_tec)->>'catalog_scope' AS catalog_scope
          FROM public.plantillas_doc_tec
          WHERE id = $1
@@ -104,15 +106,17 @@ async function getTemplateSource(templateId: string | null): Promise<PrintTempla
     return rows[0] ?? null
 }
 
-async function getLinkedDatasetIds(templateId: string): Promise<string[]> {
+async function getLinkedDatasetIds(templateId: string, elementsJson: string | null): Promise<string[]> {
     const rows = await dbQuery(
-        `SELECT dataset_id
-         FROM public.template_dataset_links
-         WHERE template_id = $1`,
+        `SELECT d.id AS dataset_id, d.schema_json
+         FROM public.template_dataset_links l
+         JOIN public.custom_datasets d ON d.id = l.dataset_id
+         WHERE l.template_id = $1`,
         [templateId]
-    ) as { dataset_id: string | null }[]
+    ) as { dataset_id: string | null; schema_json: unknown }[]
 
     return rows
+        .filter((row) => isExternalDatasetSchemaCompatible(elementsJson, row.schema_json))
         .map((row) => row.dataset_id)
         .filter((id): id is string => Boolean(id))
 }
@@ -153,7 +157,7 @@ export async function getFilteredProducts(
     const dataSource = String(templateSource?.data_source || CORE_FIRPLAK_SOURCE).trim()
 
     if (dataSource === GENERIC_DATASETS_SOURCE && templateSource?.id) {
-        const linkedDatasetIds = await getLinkedDatasetIds(templateSource.id)
+        const linkedDatasetIds = await getLinkedDatasetIds(templateSource.id, templateSource.elements_json)
         return getDatasetProducts(linkedDatasetIds, search, page, pageSize)
     }
 

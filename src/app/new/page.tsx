@@ -11,7 +11,7 @@ export default function NewProductPage() {
     const [resetKey, setResetKey] = useState(0)
 
     return (
-        <div className="max-w-5xl mx-auto w-full">
+        <div className="max-w-[1240px] mx-auto w-full">
             <div className="flex items-center justify-between mb-4">
                 <Button
                     variant="ghost"

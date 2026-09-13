@@ -12,12 +12,13 @@ export default async function TemplateBuilderPage({
     searchParams: Promise<{ id?: string }>
 }) {
     const resolvedParams = await searchParams
+    const templateId = typeof resolvedParams.id === 'string' ? resolvedParams.id.trim() : ''
 
-    if (!resolvedParams.id) {
+    if (!UUID_RE.test(templateId)) {
         redirect('/templates')
     }
 
-    const rowsResult = await dbQuery(`SELECT * FROM public.plantillas_doc_tec WHERE id='${resolvedParams.id}' LIMIT 1`)
+    const rowsResult = await dbQuery(`SELECT * FROM public.plantillas_doc_tec WHERE id='${templateId}' LIMIT 1`)
     const rows = Array.isArray(rowsResult) ? rowsResult : (rowsResult?.rows || [])
     const template = rows?.[0]
 
@@ -69,24 +70,19 @@ export default async function TemplateBuilderPage({
             datasetSchema = parseSchemaColumns(raw)
         }
     } else if (isGenericDatasets && template?.id) {
-        // Cargar schemas de TODOS los datasets asociados y mostrar sus variables disponibles.
+        // The primary dataset is the authoring source; secondary datasets are runtime-compatible only.
         const linked = await dbQuery(`
             SELECT d.schema_json
             FROM public.template_dataset_links l
             JOIN public.custom_datasets d ON d.id = l.dataset_id
             WHERE l.template_id = '${String(template.id).replace(/'/g, "''")}'
+              AND l.is_primary = true
+            LIMIT 1
         `) || []
-        const seen = new Set<string>()
         for (const row of linked) {
             if (!row?.schema_json) continue
             const raw = typeof row.schema_json === 'string' ? JSON.parse(row.schema_json) : row.schema_json
-            const cols = parseSchemaColumns(raw)
-            for (const c of cols) {
-                if (!seen.has(c.key)) {
-                    seen.add(c.key)
-                    datasetSchema.push(c)
-                }
-            }
+            datasetSchema = parseSchemaColumns(raw)
         }
     }
 

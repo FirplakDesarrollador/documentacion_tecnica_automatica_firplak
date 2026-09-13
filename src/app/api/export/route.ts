@@ -17,12 +17,15 @@ import {
     type TemplateRenderRuntimeValues,
 } from '@/lib/templates/printRuntimeVariables'
 import { apiGuard } from '@/utils/auth/access'
+import { dbQuery } from '@/lib/supabase'
+import { isExternalDatasetSchemaCompatible } from '@/lib/templates/externalDatasetCompatibility'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const CORE_FIRPLAK_SOURCE = 'core_firplak'
+const GENERIC_DATASETS_SOURCE = 'custom_datasets'
 
 type ExportPayload = {
     templateId: string | null
@@ -184,6 +187,34 @@ async function resolveExportRenderElements(payload: ExportPayload): Promise<Expo
     }
 }
 
+async function isExternalRowAllowedForTemplate(templateId: string, productId: string): Promise<boolean | null> {
+    const template = await getActiveTemplateCatalogSource(templateId)
+    if (!template) return false
+
+    const dataSource = String(template.data_source || CORE_FIRPLAK_SOURCE).trim()
+    if (UUID_RE.test(dataSource)) {
+        const rows = await dbQuery(
+            `SELECT id FROM public.custom_dataset_rows WHERE id = $1 AND dataset_id = $2 LIMIT 1`,
+            [productId, dataSource]
+        )
+        return rows.length > 0
+    }
+    if (dataSource === CORE_FIRPLAK_SOURCE) return null
+    if (dataSource !== GENERIC_DATASETS_SOURCE) return false
+
+    const rows = await dbQuery(
+        `SELECT r.id, d.schema_json
+         FROM public.custom_dataset_rows r
+         JOIN public.template_dataset_links l ON l.dataset_id = r.dataset_id
+         JOIN public.custom_datasets d ON d.id = r.dataset_id
+         WHERE r.id = $1 AND l.template_id = $2
+         LIMIT 1`,
+        [productId, templateId]
+    ) as { id: string; schema_json: unknown }[]
+
+    return Boolean(rows[0] && isExternalDatasetSchemaCompatible(template.elements_json, rows[0].schema_json))
+}
+
 export async function POST(req: Request) {
     const guard = await apiGuard('module:generate')
     if (guard.response) {
@@ -221,6 +252,13 @@ export async function POST(req: Request) {
         const renderWidth = templateRender.renderSettings?.widthPx ?? width
         const renderHeight = templateRender.renderSettings?.heightPx ?? height
         const renderTemplateFontFamily = templateRender.renderSettings?.templateFontFamily ?? templateFontFamily
+
+        if (payload.templateId && productId) {
+            const allowed = await isExternalRowAllowedForTemplate(payload.templateId, productId)
+            if (allowed === false) {
+                return NextResponse.json({ error: 'El registro externo no pertenece a una base compatible con la plantilla' }, { status: 403 })
+            }
+        }
 
         const invalidRequiredBarcodes = findRequiredBarcodeErrors(templateRender.elements)
         if (invalidRequiredBarcodes.length > 0) {
