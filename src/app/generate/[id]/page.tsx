@@ -7,12 +7,15 @@ import type { TemplateOption } from '@/components/generate/TemplatePicker'
 import { computeNameWithNamingComponents } from '@/lib/engine/namingComponentsEngine'
 import { resolveTemplateCatalogTarget } from '@/lib/templates/catalogScopeServer'
 import { isCatalogScope, type CatalogScope } from '@/lib/templates/catalogScope'
+import { isExternalDatasetSchemaCompatible } from '@/lib/templates/externalDatasetCompatibility'
 
 export const dynamic = 'force-dynamic'
 
 type DatasetPreviewRow = {
     id: string
     data_json: unknown
+    dataset_id: string
+    schema_json: unknown
 }
 
 type PageProduct = Record<string, unknown> & {
@@ -85,6 +88,7 @@ export default async function GeneratePreviewPage({
     ) as TemplateOption[] || []
 
     const initialTemplateId = templateIdParam ?? templates[0]?.id ?? null
+    const selectedTemplate = templates.find((template) => template.id === initialTemplateId) ?? null
     // 2. Cargar el producto según el origen
     let product: PageProduct | null = null
     
@@ -109,13 +113,26 @@ export default async function GeneratePreviewPage({
             }
         } else {
             const dRows = await dbQuery(
-                `SELECT r.*, d.schema_json
+                `SELECT r.id, r.data_json, r.dataset_id, d.schema_json
                  FROM public.custom_dataset_rows r
                  LEFT JOIN public.custom_datasets d ON r.dataset_id = d.id
                  WHERE r.id = '${id}' LIMIT 1`
             ) as DatasetPreviewRow[]
-            if (dRows && dRows[0]) {
-                product = toDatasetPreviewProduct(dRows[0])
+            const datasetRow = dRows?.[0]
+            const templateDataSource = String(selectedTemplate?.data_source || 'core_firplak')
+            const isLegacyDatasetTemplate = templateDataSource === datasetRow?.dataset_id
+            const isCompatibleGenericTemplate = Boolean(
+                datasetRow
+                && selectedTemplate
+                && templateDataSource === 'custom_datasets'
+                && isExternalDatasetSchemaCompatible(selectedTemplate.elements_json, datasetRow.schema_json)
+                && (await dbQuery(
+                    `SELECT 1 FROM public.template_dataset_links WHERE template_id = $1 AND dataset_id = $2 LIMIT 1`,
+                    [selectedTemplate.id, datasetRow.dataset_id]
+                )).length > 0
+            )
+            if (datasetRow && (isLegacyDatasetTemplate || isCompatibleGenericTemplate)) {
+                product = toDatasetPreviewProduct(datasetRow)
             }
         }
     }

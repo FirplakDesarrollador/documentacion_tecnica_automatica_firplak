@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import {
     Dialog,
@@ -15,7 +16,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PlusCircle, Loader2 } from "lucide-react"
-import { createTemplate } from "@/app/templates/actions"
+import { createTemplate, getAvailableGenericDatasetsAction } from "@/app/templates/actions"
 import { toast } from "sonner"
 import { getClientsAction } from "@/app/configuration/clients/actions"
 import {
@@ -30,16 +31,45 @@ interface ClientRow {
     name: string
 }
 
+interface DatasetOption {
+    id: string
+    name: string
+}
+
 export function NewTemplateDialog() {
     const [open, setOpen] = useState(false)
     const [loading, setLoading] = useState(false)
     const [clients, setClients] = useState<ClientRow[]>([])
+    const [datasets, setDatasets] = useState<DatasetOption[]>([])
+    const [datasetsLoading, setDatasetsLoading] = useState(false)
+    const [datasetsError, setDatasetsError] = useState<string | null>(null)
     const [dataSource, setDataSource] = useState<string>('core_firplak')
+    const [primaryDatasetId, setPrimaryDatasetId] = useState('')
     const [brandScope, setBrandScope] = useState<'firplak' | 'private_label'>('firplak')
     const [privateLabelClientName, setPrivateLabelClientName] = useState<string>('')
     const [catalogScope, setCatalogScope] = useState<CatalogScope>('sku')
     const router = useRouter()
     const isCoreCatalog = isCoreCatalogDataSource(dataSource)
+
+    const loadDatasets = () => {
+        setDatasetsLoading(true)
+        setDatasetsError(null)
+        void getAvailableGenericDatasetsAction()
+            .then((res) => {
+                setDatasets(res.datasets)
+                setDatasetsError(res.error)
+            })
+            .catch(() => {
+                setDatasets([])
+                setDatasetsError('No fue posible cargar las bases de datos. Intenta de nuevo.')
+            })
+            .finally(() => setDatasetsLoading(false))
+    }
+
+    const handleOpenChange = (nextOpen: boolean) => {
+        setOpen(nextOpen)
+        if (nextOpen) loadDatasets()
+    }
 
     useEffect(() => {
         if (!open) return
@@ -62,7 +92,7 @@ export function NewTemplateDialog() {
             ? normalizeCatalogScope(formData.get("catalog_scope"))
             : null
 
-        if (!name || isNaN(width) || isNaN(height) || !dataSource) {
+        if (!name || isNaN(width) || isNaN(height) || !dataSource || (!isCoreCatalog && !primaryDatasetId)) {
             toast.error("Por favor completa todos los campos correctamente.")
             setLoading(false)
             return
@@ -76,6 +106,7 @@ export function NewTemplateDialog() {
             brand_scope: scope === 'private_label' ? 'private_label' : 'firplak',
             private_label_client_name: scope === 'private_label' ? plc : null,
             catalog_scope: selectedCatalogScope,
+            primaryDatasetId: isCoreCatalog ? null : primaryDatasetId,
         })
         setLoading(false)
 
@@ -89,7 +120,7 @@ export function NewTemplateDialog() {
     }
 
     return (
-        <Dialog open={open} onOpenChange={setOpen}>
+            <Dialog open={open} onOpenChange={handleOpenChange}>
             <DialogTrigger render={
                 <Button>
                     <PlusCircle className="mr-2 h-4 w-4" />
@@ -126,6 +157,7 @@ export function NewTemplateDialog() {
                                         setBrandScope('firplak')
                                         setPrivateLabelClientName('')
                                     }
+                                    if (isCoreCatalogDataSource(next)) setPrimaryDatasetId('')
                                 }}
                                 className="col-span-3 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
                             >
@@ -133,6 +165,47 @@ export function NewTemplateDialog() {
                                 <option value="custom_datasets">Bases de Datos (Genérico)</option>
                             </select>
                         </div>
+                        {!isCoreCatalog && (
+                            <div className="grid grid-cols-4 items-center gap-4">
+                                <Label htmlFor="primary_dataset_id" className="text-right leading-tight">
+                                    Base principal
+                                </Label>
+                                <div className="col-span-3 space-y-2">
+                                    <select
+                                        id="primary_dataset_id"
+                                        name="primary_dataset_id"
+                                        value={primaryDatasetId}
+                                        onChange={(e) => setPrimaryDatasetId(e.target.value)}
+                                        disabled={datasetsLoading || datasets.length === 0}
+                                        required
+                                        className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-60"
+                                    >
+                                        <option value="" disabled>
+                                            {datasetsLoading
+                                                ? 'Cargando bases de datos...'
+                                                : datasets.length === 0
+                                                    ? 'No hay bases de datos disponibles'
+                                                    : '-- Selecciona una base de datos --'}
+                                        </option>
+                                        {datasets.map((dataset) => (
+                                            <option key={dataset.id} value={dataset.id}>{dataset.name}</option>
+                                        ))}
+                                    </select>
+                                    {datasetsError ? (
+                                        <p className="text-xs text-destructive">{datasetsError}</p>
+                                    ) : datasets.length === 0 && !datasetsLoading && (
+                                        <p className="text-xs text-slate-500">
+                                            Primero importa una fuente en <Link href="/datasets" className="font-semibold text-indigo-600 hover:underline">Bases de Datos</Link>.
+                                        </p>
+                                    )}
+                                    {datasets.length > 0 && (
+                                        <p className="text-xs text-slate-500">
+                                            Sus variables serán las disponibles para diseñar esta plantilla.
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
                         {isCoreCatalog && (
                             <div className="grid grid-cols-4 items-center gap-4">
                                 <Label htmlFor="catalog_scope" className="text-right leading-tight">
@@ -210,7 +283,7 @@ export function NewTemplateDialog() {
                         <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={loading}>
                             Cancelar
                         </Button>
-                        <Button type="submit" disabled={loading}>
+                        <Button type="submit" disabled={loading || (!isCoreCatalog && (datasetsLoading || !primaryDatasetId))}>
                             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                             Crear e Iniciar
                         </Button>

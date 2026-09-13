@@ -23,9 +23,10 @@ import {
 import { AlertCircle, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
-    getDatasetLinkedTemplateIdsAction,
+    getDatasetTemplateLinksAction,
     normalizeDatasetRowJsonKeysAction,
     revalidateDatasetsPathsAction,
+    setDatasetAsTemplatePrimaryAction,
     unlinkDatasetFromTemplateAction,
     type FieldDef,
 } from '@/app/datasets/actions'
@@ -151,10 +152,12 @@ export function DatasetConfigurator({ datasetId, onClose, onSaved }: DatasetConf
     const [saving, setSaving] = useState(false)
     const [rowCount, setRowCount] = useState<number>(0)
     const [linkedTemplateIds, setLinkedTemplateIds] = useState<string[]>([])
+    const [primaryTemplateIds, setPrimaryTemplateIds] = useState<Set<string>>(() => new Set())
     const [templates, setTemplates] = useState<WizardTemplate[]>([])
     const [showLinkWizard, setShowLinkWizard] = useState(false)
     const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null)
     const [normalizing, setNormalizing] = useState(false)
+    const [settingPrimaryTemplateId, setSettingPrimaryTemplateId] = useState<string | null>(null)
 
     const [datasetName, setDatasetName] = useState('')
     const [schema, setSchema] = useState<NormalizedSchema>({
@@ -202,8 +205,11 @@ export function DatasetConfigurator({ datasetId, onClose, onSaved }: DatasetConf
         let cancelled = false
         const loadLinks = async () => {
             try {
-                const ids = await getDatasetLinkedTemplateIdsAction(datasetId)
-                if (!cancelled) setLinkedTemplateIds(Array.isArray(ids) ? ids : [])
+                const links = await getDatasetTemplateLinksAction(datasetId)
+                if (!cancelled) {
+                    setLinkedTemplateIds(links.map((link) => link.template_id))
+                    setPrimaryTemplateIds(new Set(links.filter((link) => link.is_primary === true).map((link) => link.template_id)))
+                }
             } catch {
                 if (!cancelled) setLinkedTemplateIds([])
             }
@@ -342,8 +348,28 @@ export function DatasetConfigurator({ datasetId, onClose, onSaved }: DatasetConf
             return
         }
         setLinkedTemplateIds(prev => prev.filter(id => id !== templateId))
+        setPrimaryTemplateIds((prev) => {
+            const next = new Set(prev)
+            next.delete(templateId)
+            return next
+        })
         await revalidateDatasetsPathsAction()
         toast.success('Plantilla desasociada')
+    }
+
+    const handleSetPrimary = async (templateId: string) => {
+        setSettingPrimaryTemplateId(templateId)
+        try {
+            const result = await setDatasetAsTemplatePrimaryAction(datasetId, templateId)
+            if (!result.success) throw new Error(result.error || 'No se pudo marcar como principal')
+            setPrimaryTemplateIds((prev) => new Set([...prev, templateId]))
+            await revalidateDatasetsPathsAction()
+            toast.success('Base de datos principal actualizada')
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'No se pudo marcar como principal')
+        } finally {
+            setSettingPrimaryTemplateId(null)
+        }
     }
 
     const handleNormalizeRows = async () => {
@@ -535,6 +561,7 @@ export function DatasetConfigurator({ datasetId, onClose, onSaved }: DatasetConf
                                             {linkedTemplates.map((t) => {
                                                 const st = templateSyncStatus[t.id]
                                                 const ok = st?.ok
+                                                const isPrimary = primaryTemplateIds.has(t.id)
                                                 const missing = (st?.required || []).filter(v => !datasetKeys.has(v))
                                                 return (
                                                     <div
@@ -543,28 +570,39 @@ export function DatasetConfigurator({ datasetId, onClose, onSaved }: DatasetConf
                                                     >
                                                         <div className="min-w-0">
                                                             <p className="text-sm font-bold text-slate-800 truncate">{t.name}</p>
-                                                            <p className="text-[10px] text-slate-500">
-                                                                {ok ? 'Sincronizada' : `Faltan: ${missing.slice(0, 4).join(', ') || 'variables'}`}
-                                                            </p>
+                                                             <p className="text-[10px] text-slate-500">
+                                                                 {isPrimary ? 'Principal · ' : ''}{ok ? 'Sincronizada' : `Faltan: ${missing.slice(0, 4).join(', ') || 'variables'}`}
+                                                             </p>
                                                         </div>
                                                         <div className="flex items-center gap-2 shrink-0">
                                                             <span
                                                                 className={`inline-flex h-2.5 w-2.5 rounded-full ${ok ? 'bg-green-500' : 'bg-red-500'}`}
                                                                 title={ok ? 'Sincronizada' : 'No sincronizada'}
                                                             />
-                                                            <Button
+                                                             <Button
                                                                 variant="ghost"
                                                                 className="text-xs text-slate-600 hover:bg-white"
                                                                 onClick={() => handleEditTemplate(t)}
-                                                            >
-                                                                Editar
-                                                            </Button>
+                                                             >
+                                                                 Editar
+                                                             </Button>
+                                                            {!isPrimary && (
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    className="text-xs text-indigo-600 hover:bg-white hover:text-indigo-700"
+                                                                    disabled={settingPrimaryTemplateId === t.id || !ok}
+                                                                    onClick={() => void handleSetPrimary(t.id)}
+                                                                >
+                                                                    {settingPrimaryTemplateId === t.id ? 'Guardando...' : 'Marcar principal'}
+                                                                </Button>
+                                                            )}
                                                             <Button
                                                                 variant="ghost"
                                                                 className="text-xs text-red-500 hover:bg-white hover:text-red-700"
+                                                                disabled={isPrimary}
                                                                 onClick={() => handleUnlink(t.id)}
                                                             >
-                                                                Desasociar
+                                                                {isPrimary ? 'BD principal' : 'Desasociar'}
                                                             </Button>
                                                         </div>
                                                     </div>

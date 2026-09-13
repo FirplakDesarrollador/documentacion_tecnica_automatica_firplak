@@ -1745,7 +1745,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
     )
     const [datasetSchema, setDatasetSchema] = useState(initialSchema)
     const [availableDatasets, setAvailableDatasets] = useState<{ id: string, name?: string, schema_json?: unknown }[]>([])
-    const [linkedDatasets, setLinkedDatasets] = useState<{ id: string, name?: string, schema_json?: unknown }[]>([])
+    const [linkedDatasets, setLinkedDatasets] = useState<{ id: string, name?: string, schema_json?: unknown, is_primary?: boolean }[]>([])
     const [propertiesPanelTab, setPropertiesPanelTab] = useState<PropertiesPanelTab>('template')
     const [templateVariableFields, setTemplateVariableFields] = useState<NamingVariableField[]>([
         ...BASE_NAMING_VARIABLE_FIELDS,
@@ -1854,7 +1854,7 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
 
     const effectivePreviewSource = useMemo(() => {
         if (dataSource === 'custom_datasets' && linkedDatasets.length > 0) {
-            return linkedDatasets[0].id
+            return linkedDatasets.find((dataset) => dataset.is_primary === true)?.id ?? linkedDatasets[0].id
         }
         return dataSource
     }, [dataSource, linkedDatasets])
@@ -1954,15 +1954,8 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
             setLinkedDatasets(Array.isArray(rows) ? rows : [])
 
             if (Array.isArray(rows)) {
-                const merged = new Map<string, FieldDef>()
-                for (const ds of rows) {
-                    const raw = parseMaybeJson(ds.schema_json)
-                    for (const column of buildFieldDefsFromSchema(raw)) {
-                        if (merged.has(column.key)) continue
-                        merged.set(column.key, column)
-                    }
-                }
-                setDatasetSchema(Array.from(merged.values()))
+                const primaryDataset = rows.find((dataset) => dataset.is_primary === true)
+                setDatasetSchema(primaryDataset ? buildFieldDefsFromSchema(parseMaybeJson(primaryDataset.schema_json)) : [])
             }
         } catch {
             setLinkedDatasets([])
@@ -4448,7 +4441,9 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                                             <div key={d.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
                                                                 <div className="min-w-0">
                                                                     <p className="text-[12px] font-semibold text-slate-800 truncate">{d.name || d.id}</p>
-                                                                    <p className="text-[10px] text-slate-400">{ok ? 'Sincronizado' : 'No sincronizado'}</p>
+                                                                    <p className="text-[10px] text-slate-400">
+                                                                        {d.is_primary ? 'Principal · ' : ''}{ok ? 'Sincronizado' : 'No sincronizado'}
+                                                                    </p>
                                                                 </div>
                                                                 <span className={cn('inline-flex h-2.5 w-2.5 rounded-full', ok ? 'bg-green-500' : 'bg-red-500')} />
                                                             </div>

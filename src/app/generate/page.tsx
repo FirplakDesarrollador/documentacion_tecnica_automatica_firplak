@@ -7,10 +7,13 @@ import { FileOutput } from 'lucide-react'
 import { loadAllRulesForNamingType } from '@/lib/engine/namingComponents'
 import { listCatalogTargetContexts, type CatalogTargetContext } from '@/lib/templates/catalogScopeServer'
 import { getTemplateCatalogScope, isCatalogScope, isCoreCatalogDataSource } from '@/lib/templates/catalogScope'
+import { isExternalDatasetSchemaCompatible } from '@/lib/templates/externalDatasetCompatibility'
 
 type LinkedDatasetRow = {
     id: string
     name: string | null
+    schema_json: unknown
+    is_primary?: boolean
 }
 
 type DatasetRow = {
@@ -201,19 +204,19 @@ export default async function GeneratePage({
     } else if (isGenericDatasets && selectedTemplateInfo?.id) {
          
         const linkedDatasets = await dbQuery(`
-            SELECT d.id, d.name, d.schema_json, d.created_at
+            SELECT d.id, d.name, d.schema_json, l.is_primary, d.created_at
             FROM public.template_dataset_links l
             JOIN public.custom_datasets d ON d.id = l.dataset_id
             WHERE l.template_id = '${String(selectedTemplateInfo.id).replace(/'/g, "''")}'
-            ORDER BY d.created_at DESC
+            ORDER BY l.is_primary DESC, d.created_at DESC
         `) as LinkedDatasetRow[] || []
 
-        // Show ALL linked datasets — synced or not — so the user can preview any associated data.
-        // The sync status is visible in the DatasetConfigurator.
-        availableDatasetsForTemplate = linkedDatasets.map((d) => ({
+        availableDatasetsForTemplate = linkedDatasets
+            .filter((dataset) => isExternalDatasetSchemaCompatible(selectedTemplateInfo.elements_json, dataset.schema_json))
+            .map((d) => ({
             id: String(d.id),
             name: String(d.name || ''),
-        }))
+            }))
 
         if (datasetIdParam && availableDatasetsForTemplate.some(d => d.id === datasetIdParam)) {
             effectiveDatasetId = datasetIdParam

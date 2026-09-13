@@ -64,6 +64,8 @@ function sqlRequiredNumber(value: unknown, fallback: number): string {
 
 type TemplateRow = Record<string, unknown>
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 function asRecord(value: unknown): Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
         ? value as Record<string, unknown>
@@ -202,6 +204,7 @@ export async function createTemplate(data: {
     media_width_mm?: number | null
     media_length_mm?: number | null
     media_gap_mm?: number | null
+    primaryDatasetId?: string | null
 }) {
     await assertAdminAccess()
 
@@ -213,12 +216,27 @@ export async function createTemplate(data: {
         const plc = data.private_label_client_name ? String(data.private_label_client_name).trim() : ''
         const templateFontFamily = normalizeTemplateFontFamily(data.template_font_family)
         const printTarget = normalizePrintTarget(data.print_target)
+        const primaryDatasetId = String(data.primaryDatasetId || '').trim()
 
         if (brandScope === 'private_label' && !plc) {
             return { success: false, error: 'Cliente marca propia requerido' }
         }
 
-        const rows = await dbQuery(`
+        if (dataSource === 'custom_datasets') {
+            if (!UUID_RE.test(primaryDatasetId)) {
+                return { success: false, error: 'Selecciona una base de datos principal válida.' }
+            }
+
+            const datasetRows = await dbQuery(
+                `SELECT id FROM public.custom_datasets WHERE id = $1 LIMIT 1`,
+                [primaryDatasetId]
+            )
+            if (!datasetRows[0]) {
+                return { success: false, error: 'La base de datos principal ya no existe.' }
+            }
+        }
+
+        const templateInsert = `
             INSERT INTO public.plantillas_doc_tec (
                 name,
                 width_mm,
@@ -258,10 +276,31 @@ export async function createTemplate(data: {
                 ${brandScope === 'private_label' ? `'${plc.replace(/'/g, "''")}'` : 'NULL'}
             )
             RETURNING id
-        `)
+        `
+        const rows = await dbQuery(
+            dataSource === 'custom_datasets'
+                ? `
+                    WITH created_template AS (
+                        ${templateInsert}
+                    ), linked_dataset AS (
+                        INSERT INTO public.template_dataset_links (template_id, dataset_id, is_primary)
+                        SELECT id, '${primaryDatasetId}', true
+                        FROM created_template
+                        RETURNING template_id, dataset_id, is_primary
+                    )
+                    SELECT template_id AS id, dataset_id AS primary_dataset_id, is_primary FROM linked_dataset
+                `
+                : templateInsert
+        )
 
         revalidatePath('/templates')
-        return { success: true, id: rows?.[0]?.id }
+        revalidatePath('/datasets')
+        revalidatePath('/generate')
+        return {
+            success: true,
+            id: rows?.[0]?.id,
+            primaryDatasetId: dataSource === 'custom_datasets' ? rows?.[0]?.primary_dataset_id : null,
+        }
     } catch (e) {
         return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
@@ -741,7 +780,33 @@ export async function getDatasetModeTemplatesAction(): Promise<{ id: string; nam
     }
 }
 
-export async function getTemplateLinkedDatasetsAction(templateId: string): Promise<{ id: string; name: string; schema_json: unknown; created_at: string }[]> {
+export async function getAvailableGenericDatasetsAction(): Promise<{
+    datasets: { id: string; name: string }[]
+    error: string | null
+}> {
+    try {
+        await assertAdminAccess()
+        const rows = await dbQuery(`
+            SELECT id, name
+            FROM public.custom_datasets
+            ORDER BY name ASC, created_at ASC
+        `) as TemplateRow[]
+        return {
+            datasets: rows.map((row) => ({
+                id: String(row.id || ''),
+                name: String(row.name || ''),
+            })).filter((row) => UUID_RE.test(row.id)),
+            error: null,
+        }
+    } catch {
+        return {
+            datasets: [],
+            error: 'No fue posible cargar las bases de datos. Intenta de nuevo.',
+        }
+    }
+}
+
+export async function getTemplateLinkedDatasetsAction(templateId: string): Promise<{ id: string; name: string; schema_json: unknown; created_at: string; is_primary: boolean }[]> {
     await assertAdminAccess()
 
     try {
@@ -749,7 +814,7 @@ export async function getTemplateLinkedDatasetsAction(templateId: string): Promi
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tid)) return []
 
         const rows = await dbQuery(`
-            SELECT d.id, d.name, d.schema_json, d.created_at
+            SELECT d.id, d.name, d.schema_json, d.created_at, l.is_primary
             FROM public.template_dataset_links l
             JOIN public.custom_datasets d ON d.id = l.dataset_id
             WHERE l.template_id = '${tid.replace(/'/g, "''")}'
@@ -761,6 +826,7 @@ export async function getTemplateLinkedDatasetsAction(templateId: string): Promi
             name: String(r.name || ''),
             schema_json: r.schema_json,
             created_at: String(r.created_at || ''),
+            is_primary: r.is_primary === true,
         }))
     } catch {
         return []

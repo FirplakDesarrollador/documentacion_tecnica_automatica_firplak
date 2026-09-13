@@ -4,6 +4,7 @@
 import { dbQuery } from "@/lib/supabase"
 import { revalidatePath } from "next/cache"
 import { assertPermission } from '@/utils/auth/access'
+import { isExternalDatasetSchemaCompatible } from '@/lib/templates/externalDatasetCompatibility'
 
 async function assertAdminAccess() {
     await assertPermission('module:datasets')
@@ -48,7 +49,13 @@ export async function revalidateDatasetsPathsAction() {
     return { success: true }
 }
 
-type TemplateLinkRow = { template_id: string; dataset_id: string }
+type TemplateLinkRow = {
+    template_id: string
+    dataset_id: string
+    is_primary?: boolean
+    elements_json?: string | null
+    schema_json?: unknown
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -189,6 +196,65 @@ export async function linkDatasetToTemplatesAction(datasetId: string, templateId
     }
 }
 
+export async function setDatasetAsTemplatePrimaryAction(datasetId: string, templateId: string) {
+    await assertAdminAccess()
+
+    const did = String(datasetId || '').trim()
+    const tid = String(templateId || '').trim()
+    if (!UUID_RE.test(did) || !UUID_RE.test(tid)) {
+        return { success: false, error: 'IDs inválidos' }
+    }
+
+    try {
+        const candidate = await dbQuery(`
+            SELECT l.template_id, l.dataset_id, t.elements_json, d.schema_json
+            FROM public.template_dataset_links l
+            JOIN public.plantillas_doc_tec t ON t.id = l.template_id
+            JOIN public.custom_datasets d ON d.id = l.dataset_id
+            WHERE l.template_id = '${tid.replace(/'/g, "''")}'
+              AND l.dataset_id = '${did.replace(/'/g, "''")}'
+              AND t.data_source = 'custom_datasets'
+            LIMIT 1
+        `) as TemplateLinkRow[]
+        if (!candidate[0]) {
+            return { success: false, error: 'La base de datos no está asociada a una plantilla genérica.' }
+        }
+        if (!isExternalDatasetSchemaCompatible(candidate[0].elements_json as string | null, candidate[0].schema_json)) {
+            return { success: false, error: 'La base de datos no cubre todas las variables requeridas por la plantilla.' }
+        }
+
+        await dbQuery(`
+            UPDATE public.template_dataset_links
+            SET is_primary = false
+            WHERE template_id = '${tid.replace(/'/g, "''")}' AND is_primary = true
+        `)
+        await dbQuery(`
+            UPDATE public.template_dataset_links
+            SET is_primary = true
+            WHERE template_id = '${tid.replace(/'/g, "''")}'
+              AND dataset_id = '${did.replace(/'/g, "''")}'
+        `)
+
+        const verified = await dbQuery(`
+            SELECT dataset_id
+            FROM public.template_dataset_links
+            WHERE template_id = '${tid.replace(/'/g, "''")}' AND is_primary = true
+            LIMIT 1
+        `) as { dataset_id?: string | null }[]
+        if (verified[0]?.dataset_id !== did) {
+            return { success: false, error: 'No se pudo verificar la base de datos principal.' }
+        }
+
+        revalidatePath('/datasets')
+        revalidatePath('/templates')
+        revalidatePath('/generate')
+        revalidatePath('/print')
+        return { success: true, templateId: tid, primaryDatasetId: did }
+    } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+}
+
 export async function unlinkDatasetFromTemplateAction(datasetId: string, templateId: string) {
     await assertAdminAccess()
 
@@ -197,6 +263,22 @@ export async function unlinkDatasetFromTemplateAction(datasetId: string, templat
     if (!UUID_RE.test(did) || !UUID_RE.test(tid)) return { success: false, error: 'IDs inválidos' }
 
     try {
+        const linkRows = await dbQuery(`
+            SELECT l.is_primary, t.data_source
+            FROM public.template_dataset_links l
+            JOIN public.plantillas_doc_tec t ON t.id = l.template_id
+            WHERE l.template_id = '${tid.replace(/'/g, "''")}'
+              AND l.dataset_id = '${did.replace(/'/g, "''")}'
+            LIMIT 1
+        `) as { is_primary?: boolean; data_source?: string | null }[]
+        const link = linkRows[0]
+        if (link?.data_source === 'custom_datasets' && link.is_primary === true) {
+            return {
+                success: false,
+                error: 'Esta es la base de datos principal. Marca primero otra base asociada como principal.',
+            }
+        }
+
         await dbQuery(`
             DELETE FROM public.template_dataset_links
             WHERE template_id = '${tid.replace(/'/g, "''")}' AND dataset_id = '${did.replace(/'/g, "''")}'
@@ -204,9 +286,28 @@ export async function unlinkDatasetFromTemplateAction(datasetId: string, templat
         revalidatePath('/datasets')
         revalidatePath('/templates')
         revalidatePath('/generate')
+        revalidatePath('/print')
         return { success: true }
     } catch (e) {
         return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+}
+
+export async function getDatasetTemplateLinksAction(datasetId: string): Promise<TemplateLinkRow[]> {
+    await assertAdminAccess()
+
+    const did = String(datasetId || '').trim()
+    if (!UUID_RE.test(did)) return []
+
+    try {
+        const rows = await dbQuery(`
+            SELECT template_id, dataset_id, is_primary
+            FROM public.template_dataset_links
+            WHERE dataset_id = '${did.replace(/'/g, "''")}'
+        `) as TemplateLinkRow[]
+        return rows || []
+    } catch {
+        return []
     }
 }
 
@@ -217,11 +318,7 @@ export async function getDatasetLinkedTemplateIdsAction(datasetId: string): Prom
     if (!UUID_RE.test(did)) return []
 
     try {
-        const rows = (await dbQuery(`
-            SELECT template_id, dataset_id
-            FROM public.template_dataset_links
-            WHERE dataset_id = '${did.replace(/'/g, "''")}'
-        `)) as TemplateLinkRow[]
+        const rows = await getDatasetTemplateLinksAction(did)
 
         return (rows || []).map(r => String(r.template_id)).filter(Boolean)
     } catch {
@@ -533,11 +630,29 @@ export async function deleteDatasetAction(id: string) {
 
     try {
         const safeId = id.replace(/'/g, "''")
+        const primaryLinks = await dbQuery(`
+            SELECT t.name
+            FROM public.template_dataset_links l
+            JOIN public.plantillas_doc_tec t ON t.id = l.template_id
+            WHERE l.dataset_id = '${safeId}'
+              AND l.is_primary = true
+              AND t.data_source = 'custom_datasets'
+            ORDER BY t.name ASC
+        `) as { name?: string | null }[]
+        if (primaryLinks.length > 0) {
+            return {
+                success: false,
+                error: `Esta base de datos es principal para: ${primaryLinks.map((row) => row.name || 'plantilla').join(', ')}. Marca otra base como principal antes de eliminarla.`,
+            }
+        }
         await dbQuery(`
             DELETE FROM public.custom_dataset_rows WHERE dataset_id = '${safeId}';
             DELETE FROM public.custom_datasets WHERE id = '${safeId}';
         `)
         revalidatePath('/datasets')
+        revalidatePath('/templates')
+        revalidatePath('/generate')
+        revalidatePath('/print')
         return { success: true }
     } catch (e) {
         return { success: false, error: e instanceof Error ? e.message : String(e) }

@@ -19,6 +19,7 @@ import {
     type TemplateRenderRuntimeValues,
 } from '@/lib/templates/printRuntimeVariables'
 import { apiGuard } from '@/utils/auth/access'
+import { isExternalDatasetSchemaCompatible } from '@/lib/templates/externalDatasetCompatibility'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -65,23 +66,25 @@ function isExternalDataSource(dataSource: string): boolean {
     return dataSource === GENERIC_DATASETS_SOURCE || UUID_RE.test(dataSource)
 }
 
-async function getLinkedDatasetIds(templateId: string): Promise<string[]> {
+async function getLinkedDatasetIds(templateId: string, elementsJson: string | null | undefined): Promise<string[]> {
     const rows = await dbQuery(
-        `SELECT dataset_id
-         FROM public.template_dataset_links
-         WHERE template_id = $1`,
+        `SELECT d.id AS dataset_id, d.schema_json
+         FROM public.template_dataset_links l
+         JOIN public.custom_datasets d ON d.id = l.dataset_id
+         WHERE l.template_id = $1`,
         [templateId]
-    ) as { dataset_id: string | null }[]
+    ) as { dataset_id: string | null; schema_json: unknown }[]
 
     return rows
+        .filter((row) => isExternalDatasetSchemaCompatible(elementsJson, row.schema_json))
         .map((row) => row.dataset_id)
         .filter((id): id is string => Boolean(id && UUID_RE.test(id)))
 }
 
-async function getAllowedDatasetIdsForTemplate(template: Pick<TemplateCatalogSource, 'id' | 'data_source'>): Promise<string[]> {
+async function getAllowedDatasetIdsForTemplate(template: Pick<TemplateCatalogSource, 'id' | 'data_source' | 'elements_json'>): Promise<string[]> {
     const dataSource = normalizeDataSource(template.data_source)
     if (dataSource === GENERIC_DATASETS_SOURCE) {
-        return getLinkedDatasetIds(template.id)
+        return getLinkedDatasetIds(template.id, template.elements_json)
     }
 
     if (UUID_RE.test(dataSource)) {
