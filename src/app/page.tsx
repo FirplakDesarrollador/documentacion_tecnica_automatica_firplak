@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { 
   Package, AlertTriangle, LayoutTemplate,
-  FileText, PlusCircle, ArrowRight, Upload
+  PlusCircle, ArrowRight, Upload, Printer
 } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { hasModuleAccess } from '@/types/auth'
 import { decodeGenerateLastUrl, GENERATE_LAST_URL_COOKIE } from '@/lib/navigation/generateLastUrl'
 import {
   getNavigationHref,
@@ -18,14 +18,8 @@ import {
 
 import { getPendingStructuralSummary } from '@/lib/engine/pendingStructural'
 import { requirePagePermission } from '@/utils/auth/access'
-
-interface RecentProduct {
-  id: string
-  code: string
-  final_name_es: string | null
-  validation_status: string
-  updated_at: string
-}
+import { getDashboardActivityFeed } from '@/lib/dashboard/activityFeed'
+import { formatActivityRelativeTime } from '@/lib/dashboard/activityFeedUtils'
 
 const QUICK_ACTION_IDS = [
   'sap-consulting',
@@ -68,7 +62,9 @@ export default async function Home() {
   const kpiRows = await dbQuery(`
     SELECT
       (SELECT COUNT(*) FROM public.product_skus) as total_products,
-      (SELECT COUNT(*) FROM public.plantillas_doc_tec WHERE active = true) as active_templates
+      (SELECT COUNT(*) FROM public.plantillas_doc_tec WHERE active = true) as active_templates,
+      (SELECT COALESCE(SUM(copies), 0) FROM public.print_activity_events
+       WHERE status = 'accepted' AND created_at >= now() - interval '30 days') as print_count
   `)
   
   const kpi = kpiRows?.[0] || {}
@@ -76,18 +72,11 @@ export default async function Home() {
   const pendingCount = pendingSummary.pendingCount
   const pendingCriticalCount = pendingSummary.criticalCount
   const activeTemplates = parseInt(kpi.active_templates || '0')
+  const printCount = parseInt(kpi.print_count || '0')
 
-  // Recent activity
-  const recentProducts = await dbQuery(`
-    SELECT s.id, s.sku_complete as code, s.final_complete_name_es as final_name_es, v.validation_status, s.updated_at
-    FROM public.product_skus s
-    JOIN public.product_versions v ON s.version_id = v.id
-    ORDER BY s.updated_at DESC
-    LIMIT 5
-  `) || []
+  const activity = await getDashboardActivityFeed(access.permissions)
 
-  // Mock data for unconnected features
-  const generatedDocs = 48
+  const canAccessPending = hasModuleAccess(access.permissions, 'module:pending')
 
   return (
     <div className="flex flex-col gap-8 text-foreground pb-10">
@@ -131,19 +120,33 @@ export default async function Home() {
           </CardContent>
         </Card>
 
-        <Card className="shadow-soft border-slate-200/60 rounded-xl overflow-hidden group hover:shadow-premium transition-all duration-300">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between space-y-0 pb-2">
-              <p className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">Pendientes</p>
-              <div className="p-1.5 bg-amber-50 rounded-md">
-                <AlertTriangle className="h-4 w-4 text-amber-600" />
+        {canAccessPending ? (
+          <Link href="/pending" aria-label="Abrir pendientes" className="group outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 rounded-xl">
+            <Card className="h-full shadow-soft border-slate-200/60 rounded-xl overflow-hidden group-hover:shadow-premium transition-all duration-300">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between space-y-0 pb-2">
+                  <p className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">Pendientes</p>
+                  <div className="p-1.5 bg-amber-50 rounded-md"><AlertTriangle className="h-4 w-4 text-amber-600" /></div>
+                </div>
+                <div className="text-3xl font-extrabold text-slate-900 mt-3 tabular-nums">{pendingCount}</div>
+                <p className="text-[10px] text-amber-700 mt-1 font-bold">ACCION REQUERIDA</p>
+                <p className="text-[10px] text-slate-400 mt-1 font-medium">Criticos: {pendingCriticalCount}</p>
+              </CardContent>
+            </Card>
+          </Link>
+        ) : (
+          <Card className="shadow-soft border-slate-200/60 rounded-xl overflow-hidden group hover:shadow-premium transition-all duration-300">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between space-y-0 pb-2">
+                <p className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">Pendientes</p>
+                <div className="p-1.5 bg-amber-50 rounded-md"><AlertTriangle className="h-4 w-4 text-amber-600" /></div>
               </div>
-            </div>
-            <div className="text-3xl font-extrabold text-slate-900 mt-3 tabular-nums">{pendingCount}</div>
-            <p className="text-[10px] text-amber-700 mt-1 font-bold">ACCION REQUERIDA</p>
-            <p className="text-[10px] text-slate-400 mt-1 font-medium">Criticos: {pendingCriticalCount}</p>
-          </CardContent>
-        </Card>
+              <div className="text-3xl font-extrabold text-slate-900 mt-3 tabular-nums">{pendingCount}</div>
+              <p className="text-[10px] text-amber-700 mt-1 font-bold">ACCION REQUERIDA</p>
+              <p className="text-[10px] text-slate-400 mt-1 font-medium">Criticos: {pendingCriticalCount}</p>
+            </CardContent>
+          </Card>
+        )}
 
         <Card className="shadow-soft border-slate-200/60 rounded-xl overflow-hidden group hover:shadow-premium transition-all duration-300">
           <CardContent className="p-6">
@@ -161,13 +164,13 @@ export default async function Home() {
         <Card className="shadow-soft border-slate-200/60 rounded-xl overflow-hidden group hover:shadow-premium transition-all duration-300">
           <CardContent className="p-6">
             <div className="flex items-center justify-between space-y-0 pb-2">
-              <p className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">Docs. Generados</p>
+              <p className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">Impresiones</p>
               <div className="p-1.5 bg-purple-50 rounded-md">
-                <FileText className="h-4 w-4 text-purple-500" />
+                <Printer className="h-4 w-4 text-purple-500" />
               </div>
             </div>
-            <div className="text-3xl font-extrabold text-slate-900 mt-3 tabular-nums">{generatedDocs}</div>
-            <p className="text-[10px] text-slate-400 mt-1 font-medium">Historial 24h</p>
+            <div className="text-3xl font-extrabold text-slate-900 mt-3 tabular-nums">{printCount}</div>
+            <p className="text-[10px] text-slate-400 mt-1 font-medium">Últimos 30 días</p>
           </CardContent>
         </Card>
       </div>
@@ -208,48 +211,19 @@ export default async function Home() {
           <h2 className="text-xl font-bold text-slate-900">Actividad Reciente</h2>
           <Card className="shadow-soft border-slate-200 h-full">
             <CardContent className="p-0 overflow-hidden">
-              <div className="p-4 bg-slate-50/80 border-b border-slate-100 flex justify-between items-center">
-                <span className="text-sm font-semibold text-slate-700">Ultimos Productos Editados</span>
-              </div>
               <div className="divide-y divide-slate-100">
-                {recentProducts.length > 0 ? recentProducts.map((p: RecentProduct) => (
-                  <div key={p.id} className="p-4 flex flex-col gap-1 hover:bg-slate-50 transition-colors">
+                {activity.length > 0 ? activity.map((event) => (
+                  <div key={`${event.kind}-${event.occurredAt}-${event.title}`} className="p-4 flex flex-col gap-1 hover:bg-slate-50 transition-colors">
                     <div className="flex justify-between items-start">
-                      <span className="font-semibold text-sm text-slate-900 truncate max-w-[180px]">
-                        {p.code}
-                      </span>
-                      <Badge
-                        className={cn(
-                          "text-[9px] px-1.5 py-0 h-4 font-bold uppercase tracking-tight ring-1 ring-inset",
-                          p.validation_status === 'ready'
-                            ? "bg-indigo-50 text-indigo-700 ring-indigo-700/10 hover:bg-indigo-50"
-                            : p.validation_status === 'needs_review'
-                              ? "bg-rose-50 text-rose-700 ring-rose-700/10 hover:bg-rose-50"
-                              : "bg-slate-50 text-slate-600 ring-slate-600/10 hover:bg-slate-50"
-                        )}
-                      >
-                        {p.validation_status === 'incomplete' ? 'Incompleto' : p.validation_status === 'needs_review' ? 'Revisar' : 'Listo'}
-                      </Badge>
+                      {event.href ? <Link href={event.href} className="font-semibold text-sm text-slate-900 truncate max-w-[180px] hover:text-indigo-700">{event.title}</Link> : <span className="font-semibold text-sm text-slate-900 truncate max-w-[180px]">{event.title}</span>}
+                      <Badge className="text-[9px] px-1.5 py-0 h-4 font-bold uppercase tracking-tight ring-1 ring-inset bg-slate-50 text-slate-600 ring-slate-600/10 hover:bg-slate-50">{event.action}</Badge>
                     </div>
-                    <span className="text-xs text-slate-500 truncate">{p.final_name_es || 'Sin nombre'}</span>
+                    <span className="text-xs text-slate-500 truncate">{event.subtitle}</span>
+                    <time dateTime={event.occurredAt} className="text-[10px] text-slate-400">{formatActivityRelativeTime(event.occurredAt)}</time>
                   </div>
                 )) : (
-                  <div className="p-8 text-center text-slate-500 text-sm">No hay productos recientes.</div>
+                  <div className="p-8 text-center text-slate-500 text-sm">Sin actividad reciente registrada.</div>
                 )}
-              </div>
-              
-              <div className="p-4 bg-slate-50/80 border-y border-slate-100 flex justify-between items-center mt-2">
-                <span className="text-sm font-semibold text-slate-700">Pendientes</span>
-                <Link href="/pending" className="text-xs font-semibold text-amber-700 hover:text-amber-800">Ver reporte</Link>
-              </div>
-              <div className="p-4 flex items-center gap-3">
-                 <div className="h-8 w-8 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
-                    <AlertTriangle className="h-4 w-4 text-amber-700" />
-                 </div>
-                 <div className="flex flex-col">
-                    <span className="text-sm font-medium text-slate-900">{pendingCount} pendientes detectados</span>
-                    <span className="text-xs text-slate-500">Criticos: {pendingCriticalCount}</span>
-                 </div>
               </div>
 
             </CardContent>
