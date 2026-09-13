@@ -72,11 +72,11 @@ export function NewTemplateDialog() {
     }
 
     useEffect(() => {
-        if (!open) return
+        if (!open || !isCoreCatalog) return
         getClientsAction()
             .then((res: ClientRow[]) => setClients(Array.isArray(res) ? res : []))
             .catch(() => setClients([]))
-    }, [open])
+    }, [open, isCoreCatalog])
 
     async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault()
@@ -111,6 +111,12 @@ export function NewTemplateDialog() {
         setLoading(false)
 
         if (res.success) {
+            if (typeof res.id !== 'string' || !res.id) {
+                toast.error('La plantilla fue creada, pero no se recibió su identificador. Vuelve a abrirla desde Plantillas.')
+                setOpen(false)
+                router.refresh()
+                return
+            }
             toast.success("Plantilla creada exitosamente")
             setOpen(false)
             router.push(`/templates/builder?id=${res.id}`)
@@ -226,26 +232,27 @@ export function NewTemplateDialog() {
                                 </select>
                             </div>
                         )}
-                        <div className="grid grid-cols-4 items-center gap-4">
-                            <Label htmlFor="brand_scope" className="text-right leading-tight">
-                                Alcance de Marca
-                            </Label>
-                            <select
-                                id="brand_scope"
-                                name="brand_scope"
-                                value={isCoreCatalog ? brandScope : 'firplak'}
-                                onChange={(e) => {
-                                    const next = (e.target.value as 'firplak' | 'private_label') || 'firplak'
-                                    setBrandScope(next)
-                                    if (next === 'firplak') setPrivateLabelClientName('')
-                                }}
-                                disabled={!isCoreCatalog}
-                                className="col-span-3 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-60"
-                            >
-                                <option value="firplak">Firplak</option>
-                                <option value="private_label">Marca Propia (Cliente)</option>
-                            </select>
-                        </div>
+                        {isCoreCatalog && (
+                            <div className="grid grid-cols-4 items-center gap-4">
+                                <Label htmlFor="brand_scope" className="text-right leading-tight">
+                                    Alcance de Marca
+                                </Label>
+                                <select
+                                    id="brand_scope"
+                                    name="brand_scope"
+                                    value={brandScope}
+                                    onChange={(e) => {
+                                        const next = (e.target.value as 'firplak' | 'private_label') || 'firplak'
+                                        setBrandScope(next)
+                                        if (next === 'firplak') setPrivateLabelClientName('')
+                                    }}
+                                    className="col-span-3 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                                >
+                                    <option value="firplak">Firplak</option>
+                                    <option value="private_label">Marca Propia (Cliente)</option>
+                                </select>
+                            </div>
+                        )}
                         {isCoreCatalog && brandScope === 'private_label' && (
                             <div className="grid grid-cols-4 items-center gap-4">
                                 <Label htmlFor="private_label_client_name" className="text-right leading-tight">

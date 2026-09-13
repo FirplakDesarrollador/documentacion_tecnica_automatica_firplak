@@ -46,6 +46,7 @@ import BarcodeElement from '@/components/export/BarcodeElement'
 import QrCodeElement from '@/components/export/QrCodeElement'
 import { resolveBarcodeFormat } from '@/lib/export/barcodeUtils'
 import { extractTemplateVariables } from '@/lib/templates/templateVariables'
+import { getExternalDatasetDefaultExportFilenameFormat } from '@/lib/templates/externalDatasetCompatibility'
 import { applyTemplateTextTransform, resolveCssTextTransform, type TemplateTextTransform } from '@/lib/templates/textTransforms'
 import { buildPrintRuntimePreviewValues, PRINT_RUNTIME_VARIABLE_KEYS, PRINT_RUNTIME_VARIABLE_OPTIONS } from '@/lib/templates/printRuntimeVariables'
 import { expandLabelBoxProducts } from '@/lib/engine/labelParts'
@@ -1790,7 +1791,11 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
         template.export_formats ? template.export_formats.split(',') : ['pdf', 'jpg']
     )
     const [exportFilenameFormat, setExportFilenameFormat] = useState<string>(
-        template.export_filename_format || '{sku_base}_{final_name_es}'
+        template.export_filename_format ?? (
+            isCoreCatalog
+                ? '{sku_base}_{final_name_es}'
+                : getExternalDatasetDefaultExportFilenameFormat({ columns: initialSchema }) ?? ''
+        )
     )
 
     // History Stack for Undo / Redo
@@ -4454,23 +4459,24 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                                         </div>
                                     )}
 
-                                    <div className="mt-4">
-                                        <Label className="text-[11px] font-bold text-slate-500 mb-1.5 block uppercase">Alcance de Marca</Label>
-                                        <select
-                                            className="flex h-9 w-full rounded-md border border-indigo-50 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus:border-indigo-200 disabled:opacity-60"
-                                            value={isCoreCatalog ? brandScope : 'firplak'}
-                                            onChange={(e) => {
-                                                const next = (e.target.value as TemplateBrandScope) || 'firplak'
-                                                setBrandScope(next)
-                                                if (next === 'firplak') setPrivateLabelClientName('')
-                                                setIsModified(true)
-                                            }}
-                                            disabled={!isCoreCatalog}
-                                        >
-                                            <option value="firplak">Firplak</option>
-                                            <option value="private_label">Marca Propia (Cliente)</option>
-                                        </select>
-                                    </div>
+                                    {isCoreCatalog && (
+                                        <div className="mt-4">
+                                            <Label className="text-[11px] font-bold text-slate-500 mb-1.5 block uppercase">Alcance de Marca</Label>
+                                            <select
+                                                className="flex h-9 w-full rounded-md border border-indigo-50 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus:border-indigo-200"
+                                                value={brandScope}
+                                                onChange={(e) => {
+                                                    const next = (e.target.value as TemplateBrandScope) || 'firplak'
+                                                    setBrandScope(next)
+                                                    if (next === 'firplak') setPrivateLabelClientName('')
+                                                    setIsModified(true)
+                                                }}
+                                            >
+                                                <option value="firplak">Firplak</option>
+                                                <option value="private_label">Marca Propia (Cliente)</option>
+                                            </select>
+                                        </div>
+                                    )}
 
                                     {isCoreCatalog && brandScope === 'private_label' && (
                                         <div className="mt-4">
@@ -4583,21 +4589,21 @@ export function BuilderCanvas({ template, assets = [], datasetSchema: initialSch
                     setPendingHref(null)
                 }
             }}>
-                <DialogContent>
+                <DialogContent className="max-h-none w-[calc(100%-2rem)] max-w-xl overflow-hidden sm:max-w-xl">
                     <DialogHeader>
                         <DialogTitle>¡Cuidado! Tienes cambios sin guardar</DialogTitle>
                         <DialogDescription className="pt-2">
                             Si sales ahora de la edición de la plantilla, perderás las modificaciones recientes que no has guardado. ¿Qué deseas hacer?
                         </DialogDescription>
                     </DialogHeader>
-                    <DialogFooter className="flex flex-col sm:flex-row gap-2 mt-2">
-                        <Button variant="outline" onClick={() => setShowExitDialog(false)}>
+                    <DialogFooter className="mt-2 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <Button variant="outline" className="w-full whitespace-nowrap sm:flex-1" onClick={() => setShowExitDialog(false)}>
                             Cancelar la acción
                         </Button>
-                        <Button variant="destructive" onClick={handleExitWithoutSaving}>
+                        <Button variant="destructive" className="w-full whitespace-nowrap sm:flex-1" onClick={handleExitWithoutSaving}>
                             Sí, salir sin guardar
                         </Button>
-                        <Button variant="default" onClick={handleExitAndSave} disabled={isSaving}>
+                        <Button variant="default" className="w-full whitespace-nowrap sm:flex-1" onClick={handleExitAndSave} disabled={isSaving}>
                             {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                             Guardar y seguir
                         </Button>

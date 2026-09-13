@@ -12,12 +12,13 @@ export default async function TemplateBuilderPage({
     searchParams: Promise<{ id?: string }>
 }) {
     const resolvedParams = await searchParams
+    const templateId = typeof resolvedParams.id === 'string' ? resolvedParams.id.trim() : ''
 
-    if (!resolvedParams.id) {
+    if (!UUID_RE.test(templateId)) {
         redirect('/templates')
     }
 
-    const rowsResult = await dbQuery(`SELECT * FROM public.plantillas_doc_tec WHERE id='${resolvedParams.id}' LIMIT 1`)
+    const rowsResult = await dbQuery(`SELECT * FROM public.plantillas_doc_tec WHERE id='${templateId}' LIMIT 1`)
     const rows = Array.isArray(rowsResult) ? rowsResult : (rowsResult?.rows || [])
     const template = rows?.[0]
 

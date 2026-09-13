@@ -1,8 +1,10 @@
 "use server"
 
 import { dbQuery } from "@/lib/supabase"
+import { randomUUID } from "node:crypto"
 import { revalidatePath } from "next/cache"
 import { normalizeTemplateFontFamily } from "@/lib/templates/templateTypography"
+import { getExternalDatasetDefaultExportFilenameFormat } from '@/lib/templates/externalDatasetCompatibility'
 import { DEFAULT_MEDIA_GAP_MM, normalizePrintTarget, type PrintTarget } from "@/lib/printLayout"
 import { assertPermission } from '@/utils/auth/access'
 import {
@@ -217,6 +219,8 @@ export async function createTemplate(data: {
         const templateFontFamily = normalizeTemplateFontFamily(data.template_font_family)
         const printTarget = normalizePrintTarget(data.print_target)
         const primaryDatasetId = String(data.primaryDatasetId || '').trim()
+        const templateId = dataSource === 'custom_datasets' ? randomUUID() : null
+        let primaryDatasetSchema: unknown = null
 
         if (brandScope === 'private_label' && !plc) {
             return { success: false, error: 'Cliente marca propia requerido' }
@@ -228,16 +232,22 @@ export async function createTemplate(data: {
             }
 
             const datasetRows = await dbQuery(
-                `SELECT id FROM public.custom_datasets WHERE id = $1 LIMIT 1`,
+                `SELECT id, schema_json FROM public.custom_datasets WHERE id = $1 LIMIT 1`,
                 [primaryDatasetId]
             )
             if (!datasetRows[0]) {
                 return { success: false, error: 'La base de datos principal ya no existe.' }
             }
+            primaryDatasetSchema = datasetRows[0].schema_json
         }
+
+        const exportFilenameFormat = dataSource === 'custom_datasets'
+            ? getExternalDatasetDefaultExportFilenameFormat(primaryDatasetSchema) ?? ''
+            : null
 
         const templateInsert = `
             INSERT INTO public.plantillas_doc_tec (
+                id,
                 name,
                 width_mm,
                 height_mm,
@@ -253,10 +263,12 @@ export async function createTemplate(data: {
                 data_source,
                 catalog_scope,
                 template_font_family,
+                export_filename_format,
                 brand_scope,
                 private_label_client_name
             )
             VALUES (
+                ${templateId ? `'${templateId}'` : 'DEFAULT'},
                 '${data.name.replace(/'/g, "''")}',
                 ${data.width_mm},
                 ${data.height_mm},
@@ -272,6 +284,7 @@ export async function createTemplate(data: {
                 '${dataSource.replace(/'/g, "''")}',
                 ${catalogScope ? `'${catalogScope}'` : 'NULL'},
                 '${templateFontFamily}',
+                ${exportFilenameFormat ? `'${exportFilenameFormat.replace(/'/g, "''")}'` : 'NULL'},
                 '${brandScope}',
                 ${brandScope === 'private_label' ? `'${plc.replace(/'/g, "''")}'` : 'NULL'}
             )
@@ -298,7 +311,7 @@ export async function createTemplate(data: {
         revalidatePath('/generate')
         return {
             success: true,
-            id: rows?.[0]?.id,
+            id: templateId || rows?.[0]?.id,
             primaryDatasetId: dataSource === 'custom_datasets' ? rows?.[0]?.primary_dataset_id : null,
         }
     } catch (e) {
