@@ -8,7 +8,7 @@ import { DEFAULT_SALES_PRICING_FORMULAS, normalizeSalesPricingFormulaConfig } fr
 import { dbQuery } from '@/lib/supabase'
 
 export const runtime = 'nodejs'
-export const maxDuration = 60
+export const maxDuration = 120
 
 async function getCostedBomResponse(itemCode: string, refreshCosts = false) {
   const result = await getSapCostedBom(itemCode, { refreshCosts })
