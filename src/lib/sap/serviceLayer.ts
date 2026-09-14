@@ -3,6 +3,7 @@ import 'server-only'
 import { request as httpsRequest, type RequestOptions } from 'node:https'
 import type { IncomingHttpHeaders } from 'node:http'
 import { dbQuery } from '@/lib/supabase'
+import { buildSapItemCodeFilter, splitSapItemCodeBatches } from './itemCodeBatching'
 
 export type SapEntityPayload = Record<string, unknown>
 
@@ -1082,36 +1083,46 @@ export async function getSapItemsByCodes(
 ): Promise<Map<string, SapEntityPayload>> {
   const normalizedCodes = [...new Set(itemCodes.map(code => normalizeRequiredCode(code, 'itemCode')))]
   if (normalizedCodes.length === 0) return new Map()
+  const normalizedCodeSet = new Set(normalizedCodes.map(code => code.toUpperCase()))
 
-  const filter = normalizedCodes
-    .map(code => `ItemCode eq ${encodeODataString(code)}`)
-    .join(' or ')
-  const query = buildCollectionQuery({
-    select,
-    filter,
-    top: normalizedCodes.length,
-  })
-  const items = new Map<string, SapEntityPayload>()
-  let requestPath: string | null = `/Items${query}`
-  const visitedPaths = new Set<string>()
-
-  while (requestPath && !visitedPaths.has(requestPath) && items.size < normalizedCodes.length) {
-    visitedPaths.add(requestPath)
-    const response: unknown = await sapServiceLayerRequest<unknown>(requestPath, {
-      timeoutMs: options?.timeoutMs,
+  const chunks = splitSapItemCodeBatches(normalizedCodes)
+  const pages = await Promise.all(chunks.map(async chunk => {
+    const query = buildCollectionQuery({
+      select,
+      filter: buildSapItemCodeFilter(chunk),
+      top: chunk.length,
     })
-    const rows = isRecord(response) && Array.isArray(response.value) ? response.value : []
+    const chunkItems = new Map<string, SapEntityPayload>()
+    let requestPath: string | null = `/Items${query}`
+    const visitedPaths = new Set<string>()
 
-    for (const row of rows) {
-      if (!isRecord(row) || typeof row.ItemCode !== 'string') continue
-      items.set(row.ItemCode.trim().toUpperCase(), row)
+    while (requestPath && !visitedPaths.has(requestPath)) {
+      visitedPaths.add(requestPath)
+      const response: unknown = await sapServiceLayerRequest<unknown>(requestPath, {
+        timeoutMs: options?.timeoutMs,
+      })
+      const rows = isRecord(response) && Array.isArray(response.value) ? response.value : []
+
+      for (const row of rows) {
+        if (!isRecord(row) || typeof row.ItemCode !== 'string') continue
+        chunkItems.set(row.ItemCode.trim().toUpperCase(), row)
+      }
+
+      requestPath = isRecord(response)
+        ? readStringField(response, 'odata.nextLink') ?? readStringField(response, '@odata.nextLink')
+        : null
     }
 
-    requestPath = isRecord(response)
-      ? readStringField(response, 'odata.nextLink') ?? readStringField(response, '@odata.nextLink')
-      : null
-  }
+    return [...chunkItems.values()]
+  }))
 
+  const items = new Map<string, SapEntityPayload>()
+  for (const item of pages.flat()) {
+    const itemCode = readStringField(item, 'ItemCode')?.toUpperCase()
+    if (itemCode && normalizedCodeSet.has(itemCode)) {
+      items.set(itemCode, item)
+    }
+  }
   return items
 }
 
@@ -1123,7 +1134,7 @@ export async function getSapItemsWithWarehouseAverages(itemCodes: string[]): Pro
   const normalizedCodes = [...new Set(itemCodes.map(code => normalizeRequiredCode(code, 'itemCode').toUpperCase()))]
   if (normalizedCodes.length === 0) return new Map()
 
-  const chunks = Array.from({ length: Math.ceil(normalizedCodes.length / 20) }, (_, index) => normalizedCodes.slice(index * 20, index * 20 + 20))
+  const chunks = splitSapItemCodeBatches(normalizedCodes)
   const pages = await Promise.all(chunks.map(async chunk => {
     const filter = chunk.map(code => `ItemCode eq ${encodeODataString(code)}`).join(' or ')
     const queryOption = [
@@ -1157,7 +1168,7 @@ export async function getSapItemsWithWarehouseAverage(
   const normalizedWarehouseCode = normalizeWarehouseCode(warehouseCode, 'warehouseCode')
   if (normalizedCodes.length === 0) return new Map()
 
-  const chunks = Array.from({ length: Math.ceil(normalizedCodes.length / 20) }, (_, index) => normalizedCodes.slice(index * 20, index * 20 + 20))
+  const chunks = splitSapItemCodeBatches(normalizedCodes)
   const pages = await Promise.all(chunks.map(async chunk => {
     const itemFilter = chunk.map(code => `Items/ItemCode eq ${encodeODataString(code)}`).join(' or ')
     const warehouseEntity = 'Items/ItemWarehouseInfoCollection'
@@ -1935,7 +1946,7 @@ export async function getSapItemBomsByCodes(itemCodes: string[]): Promise<Map<st
   const normalizedCodes = [...new Set(itemCodes.map(code => normalizeRequiredCode(code, 'itemCode').toUpperCase()))]
   if (normalizedCodes.length === 0) return new Map()
 
-  const chunks = Array.from({ length: Math.ceil(normalizedCodes.length / 20) }, (_, index) => normalizedCodes.slice(index * 20, index * 20 + 20))
+  const chunks = splitSapItemCodeBatches(normalizedCodes)
   const pages = await Promise.all(chunks.map(async chunk => {
     const treeFilter = chunk.map(code => `ProductTrees/TreeCode eq ${encodeODataString(code)}`).join(' or ')
     const lineEntity = 'ProductTrees/ProductTreeLines'
@@ -2016,7 +2027,7 @@ export async function getSapItemBomCodes(itemCodes: string[]): Promise<Set<strin
   const normalizedCodes = [...new Set(itemCodes.map(code => normalizeRequiredCode(code, 'itemCode').toUpperCase()))]
   if (normalizedCodes.length === 0) return new Set()
 
-  const chunks = Array.from({ length: Math.ceil(normalizedCodes.length / 20) }, (_, index) => normalizedCodes.slice(index * 20, index * 20 + 20))
+  const chunks = splitSapItemCodeBatches(normalizedCodes)
   const pages = await Promise.all(chunks.map(async chunk => {
     const filter = chunk.map(code => `TreeCode eq ${encodeODataString(code)}`).join(' or ')
     const query = buildCollectionQuery({
