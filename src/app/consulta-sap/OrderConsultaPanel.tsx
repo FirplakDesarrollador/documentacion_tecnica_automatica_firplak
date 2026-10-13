@@ -100,6 +100,14 @@ function statusLabel(mode: OrderMode, status: string | null): string {
   return (mode === 'production-orders' ? PRODUCTION_STATUS_LABELS : SALES_STATUS_LABELS)[status] ?? status
 }
 
+function isSalesOrderOrigin(originType: string): boolean {
+  const normalized = originType.trim().toLowerCase().replace(/[\s_-]+/g, '')
+  return normalized === 'salesorder'
+    || normalized === 'bopoosalesorder'
+    || normalized === 'so'
+    || normalized === 's'
+}
+
 function DetailField({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
@@ -114,11 +122,13 @@ function DetailPanel({
   order,
   onBack,
   onOpenItem,
+  onOpenSalesOrder,
 }: {
   mode: OrderMode
   order: SapRecord
   onBack: () => void
   onOpenItem: (itemCode: string) => void
+  onOpenSalesOrder: (docEntry: number) => void
 }) {
   const [activeTab, setActiveTab] = useState<'general' | 'lines' | 'links'>('general')
   const isProduction = mode === 'production-orders'
@@ -131,9 +141,11 @@ function DetailPanel({
   }, [isProduction, order])
   const originEntry = numberValue(recordValue(order, 'ProductionOrderOriginEntry'))
     ?? numberValue(recordValue(order, 'OriginAbs'))
-  const originNumber = numberValue(recordValue(order, 'ProductionOrderOriginNum'))
+  const originNumber = numberValue(recordValue(order, 'ProductionOrderOriginNumber'))
+    ?? numberValue(recordValue(order, 'ProductionOrderOriginNum'))
   const originType = stringValue(recordValue(order, 'ProductionOrderOrigin'))
     || stringValue(recordValue(order, 'OriginType'))
+  const hasSalesOrderOrigin = isProduction && isSalesOrderOrigin(originType) && originEntry !== null
 
   return (
     <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -173,6 +185,10 @@ function DetailPanel({
               <DetailField label="Fecha de documento" value={formatDate(stringValue(recordValue(order, 'PostingDate')))} />
               <DetailField label="Fecha de vencimiento" value={formatDate(stringValue(recordValue(order, 'DueDate')))} />
               <DetailField label="Cliente" value={stringValue(recordValue(order, 'CardName'))} />
+              <DetailField
+                label="Orden de venta asociada"
+                value={hasSalesOrderOrigin ? `OV N.º ${originNumber ?? '—'} · ID ${originEntry}` : 'Sin OV asociada'}
+              />
             </> : <>
               <DetailField label="Cliente" value={stringValue(recordValue(order, 'CardName'))} />
               <DetailField label="Código de cliente" value={itemCode} />
@@ -204,12 +220,13 @@ function DetailPanel({
 
         {activeTab === 'links' ? (
           <div className="grid gap-3 md:grid-cols-2">
-            {isProduction && itemCode ? <button type="button" onClick={() => onOpenItem(itemCode)} className="flex items-center justify-between rounded-lg border border-slate-200 p-3 text-left hover:border-indigo-300 hover:bg-indigo-50"><span><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Artículo fabricado</span><span className="mt-1 block font-mono text-sm font-semibold text-slate-900">{itemCode}</span></span><ExternalLink className="size-4 text-indigo-600" /></button> : null}
-            {isProduction && (originEntry !== null || originNumber !== null || originType) ? <div className="rounded-lg border border-slate-200 p-3"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Documento de origen SAP</p><p className="mt-1 text-sm font-medium text-slate-800">{originType || 'Documento relacionado'}{originNumber !== null ? ` · N.º ${originNumber}` : ''}{originEntry !== null ? ` · ID ${originEntry}` : ''}</p></div> : null}
+            {isProduction && itemCode ? <button type="button" onClick={() => onOpenItem(itemCode)} className="flex items-center justify-between rounded-lg border border-slate-200 p-3 text-left hover:border-indigo-300 hover:bg-indigo-50"><span><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Artículo fabricado</span><span className="mt-1 block font-mono text-sm font-semibold text-slate-900">{itemCode}</span><span className="mt-1 block text-sm text-slate-600">{firstStringValue(order, ['ItemName', 'ItemDescription', 'ProductDescription']) || 'Sin descripción'}</span></span><ExternalLink className="size-4 text-indigo-600" /></button> : null}
+            {isProduction && (originEntry !== null || originNumber !== null || originType) ? hasSalesOrderOrigin ? <button type="button" onClick={() => onOpenSalesOrder(originEntry)} className="flex items-center justify-between rounded-lg border border-slate-200 p-3 text-left hover:border-indigo-300 hover:bg-indigo-50"><span><span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Orden de venta asociada</span><span className="mt-1 block text-sm font-semibold text-slate-900">OV N.º {originNumber ?? '—'} · ID {originEntry}</span></span><ExternalLink className="size-4 text-indigo-600" /></button> : <div className="rounded-lg border border-slate-200 p-3"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Documento de origen SAP</p><p className="mt-1 text-sm font-medium text-slate-800">{originType || 'Documento relacionado'}{originNumber !== null ? ` · N.º ${originNumber}` : ''}{originEntry !== null ? ` · ID ${originEntry}` : ''}</p></div> : null}
             {!isProduction ? <p className="rounded-lg border border-slate-200 p-3 text-sm text-slate-500">Selecciona un artículo de las líneas para abrir sus datos maestros y LdM.</p> : null}
             {!isProduction && lines.length > 0 ? lines.filter(line => stringValue(recordValue(line, 'ItemCode'))).slice(0, 10).map(line => {
               const code = stringValue(recordValue(line, 'ItemCode'))
-              return <button key={code} type="button" onClick={() => onOpenItem(code)} className="flex items-center justify-between rounded-lg border border-slate-200 p-3 text-left hover:border-indigo-300 hover:bg-indigo-50"><span className="font-mono text-sm font-semibold text-slate-900">{code}</span><ExternalLink className="size-4 text-indigo-600" /></button>
+              const description = stringValue(recordValue(line, 'ItemDescription')) || stringValue(recordValue(line, 'ItemName'))
+              return <button key={code} type="button" onClick={() => onOpenItem(code)} className="flex items-center justify-between rounded-lg border border-slate-200 p-3 text-left hover:border-indigo-300 hover:bg-indigo-50"><span><span className="block font-mono text-sm font-semibold text-slate-900">{code}</span><span className="mt-1 block text-sm text-slate-600">{description || 'Sin descripción'}</span></span><ExternalLink className="size-4 text-indigo-600" /></button>
             }) : null}
             {isProduction && !itemCode && originEntry === null && originNumber === null ? <p className="text-sm text-slate-500">SAP no devolvió vínculos para esta OF.</p> : null}
           </div>
@@ -235,6 +252,7 @@ export function OrderConsultaPanel({ mode, onOpenItem }: { mode: OrderMode; onOp
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedOrder, setSelectedOrder] = useState<SapRecord | null>(null)
+  const [selectedOrderMode, setSelectedOrderMode] = useState<OrderMode>(mode)
 
   const firstLabel = isProduction ? 'Código de artículo' : 'Código de cliente'
   const secondLabel = isProduction ? 'Descripción del artículo' : 'Nombre del cliente'
@@ -292,6 +310,7 @@ export function OrderConsultaPanel({ mode, onOpenItem }: { mode: OrderMode; onOp
         return
       }
       setSelectedOrder(payload.order)
+      setSelectedOrderMode(mode)
     } catch (fetchError: unknown) {
       setError(fetchError instanceof Error ? fetchError.message : 'No se pudo consultar SAP.')
     } finally {
@@ -309,7 +328,26 @@ export function OrderConsultaPanel({ mode, onOpenItem }: { mode: OrderMode; onOp
     onOpenItem(itemCode)
   }
 
-  if (selectedOrder) return <DetailPanel mode={mode} order={selectedOrder} onBack={() => setSelectedOrder(null)} onOpenItem={openLinkedItem} />
+  async function openSalesOrder(documentEntry: number) {
+    setLoading(true)
+    setError(null)
+    try {
+      const response = await fetch(`/api/sap/sales-orders/${documentEntry}`, { headers: { Accept: 'application/json' } })
+      const payload = await response.json() as DetailPayload
+      if (!response.ok || !payload.success) {
+        setError(payload.success ? 'No se pudo consultar SAP.' : payload.error)
+        return
+      }
+      setSelectedOrder(payload.order)
+      setSelectedOrderMode('sales-orders')
+    } catch (fetchError: unknown) {
+      setError(fetchError instanceof Error ? fetchError.message : 'No se pudo consultar SAP.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (selectedOrder) return <DetailPanel mode={selectedOrderMode} order={selectedOrder} onBack={() => setSelectedOrder(null)} onOpenItem={openLinkedItem} onOpenSalesOrder={openSalesOrder} />
 
   return (
     <>
