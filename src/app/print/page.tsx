@@ -7,7 +7,7 @@ import { requirePagePermission } from '@/utils/auth/access'
 export const dynamic = 'force-dynamic'
 
 export default async function PrintPage() {
-    await requirePagePermission('module:print')
+    const access = await requirePagePermission('module:print')
 
     const templates = await dbQuery(
         `SELECT t.id, t.name, t.document_type, t.width_mm, t.height_mm, t.orientation, t.print_target, t.media_width_mm, t.media_length_mm, t.media_gap_mm, t.active, t.elements_json, t.export_formats, t.export_filename_format, t.data_source, to_jsonb(t)->>'catalog_scope' AS catalog_scope, t.template_font_family, t.brand_scope, t.private_label_client_name
@@ -40,6 +40,7 @@ export default async function PrintPage() {
             <PrintClient
                 templates={templates}
                 rules={rules}
+                canEditAgentUrl={access.isAdmin}
             />
         </div>
     )

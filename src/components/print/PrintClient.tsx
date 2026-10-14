@@ -74,6 +74,7 @@ import {
 interface PrintClientProps {
     templates: TemplateOption[]
     rules: Record<string, unknown>[]
+    canEditAgentUrl?: boolean
 }
 
 type PrintStatus = 'pending' | 'printing' | 'done' | 'error'
@@ -327,7 +328,7 @@ async function recordPrintActivity(input: PrintActivityInput) {
     }
 }
 
-export function PrintClient({ templates, rules }: PrintClientProps) {
+export function PrintClient({ templates, rules, canEditAgentUrl = false }: PrintClientProps) {
     const [textFilter, setTextFilter] = useState('')
     const [products, setProducts] = useState<GenerateProduct[]>([])
     const [loading, setLoading] = useState(false)
@@ -336,11 +337,17 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
     const [printFormat, setPrintFormat] = useState<PrintFormat>('pdf')
     const [copies, setCopies] = useState(1)
     const [showPrinterConfig, setShowPrinterConfig] = useState(false)
+    const skipInitialConfigPersistenceRef = useRef(!canEditAgentUrl)
     const [printerConfig, setPrinterConfig] = useState<PrinterConfig>(() => {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem(PRINTER_CONFIG_KEY)
             if (saved) {
-                try { return normalizePrinterConfig(JSON.parse(saved)) } catch { /* ignore */ }
+                try {
+                    const normalized = normalizePrinterConfig(JSON.parse(saved))
+                    return canEditAgentUrl
+                        ? normalized
+                        : { ...normalized, agentUrl: defaultPrinterConfig.agentUrl }
+                } catch { /* ignore */ }
             }
         }
         return defaultPrinterConfig
@@ -371,6 +378,10 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
     )
 
     useEffect(() => {
+        if (skipInitialConfigPersistenceRef.current) {
+            skipInitialConfigPersistenceRef.current = false
+            return
+        }
         localStorage.setItem(PRINTER_CONFIG_KEY, JSON.stringify(printerConfig))
     }, [printerConfig])
 
@@ -1128,15 +1139,37 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                     <div className="flex gap-2">
                                         <Input
                                             value={printerConfig.agentUrl}
-                                            onChange={(e) => setPrinterConfig(prev => ({ ...prev, agentUrl: e.target.value }))}
-                                            onBlur={() => setPrinterConfig(prev => ({ ...prev, agentUrl: normalizeAgentBaseUrl(prev.agentUrl) }))}
+                                            readOnly={!canEditAgentUrl}
+                                            disabled={!canEditAgentUrl}
+                                            onChange={canEditAgentUrl
+                                                ? (e) => setPrinterConfig(prev => ({ ...prev, agentUrl: e.target.value }))
+                                                : undefined}
+                                            onBlur={canEditAgentUrl
+                                                ? () => setPrinterConfig(prev => ({ ...prev, agentUrl: normalizeAgentBaseUrl(prev.agentUrl) }))
+                                                : undefined}
                                             placeholder="http://127.0.0.1:3344"
                                             className="text-sm font-mono flex-1"
                                         />
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => {
+                                                const nextConfig = { ...printerConfig, agentUrl: defaultPrinterConfig.agentUrl }
+                                                setPrinterConfig(nextConfig)
+                                                localStorage.setItem(PRINTER_CONFIG_KEY, JSON.stringify(nextConfig))
+                                            }}
+                                        >
+                                            Restablecer
+                                        </Button>
                                         <Button variant="outline" size="sm" onClick={checkAgent}>
                                             Probar
                                         </Button>
                                     </div>
+                                    {!canEditAgentUrl && (
+                                        <p className="text-xs text-slate-500">
+                                            Gestionado por TI. Puedes restablecerlo al agente local predeterminado.
+                                        </p>
+                                    )}
                                 </div>
                                 )}
                             </div>
