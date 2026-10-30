@@ -74,6 +74,7 @@ import {
 interface PrintClientProps {
     templates: TemplateOption[]
     rules: Record<string, unknown>[]
+    canEditAgentUrl?: boolean
 }
 
 type PrintStatus = 'pending' | 'printing' | 'done' | 'error'
@@ -97,7 +98,7 @@ interface OfPrintEntry {
 }
 
 const PRINTER_CONFIG_KEY = 'samiGen-printer-config'
-const PRINT_AGENT_VERSION = '1.0.6'
+const PRINT_AGENT_VERSION = '1.0.7'
 const PRINT_AGENT_DOWNLOAD_URL = `/downloads/samigen-print-agent-setup-${PRINT_AGENT_VERSION}.exe`
 const PRINT_AGENT_PORTABLE_URL = `/downloads/samigen-print-agent-portable-${PRINT_AGENT_VERSION}.zip`
 const PRINT_RENDER_TIMEOUT_MS = 45000
@@ -125,10 +126,18 @@ interface PrinterConfig {
     printerName: string
 }
 
+interface AgentQueue {
+    name: string
+    portName: string
+}
+
 interface AgentHealth {
+    version: string | null
     printers: string[]
     printerDetected: boolean
     supportsJobMetadata: boolean
+    multipleQueues: boolean
+    queues: AgentQueue[]
 }
 
 type PrintRuntimeOverrides = {
@@ -164,18 +173,37 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeAgentHealth(value: unknown): AgentHealth {
     if (!isRecord(value)) {
-        return { printers: [], printerDetected: false, supportsJobMetadata: false }
+        return {
+            version: null,
+            printers: [],
+            printerDetected: false,
+            supportsJobMetadata: false,
+            multipleQueues: false,
+            queues: [],
+        }
     }
 
     const capabilities = isRecord(value.capabilities) ? value.capabilities : {}
     const printers = Array.isArray(value.printers)
         ? value.printers.filter((printer): printer is string => typeof printer === 'string')
         : []
+    const queues = Array.isArray(value.printerQueues)
+        ? value.printerQueues
+            .filter(isRecord)
+            .map((queue) => ({
+                name: typeof queue.name === 'string' ? queue.name : '',
+                portName: typeof queue.portName === 'string' ? queue.portName : '',
+            }))
+            .filter((queue) => queue.name || queue.portName)
+        : []
 
     return {
+        version: typeof value.version === 'string' ? value.version : null,
         printers,
         printerDetected: value.printerDetected === true,
         supportsJobMetadata: capabilities.jobMetadata === true,
+        multipleQueues: value.multipleQueues === true || queues.length > 1,
+        queues,
     }
 }
 
@@ -327,7 +355,7 @@ async function recordPrintActivity(input: PrintActivityInput) {
     }
 }
 
-export function PrintClient({ templates, rules }: PrintClientProps) {
+export function PrintClient({ templates, rules, canEditAgentUrl = false }: PrintClientProps) {
     const [textFilter, setTextFilter] = useState('')
     const [products, setProducts] = useState<GenerateProduct[]>([])
     const [loading, setLoading] = useState(false)
@@ -336,11 +364,17 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
     const [printFormat, setPrintFormat] = useState<PrintFormat>('pdf')
     const [copies, setCopies] = useState(1)
     const [showPrinterConfig, setShowPrinterConfig] = useState(false)
+    const skipInitialConfigPersistenceRef = useRef(!canEditAgentUrl)
     const [printerConfig, setPrinterConfig] = useState<PrinterConfig>(() => {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem(PRINTER_CONFIG_KEY)
             if (saved) {
-                try { return normalizePrinterConfig(JSON.parse(saved)) } catch { /* ignore */ }
+                try {
+                    const normalized = normalizePrinterConfig(JSON.parse(saved))
+                    return canEditAgentUrl
+                        ? normalized
+                        : { ...normalized, agentUrl: defaultPrinterConfig.agentUrl }
+                } catch { /* ignore */ }
             }
         }
         return defaultPrinterConfig
@@ -352,7 +386,10 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
     const [showOfEntryDialog, setShowOfEntryDialog] = useState(false)
     const [ofEntries, setOfEntries] = useState<Record<string, OfPrintEntry[]>>({})
     const [agentOnline, setAgentOnline] = useState<boolean | null>(null)
+    const [agentVersion, setAgentVersion] = useState<string | null>(null)
     const [agentPrinters, setAgentPrinters] = useState<string[]>([])
+    const [agentQueues, setAgentQueues] = useState<AgentQueue[]>([])
+    const [agentMultipleQueues, setAgentMultipleQueues] = useState(false)
     const [printerDetected, setPrinterDetected] = useState<boolean>(false)
     const [agentSupportsJobMetadata, setAgentSupportsJobMetadata] = useState<boolean>(false)
     const [agentCheckIssue, setAgentCheckIssue] = useState<string | null>(null)
@@ -371,6 +408,10 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
     )
 
     useEffect(() => {
+        if (skipInitialConfigPersistenceRef.current) {
+            skipInitialConfigPersistenceRef.current = false
+            return
+        }
         localStorage.setItem(PRINTER_CONFIG_KEY, JSON.stringify(printerConfig))
     }, [printerConfig])
 
@@ -380,7 +421,10 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
             agentFailureCountRef.current = 0
             agentHasRespondedRef.current = false
             setAgentOnline(null)
+            setAgentVersion(null)
             setAgentPrinters([])
+            setAgentQueues([])
+            setAgentMultipleQueues(false)
             setPrinterDetected(false)
             setAgentSupportsJobMetadata(false)
             setAgentCheckIssue(null)
@@ -398,7 +442,10 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                 agentFailureCountRef.current = 0
                 agentHasRespondedRef.current = true
                 setAgentOnline(true)
+                setAgentVersion(data.version)
                 setAgentPrinters(data.printers)
+                setAgentQueues(data.queues)
+                setAgentMultipleQueues(data.multipleQueues)
                 setPrinterDetected(data.printerDetected)
                 setAgentSupportsJobMetadata(data.supportsJobMetadata)
                 setAgentCheckIssue(null)
@@ -413,7 +460,10 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
 
             if (!agentHasRespondedRef.current || agentFailureCountRef.current >= PRINT_AGENT_OFFLINE_FAILURES) {
                 setAgentOnline(false)
+                setAgentVersion(null)
                 setAgentPrinters([])
+                setAgentQueues([])
+                setAgentMultipleQueues(false)
                 setPrinterDetected(false)
                 setAgentSupportsJobMetadata(false)
             }
@@ -600,6 +650,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
     const filteredOutCount = products.length - validProducts.length
     const canPrintWithAgent = agentOnline === true && printerDetected
     const canPrintWithWebUsb = webUsbSupported && webUsbConnection !== null
+    const agentNeedsUpdate = agentVersion !== null && agentVersion !== PRINT_AGENT_VERSION
     const localAgentPrintIssueMessage = !usesLocalAgent
         ? null
         : agentOnline === null
@@ -608,13 +659,13 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
         ? 'Instala o inicia el agente local'
         : !printerDetected
         ? 'Conecta la impresora USB'
-        : !agentSupportsJobMetadata
+        : agentNeedsUpdate || !agentSupportsJobMetadata
         ? `Actualiza el agente local a la version ${PRINT_AGENT_VERSION}`
         : null
     const canPrintSelected = !requiresAgent || (
         thermalLayout?.ok === true &&
         (
-            (usesLocalAgent && canPrintWithAgent && agentSupportsJobMetadata) ||
+            (usesLocalAgent && canPrintWithAgent && agentSupportsJobMetadata && !agentNeedsUpdate) ||
             (usesWebUsb && canPrintWithWebUsb)
         )
     )
@@ -1128,15 +1179,37 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                     <div className="flex gap-2">
                                         <Input
                                             value={printerConfig.agentUrl}
-                                            onChange={(e) => setPrinterConfig(prev => ({ ...prev, agentUrl: e.target.value }))}
-                                            onBlur={() => setPrinterConfig(prev => ({ ...prev, agentUrl: normalizeAgentBaseUrl(prev.agentUrl) }))}
+                                            readOnly={!canEditAgentUrl}
+                                            disabled={!canEditAgentUrl}
+                                            onChange={canEditAgentUrl
+                                                ? (e) => setPrinterConfig(prev => ({ ...prev, agentUrl: e.target.value }))
+                                                : undefined}
+                                            onBlur={canEditAgentUrl
+                                                ? () => setPrinterConfig(prev => ({ ...prev, agentUrl: normalizeAgentBaseUrl(prev.agentUrl) }))
+                                                : undefined}
                                             placeholder="http://127.0.0.1:3344"
                                             className="text-sm font-mono flex-1"
                                         />
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => {
+                                                const nextConfig = { ...printerConfig, agentUrl: defaultPrinterConfig.agentUrl }
+                                                setPrinterConfig(nextConfig)
+                                                localStorage.setItem(PRINTER_CONFIG_KEY, JSON.stringify(nextConfig))
+                                            }}
+                                        >
+                                            Restablecer
+                                        </Button>
                                         <Button variant="outline" size="sm" onClick={checkAgent}>
                                             Probar
                                         </Button>
                                     </div>
+                                    {!canEditAgentUrl && (
+                                        <p className="text-xs text-slate-500">
+                                            Gestionado por TI. Puedes restablecerlo al agente local predeterminado.
+                                        </p>
+                                    )}
                                 </div>
                                 )}
                             </div>
@@ -1145,13 +1218,15 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                             /* Agent status */
                             <div className={`rounded-xl px-4 py-3 text-sm border ${
                                 agentOnline === true && (!requiresAgent || agentSupportsJobMetadata)
-                                    ? 'bg-green-50 border-green-200 text-green-700'
+                                    ? agentMultipleQueues
+                                        ? 'bg-amber-50 border-amber-200 text-amber-700'
+                                        : 'bg-green-50 border-green-200 text-green-700'
                                     : agentOnline === false
                                     ? 'bg-amber-50 border-amber-200 text-amber-700'
                                     : 'bg-slate-50 border-slate-200 text-slate-500'
                             }`}>
                                     {agentOnline === true ? (
-                                        requiresAgent && !agentSupportsJobMetadata ? (
+                                        requiresAgent && (agentNeedsUpdate || !agentSupportsJobMetadata) ? (
                                             <div>
                                                 <div className="flex items-center gap-2">
                                                     <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
@@ -1184,14 +1259,20 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                         ) : printerDetected ? (
                                             <div>
                                                 <div className="flex items-center gap-2">
-                                                    <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
-                                                    <span>Impresora lista</span>
+                                                    <span className={`w-2 h-2 rounded-full shrink-0 ${agentMultipleQueues ? 'bg-amber-500' : 'bg-green-500'}`} />
+                                                    <span>{agentMultipleQueues ? 'Impresora detectada con varias colas' : 'Impresora lista'}</span>
                                                     {agentPrinters.length > 0 && (
                                                         <span className="text-xs text-green-600">
                                                             ({agentPrinters.join(', ')})
                                                         </span>
                                                     )}
                                                 </div>
+                                                {agentMultipleQueues && (
+                                                    <p className="text-xs text-amber-700 mt-1">
+                                                        SamiGen usará USB directo. No elimines puertos ni impresoras; cierra 4BarCode antes de imprimir desde SamiGen si está trabajando.
+                                                        {agentQueues.length > 0 && ` Colas detectadas: ${agentQueues.map((queue) => queue.name || queue.portName).join(', ')}.`}
+                                                    </p>
+                                                )}
                                                 {agentCheckIssue && (
                                                     <p className="text-xs text-green-600 mt-1">
                                                         Ultima comprobacion lenta o intermitente. Se mantiene la conexion porque el agente respondio recientemente.
@@ -1245,7 +1326,7 @@ export function PrintClient({ templates, rules }: PrintClientProps) {
                                                 <li>Vuelve a esta pantalla y presiona <strong>Probar</strong>.</li>
                                             </ol>
                                             <p className="text-xs text-amber-600 mt-2">
-                                                Si el instalador es bloqueado, descarga el ZIP portable, extrae la carpeta y ejecuta <code className="bg-amber-100 px-1 rounded">install-service.cmd</code>.
+                                                Si el instalador es bloqueado, descarga el ZIP portable, extrae la carpeta y ejecuta <code className="bg-amber-100 px-1 rounded">install-agent.cmd</code>.
                                             </p>
                                         </div>
                                     ) : (

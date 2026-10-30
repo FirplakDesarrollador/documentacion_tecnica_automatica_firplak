@@ -5,12 +5,17 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { convertImageToTspl } = require('./printService');
-const { scanUsbDevices, scanUsbDevicesDetailed, printViaUsb } = require('./usbService');
+const { scanUsbDevicesDetailed, printViaUsb } = require('./usbService');
 const packageJson = require('./package.json');
 
 const app = express();
 const PORT = process.env.PORT || 3344;
-const AGENT_CAPABILITIES = { jobMetadata: true, fastPing: true };
+const AGENT_CAPABILITIES = {
+    jobMetadata: true,
+    fastPing: true,
+    queueDiagnostics: true,
+    windowsSpoolerFallback: true,
+};
 const USB_HEALTH_CACHE_MS = 15000;
 
 let cachedUsbHealth = null;
@@ -44,12 +49,18 @@ function getAgentStatus() {
     };
 }
 
-function mapUsbHealth(printers, scanCached) {
+function mapUsbHealth(scanResult, scanCached) {
+    const printers = scanResult.devices || [];
+    const printerQueues = scanResult.printerQueues || [];
     return {
         printerDetected: printers.length > 0,
         printerName: printers.length > 0 ? printers[0].known : null,
         printers: printers.map(p => p.known || `${p.vid}:${p.pid}`),
         usbDevices: printers,
+        printerQueues,
+        queueCount: printerQueues.length,
+        multipleQueues: printerQueues.length > 1,
+        usbDetails: scanResult.details || {},
         scanCached,
         scannedAt: new Date().toISOString(),
     };
@@ -66,9 +77,9 @@ async function getUsbHealth(forceRefresh = false) {
     }
 
     if (!pendingUsbHealth) {
-        pendingUsbHealth = scanUsbDevices()
-            .then((printers) => {
-                const payload = mapUsbHealth(printers, false);
+        pendingUsbHealth = scanUsbDevicesDetailed()
+            .then((scanResult) => {
+                const payload = mapUsbHealth(scanResult, false);
                 cachedUsbHealth = { payload, scannedAtMs: Date.now() };
                 return payload;
             })
@@ -102,6 +113,9 @@ app.get('/debug-usb', async (_req, res) => {
             printerDetected: result.devices.length > 0,
             printerName: result.devices.length > 0 ? result.devices[0].known : null,
             devicePath: result.devices.length > 0 ? result.devices[0].devicePath : null,
+            printerQueues: result.printerQueues || [],
+            queueCount: (result.printerQueues || []).length,
+            multipleQueues: (result.printerQueues || []).length > 1,
             details: result.details,
         });
     } catch (err) {

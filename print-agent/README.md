@@ -9,6 +9,31 @@ directamente a la impresora USB **3nStar LTT334 / 4BARCODE 4B-2054TG**.
 - **Node.js** 18+ instalado
 - Impresora 3nStar LTT334 conectada por **USB** y con driver instalado
 
+## Actualizaci&oacute;n para usuarios finales no t&eacute;cnicos
+
+Cuando SamiGen publique una nueva versi&oacute;n del agente, el usuario no debe
+eliminar impresoras, colas ni puertos USB. La actualizaci&oacute;n reemplaza los
+archivos del agente y conserva los registros de diagn&oacute;stico.
+
+1. Termine cualquier impresi&oacute;n pendiente en 4BarCode y cierre 4BarCode.
+2. En SamiGen &rarr; **Impresi&oacute;n**, descargue el instalador que aparece en el
+   aviso **Actualizar agente local**.
+3. Abra el archivo descargado y confirme la instalaci&oacute;n de Windows. No cambie
+   la carpeta de destino ni desinstale la impresora.
+4. Espere a que aparezca **Agente instalado correctamente**.
+5. Verifique que la impresora est&eacute; encendida y conectada por USB.
+6. Regrese a SamiGen, actualice la p&aacute;gina y pulse **Probar**.
+7. Si aparece **Impresora detectada con varias colas**, no borre puertos ni
+   colas: cierre 4BarCode antes de imprimir desde SamiGen y use **Probar de
+   nuevo**.
+
+La actualizaci&oacute;n detiene solamente el agente anterior, reemplaza sus archivos
+en `%LOCALAPPDATA%\SamiGenPrintAgent` y vuelve a iniciarlo. No modifica la
+configuraci&oacute;n de la impresora ni los trabajos de 4BarCode.
+
+Si Windows bloquea el instalador, el usuario debe enviarlo a TI; no debe
+desactivar el antivirus ni ejecutar comandos de PowerShell por su cuenta.
+
 ## Instalaci&oacute;n productiva para usuarios finales
 
 El usuario final no necesita clonar este repositorio ni instalar Node.js. Debe
@@ -62,7 +87,8 @@ npm start
 | M&eacute;todo | Ruta | Descripci&oacute;n |
 |---|---|---|
 | GET | `/health` | Estado del agente |
-| GET | `/printers` | Lista impresoras disponibles |
+| GET | `/scan-usb` | Fuerza una nueva detecci&oacute;n USB y muestra las colas encontradas |
+| GET | `/debug-usb` | Diagn&oacute;stico detallado para soporte |
 | POST | `/print` | Env&iacute;a un archivo a imprimir |
 
 ### POST /print
@@ -107,13 +133,16 @@ while ($true) {
 ## Soluci&oacute;n de problemas
 
 **"No se encuentra la impresora"**
-- Abre "Dispositivos e Impresoras" en Windows y verifica el nombre exacto
-- Usa `GET /printers` para listar las impresoras detectadas
-- Ajusta el nombre en la configuraci&oacute;n de SamiGen (Impresi&oacute;n &rarr; Configuraci&oacute;n de impresora)
+- Verifique que est&eacute; encendida y conectada por USB
+- Cierre 4BarCode y pulse **Probar** en SamiGen
+- No elimine puertos ni colas si Windows indica que est&aacute;n en uso
+- Si contin&uacute;a el problema, env&iacute;e a soporte el resultado de `/health`,
+  `/debug-usb` y el archivo `logs\agent.log`
 
-**"Error de conexi&oacute;n"**
-- Verifica que el agente est&eacute; corriendo (debes ver el mensaje "Activo" en la terminal)
-- Confirma que el puerto 3344 no est&eacute; bloqueado por un firewall
+**"Error de conexi&oacute;n o impresora ocupada"**
+- Termine la impresi&oacute;n activa en 4BarCode y cierre el programa
+- Espere unos segundos y vuelva a intentar una sola vez
+- Si falla de nuevo, desconecte y conecte el cable USB y pulse **Probar**
 - En SamiGen, la URL debe ser `http://127.0.0.1:3344`
 
 **La impresora no imprime o imprime texto basura**

@@ -95,17 +95,20 @@ async function scanUsbDevices() {
 }
 
 async function scanUsbDevicesDetailed() {
-    const result = await runPsCapture(POWERSHELL_FIND_DEVICE);
+    const [result, printerQueues] = await Promise.all([
+        runPsCapture(POWERSHELL_FIND_DEVICE),
+        getPrinterQueues(),
+    ]);
     if (!result.ok) {
         if (result.exitCode === 2) {
             // Device present in PnP but no registry path — stale entry
-            return { devices: [], details: { present: true, noPort: true } };
+            return { devices: [], printerQueues, details: { present: true, noPort: true } };
         }
-        return { devices: [], details: { present: false } };
+        return { devices: [], printerQueues, details: { present: false } };
     }
     const devicePath = result.stdout;
     if (!devicePath) {
-        return { devices: [], details: { present: true, noPath: true } };
+        return { devices: [], printerQueues, details: { present: true, noPath: true } };
     }
     return {
         devices: [{
@@ -115,13 +118,9 @@ async function scanUsbDevicesDetailed() {
             known: KNOWN_PRINTERS[0].name,
             devicePath: devicePath,
         }],
+        printerQueues,
         details: { present: true, devicePath },
     };
-}
-
-async function findDevicePath() {
-    const result = await scanUsbDevicesDetailed();
-    return result.devices.length > 0 ? result.devices[0].devicePath : null;
 }
 
 const CSHARP_WRITER = `
@@ -152,18 +151,164 @@ public class USBWriter {
 }
 `;
 
-const PS_GET_PORT_INFO = `
-$printer = Get-CimInstance -ClassName Win32_Printer -Filter "Name LIKE '%4BARCODE%' OR Name LIKE '%4B-2054%' OR Name LIKE '%LTT334%'" -ErrorAction SilentlyContinue;
-if (-not $printer) { exit 1 }
-$portName = $printer.PortName;
-$printerName = $printer.Name;
-# Look up USB port path in registry
-$portPath = "";
-$portsKey = "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Print\\Monitors\\USB Monitor\\Ports\\" + $portName;
-$pp = Get-ItemProperty -Path $portsKey -Name "Device Path" -ErrorAction SilentlyContinue;
-if ($pp) { $portPath = $pp.'Device Path' }
-Write-Host ($printerName + "|" + $portName + "|" + $portPath);
+const CSHARP_SPOOLER_WRITER = `
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+public class RawSpoolerWriter {
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+    public class DOCINFO {
+        [MarshalAs(UnmanagedType.LPWStr)] public string pDocName;
+        [MarshalAs(UnmanagedType.LPWStr)] public string pOutputFile;
+        [MarshalAs(UnmanagedType.LPWStr)] public string pDataType;
+    }
+    [DllImport("winspool.drv", CharSet=CharSet.Unicode, SetLastError=true)]
+    static extern bool OpenPrinter(string name, out IntPtr handle, IntPtr defaults);
+    [DllImport("winspool.drv", SetLastError=true)]
+    static extern bool ClosePrinter(IntPtr handle);
+    [DllImport("winspool.drv", CharSet=CharSet.Unicode, SetLastError=true)]
+    static extern int StartDocPrinter(IntPtr handle, int level, DOCINFO info);
+    [DllImport("winspool.drv", SetLastError=true)]
+    static extern bool EndDocPrinter(IntPtr handle);
+    [DllImport("winspool.drv", SetLastError=true)]
+    static extern bool StartPagePrinter(IntPtr handle);
+    [DllImport("winspool.drv", SetLastError=true)]
+    static extern bool EndPagePrinter(IntPtr handle);
+    [DllImport("winspool.drv", SetLastError=true)]
+    static extern bool WritePrinter(IntPtr handle, byte[] data, int count, out int written);
+
+    public static string PrintRaw(string printerName, string dataFile) {
+        IntPtr printer;
+        if (!OpenPrinter(printerName, out printer, IntPtr.Zero))
+            return "ERR_OPEN:" + Marshal.GetLastWin32Error();
+        try {
+            var info = new DOCINFO { pDocName = "SamiGen label", pOutputFile = null, pDataType = "RAW" };
+            if (StartDocPrinter(printer, 1, info) == 0)
+                return "ERR_START_DOC:" + Marshal.GetLastWin32Error();
+            try {
+                if (!StartPagePrinter(printer)) return "ERR_START_PAGE:" + Marshal.GetLastWin32Error();
+                try {
+                    byte[] bytes = File.ReadAllBytes(dataFile);
+                    int written;
+                    if (!WritePrinter(printer, bytes, bytes.Length, out written))
+                        return "ERR_WRITE:" + Marshal.GetLastWin32Error();
+                    return "OK:" + written;
+                } finally {
+                    EndPagePrinter(printer);
+                }
+            } finally {
+                EndDocPrinter(printer);
+            }
+        } finally {
+            ClosePrinter(printer);
+        }
+    }
+}
 `;
+
+const PS_GET_PORT_INFO = `
+$printers = @(
+    Get-CimInstance -ClassName Win32_Printer -Filter "Name LIKE '%4BARCODE%' OR Name LIKE '%4B-2054%' OR Name LIKE '%LTT334%'" -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            $portName = [string]$_.PortName;
+            $portPath = "";
+            if ($portName) {
+                $portsKey = "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Print\\Monitors\\USB Monitor\\Ports\\" + $portName;
+                $pp = Get-ItemProperty -Path $portsKey -Name "Device Path" -ErrorAction SilentlyContinue;
+                if ($pp) { $portPath = [string]$pp.'Device Path' }
+            }
+            [PSCustomObject]@{
+                name = [string]$_.Name;
+                portName = $portName;
+                portDevicePath = $portPath;
+                driverName = [string]$_.DriverName;
+                printerStatus = $_.PrinterStatus;
+                workOffline = $_.WorkOffline -eq $true;
+            }
+        }
+);
+ConvertTo-Json -InputObject $printers -Compress -Depth 4;
+`;
+
+function normalizePrinterQueues(value) {
+    const values = Array.isArray(value) ? value : value ? [value] : [];
+    return values
+        .filter((printer) => printer && typeof printer === 'object')
+        .map((printer) => ({
+            name: typeof printer.name === 'string' ? printer.name.trim() : '',
+            portName: typeof printer.portName === 'string' ? printer.portName.trim() : '',
+            portDevicePath: typeof printer.portDevicePath === 'string' ? printer.portDevicePath.trim() : '',
+            driverName: typeof printer.driverName === 'string' ? printer.driverName.trim() : '',
+            printerStatus: Number.isFinite(printer.printerStatus) ? printer.printerStatus : null,
+            workOffline: printer.workOffline === true,
+        }))
+        .filter((printer) => printer.name || printer.portName || printer.portDevicePath);
+}
+
+async function getPrinterQueues() {
+    const result = await runPsCapture(PS_GET_PORT_INFO);
+    if (!result.ok || !result.stdout) return [];
+    try {
+        return normalizePrinterQueues(JSON.parse(result.stdout));
+    } catch {
+        return [];
+    }
+}
+
+function buildUsbCandidates(devicePath, queues) {
+    const candidates = [];
+    const seen = new Set();
+
+    function add(pathValue, source) {
+        const normalized = typeof pathValue === 'string' ? pathValue.trim() : '';
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        candidates.push({ path: normalized, source });
+    }
+
+    add(devicePath, 'PnP device path');
+    for (const queue of queues) {
+        add(queue.portDevicePath, `cola ${queue.name || 'sin nombre'}`);
+    }
+    for (const queue of queues) {
+        if (queue.portName) add(`\\\\.\\${queue.portName}`, `puerto ${queue.portName}`);
+    }
+    return candidates;
+}
+
+function makeUsbAccessError(lastError, queues, attempts) {
+    const error = new Error(
+        'No se pudo abrir la impresora USB. ' +
+        'Cierra temporalmente 4BarCode u otro programa que esté imprimiendo, espera unos segundos y vuelve a intentar. ' +
+        `Último resultado: ${lastError || 'sin respuesta'}.`
+    );
+    error.code = 'USB_ACCESS_FAILED';
+    error.details = {
+        lastError: lastError || null,
+        attempts,
+        queueCount: queues.length,
+        queueNames: queues.map((queue) => queue.name).filter(Boolean),
+    };
+    return error;
+}
+
+async function printViaWindowsSpooler(zplFile, queue) {
+    const printerName = queue.name;
+    const psScript = `
+$printerName = "${printerName.replace(/"/g, '""').replace(/\$/g, '`$')}";
+$zplFile = "${zplFile.replace(/"/g, '""').replace(/\$/g, '`$')}";
+Add-Type -TypeDefinition @"
+${CSHARP_SPOOLER_WRITER}
+"@;
+$r = [RawSpoolerWriter]::PrintRaw($printerName, $zplFile);
+Write-Host $r;
+`;
+    const result = await runPsCapture(psScript);
+    if (!result.ok) return `spooler PowerShell: ${result.stderr || result.message}`;
+    const output = result.stdout.trim();
+    if (output.startsWith('OK:')) return null;
+    return output || 'spooler sin respuesta';
+}
 
 async function printViaUsb(zplData) {
     ensureTmpDir();
@@ -173,37 +318,29 @@ async function printViaUsb(zplData) {
     try {
         fs.writeFileSync(zplFile, zplData, 'utf-8');
 
-        // Step 1: get printer port info
-        const portInfoResult = await runPsCapture(PS_GET_PORT_INFO);
-        let printerName = KNOWN_PRINTERS[0].name;
-        let portName = '';
-        let portDevicePath = '';
-        let devicePath = await findDevicePath();
-
-        if (portInfoResult.ok) {
-            const parts = portInfoResult.stdout.split('|');
-            if (parts.length >= 2) {
-                printerName = parts[0] || printerName;
-                portName = parts[1] || '';
-                portDevicePath = parts[2] || '';
-                console.log(`[print] Puerto: ${portName}, printer: ${printerName}`);
-            }
-        }
-
-        console.log(`[print] DevicePath: ${devicePath}`);
-        console.log(`[print] PortDevicePath: ${portDevicePath}`);
-
-        // Step 2: collect candidate paths to try
-        const candidates = [];
-        if (devicePath) candidates.push(devicePath);
-        if (portDevicePath) candidates.push(portDevicePath);
-        if (portName) candidates.push('\\\\.\\' + portName);
-
-        // Step 3: try each path with CreateFile
+        const firstScan = await scanUsbDevicesDetailed();
+        const firstDevicePath = firstScan.devices.length > 0 ? firstScan.devices[0].devicePath : null;
+        const firstQueues = firstScan.printerQueues || [];
+        let queues = firstQueues;
+        let attempts = 0;
         let lastError = '';
-        for (const candidate of candidates) {
+        let candidates = buildUsbCandidates(firstDevicePath, firstQueues);
+
+        console.log(`[print] Colas detectadas: ${queues.length}`);
+        for (const queue of queues) {
+            console.log(`[print] Cola: ${queue.name || '(sin nombre)'} | Puerto: ${queue.portName || '(sin puerto)'}`);
+        }
+        if (queues.length > 1) {
+            console.warn('[print] Hay varias colas para la impresora. Se mantiene USB directo y no se elegirá una cola por nombre.');
+        }
+        console.log(`[print] DevicePath: ${firstDevicePath || '(no detectado)'}`);
+        console.log(`[print] Candidatos USB: ${candidates.length}`);
+
+        for (let scanAttempt = 0; scanAttempt < 2; scanAttempt += 1) {
+            for (const candidate of candidates) {
+                attempts += 1;
             const psScript = `
-$path = "${candidate.replace(/"/g, '""').replace(/\$/g, '`$')}";
+$path = "${candidate.path.replace(/"/g, '""').replace(/\$/g, '`$')}";
 $zplFile = "${zplFile.replace(/"/g, '""').replace(/\$/g, '`$')}";
 Add-Type -TypeDefinition @"
 ${CSHARP_WRITER}
@@ -218,7 +355,11 @@ Write-Host $r;
             }
             const output = psResult.stdout.trim();
             if (output.startsWith('OK:')) {
-                return { method: 'USB-direct (' + candidate.slice(0, 40) + ')', device: printerName };
+                return {
+                    method: 'USB-direct',
+                    device: queues.find((queue) => queue.name)?.name || KNOWN_PRINTERS[0].name,
+                    queueCount: queues.length,
+                };
             }
             if (output.startsWith('ERR_CREATE:')) {
                 lastError = `CreateFile code ${output.split(':')[1]}`;
@@ -234,46 +375,28 @@ Write-Host $r;
             lastError = output;
         }
 
-        // Step 4: fallback — Copy-Item to printer UNC
-        console.log(`[print] CreateFile no funcionó (${lastError}), probando Copy-Item a ${printerName}...`);
-        const copyResult = await runPsCapture(`
-$src = "${zplFile.replace(/"/g, '""').replace(/\$/g, '`$')}";
-$dst = "\\\\localhost\\${printerName.replace(/"/g, '""').replace(/\$/g, '`$')}";
-try {
-    [System.IO.File]::Copy($src, $dst, $true);
-    Write-Host "OK";
-} catch {
-    Write-Host ("ERR_COPY:" + $_.Exception.Message);
-}
-`);
-        if (copyResult.ok && copyResult.stdout.trim() === 'OK') {
-            return { method: 'Copy-Item (UNC)', device: printerName };
+            if (scanAttempt === 0) {
+                console.warn(`[print] USB no disponible (${lastError}). Reescaneando antes del último intento...`);
+                await new Promise((resolve) => setTimeout(resolve, 250));
+                const retryScan = await scanUsbDevicesDetailed();
+                queues = retryScan.printerQueues || [];
+                const retryDevicePath = retryScan.devices.length > 0 ? retryScan.devices[0].devicePath : null;
+                candidates = buildUsbCandidates(retryDevicePath, queues);
+            }
         }
 
-        // Step 5: fallback — Write-Printer cmdlet
-        console.log(`[print] Copy-Item falló, probando Write-Printer...`);
-        const wpResult = await runPsCapture(`
-$file = "${zplFile.replace(/"/g, '""').replace(/\$/g, '`$')}";
-$name = "${printerName.replace(/"/g, '""').replace(/\$/g, '`$')}";
-try {
-    $bytes = [System.IO.File]::ReadAllBytes($file);
-    Write-Printer -Name $name -Data $bytes -ErrorAction Stop;
-    Write-Host "OK";
-} catch {
-    Write-Host "ERR_PRINTER:" + $_.Exception.Message;
-}
-`);
-        if (wpResult.ok && wpResult.stdout.trim() === 'OK') {
-            return { method: 'Write-Printer (spooler)', device: printerName };
+        if (queues.length === 1 && queues[0].name) {
+            console.warn(`[print] USB no disponible (${lastError}). Probando spooler de Windows con la cola ${queues[0].name}...`);
+            const spoolerError = await printViaWindowsSpooler(zplFile, queues[0]);
+            if (!spoolerError) {
+                return { method: 'Windows-spooler', device: queues[0].name, queueCount: 1 };
+            }
+            lastError = `${lastError}; spooler: ${spoolerError}`;
+        } else if (queues.length > 1) {
+            lastError = `${lastError}; fallback de spooler omitido: hay ${queues.length} colas`;
         }
 
-        throw new Error(
-            `No se pudo enviar datos a la impresora.\n` +
-            `USB: ${lastError}\n` +
-            `Copy-Item: ${copyResult.ok && !copyResult.stdout.startsWith('OK') ? copyResult.stdout.slice(0, 100) : 'no'}\n` +
-            `Write-Printer: ${wpResult.ok && !wpResult.stdout.startsWith('OK') ? wpResult.stdout.slice(0, 100) : 'no'}\n` +
-            `Verifica que la impresora esté encendida, conectada y correctamente instalada.`
-        );
+        throw makeUsbAccessError(lastError, queues, attempts);
     } finally {
         for (const f of cleanup) {
             try { fs.unlinkSync(f); } catch {}
@@ -281,37 +404,10 @@ try {
     }
 }
 
-async function printViaWritePrinter(zplData, printerName) {
-    ensureTmpDir();
-    const zplFile = path.join(TMP_DIR, '.tmp-zpl-' + Date.now() + '.zpl');
-    try {
-        fs.writeFileSync(zplFile, zplData, 'utf-8');
-        const psScript = `
-$file = "${zplFile.replace(/"/g, '""').replace(/\$/g, '`$')}";
-$name = "${(printerName || '4BARCODE 4B-2054TG').replace(/"/g, '""').replace(/\$/g, '`$')}";
-try {
-    $bytes = [System.IO.File]::ReadAllBytes($file);
-    Write-Printer -Name $name -Data $bytes -ErrorAction Stop;
-    Write-Host "OK";
-} catch {
-    Write-Host "ERR_PRINTER:" + $_.Exception.Message;
-}
-`;
-        const psResult = await runPsCapture(psScript);
-        if (!psResult.ok) {
-            throw new Error(`Write-Printer falló: ${(psResult.stderr || psResult.stdout || psResult.message).slice(0, 300)}`);
-        }
-        const output = psResult.stdout.trim();
-        if (output.startsWith('ERR_PRINTER:')) {
-            throw new Error(`Write-Printer: ${output.slice(12).trim()}`);
-        }
-        if (output !== 'OK') {
-            throw new Error(`Write-Printer: respuesta inesperada: ${output.slice(0, 200)}`);
-        }
-        return { method: 'Write-Printer (spooler)', device: printerName || KNOWN_PRINTERS[0].name };
-    } finally {
-        try { fs.unlinkSync(zplFile); } catch {}
-    }
-}
-
-module.exports = { scanUsbDevices, scanUsbDevicesDetailed, printViaUsb, printViaWritePrinter };
+module.exports = {
+    scanUsbDevices,
+    scanUsbDevicesDetailed,
+    printViaUsb,
+    normalizePrinterQueues,
+    buildUsbCandidates,
+};
