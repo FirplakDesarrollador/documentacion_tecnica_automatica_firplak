@@ -21,6 +21,7 @@
     "check:diff": "node scripts/check_quality_diff.mjs",
     "mcp:sap": "node scripts/mcp-sap-server.mjs",
     "test:print-layout": "tsx scripts/check-print-layout.ts && node --test print-agent/printService.test.js",
+    "test:print-agent": "node --test print-agent/usbService.test.js",
     "build:print-agent-installer": "node scripts/build-print-agent-installer.js",
     "postinstall": "prisma generate",
     "release": "npm version patch && git push origin Oswaldo_cambios --follow-tags"
